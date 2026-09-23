@@ -17,7 +17,7 @@
 | `python -m satellite_rl.evaluation.compare_metrics` | 运行原指标比较流程 |
 | `python -m unittest discover -s tests -v` | 结构、导入、路径和权重兼容性检查 |
 
-训练默认 4000 回合，超参数仍在代码中设置，当前没有命令行参数覆盖功能。不要为了检查导入而启动完整训练。
+原 `train_sac_*` 入口仍默认 4000 回合。新增 `python -m satellite_rl.training.experiment_runner` 用于可复现对照，支持模型、公式版本、种子、交互步数、独立目录与断点恢复；`experiment_suite` 管理已批准的 18 组后台 CUDA 作业。具体参数见 `docs/十八组对照实验运行说明.md`。不要为了检查导入而启动完整训练。
 
 ## 训练环境约定
 
