@@ -1,5 +1,6 @@
 """参数规模接近 Transformer 的 MLP SAC；原 sac_mlp 版本独立保留。"""
 from satellite_rl.paths import project_path
+from satellite_rl.agents.sac_math import expected_min_joint_q
 # 处理离散问题的模型
 import torch
 from torch import nn
@@ -91,7 +92,7 @@ class ValueNet(nn.Module):
 class SAC:
     def __init__(self, n_states, n_hiddens, freq_dim, slots_dim, power_dim,
                  actor_lr, critic_lr, alpha_lr,
-                 target_entropy, tau, gamma, device):
+                 target_entropy, tau, gamma, device, *, formula_variant="corrected"):
         # 实例化策略网络
         self.actor = PolicyNet(n_states, n_hiddens, freq_dim, slots_dim, power_dim).to(device)
         # 实例化第一个价值网络--预测
@@ -121,6 +122,10 @@ class SAC:
         self.log_alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=alpha_lr)
 
         # 属性分配
+        if formula_variant not in ("legacy", "corrected"):
+            raise ValueError("Unknown SAC formula variant")
+        self.formula_variant = formula_variant
+        self.last_metrics = {}
         self.target_entropy = target_entropy
         self.gamma = gamma
         self.tau = tau
@@ -235,15 +240,20 @@ class SAC:
         # 目标价值网络，下一时刻的state_value [b,n_actions]
         q1_freq, q1_slots, q1_power = self.target_critic_1(next_states)
         q2_freq, q2_slots, q2_power = self.target_critic_2(next_states)
-        # 取出最小的q值  [b, 1]
-        min_freq = torch.min(q1_freq, q2_freq)
-        min_slots = torch.min(q1_slots, q2_slots)
-        min_power = torch.min(q1_power, q2_power)
-        exp_min_q = (
-                (probs_freq * min_freq).sum(1, keepdim=True) +
-                (probs_slots * min_slots).sum(1, keepdim=True) +
-                (probs_power * min_power).sum(1, keepdim=True)
-        )
+        if self.formula_variant == "corrected":
+            exp_min_q = expected_min_joint_q(
+                (probs_freq, probs_slots, probs_power),
+                (q1_freq, q1_slots, q1_power), (q2_freq, q2_slots, q2_power))
+        else:
+            # 取出最小的q值  [b, 1]
+            min_freq = torch.min(q1_freq, q2_freq)
+            min_slots = torch.min(q1_slots, q2_slots)
+            min_power = torch.min(q1_power, q2_power)
+            exp_min_q = (
+                    (probs_freq * min_freq).sum(1, keepdim=True) +
+                    (probs_slots * min_slots).sum(1, keepdim=True) +
+                    (probs_power * min_power).sum(1, keepdim=True)
+            )
         # 下个时刻的state_value  [b, 1]
         next_value = exp_min_q + self.log_alpha.exp() * entropy
 
@@ -330,14 +340,18 @@ class SAC:
         with torch.no_grad():
             q1_f, q1_s, q1_p = self.critic_1(states)
             q2_f, q2_s, q2_p = self.critic_2(states)
-        min_f = torch.min(q1_f, q2_f)
-        min_s = torch.min(q1_s, q2_s)
-        min_p = torch.min(q1_p, q2_p)
-        exp_min_q = (
-                torch.sum(pf * min_f, dim=1, keepdim=True) +
-                torch.sum(ps * min_s, dim=1, keepdim=True) +
-                torch.sum(pp * min_p, dim=1, keepdim=True)
-        )  # (B,1)
+        if self.formula_variant == "corrected":
+            exp_min_q = expected_min_joint_q(
+                (pf, ps, pp), (q1_f, q1_s, q1_p), (q2_f, q2_s, q2_p))
+        else:
+            min_f = torch.min(q1_f, q2_f)
+            min_s = torch.min(q1_s, q2_s)
+            min_p = torch.min(q1_p, q2_p)
+            exp_min_q = (
+                    torch.sum(pf * min_f, dim=1, keepdim=True) +
+                    torch.sum(ps * min_s, dim=1, keepdim=True) +
+                    torch.sum(pp * min_p, dim=1, keepdim=True)
+            )  # (B,1)
 
         actor_loss = torch.mean(-self.log_alpha.exp().detach() * entropy - exp_min_q)
 
@@ -351,6 +365,17 @@ class SAC:
         self.log_alpha_optimizer.zero_grad()
         alpha_loss.backward()
         self.log_alpha_optimizer.step()
+        # 记录现有更新值；只分离计算图，不在此处强制同步 GPU。
+        self.last_metrics = {
+            "actor_loss": actor_loss.detach(), "critic1_loss": loss_q1.detach(),
+            "critic2_loss": loss_q2.detach(), "alpha_loss": alpha_loss.detach(),
+            "alpha": self.log_alpha.exp().detach(), "entropy": entropy.detach().mean(),
+            "entropy_freq": (-(pf * log_pf).sum(1)).detach().mean(),
+            "entropy_slots": (-(ps * log_ps).sum(1)).detach().mean(),
+            "entropy_power": (-(pp * log_pp).sum(1)).detach().mean(),
+            "q_mean": (q1_joint.detach().mean() + q2_joint.detach().mean()) / 2,
+            "target_mean": td_target.detach().mean(),
+        }
 
         # ---------- 6. 软更新目标 Q ----------
         self.soft_update(self.critic_1, self.target_critic_1)

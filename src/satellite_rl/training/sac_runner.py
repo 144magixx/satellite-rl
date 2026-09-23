@@ -113,7 +113,7 @@ def run_training(SAC, ReplayBuffer, *, n_hiddens=128, experiment_name=None):
     actor_lr = 1e-5  # 策略网络学习率
     critic_lr = 1e-4  # 价值网络学习率
     alpha_lr = 1e-4  # 课训练变量的学习率
-    target_entropy = -6.9
+    target_entropy = 6.9
     tau = 0.005  # 软更新参数
     gamma = 0.99  # 折扣因子
     device = torch.device('cuda') if torch.cuda.is_available() \
