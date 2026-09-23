@@ -60,7 +60,7 @@ class RunMonitor:
             "completed", "occupancy_fraction", "zero_slot_rate", "termination_reason",
         ), resume)
         self._open_csv("evaluations", (
-            "run_id", "checkpoint", "env_step", "scene_id", "action_seed",
+            "run_id", "checkpoint", "env_step", "scene_id", "action_mode", "action_seed",
             "si_sum", "si_mean", "sgm_mean", "throughput_bps", "total_power_w",
             "served_beams", "total_beams", "power_exceeded", "completed",
             "occupancy_fraction", "zero_slot_rate",
@@ -99,7 +99,8 @@ class RunMonitor:
         if name == "episodes":
             return str(values["episode"])
         return (str(values["checkpoint"]), str(values["env_step"]),
-                str(values["scene_id"]), str(values["action_seed"]))
+                str(values["scene_id"]), str(values.get("action_mode") or "sample"),
+                str(values["action_seed"]))
 
     def event(self, kind, **values):
         self.handles["events"].write(json.dumps({
