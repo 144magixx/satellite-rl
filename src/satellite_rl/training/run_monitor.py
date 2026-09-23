@@ -11,6 +11,20 @@ import time
 import uuid
 
 
+def replace_with_retry(source, destination, *, attempts=8, initial_delay=0.05):
+    """Retry transient Windows sharing violations while keeping atomic replace semantics."""
+    if attempts < 1 or initial_delay < 0:
+        raise ValueError("attempts must be positive and initial_delay nonnegative")
+    for attempt in range(attempts):
+        try:
+            os.replace(source, destination)
+            return
+        except OSError as error:
+            if getattr(error, "winerror", None) not in (5, 32) or attempt == attempts - 1:
+                raise
+            time.sleep(min(initial_delay * 2 ** attempt, 0.5))
+
+
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -24,7 +38,7 @@ def atomic_json(path, value):
             json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -139,7 +153,7 @@ class RunMonitor:
                         writer.writerows(kept)
                         stream.flush()
                         os.fsync(stream.fileno())
-                    os.replace(temporary, path)
+                    replace_with_retry(temporary, path)
                 finally:
                     temporary.unlink(missing_ok=True)
             self.handles[name] = path.open("a", newline="", encoding="utf-8", buffering=65536)
