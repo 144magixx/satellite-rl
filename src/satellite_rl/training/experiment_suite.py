@@ -7,6 +7,7 @@ Each worker writes its own checkpoints; the supervisor only launches and observe
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,20 @@ FORMULAS = ("legacy", "corrected")
 DEFAULT_EXPERIMENT_ID = "sac_comparison_20260924"
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+
+@contextmanager
+def keep_system_awake():
+    """长实验期间避免系统自动休眠，允许屏幕正常关闭；退出即恢复。"""
+    previous = None
+    if os.name == 'nt':
+        import ctypes
+        previous = ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
+    try:
+        yield
+    finally:
+        if previous:
+            ctypes.windll.kernel32.SetThreadExecutionState(previous)
 
 
 def suite_dir(archive_root, experiment_id):
@@ -329,7 +344,7 @@ def run_queue(archive_root, experiment_id=DEFAULT_EXPERIMENT_ID,
     _verify_source(plan)
     processes = {}
     max_attempts = retries + 1
-    with SuiteLock(directory / "suite.lock"):
+    with SuiteLock(directory / "suite.lock"), keep_system_awake():
         from satellite_rl.evaluation.experiment_report import generate_progress_report
 
         _event(directory, "supervisor_started", max_concurrent=max_concurrent,
