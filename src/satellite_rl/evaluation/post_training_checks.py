@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import traceback
+import uuid
 
 import numpy as np
 import torch
@@ -46,7 +47,9 @@ GUARDED_FILES = (
     "src/satellite_rl/agents/sac_transformer.py",
     "src/satellite_rl/agents/sac_cnn_matched.py",
     "src/satellite_rl/agents/sac_mlp_matched.py",
+    "src/satellite_rl/agents/sac_math.py",
     "src/satellite_rl/evaluation/terminal_metrics.py",
+    "src/satellite_rl/evaluation/checkpoints.py",
     "src/satellite_rl/training/experiment_runner.py",
 )
 
@@ -213,6 +216,42 @@ def _put_immutable_json(path, data):
     atomic_json(path, data)
 
 
+def verify_cached_post_result(path, scene_refs):
+    """A cached JSON is valid only with all 60 original records and raw files."""
+    path = Path(path)
+    result = _load_json(path)
+    expected = {(str(scene_id), str(action_seed))
+                for scene_id in SCENE_IDS for action_seed in ACTION_SEEDS}
+    rows = result.get("rows", [])
+    observed = [(str(row["scene_id"]), str(row["action_seed"])) for row in rows]
+    if (result.get("checkpoint") != "final_test" or result.get("env_step") != 400000
+            or result.get("include_argmax") is not False
+            or result.get("action_seeds") != list(ACTION_SEEDS)
+            or result.get("scene_references") != scene_refs
+            or len(observed) != 60 or set(observed) != expected
+            or any(row.get("action_mode") != "sample" for row in rows)):
+        raise RuntimeError(f"已有补充评价场景/动作不完整或清单不一致：{path}")
+    for path_key, sha_key in (("arrays_path", "arrays_sha256"),
+                              ("trace_path", "trace_sha256")):
+        raw = Path(result[path_key])
+        if not raw.is_file() or runner.sha256_file(raw) != result[sha_key]:
+            raise RuntimeError(f"已有补充评价原始文件缺失或校验失败：{raw}")
+    return result
+
+
+def _record_failure(directory, prefix, error, config, *, latest_name):
+    directory = Path(directory)
+    moment = utc_now()
+    event_id = moment.replace(":", "").replace("-", "").replace("+", "_")
+    path = directory / f"{prefix}.failure.{event_id}.{uuid.uuid4().hex[:8]}.json"
+    atomic_json(path, {"at": moment, "type": type(error).__name__,
+                       "message": str(error), "traceback": traceback.format_exc(),
+                       "config": config})
+    atomic_json(directory / latest_name, {"at": moment, "latest_failure": str(path),
+                                                "sha256": runner.sha256_file(path)})
+    return path
+
+
 def prepare_condition_scenes(post_root, plan, provenance):
     references = {}
     for condition in CONDITIONS:
@@ -305,6 +344,9 @@ def _run_evaluation_task(task_dir, task_id, config, agent, scene_refs,
             runner._new_environment = old_factory
         monitor.write_status(stage="evaluating", scene_count=20,
                              action_seeds=list(ACTION_SEEDS), source_commit=TRAIN_COMMIT)
+        cached = task_dir / "evaluation" / "final_test_400000.json"
+        if cached.exists():
+            verify_cached_post_result(cached, scene_refs)
         result = runner.evaluate(
             agent, scene_refs, ACTION_SEEDS, "final_test", 400000, monitor,
             task_dir / "evaluation", include_argmax=False,
@@ -314,11 +356,9 @@ def _run_evaluation_task(task_dir, task_id, config, agent, scene_refs,
             sampled_si_mean=result["si_mean"], completed_at=utc_now())
         return result
     except Exception as error:
-        atomic_json(task_dir / "failure.json", {
-            "at": utc_now(), "type": type(error).__name__, "message": str(error),
-            "traceback": traceback.format_exc(), "config": config,
-        })
-        monitor.write_status(stage="failed", failure_path=str(task_dir / "failure.json"))
+        failure = _record_failure(task_dir, "evaluation", error, config,
+                                  latest_name="failure.json")
+        monitor.write_status(stage="failed", failure_path=str(failure))
         raise
     finally:
         runner._new_environment = original_factory
@@ -566,10 +606,8 @@ def run_timing(archive_root, frozen_root):
                 result_path.parent.mkdir(parents=True, exist_ok=True)
                 atomic_json(result_path, result)
             except Exception as error:
-                atomic_json(timing_dir / "runs" / (run_id + ".failure.json"), {
-                    "at": utc_now(), "config": run_config, "type": type(error).__name__,
-                    "message": str(error), "traceback": traceback.format_exc(),
-                })
+                _record_failure(timing_dir / "runs", run_id, error, run_config,
+                                latest_name=run_id + ".failure.json")
                 raise
             finally:
                 del agent

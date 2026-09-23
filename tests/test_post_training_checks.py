@@ -12,8 +12,8 @@ from satellite_rl.envs.satellite import BeamInfo
 from satellite_rl.evaluation.checkpoints import load_network_checkpoint
 from satellite_rl.evaluation.post_training_checks import (
     ACTION_SEEDS, EXPECTED_RUN_IDS, SCENE_IDS, EvaluationAgent,
-    _final_result_is_complete, legacy_environment_source,
-    make_timing_states, require_completed, transform_scene,
+    _final_result_is_complete, _record_failure, legacy_environment_source,
+    make_timing_states, require_completed, transform_scene, verify_cached_post_result,
 )
 from satellite_rl.training import experiment_runner as runner
 
@@ -98,6 +98,48 @@ class PostTrainingChecksTests(unittest.TestCase):
         path.write_text(json.dumps({"rows": rows, **metadata}), encoding="utf-8")
         with self.assertRaisesRegex(RuntimeError, "缺失或重复"):
             _final_result_is_complete(path)
+
+    def test_cached_post_result_requires_exact_60_pairs_and_matching_raw_hashes(self):
+        refs = {str(scene): {"path": f"scene_{scene}.npz", "sha256": "fixed"}
+                for scene in SCENE_IDS}
+        arrays = self.root / "result.npz"
+        trace = self.root / "result.jsonl.gz"
+        arrays.write_bytes(b"actual arrays")
+        trace.write_bytes(b"actual trace")
+        rows = [{"scene_id": scene, "action_seed": seed, "action_mode": "sample"}
+                for scene in SCENE_IDS for seed in ACTION_SEEDS]
+        result = {"checkpoint": "final_test", "env_step": 400000,
+                  "include_argmax": False, "action_seeds": list(ACTION_SEEDS),
+                  "scene_references": refs, "rows": rows,
+                  "arrays_path": str(arrays), "arrays_sha256": runner.sha256_file(arrays),
+                  "trace_path": str(trace), "trace_sha256": runner.sha256_file(trace)}
+        path = self.root / "final_test_400000.json"
+        path.write_text(json.dumps(result), encoding="utf-8")
+        self.assertEqual(len(verify_cached_post_result(path, refs)["rows"]), 60)
+        result["rows"][-1] = rows[0]
+        path.write_text(json.dumps(result), encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "不完整"):
+            verify_cached_post_result(path, refs)
+        result["rows"][-1] = {"scene_id": 81019, "action_seed": 91003,
+                               "action_mode": "sample"}
+        path.write_text(json.dumps(result), encoding="utf-8")
+        trace.write_bytes(b"changed trace")
+        with self.assertRaisesRegex(RuntimeError, "校验失败"):
+            verify_cached_post_result(path, refs)
+
+    def test_failure_records_are_unique_and_latest_is_only_an_index(self):
+        paths = []
+        for index in range(2):
+            try:
+                raise RuntimeError(f"failure {index}")
+            except RuntimeError as error:
+                paths.append(_record_failure(self.root, "evaluation", error,
+                                             {"trial": index}, latest_name="failure.json"))
+        self.assertNotEqual(paths[0], paths[1])
+        self.assertTrue(paths[0].exists() and paths[1].exists())
+        index = json.loads((self.root / "failure.json").read_text(encoding="utf-8"))
+        self.assertEqual(index["latest_failure"], str(paths[1]))
+        self.assertIn("failure 0", paths[0].read_text(encoding="utf-8"))
 
     def test_old_source_and_pretrained_transformer_load_strictly_on_cpu(self):
         module, path, digest = legacy_environment_source(self.root)
