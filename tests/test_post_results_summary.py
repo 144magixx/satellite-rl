@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import statistics
 import tempfile
 import unittest
 from unittest import mock
@@ -38,8 +39,34 @@ class PostResultsSummaryTests(unittest.TestCase):
         del changed[("81000", "91001")]
         with self.assertRaisesRegex(RuntimeError, "完整配对"):
             summary.paired_means(original, changed)
-        with self.assertRaisesRegex(RuntimeError, "不完整或重复"):
+        with self.assertRaisesRegex(RuntimeError, "必须恰好"):
             summary._sample_rows({"rows": self.rows()[:-1]})
+
+    def test_original_hundred_scenes_select_only_predeclared_twenty(self):
+        original = [{"scene_id": str(scene), "action_seed": seed,
+                     "action_mode": "sample", "si_mean": scene / 1e5}
+                    for scene in range(81000, 81100) for seed in ACTION_SEEDS]
+        selected = summary._original_sample_rows({"rows": original})
+        self.assertEqual(len(selected), 60)
+        self.assertEqual({scene for scene, _ in selected}, {str(scene) for scene in SCENE_IDS})
+        # The formal result also contains one argmax evaluation per scene.
+        argmax = [{"scene_id": str(scene), "action_seed": "argmax",
+                   "action_mode": "argmax"} for scene in range(81000, 81100)]
+        self.assertEqual(summary._original_sample_rows({"rows": original + argmax}), selected)
+        with self.assertRaisesRegex(RuntimeError, "100场景"):
+            summary._original_sample_rows({"rows": original[:-1]})
+        with self.assertRaisesRegex(RuntimeError, "必须恰好"):
+            summary._sample_rows({"rows": self.rows() + argmax[:1]})
+
+    def test_old_weight_variation_uses_twenty_scene_means(self):
+        trials = [{"scene_id": str(scene), "action_seed": seed,
+                   **{field: (scene - 81000) + offset for field in summary.FIELDS}}
+                  for scene in SCENE_IDS
+                  for seed, offset in zip(ACTION_SEEDS, (-2, 0, 2))]
+        measured = summary._std_across_scene_means(trials)
+        self.assertAlmostEqual(measured["si_mean"], statistics.stdev(range(20)))
+        with self.assertRaisesRegex(RuntimeError, "缺少20场景"):
+            summary._std_across_scene_means(trials[:-1])
 
     def test_three_train_seeds_define_the_uncertainty(self):
         rows = []
