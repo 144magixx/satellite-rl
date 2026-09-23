@@ -16,7 +16,8 @@ import numpy as np
 import torch
 
 from satellite_rl.training.experiment_runner import (
-    _evaluation_action, _json_safe, _scalar_metrics, evaluate, load_checkpoint, run, run_id_for,
+    _archive_future_artifacts, _evaluation_action, _json_safe, _scalar_metrics,
+    evaluate, load_checkpoint, run, run_id_for,
     save_actor_weights, save_checkpoint,
 )
 from satellite_rl.training.run_monitor import RunMonitor, atomic_json
@@ -36,6 +37,15 @@ class _Agent:
             setattr(self, name + "_optimizer", torch.optim.Adam(getattr(self, name).parameters()))
         self.log_alpha_optimizer = torch.optim.Adam([self.log_alpha])
         self.target_entropy = 6.9
+
+
+class _OneStepEnv:
+    beam_idx = 0
+    overload = False
+
+    def step(self, _action):
+        self.beam_idx += 1
+        return np.zeros(204), 0.0, True, {"out": 0, "occupy": 0}
 
 
 class ExperimentRunnerTests(unittest.TestCase):
@@ -123,6 +133,42 @@ class ExperimentRunnerTests(unittest.TestCase):
         with (self.root / run_id / "evaluations.csv").open(newline="") as stream:
             self.assertEqual(len(list(csv.DictReader(stream))), 1)
 
+    def test_resume_reconciles_only_rows_after_checkpoint(self):
+        run_id = "reconcile-test"
+        monitor = RunMonitor(self.root / run_id, run_id)
+        monitor.row("updates", {"env_step": 100, "update_step": 10})
+        monitor.row("updates", {"env_step": 110, "update_step": 20})
+        monitor.row("episodes", {"episode": 1, "env_step": 100})
+        monitor.row("episodes", {"episode": 2, "env_step": 110})
+        monitor.row("evaluations", {"checkpoint": "validation", "env_step": 100,
+                                     "scene_id": "one", "action_seed": 91001})
+        monitor.row("evaluations", {"checkpoint": "validation", "env_step": 110,
+                                     "scene_id": "one", "action_seed": 91001})
+        monitor.close()
+        resumed = RunMonitor(self.root / run_id, run_id, resume=True)
+        self.assertEqual(resumed.reconcile({"env_step": 100, "update_step": 10}),
+                         {"episodes": 1, "updates": 1, "evaluations": 1})
+        resumed.row("episodes", {"episode": 2, "env_step": 111})
+        resumed.close()
+        with (self.root / run_id / "episodes.csv").open(newline="") as stream:
+            self.assertEqual([int(row["env_step"]) for row in csv.DictReader(stream)],
+                             [100, 111])
+
+    def test_future_evaluation_artifacts_are_preserved_outside_active_path(self):
+        run_dir = self.root / "run"
+        evaluation = run_dir / "evaluation"
+        evaluation.mkdir(parents=True)
+        old = evaluation / "validation_100.json"
+        future = evaluation / "validation_110.json"
+        old.write_text("old")
+        future.write_text("future")
+        model_dir = self.root / "models"
+        model_dir.mkdir()
+        moved = _archive_future_artifacts(run_dir, model_dir, 100)
+        self.assertTrue(old.exists())
+        self.assertFalse(future.exists())
+        self.assertEqual(Path(moved[0]["to"]).read_text(), "future")
+
     def test_low_frequency_metrics_keep_full_precision(self):
         values = _scalar_metrics({"critic1_loss": torch.tensor(1.23456789),
                                   "alpha": torch.tensor(0.01)})
@@ -160,7 +206,7 @@ class ExperimentRunnerTests(unittest.TestCase):
             beam_idx = 0
 
             def step(self, action):
-                return None, 0.0, True, {}
+                return None, 0.0, True, {"out": 0, "occupy": 0}
 
         class Agent:
             def __init__(self):
@@ -237,6 +283,47 @@ class ExperimentRunnerTests(unittest.TestCase):
             args.stop_after_steps = None
             self.assertEqual(run(args), 0)
             self.assertEqual(json.loads(status_path.read_text())["env_step"], 2)
+            self.assertEqual(json.loads(status_path.read_text())["eta_seconds"], 0)
+            self.assertIsNone(json.loads(status_path.read_text())["steps_per_second"])
+
+    def test_latest_checkpoint_includes_completed_validation_selection(self):
+        class Agent(_Agent):
+            def take_action(self, _state):
+                return [0, 0, 0]
+
+        class Replay(_Replay):
+            def add(self, *transition):
+                self.buffer.append(transition)
+
+            def size(self):
+                return len(self.buffer)
+
+        args = Namespace(model="mlp_matched", formula="legacy", seed=51001,
+                         steps=2, experiment_id="validation-smoke", archive_root=str(self.root),
+                         validation_interval=1, checkpoint_interval=10000,
+                         validation_scene_count=1, test_scene_count=0,
+                         skip_final_evaluation=True, run_id="validated", resume=False,
+                         stop_after_steps=None)
+        with mock.patch.dict(os.environ, {}, clear=False), \
+             mock.patch("satellite_rl.training.experiment_runner.strict_cuda_preflight",
+                        return_value={"git_commit": "test"}), \
+             mock.patch("satellite_rl.training.experiment_runner.prepare_fixed_scenes",
+                        return_value={"scene": {"path": "unused"}}), \
+             mock.patch("satellite_rl.training.experiment_runner._create_agent",
+                        side_effect=lambda *_: (Agent(), Replay())), \
+             mock.patch("satellite_rl.training.experiment_runner._new_environment",
+                        side_effect=lambda *_: (_OneStepEnv(), np.zeros(204))), \
+             mock.patch("satellite_rl.training.experiment_runner._terminal_metrics",
+                        return_value=({"si_mean": 0.2}, {})), \
+             mock.patch("satellite_rl.training.experiment_runner._tensorboard_writer",
+                        return_value=None), \
+             mock.patch("satellite_rl.training.experiment_runner.evaluate",
+                        side_effect=({"si_mean": 0.9}, {"si_mean": 0.1})):
+            self.assertEqual(run(args), 0)
+        latest = self.root / "models" / "runs" / "validation-smoke" / "validated" / "latest.pt"
+        saved = torch.load(latest, map_location="cpu", weights_only=False)
+        self.assertEqual(saved["progress"]["best_si_mean"], 0.9)
+        self.assertEqual(saved["progress"]["next_validation"], 3)
 
 
 if __name__ == "__main__":
