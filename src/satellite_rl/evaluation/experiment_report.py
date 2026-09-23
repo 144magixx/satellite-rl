@@ -185,7 +185,7 @@ def _percent(value):
 
 def _variant_table(summary):
     lines = ["| 算法与公式 | 训练种子 | 终态 SI / % | SGM / % | 总吞吐量 / Gbps | 超功率 / % | 完整分配 / % | 总功率 / W | 实际槽数 | 频谱效率 / bit·s⁻¹·Hz⁻¹ | 干扰波束数 | 近距离干扰波束数 | 频谱占用 / % | 零槽 / % |",
-             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for model in MODELS:
         for formula in FORMULAS:
             variant = summary["variants"][f"{model}_{formula}"]
@@ -407,6 +407,8 @@ def generate_report(directory):
     payload = {"generated_at": utc_now(), "experiment_id": plan["experiment_id"],
                "source_commit": plan["source"]["git_commit"],
                "source_root": plan["source"]["source_root"],
+               "report_script_path": str(Path(__file__).resolve()),
+               "report_script_sha256": sha256_file(Path(__file__)),
                "steps_per_run": plan["steps"], "training_runs": 18,
                "validation_scenes": len(plan["validation_scenes"]),
                "test_scenes": len(plan["test_scenes"]),
@@ -417,9 +419,9 @@ def generate_report(directory):
     lines = [
         "# SAC 学习公式与网络对照实验报告",
         "",
-        f"生成时间：{payload['generated_at']}。源码提交：`{payload['source_commit']}`。",
+        f"生成时间：{payload['generated_at']}。训练源码提交：`{payload['source_commit']}`。",
         "",
-        "本实验在修正后的卫星环境中比较 Transformer SAC、同规模 CNN SAC、同规模 MLP SAC，"
+        "本实验在修正后的卫星环境中比较 Transformer SAC、参数量接近的 CNN SAC、参数量接近的 MLP SAC，"
         "每种网络分别使用原学习公式和修正学习公式，各训练 3 个独立种子。每组固定 400000 次环境交互。"
         "以下均为训练后的独立最终考核，不以考核结果挑选模型。",
         "",
@@ -440,6 +442,11 @@ def generate_report(directory):
         "## 最终考核成绩与资源约束",
         "",
         _variant_table(summary),
+        "",
+        "本表频谱效率为总吞吐量除以各组实际占用槽数之和与 25 MHz 的乘积，"
+        "表示已分配带宽上的平均频谱效率，并非按整个系统频带计算的频谱效率。"
+        "干扰波束数是分配该束时检出与历史波束存在同极化、同频占用的次数（每束最多计一次）；"
+        "近距离干扰还要求在环境既有的波束地面覆盖距离内。它们不是干扰强度或终态受扰波束总数。",
         "",
         "## 同网络下的配对差值",
         "",
@@ -465,8 +472,9 @@ def generate_report(directory):
         "",
         "## 训练与日常验证曲线",
         "",
-        "左图为逐回合终态 SI 原始线（淡色）及 50 回合滑动平均（深色）；右图为每次固定验证场景的原始均值。"
-        "平滑只用于看趋势，终态成绩仍使用未经平滑的独立考核数据。",
+        "每种网络的首张图包含训练终态 SI（左上）、验证 SI（右上）、验证累计奖励（左下）及验证总吞吐量（右下）。"
+        "训练 SI 的淡线是逐回合原始值，深线为 50 回合滑动平均；验证数据为各固定场景和动作采样的原始均值。"
+        "第二张图显示训练回报、温度、各动作分布熵与损失。平滑只用于观察趋势，终态成绩使用未经平滑的独立考核数据。",
         "",
     ]
     for path in curves:
