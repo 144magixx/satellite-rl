@@ -1,3 +1,4 @@
+from satellite_rl.evaluation.terminal_metrics import terminal_beam_arrays
 from satellite_rl.evaluation.checkpoints import load_actor_only, load_network_checkpoint
 from satellite_rl.action_config import DEFAULT_POWER_STEP_W, PPO_DIRECT_POWER_STEP_W
 from satellite_rl.paths import project_path
@@ -96,7 +97,7 @@ def build_env_from_beams(beam_info):
     return env
 
 
-def run_episode_per_beam(beam_info, agent_kind):
+def run_episode_per_beam(beam_info, agent_kind, *, include_sgm=False):
     """
     在同一套 beam_info 上跑一局，返回 per-beam 的 si 序列（即 satisfaction）
     """
@@ -177,10 +178,13 @@ def run_episode_per_beam(beam_info, agent_kind):
         si.append(float(info.get('sgm_rate', np.nan)))
         state = next_state
 
-    return np.asarray(si, dtype=float)
+    final = terminal_beam_arrays(env)
+    if include_sgm:
+        return {'si': final['satisfaction'], 'sgm': final['sgm']}
+    return final['satisfaction']
 
 
-def plot_si_vs_demand(demands, curves, labels, out_png):
+def plot_si_vs_demand(demands, curves, labels, out_png, ylabel="Average satisfaction (SI)"):
     """
     demands: list[float] x轴
     curves: dict(method -> list[y])
@@ -202,8 +206,8 @@ def plot_si_vs_demand(demands, curves, labels, out_png):
                  markerfacecolor='none')
 
     plt.xlabel("Average capacity demand per beam (Mbps)")
-    plt.ylabel("Average satisfaction (SI)")
-    plt.ylim(0.5, 1.0)
+    plt.ylabel(ylabel)
+    plt.ylim(0.0, 1.0)
     plt.xticks(xs)
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.legend(loc='best', frameon=True)
@@ -211,11 +215,13 @@ def plot_si_vs_demand(demands, curves, labels, out_png):
     plt.savefig(out_png, dpi=300)
     print("saved:", out_png)
 
-def save_curves_npz(demands, curves, labels, out_path):
+def save_curves_npz(demands, curves, labels, out_path, sgm_curves=None):
     np.savez(
         out_path,
         demands=np.array(demands),
         **{f"{k}_si": np.array(v) for k, v in curves.items()},
+        **{f"{k}_sgm": np.array(v) for k, v in (sgm_curves or {}).items()},
+        metric_definition="terminal_all_beams",
         labels=labels
     )
     print("saved curves to:", out_path)
@@ -242,10 +248,11 @@ def main():
     DEMANDS = [300, 400, 500, 600, 700]
 
     # 输出目录
-    os.makedirs(project_path("eval_fig/si"), exist_ok=True)
-    out_png = project_path("eval_fig/si/si_mean_vs_demand.png")
+    os.makedirs(project_path("eval_fig/terminal_metrics"), exist_ok=True)
+    out_png = project_path("eval_fig/terminal_metrics/si_mean_vs_demand.png")
 
     curves = {m: [] for m in METHODS}
+    sgm_curves = {m: [] for m in METHODS}
 
     # 固定一套“场景基准 beams”（位置/排序固定），然后对 rate 缩放
     base_beams = build_beams(seed=SCENE_SEED)
@@ -261,13 +268,18 @@ def main():
             beams_m = build_beams(seed=SCENE_SEED)
             beams_m = apply_avg_demand(beams_m, d)
 
-            si = run_episode_per_beam(beams_m, agent_kind=m)
-            si_mean = float(np.nanmean(si))
+            result = run_episode_per_beam(beams_m, agent_kind=m, include_sgm=True)
+            si_mean = float(np.mean(result['si']))
+            sgm_curves[m].append(float(np.mean(result['sgm'])))
             curves[m].append(si_mean)
             print(f"[{m:8s}] SI_mean = {si_mean:.4f}")
 
     plot_si_vs_demand(DEMANDS, curves, LABELS, out_png)
-    save_curves_npz(DEMANDS, curves, LABELS, project_path("sgm_vs_demand_curves.npz"))
+    plot_si_vs_demand(DEMANDS, sgm_curves, LABELS,
+                      project_path("eval_fig/terminal_metrics/sgm_mean_vs_demand.png"),
+                      ylabel="Average supply-demand matching (SGM)")
+    save_curves_npz(DEMANDS, curves, LABELS,
+                    project_path("outputs/metrics/demand/terminal_si_sgm_vs_demand.npz"), sgm_curves)
 
 
 if __name__ == "__main__":

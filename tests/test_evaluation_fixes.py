@@ -20,6 +20,10 @@ class RecordingEnvironment:
     def __init__(self):
         self.beam_idx = 0
         self.actions = []
+        self.beam_info = {"rate": np.full((100, 1), 1e8)}
+        self.beta = 1e8
+        self.beam_bps = []
+        self.history_cinr = []
         self.satellite_freq_state = SimpleNamespace(
             freq_pool_real=np.zeros((8, 100)),
         )
@@ -32,6 +36,7 @@ class RecordingEnvironment:
 
     def step(self, action):
         self.actions.append(list(action))
+        self.beam_bps.append(1e8)
         self.beam_idx += 1
         info = {
             "total_satisfaction": 1.0,

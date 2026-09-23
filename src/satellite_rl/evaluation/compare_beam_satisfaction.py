@@ -1,3 +1,4 @@
+from satellite_rl.evaluation.terminal_metrics import terminal_beam_arrays
 from satellite_rl.evaluation.checkpoints import load_network_checkpoint
 from satellite_rl.action_config import DEFAULT_POWER_STEP_W, PPO_DIRECT_POWER_STEP_W
 from satellite_rl.paths import project_path
@@ -146,7 +147,7 @@ def eval_once(agent_kind):
         # current_satisfaction ∈ [0,1]，就是“容量匹配率”；逐波束记录  :contentReference[oaicite:17]{index=17}
         satis_per_beam.append(float(info["current_satisfaction"]))
 
-    return np.array(satis_per_beam, dtype=float)
+    return terminal_beam_arrays(env)['satisfaction']
 
 # === 主函数：跑一轮并画对比曲线 ===
 if __name__ == "__main__":

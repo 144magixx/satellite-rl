@@ -1,3 +1,4 @@
+from satellite_rl.evaluation.terminal_metrics import terminal_beam_arrays
 from satellite_rl.evaluation.checkpoints import load_actor_only, load_network_checkpoint
 from satellite_rl.action_config import DEFAULT_POWER_STEP_W, PPO_DIRECT_POWER_STEP_W
 from satellite_rl.paths import project_path
@@ -197,7 +198,14 @@ def run_episode_per_beam(env_ctor, agent_kind, seed=42, load=False):
         sgm.append(float(sgm_val))
         state = next_state
 
-    return {'cinr': np.array(cinr), 'si': np.array(si), 'sgm': np.array(sgm)}
+    final = terminal_beam_arrays(env)
+    # CINR 从全部更新后的历史槽计算；未服务波束保留缺失标记。
+    final_cinr = np.full(len(final['rates_bps']), np.nan)
+    for beam in range(len(final_cinr)):
+        values = [float(np.asarray(row[2]).reshape(-1)[0]) for row in env.history_cinr if row[4] == beam]
+        if values:
+            final_cinr[beam] = 10 * np.log10(np.mean(10 ** (np.asarray(values) / 10)))
+    return {'cinr': final_cinr, 'si': final['satisfaction'], 'sgm': final['sgm']}
 
 def pad_fixed(arr, L, fill):
     """将一维数组截断/补齐到长度 L；不足用 fill 补"""
