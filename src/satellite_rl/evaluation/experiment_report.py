@@ -17,8 +17,8 @@ from satellite_rl.training.run_monitor import atomic_json, utc_now
 
 MODELS = ("transformer", "cnn_matched", "mlp_matched")
 FORMULAS = ("legacy", "corrected")
-MODEL_NAMES = {"transformer": "Transformer SAC", "cnn_matched": "同规模 CNN SAC",
-               "mlp_matched": "同规模 MLP SAC"}
+MODEL_NAMES = {"transformer": "Transformer SAC", "cnn_matched": "参数量接近的 CNN SAC",
+               "mlp_matched": "参数量接近的 MLP SAC"}
 FORMULA_NAMES = {"legacy": "原学习公式", "corrected": "修正学习公式"}
 FINAL_FIELDS = (
     "si_sum", "si_mean", "sgm_mean", "throughput_bps", "total_power_w",
@@ -246,6 +246,8 @@ def _plot_curves(directory, runs):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
+    plt.rcParams['axes.unicode_minus'] = False
 
     figure_dir = directory / "figures"
     figure_dir.mkdir(exist_ok=True)
@@ -256,7 +258,7 @@ def _plot_curves(directory, runs):
             job = run["job"]
             if job["model"] != model:
                 continue
-            label = f"{job['formula']} s{job['seed']}"
+            label = f"{FORMULA_NAMES[job['formula']]}，种子 {job['seed']}"
             color = "tab:blue" if job["formula"] == "legacy" else "tab:orange"
             x = np.array([float(row["env_step"]) for row in run["episodes"]])
             y = np.array([float(row["si_mean"]) * 100 for row in run["episodes"]])
@@ -275,14 +277,48 @@ def _plot_curves(directory, runs):
                 steps = sorted(grouped)
                 axes[1].plot(steps, [statistics.mean(grouped[step]) for step in steps],
                              color=color, label=label, linewidth=1.3, alpha=0.8)
-        for ax, title in zip(axes, ("Training terminal SI", "Validation terminal SI")):
+        for ax, title in zip(axes, ("训练回合最终需求满足率", "固定验证场景需求满足率")):
             ax.set_title(title)
-            ax.set_xlabel("Environment steps")
-            ax.set_ylabel("SI (%)")
+            ax.set_xlabel("环境交互步数")
+            ax.set_ylabel("需求满足率 SI（%）")
             ax.grid(alpha=0.25)
             ax.legend(fontsize=7, ncol=2)
         fig.tight_layout()
         path = figure_dir / f"{model}_si_curves.png"
+        fig.savefig(path, dpi=160)
+        plt.close(fig)
+        paths.append(path)
+        # 使用实际保存的回报和学习记录，补充训练回报、温度、熵和损失曲线。
+        fig, axes = plt.subplots(2, 2, figsize=(13, 8))
+        for run in runs:
+            job = run['job']
+            if job['model'] != model:
+                continue
+            label = f"{FORMULA_NAMES[job['formula']]}，种子 {job['seed']}"
+            color = 'tab:blue' if job['formula'] == 'legacy' else 'tab:orange'
+            x = np.array([float(row['env_step']) for row in run['episodes']])
+            y = np.array([float(row['return']) for row in run['episodes']])
+            axes[0, 0].plot(x, y, color=color, alpha=.1, linewidth=.6)
+            window = min(50, len(y))
+            if window:
+                axes[0, 0].plot(x[window-1:], np.convolve(y, np.ones(window)/window, 'valid'),
+                                color=color, label=label, alpha=.8)
+            updates_path = run['run_dir'] / 'updates.csv'
+            updates = _read_csv(updates_path) if updates_path.exists() else []
+            for ax, key in ((axes[0, 1], 'alpha'), (axes[1, 0], 'entropy'),
+                            (axes[1, 1], 'critic_1_loss')):
+                valid = [row for row in updates if row.get(key) not in ('', None)]
+                if valid:
+                    ax.plot([float(row['env_step']) for row in valid],
+                            [float(row[key]) for row in valid], color=color, label=label, alpha=.75)
+        for ax, title in zip(axes.flat, ('回合累计奖励', '温度系数 α', '动作分布总熵', '价值网络一损失')):
+            ax.set_title(title)
+            ax.set_xlabel('环境交互步数')
+            ax.grid(alpha=.25)
+            if ax.lines:
+                ax.legend(fontsize=7)
+        fig.tight_layout()
+        path = figure_dir / f'{model}_learning_curves.png'
         fig.savefig(path, dpi=160)
         plt.close(fig)
         paths.append(path)
@@ -384,7 +420,8 @@ def generate_report(directory):
         "不能算作三倍独立场景。图和表来自原始逐回合与逐场景记录。",
         "",
         "每个单元格为 3 个训练种子的平均值 ± 种子间样本标准差。超功率、完整分配、总功率与成绩并列，"
-        "不能只凭单项 SI 判定整体方案更好。原公式与修正公式的训练回报数值不直接比较。",
+        "不能只凭单项 SI 判定整体方案更好。训练回报用于观察学习过程，主比较采用相同环境中的终态服务与资源指标。",
+        "单个 Actor/Critic 参数量：Transformer 417272，CNN 447176（多约7.2%），MLP 429176（多约2.9%）；属于近似匹配。",
         "",
         "## 最终考核成绩与资源约束",
         "",

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import gzip
 import hashlib
 import importlib
+from importlib.metadata import version
 import json
 import os
 from pathlib import Path
@@ -76,6 +77,10 @@ def strict_cuda_preflight():
         raise RuntimeError(f"必须使用 DQN Conda 的 Python，当前为 {interpreter}")
     if torch.version.cuda is None or not torch.cuda.is_available():
         raise RuntimeError(f"DQN 无可用 CUDA：PyTorch={torch.__version__}, 构建={torch.version.cuda}")
+    torch.set_num_threads(1)
+    # 各组明确采用同一精度设置，避免被其他模块导入顺序影响。
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = True
     package = Path(satellite_rl.__file__).resolve()
     if not package.is_relative_to(root / "src"):
         raise RuntimeError(f"satellite_rl 导入自 {package}，应来自冻结目录 {root / 'src'}")
@@ -85,6 +90,11 @@ def strict_cuda_preflight():
         "python": str(interpreter), "torch": torch.__version__,
         "torch_cuda": torch.version.cuda, "cuda_device": torch.cuda.get_device_name(0),
         "numpy": np.__version__, "package_file": str(package),
+        "pandas": version("pandas"), "matplotlib": version("matplotlib"),
+        "cpu_threads": torch.get_num_threads(),
+        "interop_threads": torch.get_num_interop_threads(),
+        "matmul_tf32": torch.backends.cuda.matmul.allow_tf32,
+        "cudnn_tf32": torch.backends.cudnn.allow_tf32,
         "source_root": str(root), "git_commit": _git_result("rev-parse", "HEAD"),
         "cities_data": {"path": project_path("cities_china.csv"),
                         "sha256": sha256_file(project_path("cities_china.csv"))},
