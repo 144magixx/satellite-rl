@@ -200,13 +200,36 @@ def _checkpoint_payload(agent, replay, progress, config_hash):
     }
 
 
+def _ensure_finite_agent(agent):
+    for name in NETWORKS:
+        network = getattr(agent, name)
+        for key, value in network.state_dict().items():
+            if torch.is_floating_point(value) and not bool(torch.isfinite(value).all()):
+                raise FloatingPointError(f"{name}.{key} 存在 NaN/Inf，保留上一个正常断点")
+    if not bool(torch.isfinite(agent.log_alpha).all()):
+        raise FloatingPointError("log_alpha 存在 NaN/Inf，保留上一个正常断点")
+
+
 def save_checkpoint(path, agent, replay, progress, config_hash):
     """Synchronously serialize between completed steps, then atomically replace."""
+    _ensure_finite_agent(agent)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
         torch.save(_checkpoint_payload(agent, replay, progress, config_hash), temporary)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return sha256_file(path)
+
+
+def save_actor_weights(path, actor):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        torch.save(actor.state_dict(), temporary)
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -261,7 +284,16 @@ def _terminal_metrics(env):
     return terminal_metrics(env), terminal_beam_arrays(env)
 
 
-def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_dir):
+@torch.no_grad()
+def _evaluation_action(agent, state, mode):
+    if mode == "sample":
+        return agent.take_action(state)
+    inputs = torch.as_tensor(state, dtype=torch.float32, device=agent.device).unsqueeze(0)
+    return [int(probability.argmax(dim=1).item()) for probability in agent.actor(inputs)]
+
+
+def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_dir,
+             *, include_argmax=False):
     """Evaluate saved actual scenes; preserve training RNG and actor mode."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -278,16 +310,19 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
     rows = []
     arrays = {}
     trace_temp = trace_path.with_name(trace_path.name + "." + uuid.uuid4().hex + ".tmp")
-    trace_stream = gzip.open(trace_temp, "wt", encoding="utf-8") if checkpoint == "final_test" else None
+    trace_stream = gzip.open(trace_temp, "wt", encoding="utf-8") if checkpoint in ("final_test", "best_test") else None
     try:
         agent.actor.eval()
         for scene_id, reference in scene_refs.items():
-            for action_seed in action_seeds:
-                with isolated_rng(action_seed):
+            trials = [(seed, "sample") for seed in action_seeds]
+            if include_argmax:
+                trials.append(("argmax", "argmax"))
+            for action_seed, action_mode in trials:
+                with isolated_rng(action_seed if action_mode == "sample" else 0):
                     env, state = _new_environment(_load_scene(reference["path"]))
                     done = False
                     while not done:
-                        action = agent.take_action(state)
+                        action = _evaluation_action(agent, state, action_mode)
                         requested = [env.beam_idx % 8, action[0], action[1] + 1,
                                      10 * np.log10((action[2] + 1) * 5)]
                         actual = requested.copy()
@@ -296,6 +331,7 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
                         if trace_stream:
                             trace_stream.write(json.dumps({
                                 "scene_id": scene_id, "action_seed": action_seed,
+                                "action_mode": action_mode,
                                 "beam_index": beam_index, "requested": requested,
                                 "actual": actual, "reward": reward,
                                 "info": {key: np.asarray(value).tolist()
@@ -306,7 +342,8 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
                 for name, value in beam_arrays.items():
                     arrays[f"{key}_{name}"] = np.asarray(value)
                 rows.append({"checkpoint": checkpoint, "env_step": step,
-                             "scene_id": scene_id, "action_seed": action_seed, **metrics})
+                             "scene_id": scene_id, "action_mode": action_mode,
+                             "action_seed": action_seed, **metrics})
     finally:
         agent.actor.train(original_training)
         if trace_stream:
@@ -317,10 +354,15 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
     result = {
         "checkpoint": checkpoint, "env_step": step, "rows": rows,
         "scene_references": scene_refs, "action_seeds": list(action_seeds),
+        "include_argmax": include_argmax,
         "arrays_path": str(arrays_path), "arrays_sha256": sha256_file(arrays_path),
         "trace_path": str(trace_path) if trace_stream else None,
         "trace_sha256": sha256_file(trace_path) if trace_stream else None,
-        "si_mean": float(np.mean([row["si_mean"] for row in rows])),
+        "si_mean": float(np.mean([row["si_mean"] for row in rows
+                                   if row["action_mode"] == "sample"])),
+        "argmax_si_mean": (float(np.mean([row["si_mean"] for row in rows
+                                          if row["action_mode"] == "argmax"]))
+                           if include_argmax else None),
     }
     atomic_json(result_path, result)
     for row in rows:
@@ -331,19 +373,27 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
 
 def _config(args, runtime):
     seed_index = TRAIN_SEEDS.index(args.seed)
+    diagnostic = (args.steps != 400000 or args.validation_interval == 0
+                  or args.skip_final_evaluation or args.validation_scene_count != 20
+                  or args.test_scene_count != 100)
     return {
         "experiment_id": args.experiment_id, "run_id": args.run_id,
         "model": args.model, "formula": args.formula, "train_seed": args.seed,
         "train_scene_seed": SCENE_STREAM_SEEDS[seed_index],
         "budget_env_steps": args.steps, "validation_interval": args.validation_interval,
         "checkpoint_interval": args.checkpoint_interval,
+        "validation_scene_count": args.validation_scene_count,
+        "test_scene_count": args.test_scene_count,
+        "skip_final_evaluation": args.skip_final_evaluation,
+        "diagnostic_not_formal_comparison": diagnostic,
         "batch_size": 256, "replay_capacity": 20000, "warmup_size": 2000,
         "actor_lr": 1e-5, "critic_lr": 1e-4, "alpha_lr": 1e-4,
         "gamma": 0.99, "tau": 0.005,
         "target_entropy": -6.9 if args.formula == "legacy" else 6.9,
-        "validation_scene_seeds": VALIDATION_SCENE_SEEDS,
-        "test_scene_seeds": TEST_SCENE_SEEDS, "action_seeds": ACTION_SEEDS,
-        "trace_policy": "final test every step; training last 50 steps on failure",
+        "validation_scene_seeds": VALIDATION_SCENE_SEEDS[:args.validation_scene_count],
+        "test_scene_seeds": TEST_SCENE_SEEDS[:args.test_scene_count],
+        "action_seeds": ACTION_SEEDS,
+        "trace_policy": "final and best test every step; training last 50 steps on failure",
         "runtime": runtime,
     }
 
@@ -374,7 +424,23 @@ def _scalar_metrics(metrics):
         values = torch.stack([value.reshape(()) for _, value in gpu]).cpu().tolist()
         result.update({aliases.get(key, key): float(value)
                        for (key, _), value in zip(gpu, values)})
+    if any(not np.isfinite(value) for value in result.values()):
+        raise FloatingPointError("更新诊断包含 NaN/Inf，训练已停止")
     return result
+
+
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
+    if isinstance(value, float) and not np.isfinite(value):
+        return str(value)
+    return value
 
 
 def _tensorboard_writer(run_dir, monitor):
@@ -446,8 +512,12 @@ def run(args):
     previous_int = signal.signal(signal.SIGINT, request_stop)
     try:
         # All scenario files are concrete arrays and independent of training RNG.
-        validation_refs = prepare_fixed_scenes(experiment_dir, "validation", VALIDATION_SCENE_SEEDS)
-        test_refs = prepare_fixed_scenes(experiment_dir, "test", TEST_SCENE_SEEDS)
+        validation_refs = (prepare_fixed_scenes(
+            experiment_dir, "validation", VALIDATION_SCENE_SEEDS[:args.validation_scene_count])
+            if args.validation_interval else {})
+        test_refs = (prepare_fixed_scenes(
+            experiment_dir, "test", TEST_SCENE_SEEDS[:args.test_scene_count])
+            if not args.skip_final_evaluation else {})
         if not args.resume:
             atomic_json(manifest_path, {"config": config, "config_hash": config_hash,
                                         "command": sys.argv, "created_at": utc_now(),
@@ -459,17 +529,20 @@ def run(args):
         agent, replay = _create_agent(args.model, args.formula, run_dir, uuid.uuid4().hex)
         if args.resume:
             progress = load_checkpoint(model_dir / "latest.pt", agent, replay, config_hash)
+            started -= progress.get("elapsed_seconds", 0.0)
             monitor.event("resumed", from_checkpoint=str(model_dir / "latest.pt"),
                           env_step=progress["env_step"])
         else:
             progress = _initial_progress()
-            progress["next_validation"] = args.validation_interval
+            progress["next_validation"] = args.validation_interval or None
             progress["next_checkpoint"] = args.checkpoint_interval
             monitor.event("started", runtime=runtime)
         segment_start_step = progress["env_step"]
+        segment_started = time.monotonic()
 
         def checkpoint(name):
             monitor.flush()
+            progress["elapsed_seconds"] = time.monotonic() - started
             path = model_dir / (name + ".pt")
             digest = save_checkpoint(path, agent, replay, progress, config_hash)
             monitor.event("checkpoint", name=name, path=str(path), sha256=digest,
@@ -480,7 +553,9 @@ def run(args):
             checkpoint("initial")
             checkpoint("latest")
 
-        while progress["env_step"] < args.steps and not stop_requested:
+        while (progress["env_step"] < args.steps and not stop_requested
+               and (args.stop_after_steps is None
+                    or progress["env_step"] < args.stop_after_steps)):
             if progress["env"] is None:
                 from satellite_rl.envs.satellite import BeamInfo
                 beam_info = BeamInfo()
@@ -542,7 +617,8 @@ def run(args):
                 if progress["env_step"] >= progress["next_checkpoint"]:
                     progress["next_checkpoint"] += args.checkpoint_interval
                     checkpoint("latest")
-                if progress["env_step"] >= progress["next_validation"]:
+                if (progress["next_validation"] is not None
+                        and progress["env_step"] >= progress["next_validation"]):
                     if not (model_dir / "latest.pt").exists():
                         checkpoint("latest")
                     monitor.write_status(**_progress_status(progress, replay, started, "validating"))
@@ -557,11 +633,12 @@ def run(args):
                     if progress["best_si_mean"] is None or score > progress["best_si_mean"]:
                         progress["best_si_mean"] = score
                         checkpoint("best")
+                        save_actor_weights(model_dir / "best_actor.pt", agent.actor)
                     progress["next_validation"] += args.validation_interval
             now = time.monotonic()
             if now - last_status >= 5:
-                elapsed = now - started
-                speed = (progress["env_step"] - segment_start_step) / max(elapsed, 1e-9)
+                speed = ((progress["env_step"] - segment_start_step)
+                         / max(now - segment_started, 1e-9))
                 monitor.write_status(**_progress_status(
                     progress, replay, started, "training", budget_env_steps=args.steps,
                     steps_per_second=speed,
@@ -580,27 +657,57 @@ def run(args):
             monitor.event("interrupted", env_step=progress["env_step"])
             monitor.write_status(**_progress_status(progress, replay, started, "interrupted"))
             return 130
+        if progress["env_step"] < args.steps:
+            monitor.event("diagnostic_paused", env_step=progress["env_step"],
+                          stop_after_steps=args.stop_after_steps)
+            monitor.write_status(**_progress_status(progress, replay, started, "paused"))
+            return 0
         checkpoint("final")
+        save_actor_weights(model_dir / "final_actor.pt", agent.actor)
+        if args.skip_final_evaluation:
+            monitor.event("completed_diagnostic", env_step=progress["env_step"])
+            monitor.write_status(**_progress_status(
+                progress, replay, started, "completed", budget_env_steps=args.steps,
+                diagnostic_not_formal_comparison=True, completed_at=utc_now()))
+            return 0
         monitor.write_status(**_progress_status(progress, replay, started, "final_validation"))
-        final_validation = evaluate(agent, validation_refs, ACTION_SEEDS,
-                                    "final_validation", progress["env_step"], monitor,
-                                    run_dir / "evaluation")
+        final_validation = (evaluate(agent, validation_refs, ACTION_SEEDS,
+                                     "final_validation", progress["env_step"], monitor,
+                                     run_dir / "evaluation") if validation_refs else None)
         monitor.write_status(**_progress_status(progress, replay, started, "testing"))
         final_test = evaluate(agent, test_refs, ACTION_SEEDS,
                               "final_test", progress["env_step"], monitor,
-                              run_dir / "evaluation")
-        monitor.event("completed", validation_si_mean=final_validation["si_mean"],
-                      test_si_mean=final_test["si_mean"])
+                              run_dir / "evaluation", include_argmax=True)
+        best_test = None
+        if (model_dir / "best_actor.pt").exists():
+            agent.actor.load_state_dict(torch.load(model_dir / "best_actor.pt",
+                                                   map_location="cpu", weights_only=True), strict=True)
+            try:
+                best_test = evaluate(agent, test_refs, ACTION_SEEDS,
+                                     "best_test", progress["env_step"], monitor,
+                                     run_dir / "evaluation", include_argmax=True)
+            finally:
+                agent.actor.load_state_dict(torch.load(model_dir / "final_actor.pt",
+                                                       map_location="cpu", weights_only=True), strict=True)
+        monitor.event("completed", validation_si_mean=(final_validation["si_mean"]
+                                                       if final_validation else None),
+                      test_si_mean=final_test["si_mean"],
+                      best_test_si_mean=best_test["si_mean"] if best_test else None)
         monitor.write_status(**_progress_status(
             progress, replay, started, "completed", budget_env_steps=args.steps,
-            final_validation_si_mean=final_validation["si_mean"],
-            final_test_si_mean=final_test["si_mean"], completed_at=utc_now()))
+            final_validation_si_mean=(final_validation["si_mean"]
+                                      if final_validation else None),
+            final_test_si_mean=final_test["si_mean"],
+            final_test_argmax_si_mean=final_test["argmax_si_mean"],
+            best_test_si_mean=best_test["si_mean"] if best_test else None,
+            best_test_argmax_si_mean=best_test["argmax_si_mean"] if best_test else None,
+            completed_at=utc_now()))
         return 0
     except Exception as error:
         failure = {"at": utc_now(), "type": type(error).__name__,
                    "message": str(error), "traceback": traceback.format_exc(),
                    "last_traces": list(last_traces)}
-        atomic_json(run_dir / "failure.json", failure)
+        atomic_json(run_dir / "failure.json", _json_safe(failure))
         monitor.event("failed", type=failure["type"], message=failure["message"])
         monitor.write_status(stage="failed", failure_path=str(run_dir / "failure.json"))
         raise
@@ -621,16 +728,29 @@ def build_parser():
     parser.add_argument("--experiment-id", default="sac_comparison_20260924")
     parser.add_argument("--archive-root", default=str(Path(project_path("outputs")).parent))
     parser.add_argument("--validation-interval", type=int, default=10000)
+    parser.add_argument("--validation-scene-count", type=int, default=20)
+    parser.add_argument("--test-scene-count", type=int, default=100)
+    parser.add_argument("--skip-final-evaluation", action="store_true")
     parser.add_argument("--checkpoint-interval", type=int, default=10000)
     parser.add_argument("--run-id")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--stop-after-steps", type=int,
+                        help="诊断时暂停当前进程，保留原总预算及续训配置")
     return parser
 
 
 def main():
     args = build_parser().parse_args()
-    if args.steps <= 0 or args.validation_interval <= 0 or args.checkpoint_interval <= 0:
-        raise ValueError("步数与保存间隔都必须为正整数")
+    if args.steps <= 0 or args.validation_interval < 0 or args.checkpoint_interval <= 0:
+        raise ValueError("训练步数及保存间隔必须为正，验证间隔可为零")
+    if not (0 <= args.validation_scene_count <= 20 and 0 <= args.test_scene_count <= 100):
+        raise ValueError("验证场景须为0–20，考核场景须为0–100")
+    if args.validation_interval and not args.validation_scene_count:
+        raise ValueError("启用周期验证时场景数量须大于零")
+    if not args.skip_final_evaluation and not args.test_scene_count:
+        raise ValueError("启用最终考核时场景数量须大于零")
+    if args.stop_after_steps is not None and args.stop_after_steps <= 0:
+        raise ValueError("诊断暂停步数必须为正")
     raise SystemExit(run(args))
 
 
