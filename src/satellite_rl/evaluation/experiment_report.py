@@ -133,18 +133,16 @@ def summarize(runs):
             fields = {field: _seed_stats([_field_mean(seed_runs[seed]["rows"], field)
                                           for seed in sorted(seed_runs)])
                       for field in MAIN_FIELDS}
-            supplemental = {
-                "argmax_si_mean": _seed_stats([
-                    _field_mean(seed_runs[seed]["argmax_rows"], "si_mean")
-                    for seed in sorted(seed_runs)]),
-                "argmax_sgm_mean": _seed_stats([
-                    _field_mean(seed_runs[seed]["argmax_rows"], "sgm_mean")
-                    for seed in sorted(seed_runs)]),
-            }
+            supplemental_fields = ("si_mean", "sgm_mean", "power_exceeded", "completed",
+                                   "total_power_w", "throughput_bps")
+            supplemental = {"argmax_" + field: _seed_stats([
+                _field_mean(seed_runs[seed]["argmax_rows"], field)
+                for seed in sorted(seed_runs)]) for field in supplemental_fields}
             if all(seed_runs[seed]["best_test"] for seed in seed_runs):
-                supplemental["best_validation_selected_test_si_mean"] = _seed_stats([
-                    _field_mean(_sample_rows(seed_runs[seed]["best_test"]), "si_mean")
-                    for seed in sorted(seed_runs)])
+                for field in supplemental_fields:
+                    supplemental["best_validation_selected_test_" + field] = _seed_stats([
+                        _field_mean(_sample_rows(seed_runs[seed]["best_test"]), field)
+                        for seed in sorted(seed_runs)])
             variants[f"{model}_{formula}"] = {
                 "model": model, "formula": formula,
                 "train_seeds": sorted(seed_runs), "metrics": fields,
@@ -224,21 +222,24 @@ def _paired_table(summary):
 
 
 def _supplemental_table(summary):
-    lines = ["| 算法与公式 | 逐头最大概率 SI / % | 逐头最大概率 SGM / % | 按验证选择的模型 SI / % |",
-             "| --- | ---: | ---: | ---: |"]
+    lines = ["| 算法与公式 | 模型及动作选择 | SI / % | SGM / % | 超功率 / % | 完整分配 / % | 总功率 / W | 吞吐量 / Gbps |",
+             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for model in MODELS:
         for formula in FORMULAS:
             extra = summary["variants"][f"{model}_{formula}"]["supplemental"]
-            def cell(key):
+            def cell(key, scale=100):
                 stat = extra.get(key)
                 if stat is None:
                     return "未保存"
-                return f"{_fmt(100 * stat['mean'])} ± {_fmt(100 * stat['std_across_train_seeds'])}"
-            lines.append("| " + " | ".join((
-                f"{MODEL_NAMES[model]} · {FORMULA_NAMES[formula]}",
-                cell("argmax_si_mean"), cell("argmax_sgm_mean"),
-                cell("best_validation_selected_test_si_mean"),
-            )) + " |")
+                return f"{_fmt(scale * stat['mean'])} ± {_fmt(scale * stat['std_across_train_seeds'])}"
+            for prefix, label in (("argmax_", "预算终点；逐头最大概率"),
+                                  ("best_validation_selected_test_", "按验证选择；采样动作")):
+                lines.append("| " + " | ".join((
+                    f"{MODEL_NAMES[model]} · {FORMULA_NAMES[formula]}", label,
+                    cell(prefix + "si_mean"), cell(prefix + "sgm_mean"),
+                    cell(prefix + "power_exceeded"), cell(prefix + "completed"),
+                    cell(prefix + "total_power_w", 1), cell(prefix + "throughput_bps", 1e-9),
+                )) + " |")
     return "\n".join(lines)
 
 

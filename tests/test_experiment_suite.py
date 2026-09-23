@@ -148,18 +148,23 @@ class ExperimentSuiteTests(unittest.TestCase):
             for scene in ("81000", "81001"):
                 row = {field: 1.0 for field in experiment_report.FINAL_FIELDS}
                 row.update(scene_id=scene, action_seed=91001,
-                           si_mean=0.5 + (job["formula"] == "corrected") * 0.1)
+                           si_mean=0.5 + (job["formula"] == "corrected") * 0.1,
+                           power_exceeded=job["seed"] == 51001)
                 rows.append(row)
             runs.append({"job": job, "rows": rows,
                          "by_key": {(row["scene_id"], str(row["action_seed"])): row
                                     for row in rows},
                          "argmax_rows": rows,
-                         "best_test": None})
+                         "best_test": {"rows": [dict(row, si_mean=0.9) for row in rows]}})
         summary = experiment_report.summarize(runs)
         for model in experiment_report.MODELS:
             paired = summary["paired_corrected_minus_legacy"][model]["si_mean"]
             self.assertAlmostEqual(paired["mean"], 0.1)
             self.assertEqual(paired["improved_scenes_by_train_seed"], [2, 2, 2])
+            extra = summary["variants"][f"{model}_corrected"]["supplemental"]
+            self.assertAlmostEqual(extra["argmax_power_exceeded"]["mean"], 1 / 3)
+            self.assertAlmostEqual(extra["best_validation_selected_test_power_exceeded"]["mean"], 1 / 3)
+            self.assertAlmostEqual(extra["best_validation_selected_test_si_mean"]["mean"], 0.9)
         for job in self.plan["jobs"]:
             job["state"] = "completed"
         atomic_json(self.directory / "suite_plan.json", self.plan)
