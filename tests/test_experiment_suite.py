@@ -70,6 +70,8 @@ class ExperimentSuiteTests(unittest.TestCase):
         self.assertNotIn("--resume", command)
         self.assertEqual(launch.call_args.kwargs["env"]["PYTHONPATH"],
                          str(self.root / "src"))
+        self.assertEqual(launch.call_args.kwargs["env"]["OMP_NUM_THREADS"], "1")
+        self.assertEqual(launch.call_args.kwargs["env"]["MKL_NUM_THREADS"], "1")
         self.assertEqual(launch.call_args.kwargs["cwd"], str(self.root))
         self.assertEqual(job["attempts"], 1)
         run_dir.mkdir()

@@ -265,6 +265,8 @@ def _launch(directory, plan, job):
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(plan["source"]["source_root"]) / "src")
     env["SATELLITE_RL_OUTPUT_ROOT"] = plan["archive_root"]
+    env["OMP_NUM_THREADS"] = "1"
+    env["MKL_NUM_THREADS"] = "1"
     command = _worker_command(plan, job, resume)
     with log_path.open("a", encoding="utf-8") as log:
         log.write(f"\n[{utc_now()}] {'RESUME' if resume else 'START'} {command!r}\n")
