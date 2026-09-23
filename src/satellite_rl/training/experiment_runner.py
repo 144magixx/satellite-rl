@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import signal
 import subprocess
 import sys
@@ -250,6 +251,33 @@ def load_checkpoint(path, agent, replay, config_hash):
     return payload["progress"]
 
 
+def _archive_future_artifacts(run_dir, model_dir, boundary_step):
+    """Preserve abandoned evaluation files while preventing stale result reuse."""
+    moved = []
+    evaluation_dir = Path(run_dir) / "evaluation"
+    if evaluation_dir.exists():
+        destination = evaluation_dir / ("abandoned_resume_" + uuid.uuid4().hex[:10])
+        for path in evaluation_dir.iterdir():
+            match = re.search(r"_(\d+)(?:_steps)?\.(?:json|npz|jsonl\.gz)$", path.name)
+            if path.is_file() and match and int(match.group(1)) > boundary_step:
+                destination.mkdir(exist_ok=True)
+                target = destination / path.name
+                path.rename(target)
+                moved.append({"from": str(path), "to": str(target)})
+    best = Path(model_dir) / "best.pt"
+    if best.exists():
+        payload = torch.load(best, map_location="cpu", weights_only=False)
+        if payload["progress"]["env_step"] > boundary_step:
+            destination = Path(model_dir) / ("abandoned_resume_" + uuid.uuid4().hex[:10])
+            destination.mkdir()
+            for path in (best, Path(model_dir) / "best_actor.pt"):
+                if path.exists():
+                    target = destination / path.name
+                    path.rename(target)
+                    moved.append({"from": str(path), "to": str(target)})
+    return moved
+
+
 def _create_agent(model, formula, run_dir, session_name):
     module_name, hidden = MODELS[model]
     module = importlib.import_module("satellite_rl.agents." + module_name)
@@ -321,6 +349,9 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
                 with isolated_rng(action_seed if action_mode == "sample" else 0):
                     env, state = _new_environment(_load_scene(reference["path"]))
                     done = False
+                    slot_counts = {"requested_slots_total": 0, "actual_slots_total": 0,
+                                   "out_slots_total": 0, "occupied_slots_total": 0,
+                                   "clipped_steps": 0}
                     while not done:
                         action = _evaluation_action(agent, state, action_mode)
                         requested = [env.beam_idx % 8, action[0], action[1] + 1,
@@ -328,6 +359,11 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
                         actual = requested.copy()
                         beam_index = env.beam_idx
                         state, reward, done, info = env.step(actual)
+                        slot_counts["requested_slots_total"] += requested[2]
+                        slot_counts["actual_slots_total"] += actual[2]
+                        slot_counts["out_slots_total"] += int(np.asarray(info["out"]).item())
+                        slot_counts["occupied_slots_total"] += int(np.asarray(info["occupy"]).item())
+                        slot_counts["clipped_steps"] += int(actual[2] < requested[2])
                         if trace_stream:
                             trace_stream.write(json.dumps({
                                 "scene_id": scene_id, "action_seed": action_seed,
@@ -343,7 +379,7 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
                     arrays[f"{key}_{name}"] = np.asarray(value)
                 rows.append({"checkpoint": checkpoint, "env_step": step,
                              "scene_id": scene_id, "action_mode": action_mode,
-                             "action_seed": action_seed, **metrics})
+                             "action_seed": action_seed, **metrics, **slot_counts})
     finally:
         agent.actor.train(original_training)
         if trace_stream:
@@ -459,12 +495,19 @@ def _episode_row(progress, env, elapsed):
             "length": progress["episode_length"], "return": progress["episode_return"],
             "wall_seconds": elapsed, "scene_id": progress["scene_id"],
             "termination_reason": "power_exceeded" if env.overload else "all_beams",
+            "requested_slots_total": progress["requested_slots_total"],
+            "actual_slots_total": progress["actual_slots_total"],
+            "out_slots_total": progress["out_slots_total"],
+            "occupied_slots_total": progress["occupied_slots_total"],
+            "clipped_steps": progress["clipped_steps"],
             **metrics}
 
 
 def _initial_progress():
     return {"env_step": 0, "update_step": 0, "episode": 0,
             "episode_length": 0, "episode_return": 0.0, "episode_wall_seconds": 0.0,
+            "requested_slots_total": 0, "actual_slots_total": 0,
+            "out_slots_total": 0, "occupied_slots_total": 0, "clipped_steps": 0,
             "scene_id": None, "env": None, "state": None,
             "best_si_mean": None, "next_validation": None,
             "next_checkpoint": None}
@@ -530,15 +573,19 @@ def run(args):
         if args.resume:
             progress = load_checkpoint(model_dir / "latest.pt", agent, replay, config_hash)
             started -= progress.get("elapsed_seconds", 0.0)
+            monitor.reconcile(progress)
+            abandoned = _archive_future_artifacts(run_dir, model_dir, progress["env_step"])
             monitor.event("resumed", from_checkpoint=str(model_dir / "latest.pt"),
-                          env_step=progress["env_step"])
+                          env_step=progress["env_step"], abandoned_artifacts=abandoned)
         else:
             progress = _initial_progress()
             progress["next_validation"] = args.validation_interval or None
             progress["next_checkpoint"] = args.checkpoint_interval
             monitor.event("started", runtime=runtime)
-        segment_start_step = progress["env_step"]
-        segment_started = time.monotonic()
+        progress_phase = "warmup" if replay.size() <= 2000 else "training"
+        window_started = time.monotonic()
+        window_step = progress["env_step"]
+        window_update = progress["update_step"]
 
         def checkpoint(name):
             monitor.flush()
@@ -552,6 +599,33 @@ def run(args):
         if not args.resume:
             checkpoint("initial")
             checkpoint("latest")
+
+        def validate_if_due():
+            if (progress["env"] is not None or progress["next_validation"] is None
+                    or progress["env_step"] < progress["next_validation"]):
+                return
+            # Save before evaluation so a crash can repeat this boundary exactly.
+            checkpoint("latest")
+            monitor.write_status(**_progress_status(progress, replay, started, "validating"))
+            result = evaluate(agent, validation_refs, ACTION_SEEDS,
+                              "validation", progress["env_step"], monitor,
+                              run_dir / "evaluation")
+            score = result["si_mean"]
+            if tensorboard:
+                tensorboard.add_scalar("validation/terminal_si_mean", score,
+                                       progress["env_step"])
+            monitor.event("validation", env_step=progress["env_step"], si_mean=score)
+            if progress["best_si_mean"] is None or score > progress["best_si_mean"]:
+                progress["best_si_mean"] = score
+                checkpoint("best")
+                save_actor_weights(model_dir / "best_actor.pt", agent.actor)
+            while progress["next_validation"] <= progress["env_step"]:
+                progress["next_validation"] += args.validation_interval
+            # Commit selection bookkeeping before the next training episode.
+            checkpoint("latest")
+
+        if args.resume:
+            validate_if_due()
 
         while (progress["env_step"] < args.steps and not stop_requested
                and (args.stop_after_steps is None
@@ -568,6 +642,9 @@ def run(args):
                 progress["env"], progress["state"] = _new_environment(beam_info)
                 progress["episode_length"] = 0
                 progress["episode_return"] = 0.0
+                for key in ("requested_slots_total", "actual_slots_total", "out_slots_total",
+                            "occupied_slots_total", "clipped_steps"):
+                    progress[key] = 0
             env = progress["env"]
             state = progress["state"]
             step_started = time.monotonic()
@@ -581,6 +658,11 @@ def run(args):
             progress["env_step"] += 1
             progress["episode_length"] += 1
             progress["episode_return"] += reward
+            progress["requested_slots_total"] += requested[2]
+            progress["actual_slots_total"] += actual[2]
+            progress["out_slots_total"] += int(np.asarray(info["out"]).item())
+            progress["occupied_slots_total"] += int(np.asarray(info["occupy"]).item())
+            progress["clipped_steps"] += int(actual[2] < requested[2])
             last_traces.append({"episode": progress["episode"],
                                 "env_step": progress["env_step"],
                                 "requested": requested, "actual": actual,
@@ -617,36 +699,37 @@ def run(args):
                 if progress["env_step"] >= progress["next_checkpoint"]:
                     progress["next_checkpoint"] += args.checkpoint_interval
                     checkpoint("latest")
-                if (progress["next_validation"] is not None
-                        and progress["env_step"] >= progress["next_validation"]):
-                    if not (model_dir / "latest.pt").exists():
-                        checkpoint("latest")
-                    monitor.write_status(**_progress_status(progress, replay, started, "validating"))
-                    result = evaluate(agent, validation_refs, ACTION_SEEDS,
-                                      "validation", progress["env_step"], monitor,
-                                      run_dir / "evaluation")
-                    score = result["si_mean"]
-                    if tensorboard:
-                        tensorboard.add_scalar("validation/terminal_si_mean", score,
-                                               progress["env_step"])
-                    monitor.event("validation", env_step=progress["env_step"], si_mean=score)
-                    if progress["best_si_mean"] is None or score > progress["best_si_mean"]:
-                        progress["best_si_mean"] = score
-                        checkpoint("best")
-                        save_actor_weights(model_dir / "best_actor.pt", agent.actor)
-                    progress["next_validation"] += args.validation_interval
+                validate_if_due()
             now = time.monotonic()
-            if now - last_status >= 5:
-                speed = ((progress["env_step"] - segment_start_step)
-                         / max(now - segment_started, 1e-9))
+            current_phase = "warmup" if replay.size() <= 2000 else "training"
+            if current_phase != progress_phase:
+                progress_phase = current_phase
+                window_started = now
+                window_step = progress["env_step"]
+                window_update = progress["update_step"]
                 monitor.write_status(**_progress_status(
-                    progress, replay, started, "training", budget_env_steps=args.steps,
+                    progress, replay, started, current_phase,
+                    budget_env_steps=args.steps, steps_per_second=None,
+                    updates_per_second=None, eta_seconds=None,
+                    progress_at=utc_now()))
+                last_status = now
+            if now - last_status >= 5:
+                duration = max(now - window_started, 1e-9)
+                speed = (progress["env_step"] - window_step) / duration
+                update_speed = (progress["update_step"] - window_update) / duration
+                monitor.write_status(**_progress_status(
+                    progress, replay, started, current_phase, budget_env_steps=args.steps,
                     steps_per_second=speed,
-                    eta_seconds=(args.steps - progress["env_step"]) / speed if speed else None,
+                    updates_per_second=update_speed,
+                    eta_seconds=((args.steps - progress["env_step"]) / speed
+                                 if speed and current_phase == "training" else None),
                     best_validation_si_mean=progress["best_si_mean"],
                     progress_at=utc_now(),
                 ))
                 last_status = now
+                window_started = now
+                window_step = progress["env_step"]
+                window_update = progress["update_step"]
             if now - last_print >= 30:
                 print(f"{args.run_id} | 步 {progress['env_step']}/{args.steps} | "
                       f"更新 {progress['update_step']} | 回合 {progress['episode']}", flush=True)
@@ -655,12 +738,16 @@ def run(args):
         checkpoint("latest")
         if stop_requested:
             monitor.event("interrupted", env_step=progress["env_step"])
-            monitor.write_status(**_progress_status(progress, replay, started, "interrupted"))
+            monitor.write_status(**_progress_status(
+                progress, replay, started, "interrupted", steps_per_second=None,
+                updates_per_second=None, eta_seconds=None, progress_at=utc_now()))
             return 130
         if progress["env_step"] < args.steps:
             monitor.event("diagnostic_paused", env_step=progress["env_step"],
                           stop_after_steps=args.stop_after_steps)
-            monitor.write_status(**_progress_status(progress, replay, started, "paused"))
+            monitor.write_status(**_progress_status(
+                progress, replay, started, "paused", steps_per_second=None,
+                updates_per_second=None, eta_seconds=None, progress_at=utc_now()))
             return 0
         checkpoint("final")
         save_actor_weights(model_dir / "final_actor.pt", agent.actor)
@@ -668,7 +755,9 @@ def run(args):
             monitor.event("completed_diagnostic", env_step=progress["env_step"])
             monitor.write_status(**_progress_status(
                 progress, replay, started, "completed", budget_env_steps=args.steps,
-                diagnostic_not_formal_comparison=True, completed_at=utc_now()))
+                diagnostic_not_formal_comparison=True, completed_at=utc_now(),
+                steps_per_second=None, updates_per_second=None, eta_seconds=0,
+                progress_at=utc_now()))
             return 0
         monitor.write_status(**_progress_status(progress, replay, started, "final_validation"))
         final_validation = (evaluate(agent, validation_refs, ACTION_SEEDS,
@@ -701,7 +790,8 @@ def run(args):
             final_test_argmax_si_mean=final_test["argmax_si_mean"],
             best_test_si_mean=best_test["si_mean"] if best_test else None,
             best_test_argmax_si_mean=best_test["argmax_si_mean"] if best_test else None,
-            completed_at=utc_now()))
+            completed_at=utc_now(), steps_per_second=None,
+            updates_per_second=None, eta_seconds=0, progress_at=utc_now()))
         return 0
     except Exception as error:
         failure = {"at": utc_now(), "type": type(error).__name__,
