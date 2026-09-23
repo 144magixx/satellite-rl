@@ -1,0 +1,2435 @@
+{
+  "generated_at_utc": "2026-09-23T17:40:27.201573+00:00",
+  "backup": "D:\\paper_backup_20260924_013532",
+  "repository": "D:\\paper",
+  "status": "passed",
+  "method": "Static normalized Python AST comparison; does not execute training or assert runtime equivalence of new path resolution.",
+  "source_files_checked": 24,
+  "target_files_checked": 30,
+  "objects_checked": 298,
+  "objects_by_category": {
+    "module": 18,
+    "function": 62,
+    "class": 34,
+    "method": 160,
+    "training_body": 3,
+    "configuration": 3,
+    "entry_guard": 5,
+    "dependency_function": 2,
+    "inventory": 3,
+    "dependency_structure": 3,
+    "entry_wrapper": 3,
+    "plotting_body": 2
+  },
+  "allowed_normalizations": [
+    "Remove only project_path(expression) wrappers and their added import; preserve the original path expression exactly.",
+    "Map satellite_rl package import module paths to their original modules; preserve imported names and aliases in whole-module comparisons.",
+    "Map PPO rl_utils.compute_advantage to compute_advantage; compare copied functions to original utility functions.",
+    "Move exactly the three original PPO environment initialization assignments to the start of main; preserve their order.",
+    "Wrap the original SAC top-level training body in run_training(SAC, ReplayBuffer); compare its entire statement sequence.",
+    "Wrap bar.py and plot_demand.py top-level executable bodies in main; compare their entire statement sequences.",
+    "Partition PPO/DQN class/function definitions and global settings between algorithm and training modules; verify complete definition inventories."
+  ],
+  "observed_structural_metadata_changes": [
+    "DQN module description text was replaced by two role-specific descriptions; documentation strings outside classes/functions do not affect algorithms and are not included in the split-body comparison.",
+    "DQN Env import is guarded by TYPE_CHECKING under the unchanged future annotations mode; the exact new guard is checked.",
+    "Split PPO/DQN imports were redistributed and unused imports removed; their algorithm classes, method annotations, function bodies, main guards and global settings are checked separately.",
+    "SAC CNN and MLP entry modules are new guarded wrappers selecting their existing classes; original shared training statements and parameters are retained."
+  ],
+  "normalization_counts": {
+    "project_path_wrappers": 96
+  },
+  "limitations": [
+    "Whitespace and comments are excluded by AST comparison.",
+    "Import redistribution in split PPO/DQN files and new path helper runtime behavior require separate import/path smoke checks.",
+    "New package metadata, tests, documentation, __init__.py files and paths.py have no original counterparts and are outside this source-equivalence audit.",
+    "No full training or learning-quality comparison was performed."
+  ],
+  "failures": [],
+  "checks": [
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "e55e0ad0e53f1be47a19f72bfe7e7133930e9c3cbb4bf900b799e287770c9e1b"
+    },
+    {
+      "object": "geo_to_cartesian",
+      "category": "function",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "0a3f47874c694deadb69044effd4d45aa7ab16db3f5a1462b6b4a3a00de2f1ff"
+    },
+    {
+      "object": "AntennaPattern",
+      "category": "class",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "d5d76f898cf67a676e4712f5fea5271a5feb540adb6f5b2ff89b364769da6e22"
+    },
+    {
+      "object": "AntennaPattern.transmitting_antenna_pattern",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "3eb52ab34347ef387cfaf947cac5da93fe9accd52d64d7f2bd435dc7a0639354"
+    },
+    {
+      "object": "AntennaPattern.receiving_antenna_pattern",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "c89a94364dbdbb7e888245150c78c738329adbb21acacae43a4a2428afbf9bb1"
+    },
+    {
+      "object": "MCS",
+      "category": "class",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "e9e0545d3ce4c9fb48cde180c6f7d835f34e53212cd88f1b068bc1feabc78426"
+    },
+    {
+      "object": "MCS.__init__",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "331adeb1f6d86134a218dd94b36a0b878eb580bcac9cff943c72e82a3cea843d"
+    },
+    {
+      "object": "MCS.get_spectral_efficiency",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "7d4dfb4082fbf00f9a3a85492b2a8fe30fd56a6e12ae822cea19ca521fd76df7"
+    },
+    {
+      "object": "MCS.get_Eg_No",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "bd3868c34a0f0e5951a983a8332ac5354947e27db6fc15a957c34544303a4e15"
+    },
+    {
+      "object": "SatelliteFreqState",
+      "category": "class",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "a62cd9cf7ff963aa6ee5e529c0219367e31f6a7204f1d6977c3f62ddbe88b056"
+    },
+    {
+      "object": "SatelliteFreqState.__init__",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "09809104f0bf577917c22828765dd0c7e4403356df640f95966eb45ffbbde805"
+    },
+    {
+      "object": "SatelliteFreqState.distance",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "28cd9bbb6a6b6ef26d4ff6cdd05c8f533b50e0ad433749deb5fef25692579c98"
+    },
+    {
+      "object": "SatelliteFreqState.update_state",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "b5b5c59dc7df1a2f7bfe65955259ad32fc3dc186531b39b67d1c00f9c1aac0a7"
+    },
+    {
+      "object": "SatelliteFreqState.get_state",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "af0aa206aec2d0b28674b6f03f030fa58a0a39f2861e93ceec3f9a0c8c1b3869"
+    },
+    {
+      "object": "SatelliteFreqState.reset_state",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "442b2656dd3c487fc8934f4ae025cd960fe340909d7ed8e4104f6ebcb293655d"
+    },
+    {
+      "object": "BeamInfo",
+      "category": "class",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "af2e5f1a408e221fa77c4e27d4f88ca1748d4c9858d330796119bed0236ef85f"
+    },
+    {
+      "object": "BeamInfo.__init__",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "af49e291431e798f64e3c1cc222639de5ee816f83a9a71330c222ec4d1e97c89"
+    },
+    {
+      "object": "BeamInfo.shuffle",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "437b141258b7be40ca90f429c0d3bf83f1620aedddb9cfed4a71492ea4ef8205"
+    },
+    {
+      "object": "BeamInfo.apply_shuffle",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "29082fcee251c86b5d5722a183cc836398cbf18a2d784b9df9e68d9e968c2960"
+    },
+    {
+      "object": "BeamInfo.cal_distance",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "ad0da130512b24f6d4ced6bac58ae1645450d8c94661c65525fbecb74303c1b3"
+    },
+    {
+      "object": "BeamInfo.randomize_beam_location",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "e4c21b793c34c808e29b3aeb5b03f42c77d1b77b30c99943b828369b41ef102a"
+    },
+    {
+      "object": "CurrentBeamState",
+      "category": "class",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "24f1e09cc2d3011f47425fdddfd1abb7946dbd91b521f4d577ebcde804b61e42"
+    },
+    {
+      "object": "CurrentBeamState.__init__",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "191abefdb97e486edec2805b89f230281c4e8c6a91c54d1867730131a51b0958"
+    },
+    {
+      "object": "CurrentBeamState.update_state",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "49ca5796954de59b2d370de8e3170bf3d6289f13f6d3647489e60e6614a89dd3"
+    },
+    {
+      "object": "CurrentBeamState.get_state",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "38fca3e9cc2d530ca9b53c0b0ed19b70eb623a34655e7eff3a5d6d29e432f615"
+    },
+    {
+      "object": "CurrentBeamState.reset",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "7dcc8cae09551d4f8a0023ee52a0028f39ad4bdb44c13bccc0355436102b8d73"
+    },
+    {
+      "object": "Env",
+      "category": "class",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "21194ccda3f01fba8e1bc19507127af7c97a4a2ecc061dc147b560aa7498b3d2"
+    },
+    {
+      "object": "Env.__init__",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "e4b1de5912f2bed6631a555aef2e624935b49242f2a323c4cdf451b3f72f0ef7"
+    },
+    {
+      "object": "Env.get_combined_state",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "62fd37b0c4534ee5ad64a1f519fda72d806987e9f36b52693997b029f8c69820"
+    },
+    {
+      "object": "Env.reset",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "ba13f14916ea4b110b900d0d2e0e7dc983a4612df2ccd1a7ede11a2260485c06"
+    },
+    {
+      "object": "Env.beamwidth_to_ground_distance",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "657eaa5c6874ced9e3d072d244a23356575f8ac549334fc0d2401a04a419d623"
+    },
+    {
+      "object": "Env.calculate_beam_angle",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "b39dea46ea36cc925c05a335063bb1ac7e9e45e76836d9b6d25c16756fb02e33"
+    },
+    {
+      "object": "Env.haversine",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "33e8a15ef4c4dac8092ad81e6c3412dda0183d487b3f15ecbac53a0d8b67628c"
+    },
+    {
+      "object": "Env.receiving_power",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "072eefb1118b7030451dcc38bec309ab6d6d6e96167f629028a7a7c6f0aafd34"
+    },
+    {
+      "object": "Env.interfere_beams",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "dfb04b1f80be451d2bc7659b69c608138e7bed0689ddde93e98a2d4345fcc230"
+    },
+    {
+      "object": "Env.interfere_power",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "efe5eb58e5332de0d49d5d09edd0c8a3c2a383c9b9e51c6dabfb83ca5b9acc97"
+    },
+    {
+      "object": "Env.current_rate_calculate",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "c0e04f36a2f47cf724d5bd9d077272d4543dd31f9ae6a5312274bc5755537e9c"
+    },
+    {
+      "object": "Env.interfere_effect",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "7e18933339fc477c1300d2c466d14b565cba14e9dc28240ea4182d39e23a0935"
+    },
+    {
+      "object": "Env._calc_group_slot_interference",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "06b49b2831cd5eb26fee0322f610b9e26463084c0fcf29a686b6253ed5baf8e7"
+    },
+    {
+      "object": "Env.calculate_total_satisfaction",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "2fe15f2f3b93ef32f6c979df5f5cecd5f674f7fb28ee8b8bed76fb322103d53a"
+    },
+    {
+      "object": "Env.get_first_free_slot",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "2ded708b239aa41416281a8d5887ea1dcb50f375bc8033f5a1319f3c549c4217"
+    },
+    {
+      "object": "Env.SGM_rate",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "1b6205bb37cf47554c52ae3486f116dcfecb0fb6cc37d0fcf9021fd698e23576"
+    },
+    {
+      "object": "Env.power_gap",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "4dd4592fad5831d22421c7c6fa966de4058dfbe6a235aa6166962a8fa81107f7"
+    },
+    {
+      "object": "Env.get_required_power",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "8a5f30c7d55b7ec8d9136ca93347b509ae743d1e1c23064c8a5c704d4c1da0ac"
+    },
+    {
+      "object": "Env.band_utilization",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "9cde7755a847389845b3f9ac89eabab95a5a560d512ca740a65f72ed86003381"
+    },
+    {
+      "object": "Env.get_occupy",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "d1e4c2b0f9ac0d1801591946754629aaadbc7865918dd9c3d4efc8e0b2d6f075"
+    },
+    {
+      "object": "Env.get_action_mask",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "9173ee6aad9f4bad1d18ceec007cd23561cf5357ec93bb75175095928d2d5817"
+    },
+    {
+      "object": "Env.step",
+      "category": "method",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "12e79a9c6fdba974200cf65e2a927502544f9b02f22a58073e2785b74fb2c3d6"
+    },
+    {
+      "object": "plot_antenna_pattern",
+      "category": "function",
+      "old": "Environment_sac_p.py",
+      "new": "src/satellite_rl/envs/satellite.py",
+      "passed": true,
+      "normalized_ast_sha256": "2c0e2219bbe605540928c84d043fcabad85c914ad61a77a85d440bb73c2fb437"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "8b1e25ee805cee7a5158d12130981044fe77200ace34e8a8cbbe5b66d2ded68f"
+    },
+    {
+      "object": "geo_to_cartesian",
+      "category": "function",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "0a3f47874c694deadb69044effd4d45aa7ab16db3f5a1462b6b4a3a00de2f1ff"
+    },
+    {
+      "object": "AntennaPattern",
+      "category": "class",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "d5d76f898cf67a676e4712f5fea5271a5feb540adb6f5b2ff89b364769da6e22"
+    },
+    {
+      "object": "AntennaPattern.transmitting_antenna_pattern",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "3eb52ab34347ef387cfaf947cac5da93fe9accd52d64d7f2bd435dc7a0639354"
+    },
+    {
+      "object": "AntennaPattern.receiving_antenna_pattern",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "c89a94364dbdbb7e888245150c78c738329adbb21acacae43a4a2428afbf9bb1"
+    },
+    {
+      "object": "MCS",
+      "category": "class",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "e9e0545d3ce4c9fb48cde180c6f7d835f34e53212cd88f1b068bc1feabc78426"
+    },
+    {
+      "object": "MCS.__init__",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "331adeb1f6d86134a218dd94b36a0b878eb580bcac9cff943c72e82a3cea843d"
+    },
+    {
+      "object": "MCS.get_spectral_efficiency",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "7d4dfb4082fbf00f9a3a85492b2a8fe30fd56a6e12ae822cea19ca521fd76df7"
+    },
+    {
+      "object": "MCS.get_Eg_No",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "bd3868c34a0f0e5951a983a8332ac5354947e27db6fc15a957c34544303a4e15"
+    },
+    {
+      "object": "SatelliteFreqState",
+      "category": "class",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "a62cd9cf7ff963aa6ee5e529c0219367e31f6a7204f1d6977c3f62ddbe88b056"
+    },
+    {
+      "object": "SatelliteFreqState.__init__",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "09809104f0bf577917c22828765dd0c7e4403356df640f95966eb45ffbbde805"
+    },
+    {
+      "object": "SatelliteFreqState.distance",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "28cd9bbb6a6b6ef26d4ff6cdd05c8f533b50e0ad433749deb5fef25692579c98"
+    },
+    {
+      "object": "SatelliteFreqState.update_state",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "b5b5c59dc7df1a2f7bfe65955259ad32fc3dc186531b39b67d1c00f9c1aac0a7"
+    },
+    {
+      "object": "SatelliteFreqState.get_state",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "af0aa206aec2d0b28674b6f03f030fa58a0a39f2861e93ceec3f9a0c8c1b3869"
+    },
+    {
+      "object": "SatelliteFreqState.reset_state",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "442b2656dd3c487fc8934f4ae025cd960fe340909d7ed8e4104f6ebcb293655d"
+    },
+    {
+      "object": "BeamInfo",
+      "category": "class",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "02e1432a59ca049ffba21f7ee6b392ebcde0ef881b42bb5a103e0ed736b344bd"
+    },
+    {
+      "object": "BeamInfo.__init__",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "9b2eb7815470bcb2c74e6c82f6abae2aa8b8edff1ab2c7c6f990ae2bb437373b"
+    },
+    {
+      "object": "BeamInfo.shuffle",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "437b141258b7be40ca90f429c0d3bf83f1620aedddb9cfed4a71492ea4ef8205"
+    },
+    {
+      "object": "BeamInfo.apply_shuffle",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "29082fcee251c86b5d5722a183cc836398cbf18a2d784b9df9e68d9e968c2960"
+    },
+    {
+      "object": "CurrentBeamState",
+      "category": "class",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "24f1e09cc2d3011f47425fdddfd1abb7946dbd91b521f4d577ebcde804b61e42"
+    },
+    {
+      "object": "CurrentBeamState.__init__",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "191abefdb97e486edec2805b89f230281c4e8c6a91c54d1867730131a51b0958"
+    },
+    {
+      "object": "CurrentBeamState.update_state",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "49ca5796954de59b2d370de8e3170bf3d6289f13f6d3647489e60e6614a89dd3"
+    },
+    {
+      "object": "CurrentBeamState.get_state",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "38fca3e9cc2d530ca9b53c0b0ed19b70eb623a34655e7eff3a5d6d29e432f615"
+    },
+    {
+      "object": "CurrentBeamState.reset",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "7dcc8cae09551d4f8a0023ee52a0028f39ad4bdb44c13bccc0355436102b8d73"
+    },
+    {
+      "object": "Env",
+      "category": "class",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "c146f9fcde148406f08e8894e1138791879b919ae991d75bd9566a803d5d3e68"
+    },
+    {
+      "object": "Env.__init__",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "e4b1de5912f2bed6631a555aef2e624935b49242f2a323c4cdf451b3f72f0ef7"
+    },
+    {
+      "object": "Env.get_combined_state",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "61909a611ab5de7666f1b3a2a4b8afd842c9e1fdd40a593c741c276c6f249b6f"
+    },
+    {
+      "object": "Env.reset",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "ba13f14916ea4b110b900d0d2e0e7dc983a4612df2ccd1a7ede11a2260485c06"
+    },
+    {
+      "object": "Env.beamwidth_to_ground_distance",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "657eaa5c6874ced9e3d072d244a23356575f8ac549334fc0d2401a04a419d623"
+    },
+    {
+      "object": "Env.calculate_beam_angle",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "b39dea46ea36cc925c05a335063bb1ac7e9e45e76836d9b6d25c16756fb02e33"
+    },
+    {
+      "object": "Env.haversine",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "33e8a15ef4c4dac8092ad81e6c3412dda0183d487b3f15ecbac53a0d8b67628c"
+    },
+    {
+      "object": "Env.receiving_power",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "072eefb1118b7030451dcc38bec309ab6d6d6e96167f629028a7a7c6f0aafd34"
+    },
+    {
+      "object": "Env.interfere_beams",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "dfb04b1f80be451d2bc7659b69c608138e7bed0689ddde93e98a2d4345fcc230"
+    },
+    {
+      "object": "Env.interfere_power",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "efe5eb58e5332de0d49d5d09edd0c8a3c2a383c9b9e51c6dabfb83ca5b9acc97"
+    },
+    {
+      "object": "Env.current_rate_calculate",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "c0e04f36a2f47cf724d5bd9d077272d4543dd31f9ae6a5312274bc5755537e9c"
+    },
+    {
+      "object": "Env.interfere_effect",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "7e18933339fc477c1300d2c466d14b565cba14e9dc28240ea4182d39e23a0935"
+    },
+    {
+      "object": "Env._calc_group_slot_interference",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "06b49b2831cd5eb26fee0322f610b9e26463084c0fcf29a686b6253ed5baf8e7"
+    },
+    {
+      "object": "Env.calculate_total_satisfaction",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "2fe15f2f3b93ef32f6c979df5f5cecd5f674f7fb28ee8b8bed76fb322103d53a"
+    },
+    {
+      "object": "Env.get_first_free_slot",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "2ded708b239aa41416281a8d5887ea1dcb50f375bc8033f5a1319f3c549c4217"
+    },
+    {
+      "object": "Env.SGM_rate",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "9823bebed1336bbda175755c97111a5b53413eb0a647cea1d9f7b2b47aa733cb"
+    },
+    {
+      "object": "Env.SGM_power",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "ba62970efa392b715c3a7b32f7bd24c37f22d2646e32087ac3449531a14f34ff"
+    },
+    {
+      "object": "Env.get_required_power",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "8a5f30c7d55b7ec8d9136ca93347b509ae743d1e1c23064c8a5c704d4c1da0ac"
+    },
+    {
+      "object": "Env.band_utilization",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "9cde7755a847389845b3f9ac89eabab95a5a560d512ca740a65f72ed86003381"
+    },
+    {
+      "object": "Env.get_occupy",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "d1e4c2b0f9ac0d1801591946754629aaadbc7865918dd9c3d4efc8e0b2d6f075"
+    },
+    {
+      "object": "Env.get_action_mask",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "90366c53dc2d1aa99f2b43e81f00f9c2246f1b52d417b288741554eae805ce0a"
+    },
+    {
+      "object": "Env.step",
+      "category": "method",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "d5d774cc2e2954876d9a9e7694d358c577711dba9655c8a2cfde2cb576795a33"
+    },
+    {
+      "object": "plot_antenna_pattern",
+      "category": "function",
+      "old": "Environment_103.py",
+      "new": "src/satellite_rl/envs/satellite_variant_103.py",
+      "passed": true,
+      "normalized_ast_sha256": "2c0e2219bbe605540928c84d043fcabad85c914ad61a77a85d440bb73c2fb437"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "2b2db9c86db816034681255b093d5824b7fee9ea5511f5396065d2769ca7f3ed"
+    },
+    {
+      "object": "ReplayBuffer",
+      "category": "class",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "6988063afb7b65ca8a0183dd4f23d50f0572c2b755f0371172ed1cc02c32f94d"
+    },
+    {
+      "object": "ReplayBuffer.__init__",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "03038e256ed7888c66dfbe2ce14bfbb64518e23a46f69773052b08c683400a83"
+    },
+    {
+      "object": "ReplayBuffer.add",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "476ca97910281bd43637cbaaf16c6d6f5119819152a70198794f3f7318691d62"
+    },
+    {
+      "object": "ReplayBuffer.sample",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "9c662656065d55eda74c84b5d6f85a093ac1c0011e3675001a7255113be605ee"
+    },
+    {
+      "object": "ReplayBuffer.size",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "12a31ea6c1e92aded0c7ca4e008b0586b9ae4a79833b08153db72f70bdb0f4ed"
+    },
+    {
+      "object": "PolicyNet",
+      "category": "class",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "1605fde90b5ce64f04aef3528f839e8e0b80d75ee1aa3142d2f3981bc27550bc"
+    },
+    {
+      "object": "PolicyNet.__init__",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "6e4baeb6441f43f55db3075e85c0aaa367e1830a66935a67178d258f3bd0237b"
+    },
+    {
+      "object": "PolicyNet.forward",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "b36e70a88a602bd4be4d1fc1f78d5499b13bc07fcaf2727619b56da353207a2b"
+    },
+    {
+      "object": "ValueNet",
+      "category": "class",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "39a69a3d5edd9449ebeab1ad8c7635e33db2c0449423c958f409e9a7a662416a"
+    },
+    {
+      "object": "ValueNet.__init__",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "1060a915927fe4b0fb7ddad38f84c5187cde4d1a4ea327bd22165bb3016e508e"
+    },
+    {
+      "object": "ValueNet.forward",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "ba7a65aa519659d138ad74603c14cd885fb7dccb89d030b09f6351ddc1f8f6b0"
+    },
+    {
+      "object": "SAC",
+      "category": "class",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "57fd48db6623f610c460eab6e30a573fcf9399dbf8788882f1a5ecfb92570ba5"
+    },
+    {
+      "object": "SAC.__init__",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "5bec9312ac27bb685d1856344eaac6661fe430ee35b041e147a03442ee7fc3ad"
+    },
+    {
+      "object": "SAC.init_logging",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "4ad4a9b324ea688fa0be3c5e7b2606d9b0d382f0bd21c73c6518ae42dd0b27bf"
+    },
+    {
+      "object": "SAC.log_step",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "8ee55fd3acdcf1314933017c5747bc30e7bcd869eb06cd7fd2f34108f965df20"
+    },
+    {
+      "object": "SAC.take_action",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "065472ee8abe98a03b2c36eeb4704ca81e009640d0eb401fdc81ff1c5bbaa5df"
+    },
+    {
+      "object": "SAC.calc_target",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "0bdbb8a86a5a6e20fc981e2c2206a1faf4bc1c48f39f379a039bac9cdbffbdb9"
+    },
+    {
+      "object": "SAC.soft_update",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "b22dc25d7acc1994fbf3fec8100f35552e72856012757a0ba2e2f8e711589328"
+    },
+    {
+      "object": "SAC._joint_q",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "e510fd181213ae2a46dcad52f7b2c1166280cb72cce66e6ca3c3edc21e567a4d"
+    },
+    {
+      "object": "SAC.update",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "396ceb57c9e97132127b85248b523d89b2e45c7375adeee57d7201a3a3547d01"
+    },
+    {
+      "object": "SAC.save_model",
+      "category": "method",
+      "old": "sac_full.py",
+      "new": "src/satellite_rl/agents/sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "63d5a6ced592543c09f3423358b77194b79b37355eae66f6594390973c6d0398"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "4d61c5fa5ab39e850a9239708c227284815e180ccebb59e603573a2fd519fea1"
+    },
+    {
+      "object": "ReplayBuffer",
+      "category": "class",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "6988063afb7b65ca8a0183dd4f23d50f0572c2b755f0371172ed1cc02c32f94d"
+    },
+    {
+      "object": "ReplayBuffer.__init__",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "03038e256ed7888c66dfbe2ce14bfbb64518e23a46f69773052b08c683400a83"
+    },
+    {
+      "object": "ReplayBuffer.add",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "476ca97910281bd43637cbaaf16c6d6f5119819152a70198794f3f7318691d62"
+    },
+    {
+      "object": "ReplayBuffer.sample",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "9c662656065d55eda74c84b5d6f85a093ac1c0011e3675001a7255113be605ee"
+    },
+    {
+      "object": "ReplayBuffer.size",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "12a31ea6c1e92aded0c7ca4e008b0586b9ae4a79833b08153db72f70bdb0f4ed"
+    },
+    {
+      "object": "PolicyNet",
+      "category": "class",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "e38062e4e5aa33da8f643c1304ddaabf09ee03f6ce079e9de94dec5afcd50e0e"
+    },
+    {
+      "object": "PolicyNet.__init__",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "4b607011a370738e2da1e1614ea18e49694311f95a06b94ca2e3a797cce4660d"
+    },
+    {
+      "object": "PolicyNet.forward",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "ef3b5dc6f189b5ca77025a060e6fae548d4b4c76644009c66d63364692a095cc"
+    },
+    {
+      "object": "ValueNet",
+      "category": "class",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "c08f287ff47d134d4aaeb590134923ea34c69170bd42c487e51b9dee736e5c94"
+    },
+    {
+      "object": "ValueNet.__init__",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "efa087a4d4283161e3df33a90e2725e454dc41e633524c956799beed1379bafa"
+    },
+    {
+      "object": "ValueNet.forward",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "2e1f192682ba3506b95b0c48cc11f5eba7104c2458f5a0079abf303a8f84b6b7"
+    },
+    {
+      "object": "SAC",
+      "category": "class",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "90f610cde26a41fa2d9c76625b68b20780603ac95ba7b8dd08eb67de2fd53293"
+    },
+    {
+      "object": "SAC.__init__",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "5bec9312ac27bb685d1856344eaac6661fe430ee35b041e147a03442ee7fc3ad"
+    },
+    {
+      "object": "SAC.init_logging",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "60821dff8cf18e45b2bd7f3fcd05776e7c8aec36dcc5a179f7f65784b810e521"
+    },
+    {
+      "object": "SAC.log_step",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "8ee55fd3acdcf1314933017c5747bc30e7bcd869eb06cd7fd2f34108f965df20"
+    },
+    {
+      "object": "SAC.take_action",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "065472ee8abe98a03b2c36eeb4704ca81e009640d0eb401fdc81ff1c5bbaa5df"
+    },
+    {
+      "object": "SAC.calc_target",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "0bdbb8a86a5a6e20fc981e2c2206a1faf4bc1c48f39f379a039bac9cdbffbdb9"
+    },
+    {
+      "object": "SAC.soft_update",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "b22dc25d7acc1994fbf3fec8100f35552e72856012757a0ba2e2f8e711589328"
+    },
+    {
+      "object": "SAC._joint_q",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "e510fd181213ae2a46dcad52f7b2c1166280cb72cce66e6ca3c3edc21e567a4d"
+    },
+    {
+      "object": "SAC.update",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "396ceb57c9e97132127b85248b523d89b2e45c7375adeee57d7201a3a3547d01"
+    },
+    {
+      "object": "SAC.save_model",
+      "category": "method",
+      "old": "sac_cnn_full.py",
+      "new": "src/satellite_rl/agents/sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "d96c4f67ba4299c31e415fc95a97eeb2325a26a6da91f7ac1351c9a8a1010d7e"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "17cc43e69f526880865c8751ddc0ea86f7b9065052ba53bd7b59060b3fadd1eb"
+    },
+    {
+      "object": "ReplayBuffer",
+      "category": "class",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "6988063afb7b65ca8a0183dd4f23d50f0572c2b755f0371172ed1cc02c32f94d"
+    },
+    {
+      "object": "ReplayBuffer.__init__",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "03038e256ed7888c66dfbe2ce14bfbb64518e23a46f69773052b08c683400a83"
+    },
+    {
+      "object": "ReplayBuffer.add",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "476ca97910281bd43637cbaaf16c6d6f5119819152a70198794f3f7318691d62"
+    },
+    {
+      "object": "ReplayBuffer.sample",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "9c662656065d55eda74c84b5d6f85a093ac1c0011e3675001a7255113be605ee"
+    },
+    {
+      "object": "ReplayBuffer.size",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "12a31ea6c1e92aded0c7ca4e008b0586b9ae4a79833b08153db72f70bdb0f4ed"
+    },
+    {
+      "object": "PolicyNet",
+      "category": "class",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "05b8350a65f5053135745aa8db65466030a378ba5b074e203d11e26a1e2b8a6b"
+    },
+    {
+      "object": "PolicyNet.__init__",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "3fc591abf7bfc2da56322e243269d2b3d6e65f6e5bb53f6cc04ec5e9aeae9af3"
+    },
+    {
+      "object": "PolicyNet.forward",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "5285fbb9fd3b5a0309d7230773c7df7c3d203e0ff1170cac9e2905be9474322f"
+    },
+    {
+      "object": "ValueNet",
+      "category": "class",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "b414302177c07f3bc22cc452764750de2bb2c22f108c80f1765888b9198a17e3"
+    },
+    {
+      "object": "ValueNet.__init__",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "ff49169d22343ee14410b941afaedc56ca5027fd0aee77f74bf413469feae145"
+    },
+    {
+      "object": "ValueNet.forward",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "42d43b1f3e4c20bfcd5cde68a3cf9f884cccdba600e8104a2268dc3a0bd671e3"
+    },
+    {
+      "object": "SAC",
+      "category": "class",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "bce522846f533e3047731877d533851bbb96bdda3eea1e2c1e2f54ec5e62157a"
+    },
+    {
+      "object": "SAC.__init__",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "5bec9312ac27bb685d1856344eaac6661fe430ee35b041e147a03442ee7fc3ad"
+    },
+    {
+      "object": "SAC.init_logging",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "5334ed0c0887bea9a0b2e0b3fc6de3d3684e32ba906218e1ee285381047b5e74"
+    },
+    {
+      "object": "SAC.log_step",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "8ee55fd3acdcf1314933017c5747bc30e7bcd869eb06cd7fd2f34108f965df20"
+    },
+    {
+      "object": "SAC.take_action",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "065472ee8abe98a03b2c36eeb4704ca81e009640d0eb401fdc81ff1c5bbaa5df"
+    },
+    {
+      "object": "SAC.calc_target",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "0bdbb8a86a5a6e20fc981e2c2206a1faf4bc1c48f39f379a039bac9cdbffbdb9"
+    },
+    {
+      "object": "SAC.soft_update",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "b22dc25d7acc1994fbf3fec8100f35552e72856012757a0ba2e2f8e711589328"
+    },
+    {
+      "object": "SAC._joint_q",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "e510fd181213ae2a46dcad52f7b2c1166280cb72cce66e6ca3c3edc21e567a4d"
+    },
+    {
+      "object": "SAC.update",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "396ceb57c9e97132127b85248b523d89b2e45c7375adeee57d7201a3a3547d01"
+    },
+    {
+      "object": "SAC.save_model",
+      "category": "method",
+      "old": "sac_fc_full.py",
+      "new": "src/satellite_rl/agents/sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "9f6b77ad06dabefbe220c3651db06f769950155c39b56cea4d8576d9d3bb1041"
+    },
+    {
+      "object": "PolicyNet",
+      "category": "class",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "8c4dd76d340922761e86fc6ac86dd64181edb43004f00a77c8ac6f209374e2a0"
+    },
+    {
+      "object": "PolicyNet.__init__",
+      "category": "method",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "8b69a2dcc5bc00cf102c990526d0e0712893c8367c4a6612ca4c262c98ed6def"
+    },
+    {
+      "object": "PolicyNet.forward",
+      "category": "method",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "d979099e113566cdbc38826312491967b59bb70d151904dca4871e2882cfba48"
+    },
+    {
+      "object": "ValueNet",
+      "category": "class",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "811df1f316dc465f1e9d0c2c1c3b25be92f0fc82ee99160388d079d2351e1101"
+    },
+    {
+      "object": "ValueNet.__init__",
+      "category": "method",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "76b208b117bffbf6533e550203cac4d24d624dc7700201eaa60fba57b739b8e0"
+    },
+    {
+      "object": "ValueNet.forward",
+      "category": "method",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "e9550ed0932d1b57b61c1874a091614608ca58451fecc2a78a5a41ca7eb10ed7"
+    },
+    {
+      "object": "PPO",
+      "category": "class",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "e3b2bfc0e56e9fefb644f1e79eaf238250895bd4fff6f63c8f0fdf0e22566ef5"
+    },
+    {
+      "object": "PPO.__init__",
+      "category": "method",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "57bb99b43f6983e970e7d4af5dbb41c6cd6b1e09dbb9bbab97620890fe43954f"
+    },
+    {
+      "object": "PPO.init_logging",
+      "category": "method",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "52891f6c455f7cebce7e1a3d2277fa12897a7d4307afa7a1de2ac82dd4c12d12"
+    },
+    {
+      "object": "PPO.log_step",
+      "category": "method",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "5b67dfa4645bda5d06b708dc1f958072a7b799642502086dcd4889ef799e7fa8"
+    },
+    {
+      "object": "PPO.take_action",
+      "category": "method",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "17bc0bc2ae1e1c34ca32cfb77e5910182940bbfa71e3143b8da2e4292ac695a9"
+    },
+    {
+      "object": "PPO.update",
+      "category": "method",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "aec117f1938d72eb7ea6c479de4901294a40b548adb8da79052cc1574e427b85"
+    },
+    {
+      "object": "main_with_original_environment_initializers",
+      "category": "training_body",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/training/train_ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "c9b419c01836a9d03d00421b335e68b4c6b5febee59572ab3a8e94f340c75745"
+    },
+    {
+      "object": "module_global_settings",
+      "category": "configuration",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "c79c79e014dec7a91a82b781e0791b8072e437b1e7fd2cf21366eecdb636427a"
+    },
+    {
+      "object": "main_guard",
+      "category": "entry_guard",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/training/train_ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "f8b4b40a3ea944a1ec6f580e3ff79a178d83b10152621a508ff867c5dd62aa15"
+    },
+    {
+      "object": "copied_compute_advantage",
+      "category": "dependency_function",
+      "old": "rl_utils_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "0862ef4f4fe8a6d5ebbc9cf933fd2b8c9e11e26b48e6725ce8ce6ece4d25534c"
+    },
+    {
+      "object": "definition_inventory",
+      "category": "inventory",
+      "old": "PPO_103.py",
+      "new": "src/satellite_rl/agents/ppo_grouped.py + src/satellite_rl/training/train_ppo_grouped.py",
+      "passed": true,
+      "normalized_ast_sha256": "818d87bfc7ebdfb6b800eb1d0f6eb373de7ba300fcd7b183ffeca0f3a8447cf8"
+    },
+    {
+      "object": "PolicyNet",
+      "category": "class",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "c244a2a9dfe3ca4ae2a342bb146759b694faf4dc8fa078bf7fb5b28719c05677"
+    },
+    {
+      "object": "PolicyNet.__init__",
+      "category": "method",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "81bc0bb056212d4ae846f5c64de6f3ed77dcdc8a911e477099333520ac6e7eff"
+    },
+    {
+      "object": "PolicyNet.forward",
+      "category": "method",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "1a5cf08b7ae648ab6cd4af264a7de54928343fe7233cee8bfb82138e0d0f540d"
+    },
+    {
+      "object": "ValueNet",
+      "category": "class",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "811df1f316dc465f1e9d0c2c1c3b25be92f0fc82ee99160388d079d2351e1101"
+    },
+    {
+      "object": "ValueNet.__init__",
+      "category": "method",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "76b208b117bffbf6533e550203cac4d24d624dc7700201eaa60fba57b739b8e0"
+    },
+    {
+      "object": "ValueNet.forward",
+      "category": "method",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "e9550ed0932d1b57b61c1874a091614608ca58451fecc2a78a5a41ca7eb10ed7"
+    },
+    {
+      "object": "PPO",
+      "category": "class",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "01701cfa00507837bd34e639eab8291ed18ccede7a2101d0a822798b439a77b1"
+    },
+    {
+      "object": "PPO.__init__",
+      "category": "method",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "57bb99b43f6983e970e7d4af5dbb41c6cd6b1e09dbb9bbab97620890fe43954f"
+    },
+    {
+      "object": "PPO.init_logging",
+      "category": "method",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "52891f6c455f7cebce7e1a3d2277fa12897a7d4307afa7a1de2ac82dd4c12d12"
+    },
+    {
+      "object": "PPO.log_step",
+      "category": "method",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "5b67dfa4645bda5d06b708dc1f958072a7b799642502086dcd4889ef799e7fa8"
+    },
+    {
+      "object": "PPO.take_action",
+      "category": "method",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "c10133237f56d7688c47a63dc8a4ca87e98094ee4b4845a56f32e96b01665e2b"
+    },
+    {
+      "object": "PPO.update",
+      "category": "method",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "5566b89a4cb2f9dd6cc464ec69ae4604875401b34e70e09d8937fe3abb12245b"
+    },
+    {
+      "object": "main_with_original_environment_initializers",
+      "category": "training_body",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/training/train_ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "c9b419c01836a9d03d00421b335e68b4c6b5febee59572ab3a8e94f340c75745"
+    },
+    {
+      "object": "module_global_settings",
+      "category": "configuration",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "c79c79e014dec7a91a82b781e0791b8072e437b1e7fd2cf21366eecdb636427a"
+    },
+    {
+      "object": "main_guard",
+      "category": "entry_guard",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/training/train_ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "f8b4b40a3ea944a1ec6f580e3ff79a178d83b10152621a508ff867c5dd62aa15"
+    },
+    {
+      "object": "copied_compute_advantage",
+      "category": "dependency_function",
+      "old": "rl_utils_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "0862ef4f4fe8a6d5ebbc9cf933fd2b8c9e11e26b48e6725ce8ce6ece4d25534c"
+    },
+    {
+      "object": "definition_inventory",
+      "category": "inventory",
+      "old": "PPO_204.py",
+      "new": "src/satellite_rl/agents/ppo_direct.py + src/satellite_rl/training/train_ppo_direct.py",
+      "passed": true,
+      "normalized_ast_sha256": "818d87bfc7ebdfb6b800eb1d0f6eb373de7ba300fcd7b183ffeca0f3a8447cf8"
+    },
+    {
+      "object": "TrainLogger",
+      "category": "class",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/training/train_dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "83317374cd3a60a2c6497b809d1c9e2e38740ae6c2a459c9b2ad35929be729c5"
+    },
+    {
+      "object": "TrainLogger.__init__",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/training/train_dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "d58cd4d4a24b763b3848475f83fb0f5df52a566730b2804ff395ba5206f39e0f"
+    },
+    {
+      "object": "TrainLogger.log_step",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/training/train_dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "5a97734ccc7eee17c994941c5e41cf57c310db0a50081328246aad6d359d36f2"
+    },
+    {
+      "object": "_smooth",
+      "category": "function",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/training/train_dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "dd8a2e58cd84853f089f3133e01b69f462a330bda80678d9b620cfdb5ec44ab6"
+    },
+    {
+      "object": "plot_curve",
+      "category": "function",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/training/train_dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "2989e03e51398c3822ee6dc0af30b1305760a65b472e942cda95b6540237263b"
+    },
+    {
+      "object": "ReplayBuffer",
+      "category": "class",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "8d6a356a92cbcbb3dda836f20afd20a09745b915574eb354dc3191d27c9a1757"
+    },
+    {
+      "object": "ReplayBuffer.__init__",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "5f7cf409aa58cf832b8fc2742c35b0e61940f9df5b3a4f81abeb5e7d2fe550e2"
+    },
+    {
+      "object": "ReplayBuffer.push",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "0fb1393903e521a0625ed1247d3043f60b974ff46fa5c99e5d6ff814830ac1b6"
+    },
+    {
+      "object": "ReplayBuffer.sample",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "17c181c301876d05000ade9805281747d59e6738889bbe9473751655a2d10c95"
+    },
+    {
+      "object": "ReplayBuffer.__len__",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "2c2c7aaa40bc11bb63c29b9af8efc383929c213c8fa459f893454089aa293c0f"
+    },
+    {
+      "object": "FactorisedDQN",
+      "category": "class",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "8009d9dfbdcea5908d1111b26a0e7580eecfefeda91b9720d3481d75e07a400c"
+    },
+    {
+      "object": "FactorisedDQN.__init__",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "467f4abdf946f4b99417bcf2fb485a6e5af0630331942068fb3d730b34ad2a80"
+    },
+    {
+      "object": "FactorisedDQN.forward",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "261b2301239a125f0e6db3386e161f2a5aaf3a879bbb195355078c63c8b8b573"
+    },
+    {
+      "object": "DQNAgent",
+      "category": "class",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "63febf18da092d29afbca9ab57fd2daf2eb57b22a3a81e95c2c9a9bbb56b4e7b"
+    },
+    {
+      "object": "DQNAgent.__init__",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "58d51a5e334cbdfdae72deace383efc04be8966b32292ced7d67307a3730e80f"
+    },
+    {
+      "object": "DQNAgent._gather_q",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "c8851b7fb1d8826ea5154b1544137402c0f255b606076b8a3682333ff1295fe5"
+    },
+    {
+      "object": "DQNAgent.choose_action",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "0e942ab5753dd0c3c5a998566f6a54f4ecbbd2146abba1afea8a36ff85bc3c55"
+    },
+    {
+      "object": "DQNAgent.update",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "992d03f10b6942c74193e6ad7ef6facee0cd1ee3595d19af5625047ea87ab1cc"
+    },
+    {
+      "object": "DQNAgent.remember",
+      "category": "method",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "bd8bcd50bb7530ec35635f906365acbba4d1eb26e0437f0f0f624a056a733c6c"
+    },
+    {
+      "object": "build_env",
+      "category": "function",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/training/train_dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "dcd08b5cf3eb500b1c35efaac5a2fec74b29183c2d037b4e49bf97fbdb2b84d3"
+    },
+    {
+      "object": "main",
+      "category": "function",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/training/train_dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "2b01d55c615088b20436722f459f6445c8ee947d064a7240f9c67225b8610288"
+    },
+    {
+      "object": "all_hyperparameters",
+      "category": "configuration",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "be3dbc4f989069cdd1744c4092aa1e4549a29021ef1eccfaadc14e3541b3b54b"
+    },
+    {
+      "object": "main_guard",
+      "category": "entry_guard",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/training/train_dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "f8b4b40a3ea944a1ec6f580e3ff79a178d83b10152621a508ff867c5dd62aa15"
+    },
+    {
+      "object": "definition_inventory",
+      "category": "inventory",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py + src/satellite_rl/training/train_dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "5364b380b0ffb68bdfede5fb2e5dd7f3d304f4dc96c01440b351dbff414355f8"
+    },
+    {
+      "object": "type_only_environment_import",
+      "category": "dependency_structure",
+      "old": "DQN_full.py",
+      "new": "src/satellite_rl/agents/dqn.py",
+      "passed": true,
+      "normalized_ast_sha256": "6ef950d7ce7770d78727d8d363992b414ce0a3e775c6b62138ff5403776deb5f"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "rl_utils_103.py",
+      "new": "src/satellite_rl/training/ppo_grouped_utils.py",
+      "passed": true,
+      "normalized_ast_sha256": "d6b40b99b060d5210ffa463a097e510b00059268d3fe68dc71e5ee4d13406a91"
+    },
+    {
+      "object": "train_on_policy_agent",
+      "category": "function",
+      "old": "rl_utils_103.py",
+      "new": "src/satellite_rl/training/ppo_grouped_utils.py",
+      "passed": true,
+      "normalized_ast_sha256": "0422578ea4c35d9c3aca2dfeed7c1a3faa5715f6056240a5e1ff401dcb19f1bb"
+    },
+    {
+      "object": "compute_advantage",
+      "category": "function",
+      "old": "rl_utils_103.py",
+      "new": "src/satellite_rl/training/ppo_grouped_utils.py",
+      "passed": true,
+      "normalized_ast_sha256": "0862ef4f4fe8a6d5ebbc9cf933fd2b8c9e11e26b48e6725ce8ce6ece4d25534c"
+    },
+    {
+      "object": "plot_reward",
+      "category": "function",
+      "old": "rl_utils_103.py",
+      "new": "src/satellite_rl/training/ppo_grouped_utils.py",
+      "passed": true,
+      "normalized_ast_sha256": "8d4292ba9985f2a2825b2a1a1b88557aabb5796cdd28d295d207ceddefe5a198"
+    },
+    {
+      "object": "plot_satisfaction",
+      "category": "function",
+      "old": "rl_utils_103.py",
+      "new": "src/satellite_rl/training/ppo_grouped_utils.py",
+      "passed": true,
+      "normalized_ast_sha256": "36aea970ed66fefcaa126fea2ef5e5c37fad0c90168e98b4d8c8a01f139bea3f"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "rl_utils_204.py",
+      "new": "src/satellite_rl/training/ppo_direct_utils.py",
+      "passed": true,
+      "normalized_ast_sha256": "046883f7717ef06d62f27bbdee96fe86fe806a51eb7750d7e1693ee37cbf6d69"
+    },
+    {
+      "object": "train_on_policy_agent",
+      "category": "function",
+      "old": "rl_utils_204.py",
+      "new": "src/satellite_rl/training/ppo_direct_utils.py",
+      "passed": true,
+      "normalized_ast_sha256": "fcebbff43e019cbe5d245c1aea0451a3686eb1f91ee2fa95aa6d96acb0679658"
+    },
+    {
+      "object": "compute_advantage",
+      "category": "function",
+      "old": "rl_utils_204.py",
+      "new": "src/satellite_rl/training/ppo_direct_utils.py",
+      "passed": true,
+      "normalized_ast_sha256": "0862ef4f4fe8a6d5ebbc9cf933fd2b8c9e11e26b48e6725ce8ce6ece4d25534c"
+    },
+    {
+      "object": "plot_reward",
+      "category": "function",
+      "old": "rl_utils_204.py",
+      "new": "src/satellite_rl/training/ppo_direct_utils.py",
+      "passed": true,
+      "normalized_ast_sha256": "8d4292ba9985f2a2825b2a1a1b88557aabb5796cdd28d295d207ceddefe5a198"
+    },
+    {
+      "object": "plot_satisfaction",
+      "category": "function",
+      "old": "rl_utils_204.py",
+      "new": "src/satellite_rl/training/ppo_direct_utils.py",
+      "passed": true,
+      "normalized_ast_sha256": "36aea970ed66fefcaa126fea2ef5e5c37fad0c90168e98b4d8c8a01f139bea3f"
+    },
+    {
+      "object": "plot_reward",
+      "category": "function",
+      "old": "sac_train_full.py",
+      "new": "src/satellite_rl/training/sac_runner.py",
+      "passed": true,
+      "normalized_ast_sha256": "af6a57bc824c35ba412478531f2ceff33748f9f198dc0e085e964b8fcd066b16"
+    },
+    {
+      "object": "plot_satisfaction",
+      "category": "function",
+      "old": "sac_train_full.py",
+      "new": "src/satellite_rl/training/sac_runner.py",
+      "passed": true,
+      "normalized_ast_sha256": "ae6bc236fbb625d35cb5500fd6d9fc33c0599d6f3cc8fc4c4e6dbea8e62aa584"
+    },
+    {
+      "object": "entire_original_top_level_training_body",
+      "category": "training_body",
+      "old": "sac_train_full.py",
+      "new": "src/satellite_rl/training/sac_runner.py",
+      "passed": true,
+      "normalized_ast_sha256": "d58b84e2671ccf9e7aaa51a60bae5cf8242b2b66fe0809ade47b8785dc7a244d"
+    },
+    {
+      "object": "variant_selection_and_guard",
+      "category": "entry_wrapper",
+      "old": "sac_train_full.py",
+      "new": "src/satellite_rl/training/train_sac_transformer.py",
+      "passed": true,
+      "normalized_ast_sha256": "b80263eef0284eca68a5d5cf833baff773f483697e8327662d49d7e1ebff70f9"
+    },
+    {
+      "object": "variant_selection_and_guard",
+      "category": "entry_wrapper",
+      "old": "sac_train_full.py",
+      "new": "src/satellite_rl/training/train_sac_cnn.py",
+      "passed": true,
+      "normalized_ast_sha256": "e2b74d573f38913f54ec3f8c2a56d7f7a830e432a75e5d72e359a3fb4082fcf2"
+    },
+    {
+      "object": "variant_selection_and_guard",
+      "category": "entry_wrapper",
+      "old": "sac_train_full.py",
+      "new": "src/satellite_rl/training/train_sac_mlp.py",
+      "passed": true,
+      "normalized_ast_sha256": "47c3ff2dc72ed2ed5551de365673577a317e4a21617b982007aa45613d6d6e5d"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "fixed.py",
+      "new": "src/satellite_rl/baselines/fixed.py",
+      "passed": true,
+      "normalized_ast_sha256": "c35c11d382fe7881a02018c948ed7095cc18902d6a417b956ebca6ce97560405"
+    },
+    {
+      "object": "moving_average",
+      "category": "function",
+      "old": "fixed.py",
+      "new": "src/satellite_rl/baselines/fixed.py",
+      "passed": true,
+      "normalized_ast_sha256": "280ded5066792f22da5c448b11363eb51aaa1770d917b615ea3215a5cd9ab5d1"
+    },
+    {
+      "object": "fixed_policy",
+      "category": "function",
+      "old": "fixed.py",
+      "new": "src/satellite_rl/baselines/fixed.py",
+      "passed": true,
+      "normalized_ast_sha256": "a987869d4c21f25ff0b5c243cc3db106573bfad3ff354fcdc24b905621a6153a"
+    },
+    {
+      "object": "run_fixed",
+      "category": "function",
+      "old": "fixed.py",
+      "new": "src/satellite_rl/baselines/fixed.py",
+      "passed": true,
+      "normalized_ast_sha256": "8d6db442329668429f3b5d6a670e86a923a413694cb675a3fc8290cd34bda958"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "greedy.py",
+      "new": "src/satellite_rl/baselines/greedy.py",
+      "passed": true,
+      "normalized_ast_sha256": "b2c6e6e78ff332f0672791aeff94336221ad9b39fcac578bb85b013aec94b516"
+    },
+    {
+      "object": "moving_average",
+      "category": "function",
+      "old": "greedy.py",
+      "new": "src/satellite_rl/baselines/greedy.py",
+      "passed": true,
+      "normalized_ast_sha256": "280ded5066792f22da5c448b11363eb51aaa1770d917b615ea3215a5cd9ab5d1"
+    },
+    {
+      "object": "greedy_policy",
+      "category": "function",
+      "old": "greedy.py",
+      "new": "src/satellite_rl/baselines/greedy.py",
+      "passed": true,
+      "normalized_ast_sha256": "2abc7ef835105fcff4b52aff3170fbf89e563fd6219405e869ba249771bf3a55"
+    },
+    {
+      "object": "run_greedy",
+      "category": "function",
+      "old": "greedy.py",
+      "new": "src/satellite_rl/baselines/greedy.py",
+      "passed": true,
+      "normalized_ast_sha256": "efc0483dfae586bdc0ab73263de9474a00ca971fb519f095e87f222fbd20cb79"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "four_color.py",
+      "new": "src/satellite_rl/baselines/four_color.py",
+      "passed": true,
+      "normalized_ast_sha256": "5bbddacdbe5e8e6f1026526f033619c4373503aa3abebb26224d25e8db2262d1"
+    },
+    {
+      "object": "moving_average",
+      "category": "function",
+      "old": "four_color.py",
+      "new": "src/satellite_rl/baselines/four_color.py",
+      "passed": true,
+      "normalized_ast_sha256": "280ded5066792f22da5c448b11363eb51aaa1770d917b615ea3215a5cd9ab5d1"
+    },
+    {
+      "object": "_color_from_geo",
+      "category": "function",
+      "old": "four_color.py",
+      "new": "src/satellite_rl/baselines/four_color.py",
+      "passed": true,
+      "normalized_ast_sha256": "ce9a5cde6ff41a094e70be2fccca7b3b87bf6729fd16d711c67e3c717e0f9936"
+    },
+    {
+      "object": "_choose_power_w",
+      "category": "function",
+      "old": "four_color.py",
+      "new": "src/satellite_rl/baselines/four_color.py",
+      "passed": true,
+      "normalized_ast_sha256": "42f83e581a0d7712211629fe3e373e2c4bc13cf607fb5bb5a258e643d2b87d32"
+    },
+    {
+      "object": "four_color_policy",
+      "category": "function",
+      "old": "four_color.py",
+      "new": "src/satellite_rl/baselines/four_color.py",
+      "passed": true,
+      "normalized_ast_sha256": "89da9f83d40efb8ecc0f6e52c1b1fa8d3cfe5a8924cbc6893bda8ee598f1206e"
+    },
+    {
+      "object": "run_four_color",
+      "category": "function",
+      "old": "four_color.py",
+      "new": "src/satellite_rl/baselines/four_color.py",
+      "passed": true,
+      "normalized_ast_sha256": "7495262f5d841f5cc8862211fcc86f6e7e6abe62d6ba18f0d49eedae8f262da4"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "graph_coloring.py",
+      "new": "src/satellite_rl/baselines/graph_coloring.py",
+      "passed": true,
+      "normalized_ast_sha256": "6ac7ea22a0cdcb950c7fe063df397e88a2a3f351f079623e8689f6632aa3f4bd"
+    },
+    {
+      "object": "haversine_km",
+      "category": "function",
+      "old": "graph_coloring.py",
+      "new": "src/satellite_rl/baselines/graph_coloring.py",
+      "passed": true,
+      "normalized_ast_sha256": "1d37ccb943be463580379ede6efb917434d9ad7703d56a799465c30f19e5cc8c"
+    },
+    {
+      "object": "build_adjacency",
+      "category": "function",
+      "old": "graph_coloring.py",
+      "new": "src/satellite_rl/baselines/graph_coloring.py",
+      "passed": true,
+      "normalized_ast_sha256": "6144d8f57e62e6c63ff467f7b6f70b92044e1cce42209722cef282dcf19ff087"
+    },
+    {
+      "object": "graph_coloring_allocator_with_groups",
+      "category": "function",
+      "old": "graph_coloring.py",
+      "new": "src/satellite_rl/baselines/graph_coloring.py",
+      "passed": true,
+      "normalized_ast_sha256": "fffe1310192c184c33faf2c63fb425d7dd34b057c2a0ec0bde7e73b69e4a8ca2"
+    },
+    {
+      "object": "demand_to_power_w",
+      "category": "function",
+      "old": "graph_coloring.py",
+      "new": "src/satellite_rl/baselines/graph_coloring.py",
+      "passed": true,
+      "normalized_ast_sha256": "9f04fc1e66f0318caa55b9a84bf7e5bedebda8a1612c0b1e32d29646adfbf720"
+    },
+    {
+      "object": "run_graph_coloring",
+      "category": "function",
+      "old": "graph_coloring.py",
+      "new": "src/satellite_rl/baselines/graph_coloring.py",
+      "passed": true,
+      "normalized_ast_sha256": "7cfb44c4e7dec5e6e0d241c4a96e526f47ac16012183fa3f0caa269e697bc9a0"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "lagrange.py",
+      "new": "src/satellite_rl/baselines/lagrangian.py",
+      "passed": true,
+      "normalized_ast_sha256": "346ac81cdc12b5d3904ca0529cfad1397224b6541f6a06e2cd5fb08eb1d1d8ff"
+    },
+    {
+      "object": "lagrangian_relaxation",
+      "category": "function",
+      "old": "lagrange.py",
+      "new": "src/satellite_rl/baselines/lagrangian.py",
+      "passed": true,
+      "normalized_ast_sha256": "bcb2f5386ba44e40d1f93b9bdc911c2c29f05036481dd92120f8e987dbac4967"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "random_baseline.py",
+      "new": "src/satellite_rl/baselines/random_policy.py",
+      "passed": true,
+      "normalized_ast_sha256": "a85fed41b66616d49c7ce75a1a83f313415a1581fa716f1d28a403165a893bd8"
+    },
+    {
+      "object": "run_random_baseline",
+      "category": "function",
+      "old": "random_baseline.py",
+      "new": "src/satellite_rl/baselines/random_policy.py",
+      "passed": true,
+      "normalized_ast_sha256": "a2537029fd2c43d3edd5978a21d4248c3d1b79addb89fa2e4f869c0e3a36a95a"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "metrics_generate.py",
+      "new": "src/satellite_rl/evaluation/compare_metrics.py",
+      "passed": true,
+      "normalized_ast_sha256": "c3dee899192b5bad41a2487559577d22ca8a6fd54e2fda011863866a9cfeeeea"
+    },
+    {
+      "object": "fixed_policy",
+      "category": "function",
+      "old": "metrics_generate.py",
+      "new": "src/satellite_rl/evaluation/compare_metrics.py",
+      "passed": true,
+      "normalized_ast_sha256": "111448196fc5aac337e06042591b0177ea542a6be09dfc8dfec858ec36454d29"
+    },
+    {
+      "object": "greedy_policy",
+      "category": "function",
+      "old": "metrics_generate.py",
+      "new": "src/satellite_rl/evaluation/compare_metrics.py",
+      "passed": true,
+      "normalized_ast_sha256": "ce8a1c91235f92ba8841effb2c5a3665e7ab35182c58d26c91542614d71898c5"
+    },
+    {
+      "object": "load_actor_only",
+      "category": "function",
+      "old": "metrics_generate.py",
+      "new": "src/satellite_rl/evaluation/compare_metrics.py",
+      "passed": true,
+      "normalized_ast_sha256": "a71510aa9591c4b5608a43f936036e1361afd15674f6f2740d07747f71f131dc"
+    },
+    {
+      "object": "build_env_with_fixed_beams",
+      "category": "function",
+      "old": "metrics_generate.py",
+      "new": "src/satellite_rl/evaluation/compare_metrics.py",
+      "passed": true,
+      "normalized_ast_sha256": "fe5433f6bed690804c852c2f2d95dea39fbb51a7db5a6972c74609e4e2be7763"
+    },
+    {
+      "object": "to_env_action",
+      "category": "function",
+      "old": "metrics_generate.py",
+      "new": "src/satellite_rl/evaluation/compare_metrics.py",
+      "passed": true,
+      "normalized_ast_sha256": "b841e9551b02b58401099c9ab66d66cff614a330d0b65b0904ba8af75a2d0b62"
+    },
+    {
+      "object": "cinr_db_from_eta",
+      "category": "function",
+      "old": "metrics_generate.py",
+      "new": "src/satellite_rl/evaluation/compare_metrics.py",
+      "passed": true,
+      "normalized_ast_sha256": "150493bd3b8bafe43ce52c31cf34ae9df83d228278e1ac87160d5c433f93001c"
+    },
+    {
+      "object": "run_episode_per_beam",
+      "category": "function",
+      "old": "metrics_generate.py",
+      "new": "src/satellite_rl/evaluation/compare_metrics.py",
+      "passed": true,
+      "normalized_ast_sha256": "9d5a8498446f0437dec888afffed63240bb86a10a253cf8b28469611c506af03"
+    },
+    {
+      "object": "pad_fixed",
+      "category": "function",
+      "old": "metrics_generate.py",
+      "new": "src/satellite_rl/evaluation/compare_metrics.py",
+      "passed": true,
+      "normalized_ast_sha256": "64afeacb2631af81615e0faa28e6c66780ce11c8827afbf89195f05f3867ba85"
+    },
+    {
+      "object": "main",
+      "category": "function",
+      "old": "metrics_generate.py",
+      "new": "src/satellite_rl/evaluation/compare_metrics.py",
+      "passed": true,
+      "normalized_ast_sha256": "310817454d4c55b26567ef0c308b7f5358e7e1d3942660594397c680d13f1020"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "0622690d92cfdc930e828440b64abfdca1319e6c087984f7c3e01ddbb089d5c6"
+    },
+    {
+      "object": "fixed_policy",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "cfb041fb5fc270e2381b166e787d1698b004fbb1dfb2b776d8e91529bf510162"
+    },
+    {
+      "object": "greedy_policy",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "6346e63755fd825304894266699512da7fbc76366c26468bb25b61f0abeebc58"
+    },
+    {
+      "object": "load_actor_only",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "4a6ae20cfa0c31bf7e84c80d39c4961504e3582898d4d8f28dd215a4f5421e07"
+    },
+    {
+      "object": "to_env_action",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "b841e9551b02b58401099c9ab66d66cff614a330d0b65b0904ba8af75a2d0b62"
+    },
+    {
+      "object": "build_beams",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "6ca61ce87125a9f5042cadc3a6074f61c5a248acd4e298cafd0a1539a20c7f11"
+    },
+    {
+      "object": "apply_avg_demand",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "870e3145cbff67135a3361c0b8e2ed1931c40dbb2aeafd19e8d1e27badc14a80"
+    },
+    {
+      "object": "build_env_from_beams",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "96f111b004b50d4c353e469805e5a00d7a9af6bbe6abff0701acb3b4a48655f7"
+    },
+    {
+      "object": "run_episode_per_beam",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "66ed36c5539358dcfd13a11ab065091dc9931d870ceec67689288a7ddc333e9e"
+    },
+    {
+      "object": "plot_si_vs_demand",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "5764b9a1caf72598fbabcc84faee24c9a127edd60b35f4bfb0361b4fbfc49fbb"
+    },
+    {
+      "object": "save_curves_npz",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "6e5b4661b60dec4014cc8d435685d894e6b5d0e19a837b4dd52bcd58e86a259c"
+    },
+    {
+      "object": "main",
+      "category": "function",
+      "old": "demand.py",
+      "new": "src/satellite_rl/evaluation/demand_sweep.py",
+      "passed": true,
+      "normalized_ast_sha256": "46e2a1a359949204893640f73bb85897b61d20680fae42c2d98813d8e8b05fb9"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "plot_curve.py",
+      "new": "src/satellite_rl/evaluation/compare_beam_satisfaction.py",
+      "passed": true,
+      "normalized_ast_sha256": "76cce516150310d052b8dfa8df7483a1efd60bdc922dd90d9104d58ef18b8f54"
+    },
+    {
+      "object": "_as_triplet",
+      "category": "function",
+      "old": "plot_curve.py",
+      "new": "src/satellite_rl/evaluation/compare_beam_satisfaction.py",
+      "passed": true,
+      "normalized_ast_sha256": "d418e6a755f128601463bf624d99e6788f421518aecb6e668fd429165ca4d090"
+    },
+    {
+      "object": "to_env_action",
+      "category": "function",
+      "old": "plot_curve.py",
+      "new": "src/satellite_rl/evaluation/compare_beam_satisfaction.py",
+      "passed": true,
+      "normalized_ast_sha256": "7fd19ca358c6a4784e28303f2d48fb59c4e7eeb7563883b93748684fbc35611d"
+    },
+    {
+      "object": "greedy_policy",
+      "category": "function",
+      "old": "plot_curve.py",
+      "new": "src/satellite_rl/evaluation/compare_beam_satisfaction.py",
+      "passed": true,
+      "normalized_ast_sha256": "dc3b5cec31bff96c5c167bd13cc1656fd7b9713401845f518c923e047c37cee2"
+    },
+    {
+      "object": "fixed_policy",
+      "category": "function",
+      "old": "plot_curve.py",
+      "new": "src/satellite_rl/evaluation/compare_beam_satisfaction.py",
+      "passed": true,
+      "normalized_ast_sha256": "0306cf8d51559c67f34fd2d5c28a3603e8d97bbc6932f20c938a06057577c203"
+    },
+    {
+      "object": "eval_once",
+      "category": "function",
+      "old": "plot_curve.py",
+      "new": "src/satellite_rl/evaluation/compare_beam_satisfaction.py",
+      "passed": true,
+      "normalized_ast_sha256": "cb0ca55395495e67bbfe364aa697fdc1cbc2fa66e37caeb8666bf9ebf7644bbf"
+    },
+    {
+      "object": "entire_original_plotting_body",
+      "category": "plotting_body",
+      "old": "bar.py",
+      "new": "src/satellite_rl/plotting/plot_rate_comparison.py",
+      "passed": true,
+      "normalized_ast_sha256": "953d64411cccfe5383c6a3c8b288e26f684c8da4d16a339feb8c03d9f1efad1a"
+    },
+    {
+      "object": "imports",
+      "category": "dependency_structure",
+      "old": "bar.py",
+      "new": "src/satellite_rl/plotting/plot_rate_comparison.py",
+      "passed": true,
+      "normalized_ast_sha256": "0354adcb5edd6e49a5da74afbb1ce027324d6c4aa8a399a9c3c4d065a5979036"
+    },
+    {
+      "object": "main_guard",
+      "category": "entry_guard",
+      "old": "bar.py",
+      "new": "src/satellite_rl/plotting/plot_rate_comparison.py",
+      "passed": true,
+      "normalized_ast_sha256": "f8b4b40a3ea944a1ec6f580e3ff79a178d83b10152621a508ff867c5dd62aa15"
+    },
+    {
+      "object": "entire_original_plotting_body",
+      "category": "plotting_body",
+      "old": "plot_demand.py",
+      "new": "src/satellite_rl/plotting/plot_demand_satisfaction.py",
+      "passed": true,
+      "normalized_ast_sha256": "1d0f8f42990d309d2885db7244f044fec4862819767c0d7aed7a45f1983c075f"
+    },
+    {
+      "object": "imports",
+      "category": "dependency_structure",
+      "old": "plot_demand.py",
+      "new": "src/satellite_rl/plotting/plot_demand_satisfaction.py",
+      "passed": true,
+      "normalized_ast_sha256": "bff4c0873a9923177a31ad9bfa475535d85758677a02e935c468e3ecb99d43d1"
+    },
+    {
+      "object": "main_guard",
+      "category": "entry_guard",
+      "old": "plot_demand.py",
+      "new": "src/satellite_rl/plotting/plot_demand_satisfaction.py",
+      "passed": true,
+      "normalized_ast_sha256": "f8b4b40a3ea944a1ec6f580e3ff79a178d83b10152621a508ff867c5dd62aa15"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "cnn.py",
+      "new": "examples/graph_coloring_draft.py",
+      "passed": true,
+      "normalized_ast_sha256": "c1d662f2f0ba4713ae42f805c73f56eda7c4a599d66f7b485babea4e4927bf50"
+    },
+    {
+      "object": "graph_coloring_allocator",
+      "category": "function",
+      "old": "cnn.py",
+      "new": "examples/graph_coloring_draft.py",
+      "passed": true,
+      "normalized_ast_sha256": "c6d5fa443bdbff55dab27e674e7af326216cade58102cf8227d69e5d1bc09bd2"
+    },
+    {
+      "object": "complete_module",
+      "category": "module",
+      "old": "test.py",
+      "new": "examples/numpy_random_state_demo.py",
+      "passed": true,
+      "normalized_ast_sha256": "f1e6e6d92cb3a91a3bc9a189665de82bc76ce31889eb69f348d6478907233894"
+    }
+  ]
+}

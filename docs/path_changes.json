@@ -1,0 +1,114 @@
+[
+  {
+    "file": "src/satellite_rl/agents/dqn.py",
+    "path_references": 0
+  },
+  {
+    "file": "src/satellite_rl/agents/ppo_direct.py",
+    "path_references": 1
+  },
+  {
+    "file": "src/satellite_rl/agents/ppo_grouped.py",
+    "path_references": 1
+  },
+  {
+    "file": "src/satellite_rl/agents/sac_cnn.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/agents/sac_mlp.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/agents/sac_transformer.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/baselines/fixed.py",
+    "path_references": 5
+  },
+  {
+    "file": "src/satellite_rl/baselines/four_color.py",
+    "path_references": 6
+  },
+  {
+    "file": "src/satellite_rl/baselines/graph_coloring.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/baselines/greedy.py",
+    "path_references": 5
+  },
+  {
+    "file": "src/satellite_rl/baselines/lagrangian.py",
+    "path_references": 0
+  },
+  {
+    "file": "src/satellite_rl/baselines/random_policy.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/envs/satellite.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/envs/satellite_variant_103.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/evaluation/compare_beam_satisfaction.py",
+    "path_references": 9
+  },
+  {
+    "file": "src/satellite_rl/evaluation/compare_metrics.py",
+    "path_references": 20
+  },
+  {
+    "file": "src/satellite_rl/evaluation/demand_sweep.py",
+    "path_references": 8
+  },
+  {
+    "file": "src/satellite_rl/plotting/plot_demand_satisfaction.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/plotting/plot_rate_comparison.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/training/ppo_direct_utils.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/training/ppo_grouped_utils.py",
+    "path_references": 2
+  },
+  {
+    "file": "src/satellite_rl/training/sac_runner.py",
+    "path_references": 4
+  },
+  {
+    "file": "src/satellite_rl/training/train_dqn.py",
+    "path_references": 9
+  },
+  {
+    "file": "src/satellite_rl/training/train_ppo_direct.py",
+    "path_references": 3
+  },
+  {
+    "file": "src/satellite_rl/training/train_ppo_grouped.py",
+    "path_references": 3
+  },
+  {
+    "file": "src/satellite_rl/training/train_sac_cnn.py",
+    "path_references": 0
+  },
+  {
+    "file": "src/satellite_rl/training/train_sac_mlp.py",
+    "path_references": 0
+  },
+  {
+    "file": "src/satellite_rl/training/train_sac_transformer.py",
+    "path_references": 0
+  }
+]

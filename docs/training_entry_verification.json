@@ -1,0 +1,245 @@
+{
+  "scope": "One real episode through each migrated training entry; no production files modified.",
+  "seed": 20260924,
+  "device": "cpu",
+  "torch_num_threads": 1,
+  "matplotlib_backend": "agg",
+  "isolation_root": "D:\\paper_migration_work_20260924\\training_entries",
+  "test_only_overrides": [
+    "SAC: compile original run_training function with only num_epochs changed from 4000 to 1; then run actual entry module via runpy.",
+    "PPO: compile actual entry module with only num_episodes changed from 4000 to 1 and execute its __main__ guard.",
+    "DQN: temporarily set imported agents.dqn.EPISODES to 1; run actual entry via runpy; retain original EPS_DECAY."
+  ],
+  "limitations": [
+    "One episode is an integration smoke test, not a convergence or full training assessment.",
+    "SAC retains min_size=2000 so its optimizer is not reached in one episode; separate runtime_verification.json covers actual updates.",
+    "DQN retains BATCH_SIZE=256 so its optimizer is not reached in one 100-step episode; separate runtime verification covers actual updates.",
+    "The existing SAC save_model critic_1 and critic_2 filename collision is preserved: one critic file overwrites the other.",
+    "All production learning rates, model dimensions, action transformations, logger behavior, and save logic are unchanged."
+  ],
+  "entries": [
+    {
+      "algorithm": "sac_transformer",
+      "module": "satellite_rl.training.train_sac_transformer",
+      "warnings": [
+        "FigureCanvasAgg is non-interactive, and thus cannot be shown",
+        "enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)"
+      ],
+      "status": "passed",
+      "csv_logs": [
+        {
+          "file": "outputs\\logs\\sac_transformer\\sac_transformer_log_202609240142.csv",
+          "data_rows": 100
+        }
+      ],
+      "png_count": 2,
+      "metrics": {
+        "returns": [
+          -86.7645768399875
+        ],
+        "satisfactions": [
+          50.57926847856142
+        ]
+      },
+      "model_file_count": 5,
+      "all_model_files_reloadable": true,
+      "files": [
+        "models\\runs\\sac_transformer\\sac_transformer_actor_202609240142.pth",
+        "models\\runs\\sac_transformer\\sac_transformer_critic_1_202609240142.pth",
+        "models\\runs\\sac_transformer\\sac_transformer_full_model_202609240142.pth",
+        "models\\runs\\sac_transformer\\sac_transformer_target_critic_1_202609240142.pth",
+        "models\\runs\\sac_transformer\\sac_transformer_target_critic_2_202609240142.pth",
+        "outputs\\figures\\sac\\reward_group_202609240142.png",
+        "outputs\\figures\\sac\\satisfaction_group_202609240142.png",
+        "outputs\\logs\\sac_transformer\\sac_transformer_log_202609240142.csv",
+        "outputs\\metrics\\sac\\metrics_202609240142.npz"
+      ],
+      "captured_stdout_stderr": "cpu\noverload\nEpisode 0, Reward: -86.76, Satisfaction: 50.58, util337,occupy161,interfere46,inrange7\nTraining completed at 202609240142\nSaved metrics to sac_data/metrics_202609240142.npz\nModels saved to D:\\paper_migration_work_20260924\\training_entries\\sac_transformer\\models\\runs\\sac_transformer with timestamp 202609240142\n",
+      "elapsed_seconds": 1.884
+    },
+    {
+      "algorithm": "sac_cnn",
+      "module": "satellite_rl.training.train_sac_cnn",
+      "warnings": [
+        "FigureCanvasAgg is non-interactive, and thus cannot be shown"
+      ],
+      "status": "passed",
+      "csv_logs": [
+        {
+          "file": "outputs\\logs\\sac_cnn\\sac_cnn_full_log_202609240142.csv",
+          "data_rows": 100
+        }
+      ],
+      "png_count": 2,
+      "metrics": {
+        "returns": [
+          -80.87553991333131
+        ],
+        "satisfactions": [
+          54.20327490320078
+        ]
+      },
+      "model_file_count": 5,
+      "all_model_files_reloadable": true,
+      "files": [
+        "models\\runs\\sac_cnn\\sac_cnn_actor_202609240142.pth",
+        "models\\runs\\sac_cnn\\sac_cnn_critic_1_202609240142.pth",
+        "models\\runs\\sac_cnn\\sac_cnn_full_model_202609240142.pth",
+        "models\\runs\\sac_cnn\\sac_cnn_target_critic_1_202609240142.pth",
+        "models\\runs\\sac_cnn\\sac_cnn_target_critic_2_202609240142.pth",
+        "outputs\\figures\\sac\\reward_group_202609240142.png",
+        "outputs\\figures\\sac\\satisfaction_group_202609240142.png",
+        "outputs\\logs\\sac_cnn\\sac_cnn_full_log_202609240142.csv",
+        "outputs\\metrics\\sac\\metrics_202609240142.npz"
+      ],
+      "captured_stdout_stderr": "cpu\nEpisode 0, Reward: -80.88, Satisfaction: 54.20, util350,occupy169,interfere49,inrange4\nTraining completed at 202609240142\nSaved metrics to sac_data/metrics_202609240142.npz\nModels saved to D:\\paper_migration_work_20260924\\training_entries\\sac_cnn\\models\\runs\\sac_cnn with timestamp 202609240142\n",
+      "elapsed_seconds": 0.888
+    },
+    {
+      "algorithm": "sac_mlp",
+      "module": "satellite_rl.training.train_sac_mlp",
+      "warnings": [
+        "FigureCanvasAgg is non-interactive, and thus cannot be shown"
+      ],
+      "status": "passed",
+      "csv_logs": [
+        {
+          "file": "outputs\\logs\\sac_mlp\\sac_fc_full_log_202609240142.csv",
+          "data_rows": 100
+        }
+      ],
+      "png_count": 2,
+      "metrics": {
+        "returns": [
+          -107.16482350285187
+        ],
+        "satisfactions": [
+          46.02017137338117
+        ]
+      },
+      "model_file_count": 5,
+      "all_model_files_reloadable": true,
+      "files": [
+        "models\\runs\\sac_mlp\\sac_fc_actor_202609240142.pth",
+        "models\\runs\\sac_mlp\\sac_fc_critic_1_202609240142.pth",
+        "models\\runs\\sac_mlp\\sac_fc_full_model_202609240142.pth",
+        "models\\runs\\sac_mlp\\sac_fc_target_critic_1_202609240142.pth",
+        "models\\runs\\sac_mlp\\sac_fc_target_critic_2_202609240142.pth",
+        "outputs\\figures\\sac\\reward_group_202609240142.png",
+        "outputs\\figures\\sac\\satisfaction_group_202609240142.png",
+        "outputs\\logs\\sac_mlp\\sac_fc_full_log_202609240142.csv",
+        "outputs\\metrics\\sac\\metrics_202609240142.npz"
+      ],
+      "captured_stdout_stderr": "cpu\noverload\nEpisode 0, Reward: -107.16, Satisfaction: 46.02, util328,occupy220,interfere43,inrange9\nTraining completed at 202609240142\nSaved metrics to sac_data/metrics_202609240142.npz\nModels saved to D:\\paper_migration_work_20260924\\training_entries\\sac_mlp\\models\\runs\\sac_mlp with timestamp 202609240142\n",
+      "elapsed_seconds": 0.761
+    },
+    {
+      "algorithm": "ppo_grouped",
+      "module": "satellite_rl.training.train_ppo_grouped",
+      "warnings": [
+        "FigureCanvasAgg is non-interactive, and thus cannot be shown"
+      ],
+      "status": "passed",
+      "csv_logs": [
+        {
+          "file": "outputs\\logs\\ppo\\ppo_log_202609240142.csv",
+          "data_rows": 100
+        }
+      ],
+      "png_count": 2,
+      "metrics": {
+        "returns": [
+          -45.03830179387368
+        ],
+        "satisfactions": [
+          68.85425598231285
+        ]
+      },
+      "model_file_count": 3,
+      "all_model_files_reloadable": true,
+      "files": [
+        "models\\runs\\ppo\\full_group_model_202609240142.pth",
+        "models\\runs\\ppo\\ppo_group_actor_202609240142.pth",
+        "models\\runs\\ppo\\ppo_group_critic_202609240142.pth",
+        "outputs\\figures\\ppo\\reward_group_202609240142.png",
+        "outputs\\figures\\ppo\\satisfaction_group_202609240142.png",
+        "outputs\\logs\\ppo\\ppo_log_202609240142.csv",
+        "outputs\\metrics\\ppo\\metrics_202609240142.npz"
+      ],
+      "captured_stdout_stderr": "cpu\nEpisode 0, Reward: -45.04, Satisfaction: 68.85, actor_loss-0.018517620861530304, critic_loss1.1373488903045654,util477,occupy23,interfere74,inrange16\nTraining completed!\nModels saved to D:\\paper_migration_work_20260924\\training_entries\\ppo_grouped\\models\\runs\\ppo with timestamp 202609240142\nSaved metrics to PPO_data/metrics_202609240142.npz\n",
+      "elapsed_seconds": 0.847
+    },
+    {
+      "algorithm": "ppo_direct",
+      "module": "satellite_rl.training.train_ppo_direct",
+      "warnings": [
+        "FigureCanvasAgg is non-interactive, and thus cannot be shown"
+      ],
+      "status": "passed",
+      "csv_logs": [
+        {
+          "file": "outputs\\logs\\ppo\\ppo_log_202609240142.csv",
+          "data_rows": 100
+        }
+      ],
+      "png_count": 2,
+      "metrics": {
+        "returns": [
+          -87.75454279862105
+        ],
+        "satisfactions": [
+          51.65343879362011
+        ]
+      },
+      "model_file_count": 3,
+      "all_model_files_reloadable": true,
+      "files": [
+        "models\\runs\\ppo\\full_group_model_202609240142.pth",
+        "models\\runs\\ppo\\ppo_group_actor_202609240142.pth",
+        "models\\runs\\ppo\\ppo_group_critic_202609240142.pth",
+        "outputs\\figures\\ppo\\reward_group_202609240142.png",
+        "outputs\\figures\\ppo\\satisfaction_group_202609240142.png",
+        "outputs\\logs\\ppo\\ppo_log_202609240142.csv",
+        "outputs\\metrics\\ppo\\metrics_202609240142.npz"
+      ],
+      "captured_stdout_stderr": "cpu\nEpisode 0, Reward: -87.75, Satisfaction: 51.65, actor_loss-0.020673613995313644, critic_loss1.7346986532211304,util362,occupy175,interfere55,inrange5\nTraining completed!\nModels saved to D:\\paper_migration_work_20260924\\training_entries\\ppo_direct\\models\\runs\\ppo with timestamp 202609240142\nSaved metrics to PPO_data/metrics_202609240142.npz\n",
+      "elapsed_seconds": 0.803
+    },
+    {
+      "algorithm": "dqn",
+      "module": "satellite_rl.training.train_dqn",
+      "warnings": [
+        "FigureCanvasAgg is non-interactive, and thus cannot be shown"
+      ],
+      "status": "passed",
+      "csv_logs": [
+        {
+          "file": "outputs\\logs\\dqn\\dqn_log_20260924014241.csv",
+          "data_rows": 100
+        }
+      ],
+      "png_count": 2,
+      "metrics": {
+        "returns": [
+          -82.6205923674854
+        ],
+        "satisfactions": [
+          57.529695601874295
+        ]
+      },
+      "model_file_count": 2,
+      "all_model_files_reloadable": true,
+      "files": [
+        "models\\runs\\dqn\\dqn_online.pth",
+        "models\\runs\\dqn\\dqn_target.pth",
+        "outputs\\figures\\dqn\\reward_202609240142.png",
+        "outputs\\figures\\dqn\\sat_202609240142.png",
+        "outputs\\logs\\dqn\\dqn_log_20260924014241.csv",
+        "outputs\\metrics\\dqn\\metrics_202609240142.npz"
+      ],
+      "captured_stdout_stderr": "Ep   0 R: -82.62 Sat: 57.53 ε:1.000 Buf:  100 Loss:0.0000\nSaved metrics to DQN_full_data/metrics_202609240142.npz\n",
+      "elapsed_seconds": 0.715
+    }
+  ],
+  "all_passed": true
+}

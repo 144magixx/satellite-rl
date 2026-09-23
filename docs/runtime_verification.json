@@ -1,0 +1,191 @@
+{
+  "scope": "Migration runtime verification only; production algorithms and environments are not edited.",
+  "backup_root": "D:\\paper_backup_20260924_013532",
+  "project_root": "D:\\paper",
+  "isolation_root": "D:\\paper_migration_work_20260924\\runtime",
+  "versions": {
+    "python": "3.11.7 | packaged by Anaconda, Inc. | (main, Dec 15 2023, 18:05:47) [MSC v.1916 64 bit (AMD64)]",
+    "numpy": "1.26.4",
+    "torch": "2.3.1+cpu"
+  },
+  "seed": 20260924,
+  "environment_comparisons": [
+    {
+      "original": "Environment_sac_p.py",
+      "migrated": "satellite_rl.envs.satellite",
+      "policy_power_watts": 5,
+      "status": "passed",
+      "comparison": "Exact state/reward/done/info equality at reset and every step.",
+      "steps": 100,
+      "state_shape": [
+        204
+      ],
+      "all_states_finite": true,
+      "all_rewards_finite": true,
+      "total_reward": -69.16675045754144
+    },
+    {
+      "original": "Environment_sac_p.py",
+      "migrated": "satellite_rl.envs.satellite",
+      "policy_power_watts": 50,
+      "status": "passed",
+      "comparison": "Exact state/reward/done/info equality at reset and every step.",
+      "steps": 61,
+      "state_shape": [
+        204
+      ],
+      "all_states_finite": true,
+      "all_rewards_finite": true,
+      "total_reward": -5.333275976279653
+    },
+    {
+      "original": "Environment_103.py",
+      "migrated": "satellite_rl.envs.satellite_variant_103",
+      "policy_power_watts": 5,
+      "status": "passed",
+      "comparison": "Exact state/reward/done/info equality at reset and every step.",
+      "steps": 100,
+      "state_shape": [
+        204
+      ],
+      "all_states_finite": true,
+      "all_rewards_finite": true,
+      "total_reward": -67.50832246469213
+    },
+    {
+      "original": "Environment_103.py",
+      "migrated": "satellite_rl.envs.satellite_variant_103",
+      "policy_power_watts": 50,
+      "status": "passed",
+      "comparison": "Exact state/reward/done/info equality at reset and every step.",
+      "steps": 100,
+      "state_shape": [
+        204
+      ],
+      "all_states_finite": true,
+      "all_rewards_finite": true,
+      "total_reward": -32.28138800322759
+    }
+  ],
+  "algorithm_updates": [
+    {
+      "algorithm": "sac_transformer",
+      "original": "sac_full.py",
+      "migrated": "satellite_rl.agents.sac_transformer",
+      "status": "passed",
+      "comparison": "Exact equality of all model state tensors and alpha after one update.",
+      "device": "cpu",
+      "batch_size": 8,
+      "changed_parameter_tensors": 196,
+      "losses": null,
+      "all_updated_parameters_finite": true,
+      "warnings": [
+        "enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)"
+      ],
+      "captured_stdout": "",
+      "elapsed_seconds": 1.26
+    },
+    {
+      "algorithm": "sac_cnn",
+      "original": "sac_cnn_full.py",
+      "migrated": "satellite_rl.agents.sac_cnn",
+      "status": "passed",
+      "comparison": "Exact equality of all model state tensors and alpha after one update.",
+      "device": "cpu",
+      "batch_size": 8,
+      "changed_parameter_tensors": 71,
+      "losses": null,
+      "all_updated_parameters_finite": true,
+      "warnings": [],
+      "captured_stdout": "",
+      "elapsed_seconds": 0.14
+    },
+    {
+      "algorithm": "sac_mlp",
+      "original": "sac_fc_full.py",
+      "migrated": "satellite_rl.agents.sac_mlp",
+      "status": "passed",
+      "comparison": "Exact equality of all model state tensors and alpha after one update.",
+      "device": "cpu",
+      "batch_size": 8,
+      "changed_parameter_tensors": 41,
+      "losses": null,
+      "all_updated_parameters_finite": true,
+      "warnings": [],
+      "captured_stdout": "",
+      "elapsed_seconds": 0.027
+    },
+    {
+      "algorithm": "ppo_grouped",
+      "original": "PPO_103.py",
+      "migrated": "satellite_rl.agents.ppo_grouped",
+      "status": "passed",
+      "comparison": "Exact equality of all model state tensors and alpha after one update.",
+      "device": "cpu",
+      "batch_size": 8,
+      "changed_parameter_tensors": 16,
+      "losses": [
+        -0.06241333484649658,
+        0.1341874748468399
+      ],
+      "all_updated_parameters_finite": true,
+      "warnings": [],
+      "captured_stdout": "cpu\ncpu\n",
+      "elapsed_seconds": 0.054
+    },
+    {
+      "algorithm": "ppo_direct",
+      "original": "PPO_204.py",
+      "migrated": "satellite_rl.agents.ppo_direct",
+      "status": "passed",
+      "comparison": "Exact equality of all model state tensors and alpha after one update.",
+      "device": "cpu",
+      "batch_size": 8,
+      "changed_parameter_tensors": 16,
+      "losses": [
+        -0.061529114842414856,
+        0.09453930705785751
+      ],
+      "all_updated_parameters_finite": true,
+      "warnings": [],
+      "captured_stdout": "cpu\ncpu\n",
+      "elapsed_seconds": 0.054
+    },
+    {
+      "algorithm": "dqn",
+      "original": "DQN_full.py",
+      "migrated": "satellite_rl.agents.dqn",
+      "status": "passed",
+      "comparison": "Exact equality of all model state tensors and alpha after one update.",
+      "device": "cpu",
+      "batch_size": 256,
+      "changed_parameter_tensors": 20,
+      "losses": [
+        0.6864596605300903
+      ],
+      "all_updated_parameters_finite": true,
+      "warnings": [],
+      "captured_stdout": "",
+      "elapsed_seconds": 0.03
+    }
+  ],
+  "limitations": [
+    "No 4000-episode training entry point was run.",
+    "Optimizer checks use a synthetic legal batch: SAC/PPO size 8 and DQN its existing BATCH_SIZE 256.",
+    "No convergence, learning quality, GPU behavior, or performance claim is made.",
+    "Update checks do not exercise training-loop CSV log_step or model-save methods.",
+    "Environment comparisons use deterministic low-power and over-budget scripted policies, not learned policies."
+  ],
+  "all_passed": true,
+  "isolation_files": [
+    "cities_china.csv",
+    "migrated_outputs\\outputs\\logs\\ppo\\ppo_log_202609240140.csv",
+    "migrated_outputs\\outputs\\logs\\sac_cnn\\sac_cnn_full_log_202609240140.csv",
+    "migrated_outputs\\outputs\\logs\\sac_mlp\\sac_fc_full_log_202609240140.csv",
+    "migrated_outputs\\outputs\\logs\\sac_transformer\\sac_transformer_log_202609240140.csv",
+    "ppo_group_no_freq_by_self_log\\ppo_log_202609240140.csv",
+    "sac_cnn_full_log\\sac_cnn_full_log_202609240140.csv",
+    "sac_fc_full_log\\sac_fc_full_log_202609240140.csv",
+    "sac_transformer_log\\sac_transformer_log_202609240140.csv"
+  ]
+}
