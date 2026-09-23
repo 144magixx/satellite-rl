@@ -89,9 +89,9 @@ class AntennaPattern:
         if phi <= beamwidth / 2:
             return G_max - 3 * (phi / (beamwidth / 2)) ** 2
         else:
-            # 高斯衰减模型
-            gain_linear = np.exp(-(phi ** 2) / (2 * sigma ** 2)) * 10 ** (G_max / 10)
-            return 10 * np.log10(gain_linear + 1e-10)  # 避免log(0)
+            # 从半功率边界的 -3 dB 接续原高斯尾部的衰减斜率。
+            edge = beamwidth / 2
+            return G_max - 3 - 10 / np.log(10) * (phi ** 2 - edge ** 2) / (2 * sigma ** 2)
 
     def receiving_antenna_pattern(self, G_max, phi):
         """简化的接收天线方向图（与发射对称）"""
@@ -410,6 +410,7 @@ class Env:
         self.overload = False
         self.total_satisfaction = 0
         self.beam_info = beam_info.beam_info
+        self.beta = sum(self.beam_info['rate']) / self.beam_num
         self.current_beam_state.reset(self.beam_info)
         self.current_beam_state.update_state()
         state = self.get_combined_state(self.current_beam_state, self.satellite_freq_state)
@@ -499,6 +500,8 @@ class Env:
 
     def receiving_power(self, action):
         group, freq, slots, power = action
+        if slots <= 0:
+            return -np.inf  # 没有成功占用的频率槽时不辐射。
         # 获取当前波束的地理参数
         # beam_location = self.current_beam_state.beam_state['beam_location']
         f = 1.77e10 + (freq + slots / 2) * 2.5e7  # 当前波束频率中心点
@@ -520,7 +523,7 @@ class Env:
         path_loss_db = 10 * np.log10(path_loss)
 
         # 计算接收功率（dB）
-        P_rx = power + G_tx + G_rx - path_loss_db
+        P_rx = power - 10 * np.log10(slots) + G_tx + G_rx - path_loss_db
         return P_rx
 
     def interfere_beams(self, action):
@@ -582,14 +585,15 @@ class Env:
         for conflict_beam, conflict_group, conflict_slots in conflict_list:
             conflict_lat, conflict_lon = self.beam_info['beam_location'][conflict_beam]
             phi = self.calculate_beam_angle(beam_lat, beam_lon, conflict_lat, conflict_lon)
-            P_conflict = self.history_beam[conflict_beam][4]
-            G_conflict_tx_max = self.beam_info['beam_G_Tx_max'][conflict_beam]
+            conflict_slots_count = self.history_beam[conflict_beam][3]
+            P_conflict = self.history_beam[conflict_beam][4] - 10 * np.log10(conflict_slots_count)
+            G_conflict_tx_max = self.beam_info['beam_G_Tx_max'][conflict_beam][0]
             G_conflict_tx = self.antenna_pattern.transmitting_antenna_pattern(G_conflict_tx_max, phi)
-            G_conflict_rx_max = self.beam_info['UE_G_Rx_max'][conflict_beam]
+            G_conflict_rx_max = self.beam_info['UE_G_Rx_max'][self.beam_idx][0]
             G_conflict_rx = self.antenna_pattern.receiving_antenna_pattern(G_conflict_rx_max, 0)
             conflict_distance = self.beam_info['distances'][self.beam_idx] * 1000
             G_tx_max = self.beam_info['beam_G_Tx_max'][self.beam_idx][0]
-            G_rx_max = self.beam_info['UE_G_Rx_max'][self.beam_idx][0]
+            G_rx_max = self.beam_info['UE_G_Rx_max'][conflict_beam][0]
             G_to_conflict_tx = self.antenna_pattern.transmitting_antenna_pattern(G_tx_max, phi)
             G_to_conflict_rx = self.antenna_pattern.receiving_antenna_pattern(G_rx_max, 0)
             to_conflict_distance = self.beam_info['distances'][conflict_beam] * 1000
@@ -601,8 +605,9 @@ class Env:
                 to_conflict_path_loss = (4 * np.pi * to_conflict_distance / (
                     c / (1.77e10 + 2.5e7 * (slot + 0.5)))) ** 2
                 to_conflict_path_loss_db = 10 * np.log10(to_conflict_path_loss)
-                to_conflict_rx_power_db = power + G_to_conflict_tx + G_to_conflict_rx - to_conflict_path_loss_db
-                interference.append([self.beam_idx, group, conflict_rx_power_db.item(), conflict_beam,
+                to_conflict_rx_power_db = (power - 10 * np.log10(slots) + G_to_conflict_tx
+                                           + G_to_conflict_rx - to_conflict_path_loss_db)
+                interference.append([self.beam_idx, group, conflict_rx_power_db, conflict_beam,
                                      conflict_group, to_conflict_rx_power_db, slot])
         return interference, len(interference) > 0
 
@@ -664,8 +669,10 @@ class Env:
                 origin_cinr = 10 ** (origin_cinr_db / 10)  # 原cinr转换为线性值
                 conflict_beam_power = 10 ** (search_P_rx / 10)
                 # print(conflict_beam_power)
+                # 历史 CINR 已扣 5 dB；新增干扰也须换到相同的分母口径。
                 conflict_cinr = conflict_beam_power / (
-                        (1 / origin_cinr) * conflict_beam_power + 10 ** (to_conflict_rx_power_db / 10))
+                        (1 / origin_cinr) * conflict_beam_power
+                        + 10 ** ((to_conflict_rx_power_db + 5) / 10))
                 conflict_cinr_db = 10 * np.log10(conflict_cinr)
                 # print(f"origin{origin_cinr}conflict{conflict_cinr}")
                 self.history_cinr[i][2] = conflict_cinr_db
@@ -680,26 +687,24 @@ class Env:
     def _calc_group_slot_interference(self, group: int) -> np.ndarray:
         beam_lat, beam_lon = self.beam_info['beam_location'][self.beam_idx]
         P_slot = np.zeros(100, dtype=np.float64)
-        radius = self.beamwidth_to_ground_distance(bw) / 2
         d = self.beam_info['distances'][self.beam_idx] * 1e3
         G_rx = self.beam_info['UE_G_Rx_max'][self.beam_idx][0]
         path_cache = {}
         for hist_id, hist_g, hist_f, hist_slots, hist_PdB in self.history_beam:
-            if hist_g % 2 != group % 2:
+            if hist_g % 2 != group % 2 or hist_slots <= 0:
                 continue
             hist_lat, hist_lon = self.beam_info['beam_location'][hist_id]
             phi = self.calculate_beam_angle(beam_lat, beam_lon, hist_lat, hist_lon)
-            if phi > radius:
-                continue
             G_tx = self.antenna_pattern.transmitting_antenna_pattern(
-                self.beam_info['beam_G_Tx_max'][hist_id], phi)
+                self.beam_info['beam_G_Tx_max'][hist_id][0], phi)
+            P_tx_slot_db = hist_PdB - 10 * np.log10(hist_slots)
             for slot in range(hist_f, hist_f + hist_slots):
                 if 0 <= slot < 100:
                     if slot not in path_cache:
                         f_center = 1.77e10 + 2.5e7 * (slot + 0.5)
                         path_loss = (4 * np.pi * d * f_center / c) ** 2
                         path_cache[slot] = 10 * np.log10(path_loss)
-                    P_rx_db = hist_PdB + G_tx + G_rx - path_cache[slot]
+                    P_rx_db = P_tx_slot_db + G_tx + G_rx - path_cache[slot]
                     P_slot[slot] += 10 ** (P_rx_db / 10)
         return P_slot
     
