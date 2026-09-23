@@ -160,6 +160,23 @@ class ExperimentSuiteTests(unittest.TestCase):
             paired = summary["paired_corrected_minus_legacy"][model]["si_mean"]
             self.assertAlmostEqual(paired["mean"], 0.1)
             self.assertEqual(paired["improved_scenes_by_train_seed"], [2, 2, 2])
+        for job in self.plan["jobs"]:
+            job["state"] = "completed"
+        atomic_json(self.directory / "suite_plan.json", self.plan)
+        behavior = {f"{model}_{formula}": {
+            "requested_power_w": {20: 1}, "requested_slots": {2: 1},
+            "clipped_rate": 0.0}
+            for model in experiment_report.MODELS for formula in experiment_report.FORMULAS}
+        with mock.patch.object(experiment_report, "_load_run", side_effect=runs), \
+             mock.patch.object(experiment_report, "_behavior_from_traces",
+                               return_value=behavior), \
+             mock.patch.object(experiment_report, "_plot_curves", return_value=[]):
+            report_path = experiment_report.generate_report(self.directory)
+        report_text = report_path.read_text(encoding="utf-8")
+        self.assertIn("终态 SI", report_text)
+        self.assertIn("SGM", report_text)
+        self.assertIn("Transformer SAC", report_text)
+        self.assertIn("10.00", report_text)
 
 
 if __name__ == "__main__":
