@@ -216,7 +216,7 @@ def _put_immutable_json(path, data):
     atomic_json(path, data)
 
 
-def verify_cached_post_result(path, scene_refs):
+def verify_cached_post_result(path, scene_refs, *, expected_step=400000):
     """A cached JSON is valid only with all 60 original records and raw files."""
     path = Path(path)
     result = _load_json(path)
@@ -224,7 +224,7 @@ def verify_cached_post_result(path, scene_refs):
                 for scene_id in SCENE_IDS for action_seed in ACTION_SEEDS}
     rows = result.get("rows", [])
     observed = [(str(row["scene_id"]), str(row["action_seed"])) for row in rows]
-    if (result.get("checkpoint") != "final_test" or result.get("env_step") != 400000
+    if (result.get("checkpoint") != "final_test" or result.get("env_step") != expected_step
             or result.get("include_argmax") is not False
             or result.get("action_seeds") != list(ACTION_SEEDS)
             or result.get("scene_references") != scene_refs
@@ -308,12 +308,14 @@ def load_final_agent(job, final, device):
     return agent
 
 
-def _task_config(kind, label, run_id, actor_path, scene_refs, provenance, *, old_env_sha=None):
+def _task_config(kind, label, run_id, actor_path, scene_refs, provenance, *,
+                 old_env_sha=None, training_steps=400000):
     return {
         "kind": kind, "label": label, "run_id": run_id,
         "training_commit": TRAIN_COMMIT, "post_commit": provenance["post_commit"],
         "matched_source_sha256": provenance["matched_file_sha256"],
         "actor_path": str(actor_path), "actor_sha256": runner.sha256_file(actor_path),
+        "weight_training_steps": training_steps,
         "scene_sha256": {key: value["sha256"] for key, value in scene_refs.items()},
         "scene_ids": list(SCENE_IDS), "action_seeds": list(ACTION_SEEDS),
         "old_environment_sha256": old_env_sha,
@@ -321,7 +323,7 @@ def _task_config(kind, label, run_id, actor_path, scene_refs, provenance, *, old
 
 
 def _run_evaluation_task(task_dir, task_id, config, agent, scene_refs,
-                         *, environment_module=None):
+                         *, environment_module=None, step=400000):
     """A completed matching result is immutable; failed work resumes in place."""
     task_dir = Path(task_dir)
     manifest_path = task_dir / "manifest.json"
@@ -344,15 +346,15 @@ def _run_evaluation_task(task_dir, task_id, config, agent, scene_refs,
             runner._new_environment = old_factory
         monitor.write_status(stage="evaluating", scene_count=20,
                              action_seeds=list(ACTION_SEEDS), source_commit=TRAIN_COMMIT)
-        cached = task_dir / "evaluation" / "final_test_400000.json"
+        cached = task_dir / "evaluation" / f"final_test_{step}.json"
         if cached.exists():
-            verify_cached_post_result(cached, scene_refs)
+            verify_cached_post_result(cached, scene_refs, expected_step=step)
         result = runner.evaluate(
-            agent, scene_refs, ACTION_SEEDS, "final_test", 400000, monitor,
+            agent, scene_refs, ACTION_SEEDS, "final_test", step, monitor,
             task_dir / "evaluation", include_argmax=False,
         )
         monitor.write_status(stage="completed", result_path=str(
-            task_dir / "evaluation" / "final_test_400000.json"),
+            task_dir / "evaluation" / f"final_test_{step}.json"),
             sampled_si_mean=result["si_mean"], completed_at=utc_now())
         return result
     except Exception as error:
@@ -441,6 +443,7 @@ def run_environment_pair(archive_root, frozen_root):
         "old_environment_commit": OLD_ENV_COMMIT,
         "old_environment_source": str(old_source), "old_environment_sha256": old_sha,
         "old_actor": str(old_actor_path), "old_actor_sha256": runner.sha256_file(old_actor_path),
+        "old_actor_training_steps": "unknown",
         "scenes": references, "action_seeds": list(ACTION_SEEDS), "runtime": runtime,
         "interpretation": "旧错误环境仅说明计算变化及旧策略适应，不参与新环境模型排名",
     })
@@ -448,9 +451,11 @@ def run_environment_pair(archive_root, frozen_root):
         task_dir = post_root / "environment_comparison" / label
         config = _task_config("environment", label, "pretrained_transformer",
                               old_actor_path, references, provenance,
-                              old_env_sha=old_sha if environment is not None else None)
+                              old_env_sha=old_sha if environment is not None else None,
+                              training_steps="unknown")
         _run_evaluation_task(task_dir, "pretrained_transformer_" + label,
-                             config, agent, references, environment_module=environment)
+                             config, agent, references, environment_module=environment,
+                             step="unknown")
 
 
 TIMING_BEAM_INDICES = (0, 25, 50, 75)

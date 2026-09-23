@@ -1,6 +1,7 @@
 """CPU-only checks for the frozen 18-run post-training protocol."""
 
 import json
+import csv
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,6 +17,7 @@ from satellite_rl.evaluation.post_training_checks import (
     make_timing_states, require_completed, transform_scene, verify_cached_post_result,
 )
 from satellite_rl.training import experiment_runner as runner
+from satellite_rl.training.run_monitor import RunMonitor
 
 
 class PostTrainingChecksTests(unittest.TestCase):
@@ -116,6 +118,11 @@ class PostTrainingChecksTests(unittest.TestCase):
         path = self.root / "final_test_400000.json"
         path.write_text(json.dumps(result), encoding="utf-8")
         self.assertEqual(len(verify_cached_post_result(path, refs)["rows"]), 60)
+        result["env_step"] = "unknown"
+        path.write_text(json.dumps(result), encoding="utf-8")
+        self.assertEqual(len(verify_cached_post_result(
+            path, refs, expected_step="unknown")["rows"]), 60)
+        result["env_step"] = 400000
         result["rows"][-1] = rows[0]
         path.write_text(json.dumps(result), encoding="utf-8")
         with self.assertRaisesRegex(RuntimeError, "不完整"):
@@ -126,6 +133,19 @@ class PostTrainingChecksTests(unittest.TestCase):
         trace.write_bytes(b"changed trace")
         with self.assertRaisesRegex(RuntimeError, "校验失败"):
             verify_cached_post_result(path, refs)
+
+    def test_unknown_historical_step_deduplicates_on_resume(self):
+        directory = self.root / "historical"
+        row = {"checkpoint": "final_test", "env_step": "unknown",
+               "scene_id": "81000", "action_mode": "sample", "action_seed": 91001}
+        first = RunMonitor(directory, "historical")
+        first.row("evaluations", row)
+        first.close()
+        resumed = RunMonitor(directory, "historical", resume=True)
+        resumed.row("evaluations", row)
+        resumed.close()
+        with (directory / "evaluations.csv").open(newline="", encoding="utf-8") as stream:
+            self.assertEqual(len(list(csv.DictReader(stream))), 1)
 
     def test_failure_records_are_unique_and_latest_is_only_an_index(self):
         paths = []
