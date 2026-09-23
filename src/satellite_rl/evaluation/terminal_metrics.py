@@ -30,15 +30,21 @@ def terminal_metrics(env):
     total = len(arrays['required_bps'])
     history = env.history_beam
     served = len(env.beam_bps)
+    allocated_slots = int(np.count_nonzero(env.satellite_freq_state.freq_pool_real))
+    throughput = float(arrays['rates_bps'].sum())
     return dict(
         si_sum=float(arrays['satisfaction'].sum()),
         si_mean=float(arrays['satisfaction'].mean()),
         sgm_mean=float(arrays['sgm'].mean()),
-        throughput_bps=float(arrays['rates_bps'].sum()),
+        throughput_bps=throughput,
         total_power_w=float(env.total_power),
         served_beams=served, total_beams=total,
         power_exceeded=bool(env.overload), completed=served == total,
         occupancy_fraction=float(np.count_nonzero(env.satellite_freq_state.freq_pool_real)
                                  / env.satellite_freq_state.freq_pool_real.size),
         zero_slot_rate=float(sum(row[3] == 0 for row in history) / len(history)) if history else 0.0,
+        allocated_slots=allocated_slots,
+        spectral_efficiency=throughput / (allocated_slots * 2.5e7) if allocated_slots else 0.0,
+        interference_beams=int(getattr(env, 'interfere_num', 0)),
+        in_range_interference_beams=int(getattr(env, 'interfere_in_range_num', 0)),
     )
