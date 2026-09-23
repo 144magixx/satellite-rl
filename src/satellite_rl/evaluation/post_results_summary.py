@@ -32,12 +32,26 @@ def _hash_into(record, path):
 
 
 def _sample_rows(result):
-    rows = [row for row in result["rows"] if row.get("action_mode") == "sample"]
+    rows = result["rows"]
+    if len(rows) != 60 or any(row.get("action_mode") != "sample" for row in rows):
+        raise RuntimeError("补充评价必须恰好保存20场景×3采样动作")
     expected = {(str(scene), str(seed)) for scene in SCENE_IDS for seed in ACTION_SEEDS}
     keys = [(str(row["scene_id"]), str(row["action_seed"])) for row in rows]
     if len(keys) != 60 or set(keys) != expected:
         raise RuntimeError("预定20场景×3动作种子的采样结果不完整或重复")
     return {key: row for key, row in zip(keys, rows)}
+
+
+def _original_sample_rows(result):
+    """Select the predeclared first 20 scenes from a complete 100-scene test."""
+    sampled = [row for row in result["rows"] if row.get("action_mode") == "sample"]
+    expected = {(str(scene), str(seed))
+                for scene in range(81000, 81100) for seed in ACTION_SEEDS}
+    keys = [(str(row["scene_id"]), str(row["action_seed"])) for row in sampled]
+    if len(keys) != 300 or set(keys) != expected:
+        raise RuntimeError("原条件正式考核缺少100场景×3采样动作")
+    selected = [row for row in sampled if int(row["scene_id"]) in SCENE_IDS]
+    return _sample_rows({"rows": selected})
 
 
 def paired_means(original, changed):
@@ -47,6 +61,22 @@ def paired_means(original, changed):
     return {field: statistics.mean(float(changed[key][field]) - float(original[key][field])
                                    for key in sorted(original))
             for field in FIELDS}
+
+
+def _std_across_scene_means(paired_trials):
+    scenes = defaultdict(dict)
+    for row in paired_trials:
+        scene, seed = str(row["scene_id"]), str(row["action_seed"])
+        if seed in scenes[scene]:
+            raise RuntimeError("历史环境对照中同一场景动作种子重复")
+        scenes[scene][seed] = row
+    if (set(scenes) != {str(scene) for scene in SCENE_IDS} or
+            any(set(rows) != {str(seed) for seed in ACTION_SEEDS}
+                for rows in scenes.values())):
+        raise RuntimeError("历史环境对照缺少20场景×3动作种子")
+    return {field: statistics.stdev(
+        statistics.mean(float(scenes[scene][str(seed)][field]) for seed in ACTION_SEEDS)
+        for scene in sorted(scenes)) for field in FIELDS}
 
 
 def summarize_three_seeds(rows):
@@ -76,7 +106,7 @@ def _read_condition_results(exp_dir, post_root, plan, final, eval_commit, hashes
     originals = {}
     for job in plan["jobs"]:
         result_path = Path(final[job["run_id"]]["original_test"])
-        originals[job["run_id"]] = _sample_rows(_load_json(result_path))
+        originals[job["run_id"]] = _original_sample_rows(_load_json(result_path))
         _hash_into(hashes, result_path)
     by_seed = []
     for condition in CONDITIONS:
@@ -177,8 +207,7 @@ def _read_environment_pair(post_root, plan, eval_commit, hashes):
             "paired_scenes": 20, "action_seeds_per_scene": 3,
             "difference_definition": "corrected_environment_minus_old_environment",
             "mean_differences": differences,
-            "std_across_60_paired_evaluations": {
-                field: statistics.stdev(row[field] for row in per_trial) for field in FIELDS},
+            "std_across_20_scene_means": _std_across_scene_means(per_trial),
             "old_actor_sha256": source["old_actor_sha256"],
             "old_environment_sha256": source["old_environment_sha256"],
             "paired_trials": per_trial}
@@ -351,8 +380,8 @@ def generate_summary(archive_root, frozen_root, output_directory=None):
         _show(environment["mean_differences"]["completed"], 100),
     )) + " |")
     lines += ["", "60项逐场景/动作差值保存在 `historical_environment_trials.csv`；"
-              "它们是20个场景各重复3个动作种子，并非60个独立场景。"
-              "跨样本波动在 `summary_data.json`，不能当作训练种子间波动。", "",
+              "每场景先平均三个动作种子，再计算20个场景均值之间的标准差（见 `summary_data.json`）。"
+              "这是单个旧权重的场景差异，不是训练种子间波动。", "",
               "## 统一 CUDA 单次决策计时", "",
               _timing_table(timing), "",
               "纯前向从已驻留GPU的单状态张量到 Actor 输出；完整决策从主机状态到动作返回。"
