@@ -206,7 +206,9 @@ class ExperimentRunnerTests(unittest.TestCase):
             beam_idx = 0
 
             def step(self, action):
-                return None, 0.0, True, {"out": 0, "occupy": 0}
+                reward = (1.25, -0.375)[self.beam_idx]
+                self.beam_idx += 1
+                return None, reward, self.beam_idx == 2, {"out": 0, "occupy": 0}
 
         class Agent:
             def __init__(self):
@@ -236,6 +238,9 @@ class ExperimentRunnerTests(unittest.TestCase):
                 trace = json.loads(stream.readline())
             self.assertEqual(trace["requested"][1:3], [0, 1])
             self.assertEqual(trace["actual"], trace["requested"])
+            self.assertEqual(result["rows"][0]["return"], 0.875)
+            with (monitor.directory / "evaluations.csv").open(newline="") as stream:
+                self.assertEqual(float(next(csv.DictReader(stream))["return"]), 0.875)
             self.assertTrue(agent.actor.training)
             observed = (random.random(), np.random.random(), torch.rand(1).item())
             random.seed(23)

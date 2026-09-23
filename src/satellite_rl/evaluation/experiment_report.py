@@ -253,7 +253,8 @@ def _plot_curves(directory, runs):
     figure_dir.mkdir(exist_ok=True)
     paths = []
     for model in MODELS:
-        fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
+        fig, grid = plt.subplots(2, 2, figsize=(13, 8))
+        axes = grid.ravel()
         for run in runs:
             job = run["job"]
             if job["model"] != model:
@@ -268,28 +269,37 @@ def _plot_curves(directory, runs):
                 smoothed = np.convolve(y, np.ones(window) / window, mode="valid")
                 axes[0].plot(x[window - 1:], smoothed, color=color,
                              label=label, linewidth=1.3, alpha=0.8)
-            grouped = defaultdict(list)
-            for row in run["evaluations"]:
-                if (row["checkpoint"] == "validation" and
-                        row.get("action_mode", "sample") == "sample"):
-                    grouped[int(row["env_step"])].append(float(row["si_mean"]) * 100)
-            if grouped:
-                steps = sorted(grouped)
-                axes[1].plot(steps, [statistics.mean(grouped[step]) for step in steps],
-                             color=color, label=label, linewidth=1.3, alpha=0.8)
-        for ax, title in zip(axes, ("训练回合最终需求满足率", "固定验证场景需求满足率")):
+            for ax, field, scale in ((axes[1], "si_mean", 100),
+                                     (axes[2], "return", 1),
+                                     (axes[3], "throughput_bps", 1e-9)):
+                grouped = defaultdict(list)
+                for row in run["evaluations"]:
+                    if (row["checkpoint"] == "validation" and
+                            row.get("action_mode", "sample") == "sample" and
+                            row.get(field) not in (None, "")):
+                        grouped[int(row["env_step"])].append(float(row[field]) * scale)
+                if grouped:
+                    steps = sorted(grouped)
+                    ax.plot(steps, [statistics.mean(grouped[step]) for step in steps],
+                            color=color, label=label, linewidth=1.3, alpha=0.8)
+        labels = (("训练回合最终需求满足率", "需求满足率 SI（%）"),
+                  ("固定验证场景需求满足率", "需求满足率 SI（%）"),
+                  ("固定验证场景累计奖励", "平均回合累计奖励"),
+                  ("固定验证场景总吞吐量", "平均总吞吐量（Gbps）"))
+        for ax, (title, ylabel) in zip(axes, labels):
             ax.set_title(title)
             ax.set_xlabel("环境交互步数")
-            ax.set_ylabel("需求满足率 SI（%）")
+            ax.set_ylabel(ylabel)
             ax.grid(alpha=0.25)
-            ax.legend(fontsize=7, ncol=2)
+            if ax.lines:
+                ax.legend(fontsize=7, ncol=2)
         fig.tight_layout()
         path = figure_dir / f"{model}_si_curves.png"
         fig.savefig(path, dpi=160)
         plt.close(fig)
         paths.append(path)
         # 使用实际保存的回报和学习记录，补充训练回报、温度、熵和损失曲线。
-        fig, axes = plt.subplots(2, 2, figsize=(13, 8))
+        fig, axes = plt.subplots(3, 3, figsize=(16, 12))
         for run in runs:
             job = run['job']
             if job['model'] != model:
@@ -305,13 +315,17 @@ def _plot_curves(directory, runs):
                                 color=color, label=label, alpha=.8)
             updates_path = run['run_dir'] / 'updates.csv'
             updates = _read_csv(updates_path) if updates_path.exists() else []
-            for ax, key in ((axes[0, 1], 'alpha'), (axes[1, 0], 'entropy'),
-                            (axes[1, 1], 'critic_1_loss')):
+            for ax, key in ((axes[0, 1], 'alpha'), (axes[0, 2], 'entropy'),
+                            (axes[1, 0], 'entropy_freq'), (axes[1, 1], 'entropy_slots'),
+                            (axes[1, 2], 'entropy_power'), (axes[2, 0], 'actor_loss'),
+                            (axes[2, 1], 'critic_1_loss'), (axes[2, 2], 'critic_2_loss')):
                 valid = [row for row in updates if row.get(key) not in ('', None)]
                 if valid:
                     ax.plot([float(row['env_step']) for row in valid],
                             [float(row[key]) for row in valid], color=color, label=label, alpha=.75)
-        for ax, title in zip(axes.flat, ('回合累计奖励', '温度系数 α', '动作分布总熵', '价值网络一损失')):
+        titles = ('回合累计奖励', '温度系数 α', '动作分布总熵', '频率起点分布熵',
+                  '槽数分布熵', '功率分布熵', '策略网络损失', '价值网络一损失', '价值网络二损失')
+        for ax, title in zip(axes.flat, titles):
             ax.set_title(title)
             ax.set_xlabel('环境交互步数')
             ax.grid(alpha=.25)

@@ -359,6 +359,7 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
                 with isolated_rng(action_seed if action_mode == "sample" else 0):
                     env, state = _new_environment(_load_scene(reference["path"]))
                     done = False
+                    episode_return = 0.0
                     slot_counts = {"requested_slots_total": 0, "actual_slots_total": 0,
                                    "out_slots_total": 0, "occupied_slots_total": 0,
                                    "clipped_steps": 0}
@@ -369,6 +370,7 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
                         actual = requested.copy()
                         beam_index = env.beam_idx
                         state, reward, done, info = env.step(actual)
+                        episode_return += float(reward)
                         slot_counts["requested_slots_total"] += requested[2]
                         slot_counts["actual_slots_total"] += actual[2]
                         slot_counts["out_slots_total"] += int(np.asarray(info["out"]).item())
@@ -389,7 +391,8 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
                     arrays[f"{key}_{name}"] = np.asarray(value)
                 rows.append({"checkpoint": checkpoint, "env_step": step,
                              "scene_id": scene_id, "action_mode": action_mode,
-                             "action_seed": action_seed, **metrics, **slot_counts})
+                             "action_seed": action_seed, "return": episode_return,
+                             **metrics, **slot_counts})
     finally:
         agent.actor.train(original_training)
         if trace_stream:
