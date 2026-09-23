@@ -30,7 +30,7 @@ import numpy as np
 import torch
 
 from satellite_rl.paths import project_path
-from satellite_rl.training.run_monitor import RunMonitor, atomic_json, utc_now
+from satellite_rl.training.run_monitor import RunMonitor, atomic_json, replace_with_retry, utc_now
 
 
 MODELS = {
@@ -139,7 +139,7 @@ def _atomic_npz(path, arrays):
             np.savez_compressed(stream, **arrays)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -229,7 +229,7 @@ def save_checkpoint(path, agent, replay, progress, config_hash):
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
         torch.save(_checkpoint_payload(agent, replay, progress, config_hash), temporary)
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
     return sha256_file(path)
@@ -241,7 +241,7 @@ def save_actor_weights(path, actor):
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
         torch.save(actor.state_dict(), temporary)
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
     return sha256_file(path)
@@ -398,7 +398,7 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
         if trace_stream:
             trace_stream.close()
     if trace_stream:
-        os.replace(trace_temp, trace_path)
+        replace_with_retry(trace_temp, trace_path)
     _atomic_npz(arrays_path, arrays)
     result = {
         "checkpoint": checkpoint, "env_step": step, "rows": rows,
