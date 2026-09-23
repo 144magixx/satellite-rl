@@ -254,8 +254,8 @@ def main():
             sgm  = pad_fixed(res.get('sgm', []), beam_num, fill=0.0)
 
             # --- 按波束求均值/方差（本场景）---
-            stats[m]['cinr_mean'].append(float(np.mean(cinr)))
-            stats[m]['cinr_var' ].append(float(np.var(cinr)))
+            stats[m]['cinr_mean'].append(float(np.nanmean(cinr)) if np.isfinite(cinr).any() else np.nan)
+            stats[m]['cinr_var' ].append(float(np.nanvar(cinr)) if np.isfinite(cinr).any() else np.nan)
             stats[m]['si_mean'  ].append(float(np.mean(si)))
             stats[m]['si_var'   ].append(float(np.var(si)))
             stats[m]['sgm_mean' ].append(float(np.mean(sgm)))
