@@ -16,7 +16,8 @@ import numpy as np
 import torch
 
 from satellite_rl.training.experiment_runner import (
-    _scalar_metrics, evaluate, load_checkpoint, run, run_id_for, save_checkpoint,
+    _evaluation_action, _json_safe, _scalar_metrics, evaluate, load_checkpoint, run, run_id_for,
+    save_actor_weights, save_checkpoint,
 )
 from satellite_rl.training.run_monitor import RunMonitor, atomic_json
 
@@ -99,6 +100,16 @@ class ExperimentRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "配置不匹配"):
             load_checkpoint(path, agent, replay, "another-config")
 
+    def test_best_actor_file_can_be_loaded_independently(self):
+        actor = torch.nn.Linear(2, 1)
+        expected = actor.weight.detach().clone()
+        path = self.root / "best_actor.pt"
+        digest = save_actor_weights(path, actor)
+        self.assertEqual(len(digest), 64)
+        actor.weight.data.zero_()
+        actor.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+        torch.testing.assert_close(actor.weight, expected)
+
     def test_recorded_rows_not_duplicated_after_resume(self):
         run_id = "resume-test"
         monitor = RunMonitor(self.root / run_id, run_id)
@@ -118,6 +129,31 @@ class ExperimentRunnerTests(unittest.TestCase):
         self.assertIn("critic_1_loss", values)
         self.assertAlmostEqual(values["critic_1_loss"], 1.23456789, places=6)
         self.assertAlmostEqual(values["alpha"], 0.01, places=6)
+        with self.assertRaises(FloatingPointError):
+            _scalar_metrics({"actor_loss": torch.tensor(float("nan"))})
+        self.assertEqual(_json_safe({"bad": [float("inf"), np.float64(float("nan"))]}),
+                         {"bad": ["inf", "nan"]})
+
+    def test_bad_network_cannot_replace_latest_checkpoint(self):
+        agent = _Agent()
+        replay = _Replay()
+        path = self.root / "latest.pt"
+        save_checkpoint(path, agent, replay, {"env_step": 1}, "config")
+        original = path.read_bytes()
+        agent.actor.weight.data[0, 0] = float("nan")
+        with self.assertRaises(FloatingPointError):
+            save_checkpoint(path, agent, replay, {"env_step": 2}, "config")
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_argmax_uses_each_actor_head(self):
+        class Actor(torch.nn.Module):
+            def forward(self, _state):
+                return (torch.tensor([[0.1, 0.9]]),
+                        torch.tensor([[0.8, 0.2]]),
+                        torch.tensor([[0.3, 0.7]]))
+
+        agent = type("Agent", (), {"device": torch.device("cpu"), "actor": Actor()})()
+        self.assertEqual(_evaluation_action(agent, np.zeros(204), "argmax"), [1, 0, 1])
 
     def test_evaluation_restores_training_rng_and_actor_mode(self):
         class Env:
@@ -178,8 +214,10 @@ class ExperimentRunnerTests(unittest.TestCase):
 
         args = Namespace(model="mlp_matched", formula="legacy", seed=51001,
                          steps=2, experiment_id="smoke", archive_root=str(self.root),
-                         validation_interval=10000, checkpoint_interval=10000,
-                         run_id="two-steps", resume=False)
+                         validation_interval=0, checkpoint_interval=10000,
+                         validation_scene_count=0, test_scene_count=0,
+                         skip_final_evaluation=True,
+                         run_id="two-steps", resume=False, stop_after_steps=1)
         with mock.patch.dict(os.environ, {}, clear=False), \
              mock.patch("satellite_rl.training.experiment_runner.strict_cuda_preflight",
                         return_value={"git_commit": "test"}), \
@@ -193,9 +231,10 @@ class ExperimentRunnerTests(unittest.TestCase):
                         return_value={"si_mean": 0.1}):
             self.assertEqual(run(args), 0)
             status_path = self.root / "outputs" / "experiments" / "smoke" / "two-steps" / "status.json"
-            self.assertEqual(json.loads(status_path.read_text())["env_step"], 2)
-            self.assertEqual(json.loads(status_path.read_text())["stage"], "completed")
+            self.assertEqual(json.loads(status_path.read_text())["env_step"], 1)
+            self.assertEqual(json.loads(status_path.read_text())["stage"], "paused")
             args.resume = True
+            args.stop_after_steps = None
             self.assertEqual(run(args), 0)
             self.assertEqual(json.loads(status_path.read_text())["env_step"], 2)
 
