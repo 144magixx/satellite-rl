@@ -30,11 +30,13 @@ from satellite_rl.evaluation.post_training_checks import source_guard
 from satellite_rl.evaluation.single_seed_scope import (
     EXPERIMENT_ID, RUN_IDS, SEED, TRAIN_COMMIT, require_completed,
 )
+from satellite_rl.evaluation.single_seed_extended_baselines import load_extended_baselines
 from satellite_rl.training import experiment_runner as runner
 from satellite_rl.training.run_monitor import atomic_json, replace_with_retry, utc_now
 
 
 BASELINE_ROOT = Path(r"D:/paper/outputs/verification/baseline_recheck_sac_r2_20260924")
+EXTENDED_BASELINE_ROOT = Path(r"D:/paper/outputs/verification/baseline_recheck_sac_r2_20260925_extended")
 VALIDATION_FIELDS = ("si_mean", "sgm_mean", "throughput_bps", "return")
 BEHAVIOR_FIELDS = ("final_si_mean", "unserved_rate", "requested_power_mean_w",
                    "requested_slots_mean", "actual_slots_mean", "zero_slot_rate", "clipped_rate")
@@ -165,7 +167,7 @@ def compare_with_baselines(runs, baselines):
     output = []
     for run in runs:
         model_scene = _scene_means(run["rows"], "si_mean")
-        for policy in ("greedy", "fixed"):
+        for policy in baselines["by_policy"]:
             baseline = baselines["by_policy"][policy]
             if set(model_scene) != set(baseline):
                 raise RuntimeError("模型与基线考核场景不一致")
@@ -382,6 +384,11 @@ def _write_csv(path, rows, fields):
 def _input_hashes(exp_dir, plan, final, baselines, selection_path):
     files = [exp_dir / "suite_plan.json", selection_path,
              baselines["config_path"], baselines["records_path"]]
+    if "extended" in baselines:
+        extra = baselines["extended"]
+        files += [extra["config_path"], extra["records_path"]]
+        files += extra["source_paths"]
+        files += list(extra["trace_path_sha256"])
     files += [Path(reference["path"]) for reference in plan["test_scenes"].values()]
     for run_id, info in final.items():
         run_dir = exp_dir / run_id
@@ -417,6 +424,10 @@ def _report_text(summary, paired, baseline, baseline_pairs, timing, behavior,
     indexed = {(row["model"], row["formula"]): row for row in summary}
     times = {row["run_id"]: row for row in timing}
     diagnostics = {key: values[-1] for key, values in learning.items()}
+    color_result = baseline["config"]["summary"].get("four_color")
+    color_detail = (f"本批四色平均每场景换组{color_result['group_switch_steps']['mean']:.2f}次、"
+                    f"请求被裁剪{color_result['clipped_steps']['mean']:.2f}次。"
+                    if color_result else "四色的换组与裁剪以保存的逐步记录为准。")
     lines = ["# 单一种子 51001 的六组 SAC 对照", "",
              f"冻结训练提交：`{TRAIN_COMMIT}`；离线分析提交：`{provenance['post_commit']}`。"
              "三种网络各以原、修两套学习公式训练40万次环境交互。"
@@ -435,19 +446,47 @@ def _report_text(summary, paired, baseline, baseline_pairs, timing, behavior,
                          f"{m['throughput_bps'] * 1e-9:.2f} | {m['total_power_w']:.1f} | "
                          f"{m['power_exceeded'] * 100:.1f} | {m['completed'] * 100:.1f} | "
                          f"{m['zero_slot_rate'] * 100:.1f} | {m['allocated_slots']:.1f} |")
-    lines += ["", "贪心与固定策略是**同一修正环境、同100场景**的已有确定性参照，"
-              "每场景各执行一次；模型每场景三个动作种子。两种参照的请求槽数裁剪率"
-              "未由已存基线记录完整提供，不猜测该列。", "",
+    lines += ["", "以下基线与六个模型使用**同一修正环境和同100个考核场景**。"
+              "贪心、固定和现有四色每场景各执行一次；随机策略每场景用三个固定动作种子，"
+              "先在同场景内求均值。六模型也是每场景三个动作种子。", "",
               "| 参照策略 | 终态 SI / % | SGM / % | 功率 / W | 超功率 / % | 完成100束 / % | 实际槽数 |",
               "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
-    for policy, label in (("greedy", "贪心"), ("fixed", "固定")):
+    for policy, label in (("greedy", "贪心"), ("fixed", "固定"),
+                          ("four_color", "四色（现有实现）"),
+                          ("random", "随机动作")):
+        if policy not in baseline["config"]["summary"]:
+            continue
         m = baseline["config"]["summary"][policy]
         lines.append(f"| {label} | {m['si_mean']['mean'] * 100:.2f} | "
                      f"{m['sgm_mean']['mean'] * 100:.2f} | {m['total_power_w']['mean']:.1f} | "
                      f"{m['power_exceeded']['mean'] * 100:.1f} | "
                      f"{m['completed']['mean'] * 100:.1f} | {m['allocated_slots']['mean']:.1f} |")
-    lines += ["", "`baseline_pairs.csv` 按同一场景将模型三个动作种子的平均 SI 与单次确定性参照配对。"
-              "参照的资源与约束结果须和 SI 一起判断。", "",
+    lines += ["", "`baseline_pairs.csv` 按同一场景比较模型与基线的需求满足率，"
+              "随机动作先对三个动作种子求场景均值；表中波动只来自100个场景，"
+              "不是训练种子间波动。四色现有实现可换至相邻频率组，六模型则固定当前组；"
+              "其空位估计把0/1占用当作十层容量，也未检验起点后的连续空槽，"
+              "环境可能裁剪请求。" + color_detail +
+              "因此表中四色数值只评价**现有实现**，"
+              "不代表理想四色策略，也不能把与六模型的差异全部归因于算法能力。"
+              "图着色旧实现还会在制定方案后换场景，拉格朗日旧实现使用不同容量口径，"
+              "本轮均没有可直接并入此表的同场景结果。", "",
+              "| 终点模型 | 比贪心的SI差/百分点 | 比固定的SI差/百分点 | 比四色的SI差/百分点 | 比随机动作的SI差/百分点 |",
+              "| --- | ---: | ---: | ---: | ---: |"]
+    if baseline_pairs:
+        indexed_pairs = {(row["run_id"], row["policy"]): row for row in baseline_pairs}
+        expected_pairs = {(row["run_id"], policy) for row in summary
+                          for policy in ("greedy", "fixed", "four_color", "random")}
+        if set(indexed_pairs) != expected_pairs:
+            raise RuntimeError("报告缺少六模型对四项基线的同场景差值")
+        for model in runner.MODELS:
+            for formula in ("legacy", "corrected"):
+                run_id = f"{model}_{formula}_s{SEED}"
+                differences = [indexed_pairs[(run_id, policy)]["model_minus_baseline_si_mean"]
+                               * 100 for policy in ("greedy", "fixed", "four_color", "random")]
+                lines.append(f"| {MODEL_NAMES[model]} · {FORMULA_NAMES[formula]} | "
+                             + " | ".join(f"{value:+.2f}" for value in differences) + " |")
+    lines += ["", "差值先在同一场景对动作重复取平均，再跨100场景求均值。"
+              "正数表示该终点模型的需求满足率更高；功率与完整处理约束须同时看上表。", "",
               "## 同网络内修正公式减原公式", "",
               "| 网络 | SI 差 / 百分点 | SGM 差 / 百分点 | 功率差 / W | 超功率率差 / 百分点 | 完成率差 / 百分点 | SI 较高场景 / 100 |",
               "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
@@ -516,20 +555,24 @@ def _report_text(summary, paired, baseline, baseline_pairs, timing, behavior,
               "这只是一个训练种子在固定仿真场景下的受控对照。"
               "相同场景上的高低与约束差异可被复核，"
               "但无法估计重新训练时的波动，也不能据此宣称稳定优势或真实通信性能提升。"
-              "补充需求/次序条件、旧权重跨环境和独立CUDA耗时结果若尚未执行，"
-              "应与本主报告分开标为待验证。", "",
+              "补充需求/次序条件、旧权重跨环境和独立CUDA耗时结果"
+              "已在本实验的conditions、environment_comparison、timing与update_timing"
+              "目录分开保存，不与主考核或旧错误环境的成绩混排。", "",
               "原始输入及每个输出文件的 SHA-256 保存在 `analysis_manifest.json`。", ""]
     return "\n".join(lines)
 
 
 def generate_single_seed_analysis(archive_root="D:/paper",
                                   frozen_root="D:/paper_worktrees/frozen-sac-20260924-r2",
-                                  baseline_root=BASELINE_ROOT):
+                                  baseline_root=BASELINE_ROOT,
+                                  extended_baseline_root=EXTENDED_BASELINE_ROOT):
     """Generate an isolated, immutable report only after all six runs finish."""
     provenance = source_guard(frozen_root)
     exp_dir, plan, final = require_completed(archive_root, frozen_root)
     selection_path, selection = _selection(exp_dir, plan)
     baselines = load_same_scene_baselines(plan, frozen_root, baseline_root)
+    baselines = load_extended_baselines(plan, frozen_root, baselines,
+                                       extended_baseline_root)
     input_hashes = _input_hashes(exp_dir, plan, final, baselines, selection_path)
     target = Path(plan["single_seed_output_dir"]) / "analysis"
     if target.exists():
@@ -571,6 +614,7 @@ def generate_single_seed_analysis(archive_root="D:/paper",
             "records_path": baselines["records_path"],
             "records_sha256": baselines["records_sha256"],
             "summary": baselines["config"]["summary"],
+            "extended": baselines["extended"],
         })
         atomic_json(staging / "validation_curves.json", {
             "training_seed": SEED, "training_repeats": 1,
@@ -621,6 +665,8 @@ def generate_single_seed_analysis(archive_root="D:/paper",
             "run_ids": sorted(RUN_IDS), "fixed_scenes": len(plan["test_scenes"]),
             "action_seeds": plan["action_seeds"],
             "matched_training_source_sha256": provenance["matched_file_sha256"],
+            "baseline_policies": ["greedy", "fixed", "four_color", "random"],
+            "extended_baseline_source_commit": baselines["extended"]["evaluation_commit"],
             "input_sha256": input_hashes,
             "output_sha256": {path.name: runner.sha256_file(path) for path in outputs},
             "limitations": [
@@ -648,9 +694,10 @@ def main():
     parser.add_argument("--archive-root", default="D:/paper")
     parser.add_argument("--frozen-root", default="D:/paper_worktrees/frozen-sac-20260924-r2")
     parser.add_argument("--baseline-root", default=str(BASELINE_ROOT))
+    parser.add_argument("--extended-baseline-root", default=str(EXTENDED_BASELINE_ROOT))
     args = parser.parse_args()
     print(generate_single_seed_analysis(args.archive_root, args.frozen_root,
-                                        args.baseline_root))
+                                        args.baseline_root, args.extended_baseline_root))
 
 
 if __name__ == "__main__":
