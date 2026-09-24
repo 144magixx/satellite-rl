@@ -155,6 +155,21 @@ CNN 修正公式的终点逐头最大概率动作考核仅约 **3.20%**，零槽
 
 原十八组后台管理进程已在六组产物与状态诊断保存后停止，[关闭记录](../../outputs/experiments/sac_comparison_20260924_r2/scope_change_single_seed_20260924/old_postmanager_shutdown.json)保留其原 `waiting_for_repair` 状态 SHA。六组计时续跑管理进程正常退出；本轮重复进度检查也已停用。正式报告因一次奖励口径文字更正，初稿完整归档，最终数值和图表 17 份文件校验值与初稿一致。代码和原始实验产物均在本机保存；尚未指定异地备份位置，不宣称已做异地备份。
 
+### 2026-09-25：在六组报告中补齐同场景基线
+
+用户要求在现有六组报告中加入固定、贪心、四色等基线。原报告已有固定和贪心的 100 场景对照；历史四色文件各只有一回合，场景与本轮不同，因此由子任务使用冻结训练源码 `36c14d74cbe6b9cf7410ee0595ee6d73083afdc8`，在本轮保存的 **同 100 个考核场景** 重新评价现有四色策略，并按三个固定动作种子补充随机动作参照。两个新策略共保存 400 回合、40,000 条逐步记录及全部目标波束的终态速率、需求和资源账；[补充基线原始结果](../../outputs/verification/baseline_recheck_sac_r2_20260925_extended/per_scene_results.jsonl)、[配置与逐场景汇总](../../outputs/verification/baseline_recheck_sac_r2_20260925_extended/config_and_summary.json)和[独立核验](../../outputs/verification/baseline_recheck_sac_r2_20260925_extended/independent_audit.json)保存源码、场景和结果校验值。随机动作先在每场景对三次采样求平均，再在 100 场景上汇总，不把 300 回合算作独立场景。
+
+| 同场景基线 | 终态需求满足率 | 供需匹配程度 | 平均功率 | 超功率场景 | 完整处理100束 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 贪心 | 68.48% | 63.56% | 2452.1 W | 0% | 100% |
+| 固定 | 70.90% | 58.21% | 3000.0 W | 0% | 100% |
+| 四色（现有实现） | 48.90% | 47.04% | 2452.1 W | 0% | 100% |
+| 随机动作 | 45.02% | 43.27% | 2726.7 W | 0% | 100% |
+
+新的[正式六组报告](../../outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/中文单种子六组报告.md)还列出每个终点模型相对四项基线、逐场景配对的需求满足率差值，并在[原始配对表](../../outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/baseline_pairs.csv)保留全部 24 行。四色原代码可能换到相邻频率组，而本轮六模型固定当前组；本次 100 场景虽实际未换组，它把 0/1 占用误当作十层容量，平均每场景有 17.43 步请求被环境裁剪。因此 48.90% 只代表**现有实现**，不能证明理想四色策略差于某网络。图着色旧实现会在预计算后换场景，旧拉格朗日实现的容量口径不同，未把它们的历史数字混入此表。
+
+新版报告从固定源码提交 `508bc4d90205ed9d6140daa7a8054996cc53cf39` 生成；[分析清单](../../outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/analysis_manifest.json)校验 620 份输入和 18 份输出。前一版完整移入 `analysis_before_four_baseline_comparison_20260925/` 并保存[归档记录](../../outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis_four_baseline_supersession_record.json)。六模型原始终态数值与收敛图等 15 份输出和前版校验值一致；变化的是基线引用、24 行配对表和报告文字。九项定向 CPU 检查及真实数据完整试运行通过；没有重训六个模型或改写原始考核。
+
 ## 最新确认稿：监控、正确性修复、模型对照、状态探索
 
 用户最新要求：先增加统一运行记录与监控层，该步骤不改变算法结构或环境；再修复第一优先级问题及两项指定 SAC 公式；正确性验证通过后比较 matched CNN/MLP 与 Transformer；最后探索 204 维状态信息不足。正式训练和长评估交给后台子 agent，主任务可继续讨论。用户明确要求确认方案后再开始工作。
