@@ -174,6 +174,28 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["SATELLITE_RL_OUTPUT_ROOT"], str(self.root))
         self.assertEqual(read_json(self.application.store.job_dir(job["run_id"]) / "status.json")["pid"], 12345)
 
+    def test_native_exit_retains_exit_code_and_checkpoint_reference(self):
+        job = self.application.store.create_job(self.config)
+        directory = self.application.store.job_dir(job["run_id"])
+        (directory / "checkpoint.pt").write_bytes(b"last normal checkpoint fixture")
+        status = read_json(directory / "status.json")
+        status.update(stage="training", pid=12345)
+        (directory / "status.json").write_text(json.dumps(status), encoding="utf-8")
+        class ExitedChild:
+            returncode = 3221226505
+            def poll(self):
+                return self.returncode
+        scheduler = Scheduler(self.application.store)
+        scheduler.children[job["run_id"]] = ExitedChild()
+        scheduler.tick()
+        result = read_json(directory / "status.json")
+        failure = read_json(directory / "failure.json")
+        self.assertEqual(result["stage"], "interrupted")
+        self.assertEqual(result["exit_hex"], "0xC0000409")
+        self.assertEqual(failure["exit_code"], 3221226505)
+        self.assertEqual(failure["last_normal_checkpoint"], str(directory / "checkpoint.pt"))
+        self.assertNotIn(job["run_id"], scheduler.children)
+
     def test_compare_native_workbench_metrics_on_same_actual_scene(self):
         first = self.application.store.create_job(self.config)
         second = self.application.store.create_job(self.config)

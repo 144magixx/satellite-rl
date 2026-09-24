@@ -129,6 +129,9 @@ class Scheduler:
             for job, status in jobs:
                 stage = status.get("stage")
                 if stage in TERMINAL or stage == "queued":
+                    old_child = self.children.get(job["run_id"])
+                    if old_child is not None and old_child.poll() is not None:
+                        self.children.pop(job["run_id"], None)
                     continue
                 run_id = job["run_id"]
                 child = self.children.get(run_id)
@@ -142,8 +145,19 @@ class Scheduler:
                 latest = read_json(directory / "status.json", status)
                 if latest.get("stage") in TERMINAL:
                     continue
+                exit_code = child.returncode if child else None
+                exit_hex = f"0x{exit_code & 0xffffffff:08X}" if isinstance(exit_code, int) else None
+                failure = {"at": now(), "run_id": run_id, "pid": status.get("pid"),
+                           "exit_code": exit_code, "exit_hex": exit_hex,
+                           "source_root": job.get("source_root"), "git_commit": job.get("git_commit"),
+                           "last_normal_checkpoint": str(directory / "checkpoint.pt") if (directory / "checkpoint.pt").exists() else None,
+                           "error": "进程在没有Python异常记录的情况下结束；原生退出应结合Windows事件和驱动日志排查"}
+                if not (directory / "failure.json").is_file():
+                    atomic_json(directory / "failure.json", failure)
                 self._status(directory, latest, stage="interrupted",
-                             error="后台进程已结束但未写入完成状态；检查日志后可从正常断点恢复")
+                             exit_code=exit_code, exit_hex=exit_hex,
+                             error="后台进程已结束但未写入完成状态" + (f"（{exit_hex}）" if exit_hex else "") + "；检查日志后可从正常断点恢复")
+                self.children.pop(run_id, None)
             queued = [(j, s) for j, s in jobs if s.get("stage") == "queued"]
             if not queued or len(active) >= self.max_workers:
                 return
