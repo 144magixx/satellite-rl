@@ -130,6 +130,23 @@ class SingleSeedPostEvalTests(unittest.TestCase):
             "created": "2026-09-24T09:17:31.007437+08:00",
             "gpu_query": "2152, [Insufficient Permissions], [N/A]"}]}), encoding="utf-8")
         digest = checks.runner.sha256_file(baseline)
+        wps_binary = self.root / "promecefpluginhost.exe"
+        wps_binary.write_bytes(b"verified WPS GUI executable")
+        wps_path = str(wps_binary)
+        wps_command = f'"{wps_path}" --type=gpu-process'
+        wps_evidence = self.root / "wps_gui.json"
+        wps_evidence.write_text(json.dumps({
+            "pid": 22564, "process_name": "promecefpluginhost.exe",
+            "path": wps_path, "path_sha256": checks.runner.sha256_file(wps_binary),
+            "created_iso": "2026-09-24T16:56:05.455935+08:00",
+            "session_id": 1, "command_line": wps_command,
+            "signature_status": "Valid", "signer_subject": "Kingsoft Office",
+            "gpu_engine_summary": [{"Engine": "3d", "MaxPercent": 0}]}
+        ), encoding="utf-8")
+        wps_digest = checks.runner.sha256_file(wps_evidence)
+        evidence = {"baseline_path": baseline, "baseline_sha256": digest,
+                    "wps_evidence_path": wps_evidence,
+                    "wps_evidence_sha256": wps_digest}
         gui = {"ProcessId": 2152, "Name": "dwm.exe", "Path": None,
                "SessionId": 1, "Created": "2026-09-24T09:17:31.0074370+08:00"}
         gpu = mock.Mock(stdout="2152, [Insufficient Permissions], [N/A]\n")
@@ -137,22 +154,51 @@ class SingleSeedPostEvalTests(unittest.TestCase):
         with mock.patch.object(checks.subprocess, "run", return_value=gpu), \
              mock.patch.object(checks, "_windows_process", return_value=gui), \
              mock.patch.object(checks.common, "_gpu_snapshot", return_value=snap):
-            observed = checks.exclusive_gpu_snapshot(
-                baseline_path=baseline, baseline_sha256=digest)
+            observed = checks.exclusive_gpu_snapshot(**evidence)
         self.assertEqual(observed["process_classification"][0]["kind"],
                          "verified_preexisting_gui_context")
+        wps_live = {"ProcessId": 22564, "Name": "promecefpluginhost.exe",
+                    "Path": wps_path, "SessionId": 1,
+                    "Created": "2026-09-24T16:56:05.4559350+08:00",
+                    "CommandLine": wps_command}
+        gpu.stdout = ("2152, [Insufficient Permissions], [N/A]\n"
+                      f"22564, {wps_path}, [N/A]\n")
+        snap["compute_process_query"] = "2152, [N/A]\n22564, [N/A]"
+        with mock.patch.object(checks.subprocess, "run", return_value=gpu), \
+             mock.patch.object(checks, "_windows_process",
+                               side_effect=lambda pid: gui if pid == 2152 else wps_live), \
+             mock.patch.object(checks.common, "_gpu_snapshot", return_value=snap):
+            observed = checks.exclusive_gpu_snapshot(**evidence)
+        self.assertEqual(observed["process_classification"][1]["kind"],
+                         "verified_wps_gui_context")
+        wps_live["Created"] = "2026-09-24T17:56:05.455935+08:00"
+        with mock.patch.object(checks.subprocess, "run", return_value=gpu), \
+             mock.patch.object(checks, "_windows_process",
+                               side_effect=lambda pid: gui if pid == 2152 else wps_live), \
+             mock.patch.object(checks.common, "_gpu_snapshot", return_value=snap):
+            with self.assertRaisesRegex(RuntimeError, "新增WPS图形进程"):
+                checks.exclusive_gpu_snapshot(**evidence)
+        wps_live["Created"] = "2026-09-24T16:56:05.4559350+08:00"
+        wps_live["CommandLine"] = '"wrong.exe" --type=gpu-process'
+        with mock.patch.object(checks.subprocess, "run", return_value=gpu), \
+             mock.patch.object(checks, "_windows_process",
+                               side_effect=lambda pid: gui if pid == 2152 else wps_live), \
+             mock.patch.object(checks.common, "_gpu_snapshot", return_value=snap):
+            with self.assertRaisesRegex(RuntimeError, "新增WPS图形进程"):
+                checks.exclusive_gpu_snapshot(**evidence)
         gpu.stdout = "999999, C:\\Python\\python.exe, [N/A]\n"
         with mock.patch.object(checks.subprocess, "run", return_value=gpu), \
              mock.patch.object(checks.common, "_gpu_snapshot", return_value=snap):
             with self.assertRaisesRegex(RuntimeError, "未知GPU进程"):
-                checks.exclusive_gpu_snapshot(baseline_path=baseline, baseline_sha256=digest)
+                checks.exclusive_gpu_snapshot(**evidence)
         gui["Created"] = "2026-09-24T10:17:31+08:00"
         gpu.stdout = "2152, [Insufficient Permissions], [N/A]\n"
+        snap["compute_process_query"] = "2152, [N/A]"
         with mock.patch.object(checks.subprocess, "run", return_value=gpu), \
              mock.patch.object(checks, "_windows_process", return_value=gui), \
              mock.patch.object(checks.common, "_gpu_snapshot", return_value=snap):
             with self.assertRaisesRegex(RuntimeError, "已复用"):
-                checks.exclusive_gpu_snapshot(baseline_path=baseline, baseline_sha256=digest)
+                checks.exclusive_gpu_snapshot(**evidence)
 
     def test_timing_reuses_only_exact_prior_scope_and_stage_hashes(self):
         post = self.root / "single_seed_51001"
