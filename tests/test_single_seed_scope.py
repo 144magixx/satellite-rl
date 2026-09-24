@@ -10,7 +10,7 @@ import torch
 
 from satellite_rl.evaluation.single_seed_scope import (
     EXPERIMENT_ID, RUN_IDS, TRAIN_COMMIT,
-    _checkpoint_pair, _command_identifies_worker, _result,
+    _checkpoint_pair, _command_identifies_worker, _complete_checkpoint, _result,
     current_six_status, require_completed,
 )
 from satellite_rl.training import experiment_runner as runner
@@ -70,6 +70,12 @@ class SingleSeedScopeTests(unittest.TestCase):
         torch.save(networks["actor"], actor)
         self.assertEqual(_checkpoint_pair(full, actor, "fixed", final=True)["checkpoint_step"],
                          400000)
+        initial = self.root / "initial.pt"
+        payload["progress"]["env_step"] = 0
+        torch.save(payload, initial)
+        self.assertEqual(_complete_checkpoint(initial, "fixed", expected_step=0)[1], 0)
+        with self.assertRaisesRegex(RuntimeError, "步数不符"):
+            _complete_checkpoint(initial, "fixed", expected_step=400000)
         torch.save({"weight": torch.tensor([2.0])}, actor)
         with self.assertRaisesRegex(RuntimeError, "不一致"):
             _checkpoint_pair(full, actor, "fixed", final=True)
