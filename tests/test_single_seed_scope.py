@@ -10,7 +10,8 @@ import torch
 
 from satellite_rl.evaluation.single_seed_scope import (
     EXPERIMENT_ID, RUN_IDS, TRAIN_COMMIT,
-    _checkpoint_pair, _result, require_completed,
+    _checkpoint_pair, _command_identifies_worker, _result,
+    current_six_status, require_completed,
 )
 from satellite_rl.training import experiment_runner as runner
 
@@ -129,6 +130,64 @@ class SingleSeedScopeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "尚未全部完成"):
                 require_completed(self.root, frozen)
             weights.assert_not_called()
+
+    def test_read_only_status_excludes_stopped_other_seeds_and_checks_pid_token(self):
+        exp, _ = self._plan_fixture()
+        plan_path = exp / "suite_plan.json"
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        first, second = sorted(RUN_IDS)[:2]
+        for job in plan["jobs"]:
+            if job["run_id"] == first:
+                job["pid"] = 123
+                job["process_token"] = 456
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        for run_id in (first, second):
+            (exp / run_id / "status.json").write_text(json.dumps({
+                "stage": "training", "env_step": 1000, "update_step": 0,
+            }), encoding="utf-8")
+        with mock.patch("satellite_rl.evaluation.single_seed_scope._process_token",
+                        return_value=456), \
+             mock.patch("satellite_rl.evaluation.single_seed_scope._process_command",
+                        return_value={"ProcessId": 123,
+                                      "ExecutablePath": r"C:\Users\Admin\anaconda3\envs\DQN\python.exe",
+                                      "CommandLine": ("python -m satellite_rl.training.experiment_runner "
+                                                      "--experiment-id sac_comparison_20260924_r2 "
+                                                      "--run-id " + first)}):
+            snapshot = current_six_status(self.root)
+        self.assertEqual(snapshot["counts"], {"completed": 4, "running": 1,
+                                               "identity_unknown": 0,
+                                               "stopped_or_incomplete": 1})
+        self.assertEqual({row["run_id"] for row in snapshot["runs"]}, RUN_IDS)
+        self.assertTrue(all(row["seed"] == 51001 for row in snapshot["runs"]))
+        self.assertTrue(next(row for row in snapshot["runs"] if row["run_id"] == first)
+                        ["worker_identity_alive"])
+
+    def test_reused_pid_or_wrong_command_never_counts_as_running(self):
+        exp, _ = self._plan_fixture()
+        run_id = sorted(RUN_IDS)[0]
+        plan_path = exp / "suite_plan.json"
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        for job in plan["jobs"]:
+            if job["run_id"] == run_id:
+                job.update(pid=23476, process_token=111)
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        (exp / run_id / "status.json").write_text(json.dumps({
+            "stage": "training", "env_step": 200000, "update_step": 198000,
+        }), encoding="utf-8")
+        with mock.patch("satellite_rl.evaluation.single_seed_scope._process_token",
+                        return_value=222):
+            snapshot = current_six_status(self.root)
+        row = next(row for row in snapshot["runs"] if row["run_id"] == run_id)
+        self.assertFalse(row["worker_identity_alive"])
+        self.assertEqual(row["worker_identity_status"], "pid_reused_or_exited")
+        self.assertEqual(row["state"], "stopped_or_incomplete")
+        info = {"ProcessId": 23476, "ExecutablePath": r"C:\Program Files\Microsoft\Edge\msedge.exe",
+                "CommandLine": ("python -m satellite_rl.training.experiment_runner "
+                                "--experiment-id sac_comparison_20260924_r2 --run-id " + run_id)}
+        self.assertFalse(_command_identifies_worker(info, 23476, run_id))
+        info["ExecutablePath"] = r"C:\Users\Admin\anaconda3\envs\DQN\python.exe"
+        info["CommandLine"] = "python -m satellite_rl.training.experiment_runner --run-id other"
+        self.assertFalse(_command_identifies_worker(info, 23476, run_id))
 
 
 if __name__ == "__main__":
