@@ -1,6 +1,7 @@
 """CPU-only checks for the fixed SAC update-cost protocol."""
 
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,9 +10,11 @@ from unittest import mock
 import numpy as np
 
 from satellite_rl.evaluation.update_timing import (
-    BATCH_SIZE, REPEATS, WARMUP, _experiment_gpu_children, _finish_reports, _immutable_json,
+    BATCH_SIZE, REPEATS, WARMUP, _batch_dicts, _experiment_gpu_children,
+    _finish_reports, _immutable_json, _validate_cached_result, _verify_existing_index,
     fixed_batches, require_ready, summarize_ms, time_updates,
 )
+from satellite_rl.agents.sac_transformer import ReplayBuffer
 from satellite_rl.training import experiment_runner as runner
 
 
@@ -29,6 +32,29 @@ class UpdateTimingTests(unittest.TestCase):
         np.testing.assert_array_equal(first["states"][:, :, 0], first["indices"])
         np.testing.assert_array_equal(first["next_states"][:, :, 0], first["indices"] + 1)
         self.assertEqual(first["actions"].shape, (2, 256, 3))
+
+    def test_rebuilt_batches_preserve_real_replay_sample_containers(self):
+        replay = [(np.full(204, index, dtype=np.float64), [index % 100, index % 10, 0],
+                   float(index), np.full(204, index + 1, dtype=np.float64), bool(index % 2))
+                  for index in range(512)]
+        arrays = fixed_batches(replay, batch_count=1, batch_size=256)
+        restored = _batch_dicts(arrays)[0]
+        buffer = ReplayBuffer(capacity=512)
+        buffer.buffer.extend(replay)
+        actual = buffer.sample(256)
+        self.assertIsInstance(restored["states"], np.ndarray)
+        self.assertIsInstance(restored["next_states"], np.ndarray)
+        self.assertEqual(type(restored["actions"]), type(actual[1]))
+        self.assertEqual(type(restored["actions"][0]), type(actual[1][0]))
+        self.assertEqual(type(restored["rewards"]), type(actual[2]))
+        self.assertEqual(type(restored["dones"]), type(actual[4]))
+        self.assertIsInstance(restored["actions"][0][0], int)
+        self.assertIsInstance(restored["rewards"][0], float)
+        self.assertIsInstance(restored["dones"][0], bool)
+        chosen = int(arrays["indices"][0, 0])
+        self.assertEqual(restored["actions"][0], replay[chosen][1])
+        self.assertEqual(restored["rewards"][0], replay[chosen][2])
+        self.assertEqual(restored["dones"][0], replay[chosen][4])
 
     def test_update_timer_excludes_batch_selection_and_syncs_each_boundary(self):
         class Agent:
@@ -124,6 +150,59 @@ class UpdateTimingTests(unittest.TestCase):
                                                   "CommandLine": "experiment_runner"})
             self.assertEqual(_experiment_gpu_children()[0]["ProcessId"], 111)
 
+    def test_process_scan_includes_peer_update_timing_but_excludes_self(self):
+        with mock.patch("satellite_rl.evaluation.update_timing.subprocess.run") as run:
+            run.return_value.stdout = json.dumps([
+                {"ProcessId": os.getpid(), "CommandLine": "update_timing self"},
+                {"ProcessId": 99999, "CommandLine": "update_timing peer"},
+            ])
+            self.assertEqual([item["ProcessId"] for item in _experiment_gpu_children()], [99999])
+            command = run.call_args.args[0][-1]
+            self.assertIn("update_timing", command)
+            self.assertIn(str(os.getpid()), command)
+
+    def test_bad_cached_statistics_and_metadata_are_rejected(self):
+        config = {"run_id": "one"}
+        raw = [10.0] * REPEATS
+        valid = {"config": config, "raw_milliseconds": raw,
+                 "statistics": summarize_ms(raw), "parameters_actor": 10,
+                 "temporary_log_file": "log.csv", "completed_at": "now",
+                 "gpu_before": {"at": "start", "used_mib": 1, "free_mib": 2,
+                                "utilization_percent": 3, "compute_process_query": ""},
+                 "gpu_after": {"at": "end", "used_mib": 1, "free_mib": 2,
+                               "utilization_percent": 3, "compute_process_query": ""}}
+        self.assertIs(_validate_cached_result(valid, config), valid)
+        bad = json.loads(json.dumps(valid))
+        bad["statistics"]["mean_ms"] = 11.0
+        with self.assertRaisesRegex(RuntimeError, "不一致"):
+            _validate_cached_result(bad, config)
+        bad = json.loads(json.dumps(valid))
+        del bad["gpu_after"]["free_mib"]
+        with self.assertRaisesRegex(RuntimeError, "元数据"):
+            _validate_cached_result(bad, config)
+
+    def test_existing_result_index_checks_all_input_hashes_before_reports(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            manifest = directory / "manifest.json"
+            manifest.write_text("{}", encoding="utf-8")
+            runs = directory / "runs"
+            runs.mkdir()
+            refs = {}
+            from satellite_rl.evaluation.post_training_checks import EXPECTED_RUN_IDS
+            for run_id in EXPECTED_RUN_IDS:
+                result = runs / (run_id + ".json")
+                result.write_text(run_id, encoding="utf-8")
+                refs[run_id] = {"path": str(result), "sha256": runner.sha256_file(result)}
+            (directory / "result_index.json").write_text(json.dumps({
+                "manifest_sha256": runner.sha256_file(manifest), "runs": refs,
+            }), encoding="utf-8")
+            _verify_existing_index(directory)
+            first = next(iter(refs))
+            (runs / (first + ".json")).write_text("changed", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "损坏"):
+                _verify_existing_index(directory)
+
     def test_three_seed_summary_and_formula_difference_keep_units(self):
         jobs, results = [], {}
         for model in runner.MODELS:
@@ -144,6 +223,10 @@ class UpdateTimingTests(unittest.TestCase):
             self.assertTrue(all(float(row["corrected_minus_legacy_mean_ms"]) == 5.0
                                 for row in rows))
             self.assertIn("修正公式减原公式", (Path(folder) / "中文更新耗时.md").read_text(encoding="utf-8"))
+            report = (Path(folder) / "中文更新耗时.md").read_text(encoding="utf-8")
+            self.assertIn("Transformer", report)
+            self.assertIn("CNN", report)
+            self.assertIn("原公式", report)
 
 
 if __name__ == "__main__":

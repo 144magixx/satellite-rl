@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 from pathlib import Path
 import statistics
@@ -36,6 +37,9 @@ BATCH_COUNT = 8
 BATCH_SIZE = 256
 WARMUP = 20
 REPEATS = 100
+MODEL_LABELS = {"transformer": "Transformer", "cnn_matched": "CNN",
+                "mlp_matched": "MLP"}
+FORMULA_LABELS = {"legacy": "原公式", "corrected": "修正公式"}
 
 
 def _read(path):
@@ -60,7 +64,9 @@ def _experiment_gpu_children():
         "$_.Name -match '^python' -and ("
         "($_.CommandLine -match 'satellite_rl.training.experiment_runner' "
         "-and $_.CommandLine -match 'sac_comparison_20260924_r2') -or "
-        "$_.CommandLine -match 'satellite_rl.evaluation.post_training_checks') } | "
+        "$_.CommandLine -match 'satellite_rl.evaluation.post_training_checks' -or "
+        "($_.CommandLine -match 'update_timing' "
+        f"-and $_.ProcessId -ne {os.getpid()})) }} | "
         "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
     )
     output = subprocess.run(["powershell", "-NoProfile", "-Command", query],
@@ -68,7 +74,8 @@ def _experiment_gpu_children():
     if not output:
         return []
     values = json.loads(output)
-    return values if isinstance(values, list) else [values]
+    values = values if isinstance(values, list) else [values]
+    return [item for item in values if int(item.get("ProcessId") or -1) != os.getpid()]
 
 
 def require_ready(archive_root, frozen_root):
@@ -140,10 +147,60 @@ def _load_or_save_batches(directory, final):
 
 
 def _batch_dicts(arrays):
-    return [dict(states=arrays["states"][index], actions=arrays["actions"][index],
-                 rewards=arrays["rewards"][index],
-                 next_states=arrays["next_states"][index], dones=arrays["dones"][index])
+    # ReplayBuffer.sample returns ndarray states, tuple[list[int]] actions,
+    # and tuples of Python reward/done scalars. Preserve its conversion cost.
+    return [dict(states=arrays["states"][index],
+                 actions=tuple(row.tolist() for row in arrays["actions"][index]),
+                 rewards=tuple(float(value) for value in arrays["rewards"][index]),
+                 next_states=arrays["next_states"][index],
+                 dones=tuple(bool(value) for value in arrays["dones"][index]))
             for index in range(len(arrays["indices"]))]
+
+
+def _validate_cached_result(result, run_config):
+    if result.get("config") != run_config:
+        raise RuntimeError("已有更新计时结果的配置不一致")
+    raw = result.get("raw_milliseconds")
+    if not isinstance(raw, list) or len(raw) != REPEATS:
+        raise RuntimeError("已有更新计时结果缺少100次原始毫秒值")
+    try:
+        calculated = summarize_ms(raw)
+        statistics_saved = result["statistics"]
+        if (set(statistics_saved) != set(calculated)
+                or any(not math.isclose(float(statistics_saved[key]), value,
+                                        rel_tol=1e-12, abs_tol=1e-12)
+                       for key, value in calculated.items())):
+            raise RuntimeError("已有更新计时统计与100次原始耗时不一致")
+        if not isinstance(result["parameters_actor"], int) or result["parameters_actor"] <= 0:
+            raise RuntimeError("已有更新计时缺少有效模型参数量")
+        if not result["temporary_log_file"] or not result["completed_at"]:
+            raise RuntimeError("已有更新计时缺少日志或完成时间")
+        for key in ("gpu_before", "gpu_after"):
+            snapshot = result[key]
+            if (not snapshot.get("at")
+                    or not all(isinstance(snapshot[name], int) for name in
+                               ("used_mib", "free_mib", "utilization_percent"))
+                    or not isinstance(snapshot["compute_process_query"], str)):
+                raise RuntimeError("已有更新计时缺少GPU负载快照")
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("已有更新计时结果缺少必需元数据或数值无效") from error
+    return result
+
+
+def _verify_existing_index(directory):
+    index_path = Path(directory) / "result_index.json"
+    if not index_path.exists():
+        return
+    index = _read(index_path)
+    if (index.get("manifest_sha256") != runner.sha256_file(Path(directory) / "manifest.json")
+            or set(index.get("runs", {})) != EXPECTED_RUN_IDS):
+        raise RuntimeError("已有更新计时索引与本次清单或18个结果不一致")
+    for run_id, reference in index["runs"].items():
+        expected = Path(directory) / "runs" / (run_id + ".json")
+        if (Path(reference.get("path", "")).resolve() != expected.resolve()
+                or not expected.is_file()
+                or runner.sha256_file(expected) != reference.get("sha256")):
+            raise RuntimeError(f"已有更新计时索引的输入结果损坏：{run_id}")
 
 
 def time_updates(agent, batches, *, warmup=WARMUP, repeats=REPEATS,
@@ -264,14 +321,14 @@ def _finish_reports(directory, plan, results):
              "| 网络 | 公式 | 三种子单次更新均值 ± 样本标准差 (ms) | 更新速度均值 ± 样本标准差 (次/秒) |",
              "| --- | --- | ---: | ---: |"]
     for row in summary:
-        lines.append(f"| {row['model']} | {row['formula']} | "
+        lines.append(f"| {MODEL_LABELS[row['model']]} | {FORMULA_LABELS[row['formula']]} | "
                      f"{row['mean_update_ms']:.3f} ± {row['std_update_ms_across_seeds']:.3f} | "
                      f"{row['mean_updates_per_second']:.2f} ± "
                      f"{row['std_updates_per_second_across_seeds']:.2f} |")
     lines += ["", "| 网络 | 修正公式减原公式：单次更新耗时均值 ± 三种子样本标准差 (ms) |",
               "| --- | ---: |"]
     for row in differences:
-        lines.append(f"| {row['model']} | "
+        lines.append(f"| {MODEL_LABELS[row['model']]} | "
                      f"{row['corrected_minus_legacy_mean_ms']:+.3f} ± "
                      f"{row['corrected_minus_legacy_std_ms']:.3f} |")
     lines += ["", "上表在相同网络、配对训练种子和公共批次下描述两套公式的实测更新成本差值；"
@@ -300,6 +357,12 @@ def run_update_timing(archive_root, frozen_root):
         "update_seed": UPDATE_SEED, "batch_count": BATCH_COUNT,
         "batch_size": BATCH_SIZE, "batch_file": str(batch_path),
         "batch_sha256": batch_sha, "warmup": WARMUP, "repeats": REPEATS,
+        "batch_dtypes": {key: str(value.dtype) for key, value in arrays.items()},
+        "update_input_containers": {
+            "states": "numpy.ndarray", "next_states": "numpy.ndarray",
+            "actions": "tuple[list[int]]", "rewards": "tuple[float]",
+            "dones": "tuple[bool]",
+        },
         "all_final_checkpoint_sha256": {key: value["checkpoint_sha256"]
                                         for key, value in final.items()},
         "all_final_checkpoint_paths": {key: value["checkpoint"]
@@ -314,6 +377,7 @@ def run_update_timing(archive_root, frozen_root):
         "interpretation": "独立参数更新计算开销短测，不保存学习权重或推断策略性能",
     }
     _immutable_json(directory / "manifest.json", config)
+    _verify_existing_index(directory)
     batches = _batch_dicts(arrays)
     results = {}
     for job in plan["jobs"]:
@@ -326,13 +390,7 @@ def run_update_timing(archive_root, frozen_root):
                       "batch_sha256": batch_sha, "post_commit": provenance["post_commit"],
                       "warmup": WARMUP, "repeats": REPEATS}
         if result_path.exists():
-            result = _read(result_path)
-            if (result.get("config") != run_config
-                    or len(result.get("raw_milliseconds", [])) != REPEATS
-                    or any(not np.isfinite(value) or value <= 0
-                           for value in result["raw_milliseconds"])
-                    or "statistics" not in result):
-                raise RuntimeError(f"已有不同配置或不完整的更新计时结果：{result_path}")
+            result = _validate_cached_result(_read(result_path), run_config)
         else:
             agent, replay = runner._create_agent(
                 job["model"], job["formula"], directory / "temporary_logs" / run_id,
