@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>卫星资源分配实验工作台</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><div class="brand-icon" aria-hidden="true">◈</div><div><strong>卫星资源分配实验工作台</strong><span>本机实验 · 配置、训练、测试与对照</span></div></div>
+      <div class="system-line"><span class="status-dot" id="system-dot"></span><span id="system-label">正在连接本地服务…</span><button class="quiet" id="system-refresh" type="button">检查环境</button></div>
+    </header>
+    <nav class="main-nav" aria-label="工作台页面">
+      <button type="button" data-page="config" aria-current="page"><span>01</span> 配置实验</button>
+      <button type="button" data-page="monitor"><span>02</span> 训练监控</button>
+      <button type="button" data-page="test"><span>03</span> 模型测试</button>
+      <button type="button" data-page="compare"><span>04</span> 结果对比</button>
+    </nav>
+    <main>
+      <section class="page active" id="page-config" aria-labelledby="config-title">
+        <div class="page-heading"><div><p class="eyebrow">EXPERIMENT DESIGN</p><h1 id="config-title">配置实验</h1><p>选择有实际实现的状态、网络和奖励，保存经过后台校验的方案。</p></div><div class="actions"><button id="config-load" type="button">载入方案</button><button id="config-import" type="button">导入 JSON</button><button id="config-export" type="button">导出 JSON</button></div></div>
+        <div class="layout-two">
+          <div class="stack">
+            <div class="panel">
+              <div class="panel-head"><div><h2>方案设置</h2><p>算法与基础配置</p></div><span class="pill" id="config-state">待检查</span></div>
+              <div class="field-grid"><label class="field">方案名称<input id="config-name" type="text" maxlength="100" placeholder="例如：SAC 需求可见性对照"></label><label class="field">算法<select id="config-algorithm"></select></label></div>
+              <div class="tabs" role="tablist" aria-label="配置类别"><button role="tab" aria-selected="true" data-config-tab="state" type="button">状态与场景</button><button role="tab" aria-selected="false" data-config-tab="network" type="button">网络与动作</button><button role="tab" aria-selected="false" data-config-tab="reward" type="button">奖励与约束</button><button role="tab" aria-selected="false" data-config-tab="training" type="button">训练参数</button></div>
+              <div id="config-form" class="config-form"></div>
+            </div>
+            <div class="panel"><div class="panel-head"><div><h2>校验结果</h2><p>服务端检查配置及模型是否可以构建</p></div><button type="button" id="config-validate">检查当前组合</button></div><div id="config-errors" class="notice muted" role="status">修改配置后点击检查，或等待自动检查。</div><div id="config-warnings"></div></div>
+          </div>
+          <aside class="stack">
+            <div class="panel preview-card"><div class="panel-head"><div><h2>状态输入</h2><p>按实际拼接顺序</p></div><strong class="big-number" id="state-dim">—</strong></div><ol id="state-layout" class="layout-list"></ol><p class="small muted" id="state-visibility"></p></div>
+            <div class="panel"><div class="panel-head"><div><h2>网络结构</h2><p>来自后台构建结果</p></div><span id="parameter-count" class="pill">— 参数</span></div><div id="network-graph" class="network-graph empty">检查配置后显示实际网络结构。</div></div>
+            <div class="panel"><div class="panel-head"><div><h2>奖励公式</h2><p>以后台校验结果为准</p></div></div><div id="reward-formula" class="formula">—</div><p class="small muted">奖励与功率、频率槽等物理约束分别配置；跨公式的回报不能直接排名。</p></div>
+            <div class="panel sticky-actions"><div class="actions"><button id="config-save" type="button">保存方案</button><button id="config-start" class="primary" type="button">提交后台训练</button></div><p class="small muted">提交时服务器会再次验证配置、CUDA 和运行源码。</p></div>
+          </aside>
+        </div>
+      </section>
+      <section class="page" id="page-monitor" aria-labelledby="monitor-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">LIVE RUN DIAGNOSTICS</p><h1 id="monitor-title">训练监控</h1><p>从实际状态、日志与标量记录读取；曲线缺失时保留空状态。</p></div><div class="actions"><label class="inline-label">运行<select id="monitor-run"></select></label><button id="monitor-refresh" type="button">刷新</button></div></div>
+        <div id="monitor-banner" class="notice muted">选择一个运行查看进度。</div>
+        <details class="overlay-picker"><summary>叠加其他运行的同名指标</summary><div id="monitor-overlay" class="choice-grid"></div><p class="small muted">曲线按运行标注；不同奖励公式的回报仅作训练诊断，不作成绩排序。</p></details>
+        <div class="metric-strip" id="monitor-summary"></div>
+          <div class="panel"><div class="panel-head"><div><h2>运行控制与来源</h2><p id="monitor-source">—</p></div><div class="actions"><button id="monitor-stop" type="button">停止并保存</button><button id="monitor-resume" type="button">从断点恢复</button><label class="inline-label">原始文件<select id="monitor-file"><option value="metrics.jsonl">标量 JSONL</option><option value="status.json">运行状态</option><option value="events.jsonl">事件 JSONL</option><option value="episodes.jsonl">回合 JSONL</option><option value="updates.jsonl">更新 JSONL</option><option value="evaluations.jsonl">评价 JSONL</option><option value="results.json">评价结果</option></select></label><button id="monitor-download" type="button">下载</button></div></div><div id="monitor-meta" class="facts"></div><details><summary>完整运行状态与错误详情</summary><pre id="monitor-raw-status" class="log-box">—</pre></details></div>
+        <div class="section-title"><h2>关键曲线</h2><p>原始记录始终保留；平滑只影响显示。</p></div>
+        <div class="chart-toolbar"><label>横轴<select id="chart-axis"><option value="step">交互步数</option><option value="time">已用时间</option></select></label><label>平滑窗口<input id="chart-smooth" type="number" min="1" max="200" value="1"></label><label class="check-inline"><input id="chart-show-raw" type="checkbox" checked>显示原始曲线</label><label class="check-inline"><input id="chart-show-smooth" type="checkbox">显示平滑曲线</label><span class="small muted">时间按各运行首次标量记录归零；历史耗时记录沿用原值。</span></div>
+        <div id="monitor-charts" class="chart-grid"></div>
+        <div class="panel"><div class="panel-head"><div><h2>全部标量</h2><p>包含已有 TensorBoard 标签与新运行的 JSONL 指标</p></div><span id="tag-count" class="pill">0 项</span></div><div class="field-grid"><label class="field">搜索标签<input id="tag-search" type="search" placeholder="例如 si_mean、entropy、slots"></label><label class="field">选择曲线<select id="tag-select"></select></label></div><div id="tag-chart" class="chart-box"></div><div id="tag-table" class="table-wrap"></div></div>
+        <div class="layout-two monitor-bottom"><div class="panel"><div class="panel-head"><div><h2>运行日志</h2><p>包含错误与堆栈；最近记录在下方</p></div></div><pre id="monitor-logs" class="log-box">暂无日志。</pre></div><div class="panel"><div class="panel-head"><div><h2>事件与诊断</h2><p>仅依据实际状态和记录提示</p></div></div><div id="monitor-diagnostics"></div><div id="monitor-events" class="event-list"></div></div></div>
+      </section>
+      <section class="page" id="page-test" aria-labelledby="test-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">MODEL EVALUATION</p><h1 id="test-title">模型测试</h1><p>模型和实际场景先校验，再对全部目标波束的最终效果进行评价。</p></div><button id="test-refresh" type="button">刷新资源</button></div>
+        <div class="layout-two">
+          <div class="stack"><div class="panel"><div class="panel-head"><div><h2>选择或导入模型</h2><p>旧格式需提供明确类型和配置</p></div></div><label class="field">已登记模型<select id="model-select"></select></label><div id="model-details" class="notice muted">尚未选择模型。</div><button id="model-download" type="button">导出模型包</button><div class="divider"></div><div class="field-grid"><label class="field">本地权重路径<input id="model-path" type="text" placeholder="C:\...\model.pt"></label><label class="field">旧权重类型<select id="model-legacy-type"><option value="">模型包或自动识别</option><option value="sac_transformer">旧 SAC Transformer</option><option value="sac_cnn">旧 SAC CNN</option><option value="sac_mlp">旧 SAC MLP</option><option value="sac_cnn_matched">匹配版 SAC CNN</option><option value="sac_mlp_matched">匹配版 SAC MLP</option><option value="ppo_direct">旧 PPO direct</option><option value="dqn">旧 DQN</option></select></label></div><label class="field">可选：配套配置 JSON<textarea id="model-config-json" rows="3" placeholder="仅旧权重无法确定状态/网络时填写"></textarea></label><button id="model-import" type="button">检查并导入</button></div>
+          <div class="panel"><div class="panel-head"><div><h2>评价设置</h2><p>同一场景可在结果对比页配对分析</p></div></div><div class="field-grid"><label class="field">动作方式<select id="test-action-mode"><option value="deterministic">确定性</option><option value="stochastic">采样</option></select></label><label class="field">重复次数<input id="test-repeats" type="number" min="1" value="1"></label></div><fieldset class="bare-fieldset"><legend>同场景基线</legend><label class="check-inline"><input type="checkbox" value="fixed" class="baseline-choice">固定</label><label class="check-inline"><input type="checkbox" value="greedy" class="baseline-choice">贪心</label></fieldset><button id="test-start" class="primary" type="button">运行真实评价</button><p class="small muted">评价也作为后台任务执行；结果会保留场景与逐束数据。</p></div></div>
+          <div class="stack"><div class="panel"><div class="panel-head"><div><h2>选择或生成场景</h2><p>每个场景含 100 束，保存实际数组</p></div></div><label class="field">已保存场景<select id="scene-select"></select></label><div id="scene-details" class="notice muted">尚未选择场景。</div><div class="divider"></div><div class="field-grid"><label class="field">场景集名称<input id="scene-name" type="text" placeholder="例如：测试场景 A"></label><label class="field">随机种子<input id="scene-seed" type="number" value="95000"></label><label class="field">场景数量<input id="scene-count" type="number" min="1" value="1"></label></div><button id="scene-generate" type="button">生成并保存场景</button><div class="divider"></div><label class="field">本地场景路径（NPZ、CSV 或目录）<input id="scene-path" type="text" placeholder="C:\...\scene.npz"></label><button id="scene-import" type="button">导入并验证场景</button></div>
+          <div class="panel"><div class="panel-head"><div><h2>测试任务</h2><p>选择已完成任务查看逐束与动作记录</p></div></div><label class="field">评价运行<select id="evaluation-run"></select></label><button id="evaluation-load" type="button">读取结果</button><div id="evaluation-state" class="notice muted">尚未选择评价运行。</div></div></div>
+        </div>
+        <div id="test-results" hidden><div class="section-title"><h2>最终测试结果</h2><p>全体目标波束，含未服务与后续干扰。</p></div><div class="actions"><button id="test-report-download" type="button">下载中文报告</button><button id="test-csv-download" type="button">下载逐束 CSV</button><button id="test-json-download" type="button">下载原始 JSON</button></div><div class="metric-strip" id="test-summary"></div><div id="baseline-results" class="panel"></div><div class="chart-grid"><div class="panel"><h3>各波束业务需求与最终速率</h3><div id="beam-chart" class="chart-box"></div></div><div class="panel"><h3>功率分配</h3><div id="power-chart" class="chart-box"></div></div><div class="panel"><h3>频率槽分配</h3><div id="spectrum-chart" class="spectrum-box"></div></div><div class="panel"><h3>逐步动作与奖励</h3><div id="trace-view" class="trace-box"></div></div></div><div class="panel"><div class="panel-head"><h3>逐束最终效果</h3><div class="actions"><label class="inline-label">场景<select id="result-scene"></select></label><label class="inline-label">同场景基线<select id="baseline-view"></select></label></div></div><div id="beam-table" class="table-wrap"></div></div></div>
+      </section>
+      <section class="page" id="page-compare" aria-labelledby="compare-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">PAIRED COMPARISON</p><h1 id="compare-title">结果对比</h1><p>仅在服务端确认同一实际场景与相容统计口径后显示配对差异。</p></div><button id="compare-refresh" type="button">刷新运行</button></div>
+        <div class="panel"><div class="panel-head"><div><h2>选择评价运行</h2><p>可多选；训练回报因公式不同不能直接排名</p></div><button id="compare-run" class="primary" type="button">生成对比</button></div><div id="compare-choices" class="choice-grid"></div><div id="compare-notice" class="notice muted">请至少选择两个有评价结果的运行。</div></div><div class="panel" id="compare-output" hidden><div class="panel-head"><div><h2>配对结果</h2><p>实际场景、终态服务和约束并列呈现</p></div><button id="compare-export" type="button">导出 JSON</button></div><div id="compare-warnings"></div><div id="compare-table" class="table-wrap"></div><div id="compare-configs" class="comparison-configs"></div></div>
+      </section>
+    </main>
+    <footer>本地单用户工作台 · 数据取自真实运行及保存场景 · 训练和效果结论以原始记录为准</footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="config-dialog"><form method="dialog"><h2>载入已保存方案</h2><label class="field">方案<select id="saved-config-select"></select></label><div class="actions"><button value="cancel" type="submit">取消</button><button id="saved-config-apply" value="apply" type="submit" class="primary">载入副本</button></div></form></dialog>
+  <input id="config-file" type="file" accept=".json,application/json" hidden>
+</body>
+</html>
