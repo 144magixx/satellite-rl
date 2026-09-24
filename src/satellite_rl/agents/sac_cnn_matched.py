@@ -1,6 +1,6 @@
 """参数规模接近 Transformer 的 CNN SAC；融合层默认在训练入口设为128。"""
 from satellite_rl.paths import project_path
-from satellite_rl.agents.sac_math import expected_min_joint_q
+from satellite_rl.agents.sac_math import FORMULA_Q_VARIANTS, expected_min_joint_q
 # 处理离散问题的模型
 import torch
 from torch import nn
@@ -175,7 +175,7 @@ class SAC:
         self.log_alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=alpha_lr)
 
         # 属性分配
-        if formula_variant not in ("legacy", "corrected"):
+        if formula_variant not in FORMULA_Q_VARIANTS:
             raise ValueError("Unknown SAC formula variant")
         self.formula_variant = formula_variant
         self.last_metrics = {}
@@ -293,7 +293,7 @@ class SAC:
         # 目标价值网络，下一时刻的state_value [b,n_actions]
         q1_freq, q1_slots, q1_power = self.target_critic_1(next_states)
         q2_freq, q2_slots, q2_power = self.target_critic_2(next_states)
-        if self.formula_variant == "corrected":
+        if FORMULA_Q_VARIANTS[self.formula_variant] == "joint":
             exp_min_q = expected_min_joint_q(
                 (probs_freq, probs_slots, probs_power),
                 (q1_freq, q1_slots, q1_power), (q2_freq, q2_slots, q2_power))
@@ -393,7 +393,7 @@ class SAC:
         with torch.no_grad():
             q1_f, q1_s, q1_p = self.critic_1(states)
             q2_f, q2_s, q2_p = self.critic_2(states)
-        if self.formula_variant == "corrected":
+        if FORMULA_Q_VARIANTS[self.formula_variant] == "joint":
             exp_min_q = expected_min_joint_q(
                 (pf, ps, pp), (q1_f, q1_s, q1_p), (q2_f, q2_s, q2_p))
         else:

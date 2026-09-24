@@ -29,6 +29,7 @@ import uuid
 import numpy as np
 import torch
 
+from satellite_rl.agents.sac_math import FORMULA_Q_VARIANTS
 from satellite_rl.paths import project_path
 from satellite_rl.training.run_monitor import RunMonitor, atomic_json, replace_with_retry, utc_now
 
@@ -46,6 +47,12 @@ SCENE_STREAM_SEEDS = (61001, 61002, 61003)
 VALIDATION_SCENE_SEEDS = tuple(range(71000, 71020))
 TEST_SCENE_SEEDS = tuple(range(81000, 81100))
 ACTION_SEEDS = (91001, 91002, 91003)
+TARGET_ENTROPY_BY_FORMULA = {
+    "legacy": -6.9,
+    "corrected": 6.9,
+    "negative_joint": -6.9,
+    "positive_per_head": 6.9,
+}
 
 
 def sha256_file(path):
@@ -297,7 +304,7 @@ def _create_agent(model, formula, run_dir, session_name):
         agent = module.SAC(
             n_states=204, n_hiddens=hidden, freq_dim=100, slots_dim=10,
             power_dim=10, actor_lr=1e-5, critic_lr=1e-4, alpha_lr=1e-4,
-            target_entropy=-6.9 if formula == "legacy" else 6.9,
+            target_entropy=TARGET_ENTROPY_BY_FORMULA[formula],
             tau=0.005, gamma=0.99, device=torch.device("cuda"),
             formula_variant=formula,
         )
@@ -438,7 +445,9 @@ def _config(args, runtime):
         "batch_size": 256, "replay_capacity": 20000, "warmup_size": 2000,
         "actor_lr": 1e-5, "critic_lr": 1e-4, "alpha_lr": 1e-4,
         "gamma": 0.99, "tau": 0.005,
-        "target_entropy": -6.9 if args.formula == "legacy" else 6.9,
+        "target_entropy": TARGET_ENTROPY_BY_FORMULA[args.formula],
+        **({"q_min_variant": FORMULA_Q_VARIANTS[args.formula]}
+           if args.formula not in ("legacy", "corrected") else {}),
         "validation_scene_seeds": VALIDATION_SCENE_SEEDS[:args.validation_scene_count],
         "test_scene_seeds": TEST_SCENE_SEEDS[:args.test_scene_count],
         "action_seeds": ACTION_SEEDS,
@@ -823,9 +832,9 @@ def run(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="18 组 SAC 配对实验的单次 CUDA 作业")
+    parser = argparse.ArgumentParser(description="SAC 公式对照实验的单次 CUDA 作业")
     parser.add_argument("--model", choices=MODELS, required=True)
-    parser.add_argument("--formula", choices=("legacy", "corrected"), required=True)
+    parser.add_argument("--formula", choices=tuple(TARGET_ENTROPY_BY_FORMULA), required=True)
     parser.add_argument("--seed", type=int, choices=TRAIN_SEEDS, required=True)
     parser.add_argument("--steps", type=int, default=400000)
     parser.add_argument("--experiment-id", default="sac_comparison_20260924")

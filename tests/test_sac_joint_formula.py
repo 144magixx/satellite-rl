@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from satellite_rl.agents.sac_math import expected_min_joint_q
+from satellite_rl.training.experiment_runner import TARGET_ENTROPY_BY_FORMULA, _config, build_parser
 
 
 class JointFormulaTests(unittest.TestCase):
@@ -45,10 +46,53 @@ class JointFormulaTests(unittest.TestCase):
                 agent.target_critic_2 = Outputs((0., 5., 0.))
                 agent.log_alpha = torch.tensor(float('-inf'))
                 agent.gamma = 1.
-                for formula, expected in [('legacy', 0.), ('corrected', 5.)]:
+                for formula, expected in [('legacy', 0.), ('corrected', 5.),
+                                          ('negative_joint', 5.), ('positive_per_head', 0.)]:
                     agent.formula_variant = formula
                     target = agent.calc_target(torch.zeros(1, 1), torch.zeros(1, 204), torch.zeros(1, 1))
                     self.assertAlmostEqual(target.item(), expected, places=5)
+
+    def test_all_four_runner_formulas_record_the_requested_entropy_and_q_rule(self):
+        expectations = {
+            'legacy': (-6.9, None), 'corrected': (6.9, None),
+            'negative_joint': (-6.9, 'joint'),
+            'positive_per_head': (6.9, 'per_head'),
+        }
+        parser = build_parser()
+        for formula, (target, q_rule) in expectations.items():
+            with self.subTest(formula=formula):
+                args = parser.parse_args(['--model', 'transformer', '--formula', formula,
+                                          '--seed', '51001', '--run-id', 'probe'])
+                args.experiment_id = 'probe'
+                config = _config(args, {})
+                self.assertEqual(config['target_entropy'], target)
+                self.assertEqual(TARGET_ENTROPY_BY_FORMULA[formula], target)
+                self.assertEqual(config.get('q_min_variant'), q_rule)
+                self.assertEqual(config['formula'], formula)
+
+    def test_real_update_uses_each_q_path_and_updates_parameters(self):
+        from satellite_rl.agents import sac_mlp
+        previous = torch.get_num_threads()
+        self.addCleanup(torch.set_num_threads, previous)
+        torch.set_num_threads(1)
+        states = np.random.default_rng(51001).normal(size=(8, 204))
+        transitions = dict(states=states, next_states=states.copy(),
+                           actions=[[0, 0, 0]] * 8, rewards=[0.] * 8, dones=[0.] * 8)
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'SATELLITE_RL_OUTPUT_ROOT': directory}):
+            for formula in ('legacy', 'corrected', 'negative_joint', 'positive_per_head'):
+                with self.subTest(formula=formula):
+                    torch.manual_seed(51001)
+                    agent = sac_mlp.SAC(204, 128, 100, 10, 10, 1e-5, 1e-4, 1e-4,
+                                        TARGET_ENTROPY_BY_FORMULA[formula], .005, .99,
+                                        torch.device('cpu'), formula_variant=formula)
+                    before_actor = next(agent.actor.parameters()).detach().clone()
+                    before_critic = next(agent.critic_1.parameters()).detach().clone()
+                    with patch.object(sac_mlp, 'expected_min_joint_q',
+                                      wraps=expected_min_joint_q) as joint_q:
+                        agent.update(transitions)
+                    self.assertEqual(joint_q.call_count, 2 if formula in ('corrected', 'negative_joint') else 0)
+                    self.assertFalse(torch.equal(next(agent.actor.parameters()), before_actor))
+                    self.assertFalse(torch.equal(next(agent.critic_1.parameters()), before_critic))
 
     def test_real_temperature_update_moves_towards_positive_target(self):
         from satellite_rl.agents.sac_mlp import SAC

@@ -2,6 +2,15 @@
 import torch
 
 
+# The two original names keep their historical Q behavior for old checkpoints.
+FORMULA_Q_VARIANTS = {
+    "legacy": "per_head",
+    "corrected": "joint",
+    "negative_joint": "joint",
+    "positive_per_head": "per_head",
+}
+
+
 def expected_min_joint_q(probabilities, q1, q2, frequency_chunk=25):
     """先比较完整动作 Q，再按三个动作概率求期望，保留概率梯度。"""
     pf, ps, pp = probabilities
