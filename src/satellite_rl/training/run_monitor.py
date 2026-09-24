@@ -70,7 +70,8 @@ class RunMonitor:
         ), resume)
         self._open_csv("episodes", (
             "run_id", "episode", "env_step", "length", "return", "wall_seconds",
-            "scene_id", "si_sum", "si_mean", "sgm_mean", "throughput_bps",
+            "scene_id", "si_sum", "si_mean", "sgm_mean", "basic_service_count",
+            "zero_capacity_count", "throughput_bps",
             "total_power_w", "served_beams", "total_beams", "power_exceeded",
             "completed", "occupancy_fraction", "zero_slot_rate", "allocated_slots",
             "spectral_efficiency", "interference_beams", "in_range_interference_beams",
@@ -79,7 +80,8 @@ class RunMonitor:
         ), resume)
         self._open_csv("evaluations", (
             "run_id", "checkpoint", "env_step", "scene_id", "action_mode", "action_seed",
-            "return", "si_sum", "si_mean", "sgm_mean", "throughput_bps", "total_power_w",
+            "return", "si_sum", "si_mean", "sgm_mean", "basic_service_count",
+            "zero_capacity_count", "throughput_bps", "total_power_w",
             "served_beams", "total_beams", "power_exceeded", "completed",
             "occupancy_fraction", "zero_slot_rate", "allocated_slots",
             "spectral_efficiency", "interference_beams", "in_range_interference_beams",

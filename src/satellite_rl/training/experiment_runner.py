@@ -434,6 +434,8 @@ def _config(args, runtime):
         "experiment_id": args.experiment_id, "run_id": args.run_id,
         "model": args.model, "formula": args.formula, "train_seed": args.seed,
         "reward_variant": args.reward_variant, "basic_fraction": 0.1,
+        "validation_selection_metric": ("basic_service_count" if service_run else "si_mean"),
+        "primary_test_checkpoint": "final",
         "train_scene_seed": SCENE_STREAM_SEEDS[seed_index],
         "budget_env_steps": args.steps, "validation_interval": args.validation_interval,
         "checkpoint_interval": args.checkpoint_interval,
@@ -755,7 +757,11 @@ def run(args):
                     updates_per_second=update_speed,
                     eta_seconds=((args.steps - progress["env_step"]) / speed
                                  if speed and current_phase == "training" else None),
-                    best_validation_si_mean=progress["best_si_mean"],
+                    **({"best_validation_si_mean": progress["best_si_mean"]}
+                       if args.reward_variant == "legacy_original" else
+                       {"best_validation_basic_service_count": progress.get("best_basic_service_count")}),
+                    validation_selection_metric=("basic_service_count"
+                                                 if args.reward_variant != "legacy_original" else "si_mean"),
                     progress_at=utc_now(),
                 ))
                 last_status = now
