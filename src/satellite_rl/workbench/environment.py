@@ -292,10 +292,12 @@ class WorkbenchEnv:
         preset = self.config["reward"]["preset"]
         if preset != "custom":
             if preset == "fused":
-                components = {"basic_delta": 2 * (after["basic"] - before["basic"]),
+                components = {"basic_delta": after["basic"] - before["basic"],
                               "si_delta": after["si"] - before["si"],
-                              "sgm_delta": .2 * (after["sgm"] - before["sgm"]),
+                              "sgm_delta": after["sgm"] - before["sgm"],
                               "power_cost": -_float(info["actual_power"]) / self.config["environment"]["power_budget_w"]}
+                weights = {"basic_delta": 2.0, "si_delta": 1.0,
+                           "sgm_delta": 0.2, "power_cost": 1.0}
             else:
                 increment = _float(info["satisfaction_increment"])
                 sat = 1 if increment >= 1 else -1
@@ -307,12 +309,15 @@ class WorkbenchEnv:
                 components = {"legacy_threshold": float(sat), "current_sgm": current_sgm,
                               "legacy_sgm_penalty": -sgm_penalty,
                               "occupy_penalty": -_float(info["occupy"]) / max(1, _float(info["origin_slots"]))}
+                weights = {key: 1.0 for key in components}
             total = float(legacy_reward)
-            # The legacy implementation is authoritative; record its exact residual if necessary.
-            residual = total - sum(components.values())
+            # Preserve the raw environment's exact reward, including any numerical residual.
+            residual = total - sum(value * weights[key] for key, value in components.items())
             if abs(residual) > 1e-10:
                 components["legacy_residual"] = residual
-            return total, {key: dict(raw=value, scaled=value, weighted=value, timing="step") for key, value in components.items()}
+                weights["legacy_residual"] = 1.0
+            return total, {key: dict(raw=value, scaled=value, weighted=value * weights[key], timing="step")
+                           for key, value in components.items()}
         budget = self.config["environment"]["power_budget_w"]
         this_rate = max(0.0, _float(self.raw_env.beam_bps[-1]))
         demand = _float(info["required_rate"])

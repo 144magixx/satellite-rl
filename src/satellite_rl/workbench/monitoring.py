@@ -59,13 +59,15 @@ def _number(value):
 
 
 def _time_value(value):
+    if value is None or value == "":
+        return None
     number = _number(value)
     if number is not None:
         return number
     try:
         return datetime.fromisoformat(str(value)).timestamp()
     except (ValueError, TypeError):
-        return 0
+        return None
 
 
 def reduce_points(points, limit):
@@ -99,9 +101,9 @@ class MetricsReader:
         cached = self.cache.get(key)
         if cached and time.monotonic() - cached[0] < 4:
             return cached[1]
-        series, sources, invalid = {}, set(), []
+        series, sources, invalid, time_bases = {}, set(), [], {}
 
-        def add(tag, step, value, wall_time=0):
+        def add(tag, step, value, wall_time=None):
             numeric = _number(value)
             if numeric is None:
                 if str(value).lower() in ("nan", "inf", "-inf", "infinity"):
@@ -120,9 +122,9 @@ class MetricsReader:
             for row in read_jsonl(json_path, limit=0):
                 group = row.get("group", "training")
                 for name, value in row.get("values", {}).items():
-                    add(name if "/" in name else group + "/" + name,
+                    add(name if name.startswith(group + "/") else group + "/" + name,
                         row.get("step", row.get("env_step", 0)), value,
-                        row.get("wall_time", row.get("wall_seconds", 0)))
+                        row.get("wall_time", row.get("wall_seconds")))
         skip = {"run_id", "env_step", "update_step", "episode", "scene_id", "action_seed", "wall_seconds"}
         for filename, group in (("updates", "learning"), ("episodes", "training"), ("evaluations", "evaluation")):
             path = directory / (filename + ".csv")
@@ -144,11 +146,18 @@ class MetricsReader:
                     for (context, name, step), values in buckets.items():
                         add("evaluation/" + context + "/" + name, step, sum(values) / len(values))
                 else:
+                    cumulative_episode_seconds = 0.0
                     for row in rows:
+                        record_time = _number(row.get("wall_seconds"))
+                        if group == "training" and record_time is not None:
+                            cumulative_episode_seconds += record_time
+                            record_time = cumulative_episode_seconds
                         for name, value in row.items():
                             if name not in skip:
                                 add(group + "/" + name, row.get("env_step", row.get("episode", 0)), value,
-                                    row.get("wall_seconds", 0))
+                                    record_time)
+                                if group == "training":
+                                    time_bases[group + "/" + name] = "累计回合交互耗时，不含验证与保存"
         # Also accept per-category records if a worker crashed before its metrics file flush.
         if not json_path.exists():
             for filename, group in (("updates", "learning"), ("episodes", "training")):
@@ -159,7 +168,7 @@ class MetricsReader:
                         for name, value in row.items():
                             if name not in skip and not isinstance(value, (dict, list)):
                                 add(group + "/" + name, row.get("env_step", row.get("step", 0)), value,
-                                    row.get("wall_seconds", 0))
+                                    row.get("wall_seconds"))
         tb_path = directory / "tensorboard"
         tb_error = None
         if tb_path.is_dir():
@@ -172,6 +181,11 @@ class MetricsReader:
                     sources.add("TensorBoard（每项最多读取10000个事件）")
                 for tag in tags:
                     if tag in series:
+                        for event in accumulator.Scalars(tag):
+                            point = series[tag].get(float(event.step))
+                            if point is not None:
+                                point["wall_time"] = event.wall_time
+                        time_bases[tag] = "TensorBoard实际记录时间"
                         continue
                     for event in accumulator.Scalars(tag):
                         add(tag, event.step, event.value, event.wall_time)
@@ -182,6 +196,7 @@ class MetricsReader:
             points = sorted(by_step.values(), key=lambda point: point["step"])
             result.append({"tag": tag, "group": tag.split("/")[0],
                            "points": reduce_points(points, limit), "raw_count": len(points),
+                           "time_basis": time_bases.get(tag, "记录时间；未记录时为空"),
                            "downsampled": len(points) > limit})
         status = read_json(directory / "status.json", {})
         warnings = []
@@ -201,6 +216,6 @@ class MetricsReader:
                 pass
         output = {"series": result, "available_tags": [s["tag"] for s in result],
                   "diagnostics": warnings, "sources": sorted(sources), "groups": GROUP_LABELS,
-                  "note": "图来自原始记录；稠密曲线按时间分段保留极值。缺失项不补零；不同奖励回报不直接排名。"}
+                  "note": "图来自原始记录；稠密曲线按时间分段保留极值。历史回合CSV的时间为累计交互耗时，不含验证与保存；同名TensorBoard标签优先提供实际时间。缺失时间不补零；不同奖励回报不直接排名。"}
         self.cache[key] = (time.monotonic(), output)
         return output

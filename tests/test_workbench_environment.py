@@ -189,13 +189,22 @@ class EnvironmentTests(unittest.TestCase):
                          reward_variant="fused")
         raw.reset(beam)
         for indices in ([0, 0, 0], [1, 1, 1], [0, 0, 0], [99, 9, 9]):
+            previous_basic = raw.total_basic_service
+            previous_sgm = raw.total_sgm
             action = [raw.beam_idx % 8, indices[0], indices[1] + 1,
                       10 * np.log10((indices[2] + 1) * 5)]
             expected_state, expected_reward, done, _ = raw.step(action)
             state, reward, actual_done, info = wrapped.step(indices)
             self.assertTrue(np.allclose(state, expected_state))
             self.assertAlmostEqual(reward, expected_reward)
-            self.assertAlmostEqual(sum(t["weighted"] for t in info["reward_terms"].values()), reward)
+            terms = info["reward_terms"]
+            self.assertAlmostEqual(terms["basic_delta"]["raw"], raw.total_basic_service - previous_basic)
+            self.assertAlmostEqual(terms["sgm_delta"]["raw"], raw.total_sgm - previous_sgm)
+            self.assertAlmostEqual(terms["basic_delta"]["weighted"], 2 * terms["basic_delta"]["raw"])
+            self.assertAlmostEqual(terms["sgm_delta"]["weighted"], 0.2 * terms["sgm_delta"]["raw"])
+            self.assertAlmostEqual(terms["basic_delta"]["scaled"], terms["basic_delta"]["raw"])
+            self.assertAlmostEqual(terms["sgm_delta"]["scaled"], terms["sgm_delta"]["raw"])
+            self.assertAlmostEqual(sum(t["weighted"] for t in terms.values()), reward)
             self.assertEqual(done, actual_done)
 
     def test_final_result_is_recomputed_after_later_interference(self):

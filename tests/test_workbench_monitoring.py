@@ -8,6 +8,17 @@ from satellite_rl.workbench.monitoring import MetricsReader, reduce_points
 
 
 class MonitoringTests(unittest.TestCase):
+    def test_reward_components_keep_group_and_record_time(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            row = dict(step=50, wall_time="2026-09-25T00:00:00+00:00", group="reward",
+                       values={"si_delta/raw": 2.0, "si_delta/weighted": 0.4})
+            (root / "metrics.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+            series = {item["tag"]: item for item in MetricsReader().read(root)["series"]}
+            self.assertEqual(set(series), {"reward/si_delta/raw", "reward/si_delta/weighted"})
+            self.assertEqual(series["reward/si_delta/raw"]["group"], "reward")
+            self.assertGreater(series["reward/si_delta/raw"]["points"][0]["wall_time"], 1e9)
+
     def test_downsampling_keeps_extreme_and_endpoints(self):
         points = [{"step": i, "value": 99 if i == 481 else -88 if i == 722 else 0,
                    "wall_time": i} for i in range(1000)]
@@ -48,6 +59,17 @@ class MonitoringTests(unittest.TestCase):
             self.assertEqual(series["evaluation/first/sample/si_mean"][0]["value"], 0.5)
             self.assertEqual(series["evaluation/first/greedy/si_mean"][0]["value"], 0.8)
             self.assertEqual(series["evaluation/second/sample/si_mean"][0]["value"], 0.7)
+            self.assertIsNone(series["evaluation/first/sample/si_mean"][0]["wall_time"])
+
+    def test_episode_time_is_accumulated_not_per_episode_duration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "episodes.csv").write_text(
+                "env_step,episode,wall_seconds,si_mean\n100,0,2,0.4\n200,1,3,0.5\n", encoding="utf-8")
+            series = MetricsReader().read(root)["series"]
+            values = next(item for item in series if item["tag"] == "training/si_mean")
+            self.assertEqual([point["wall_time"] for point in values["points"]], [2, 5])
+            self.assertIn("交互耗时", values["time_basis"])
 
 
 if __name__ == "__main__":
