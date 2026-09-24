@@ -7,14 +7,18 @@ suite_status.json or suite.lock as completion evidence.
 
 from __future__ import annotations
 
+import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import subprocess
 
 import numpy as np
 import torch
 
 from satellite_rl.training import experiment_runner as runner
+from satellite_rl.training.experiment_suite import _process_token
 
 
 EXPERIMENT_ID = "sac_comparison_20260924_r2"
@@ -183,3 +187,93 @@ def require_completed(archive_root, frozen_root):
                 "source_plan_path": str(exp_dir / "suite_plan.json"),
                 "single_seed_output_dir": str(exp_dir / "single_seed_51001")}
     return exp_dir, filtered, final
+
+
+def _process_command(pid):
+    command = ("Get-CimInstance Win32_Process -Filter 'ProcessId=" + str(int(pid)) +
+               "' | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress")
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", command],
+                            capture_output=True, text=True, check=True)
+    return json.loads(result.stdout) if result.stdout.strip() else None
+
+
+def _command_identifies_worker(info, pid, run_id):
+    if not info or info.get("ProcessId") != pid:
+        return False
+    executable = str(info.get("ExecutablePath") or "").replace("/", "\\").lower()
+    command = str(info.get("CommandLine") or "")
+    return bool(executable.endswith(r"\envs\dqn\python.exe")
+                and "-m satellite_rl.training.experiment_runner" in command
+                and re.search(r"(?:^|\s)--run-id\s+" + re.escape(run_id) + r"(?:\s|$)", command)
+                and re.search(r"(?:^|\s)--experiment-id\s+" + EXPERIMENT_ID + r"(?:\s|$)",
+                              command))
+
+
+def current_six_status(archive_root):
+    """One read-only snapshot from six run files and exact worker identities."""
+    exp_dir = Path(archive_root).resolve() / "outputs" / "experiments" / EXPERIMENT_ID
+    plan = _read(exp_dir / "suite_plan.json")
+    jobs = plan.get("jobs", [])
+    if ({job["run_id"] for job in jobs} != ALL_ORIGINAL_RUN_IDS or len(jobs) != 18
+            or plan["source"]["git_commit"] != TRAIN_COMMIT):
+        raise RuntimeError("原r2十八组计划不符合单种子状态范围")
+    rows = []
+    for job in jobs:
+        if job["seed"] != SEED:
+            continue
+        try:
+            status = _read(exp_dir / job["run_id"] / "status.json")
+        except (OSError, ValueError):
+            status = {}
+        pid, token = job.get("pid"), job.get("process_token")
+        token_matches = bool(pid and token and _process_token(pid) == token)
+        try:
+            info = _process_command(pid) if token_matches else None
+        except (OSError, ValueError, subprocess.CalledProcessError):
+            info = None
+        command_verified = bool(token_matches and _command_identifies_worker(
+            info, pid, job["run_id"]))
+        alive = token_matches and command_verified
+        identity = ("verified" if alive else "command_unverified" if token_matches
+                    else "pid_reused_or_exited" if pid and token else "no_recorded_pid")
+        complete = (status.get("stage") == "completed"
+                    and status.get("env_step") == 400000
+                    and status.get("update_step") == 398000)
+        state = ("completed" if complete else "running" if alive else
+                 "identity_unknown" if token_matches else "stopped_or_incomplete")
+        rows.append({"run_id": job["run_id"], "model": job["model"],
+                     "formula": job["formula"], "seed": SEED, "state": state,
+                     "status_stage": status.get("stage"),
+                     "env_step": status.get("env_step"),
+                     "update_step": status.get("update_step"),
+                     "heartbeat_at": status.get("heartbeat_at"),
+                     "suite_plan_state": job.get("state"),
+                     "worker_pid": pid, "worker_creation_token": token,
+                     "worker_identity_alive": alive,
+                     "worker_identity_status": identity})
+    if len(rows) != 6 or {row["run_id"] for row in rows} != RUN_IDS:
+        raise RuntimeError("状态快照不是精确六组")
+    return {"at": datetime.now(timezone.utc).isoformat(),
+            "experiment_id": EXPERIMENT_ID, "scope": "seed51001_only",
+            "training_commit": TRAIN_COMMIT,
+            "counts": {state: sum(row["state"] == state for row in rows)
+                       for state in ("completed", "running", "identity_unknown",
+                                     "stopped_or_incomplete")},
+            "runs": rows}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="六组单种子实验的只读状态和完成门槛")
+    parser.add_argument("command", choices=("status", "verify"))
+    parser.add_argument("--archive-root", default="D:/paper")
+    parser.add_argument("--frozen-root", default="D:/paper_worktrees/frozen-sac-20260924-r2")
+    args = parser.parse_args()
+    if args.command == "status":
+        print(json.dumps(current_six_status(args.archive_root), ensure_ascii=False, indent=2))
+    else:
+        _, plan, _ = require_completed(args.archive_root, args.frozen_root)
+        print(f"已严格核对seed51001的{len(plan['jobs'])}组固定预算训练和考核")
+
+
+if __name__ == "__main__":
+    main()
