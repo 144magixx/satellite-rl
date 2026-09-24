@@ -1,4 +1,4 @@
-param(
+﻿param(
     [int]$Port = 8765,
     [string]$ArchiveRoot = '',
     [string]$DqnPython = "$env:USERPROFILE\anaconda3\envs\DQN\python.exe",
@@ -25,6 +25,13 @@ if ($workbenchExisting) {
 }
 $workbenchLogRoot = Join-Path $ArchiveRoot 'outputs\workbench\service'
 New-Item -ItemType Directory -Force -Path $workbenchLogRoot | Out-Null
+$workbenchLogStamp = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
+foreach ($workbenchLogName in @('server.stdout.log', 'server.stderr.log')) {
+    $workbenchPreviousLog = Join-Path $workbenchLogRoot $workbenchLogName
+    if (Test-Path -LiteralPath $workbenchPreviousLog -PathType Leaf) {
+        Copy-Item -LiteralPath $workbenchPreviousLog -Destination (Join-Path $workbenchLogRoot ($workbenchLogName + '.' + $workbenchLogStamp))
+    }
+}
 $workbenchOldPythonPath = $env:PYTHONPATH
 $workbenchOldUtf8 = $env:PYTHONUTF8
 try {
