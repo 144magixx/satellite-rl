@@ -395,7 +395,8 @@ def _input_hashes(exp_dir, plan, final, baselines, selection_path):
         for key in ("original_test", "best_test"):
             result = _read(info[key])
             files += [Path(result["arrays_path"]), Path(result["trace_path"])]
-    return {str(path): runner.sha256_file(path) for path in sorted(set(files))}
+    paths = sorted({Path(path) for path in files})
+    return {str(path): runner.sha256_file(path) for path in paths}
 
 
 def _selection(exp_dir, plan):

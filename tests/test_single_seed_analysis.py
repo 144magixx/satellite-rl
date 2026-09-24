@@ -11,7 +11,7 @@ import numpy as np
 
 from satellite_rl.evaluation.experiment_report import MAIN_FIELDS
 from satellite_rl.evaluation.single_seed_analysis import (
-    _plot_training_episodes, _plot_validation, _report_text,
+    _input_hashes, _plot_training_episodes, _plot_validation, _report_text,
     compare_with_baselines, generate_single_seed_analysis,
     learning_curve_for_run, load_same_scene_baselines, paired_formula_differences,
     summarize_runs, validation_curve_for_run,
@@ -34,6 +34,46 @@ class SingleSeedAnalysisTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "six not complete"):
                 generate_single_seed_analysis(self.root, self.root)
             baseline.assert_not_called()
+
+    def test_mixed_saved_path_types_hash_without_writing_analysis(self):
+        exp = self.root / "experiment"
+        run = exp / "run_one"
+        run.mkdir(parents=True)
+        (exp / "suite_plan.json").write_text("plan", encoding="utf-8")
+        selection = self.root / "selection.json"
+        selection.write_text("selection", encoding="utf-8")
+        baseline_config = self.root / "baseline_config.json"
+        baseline_records = self.root / "baseline_rows.jsonl"
+        baseline_config.write_text("config", encoding="utf-8")
+        baseline_records.write_text("rows", encoding="utf-8")
+        scene = self.root / "scene.npz"
+        scene.write_bytes(b"scene")
+        for name in ("status.json", "manifest.json", "events.jsonl", "updates.csv",
+                     "episodes.csv", "evaluations.csv"):
+            (run / name).write_text(name, encoding="utf-8")
+        weight = self.root / "weight.pt"
+        weight.write_bytes(b"weight")
+        arrays = self.root / "arrays.npz"
+        trace = self.root / "trace.jsonl.gz"
+        arrays.write_bytes(b"arrays")
+        trace.write_bytes(b"trace")
+        result = {"arrays_path": str(arrays), "trace_path": str(trace)}
+        first = run / "final_test.json"
+        second = run / "best_test.json"
+        for path in (first, second):
+            path.write_text(json.dumps(result), encoding="utf-8")
+        paths = {name: str(weight) for name in
+                 ("initial_checkpoint", "latest_checkpoint", "checkpoint", "actor",
+                  "best_checkpoint", "best_actor")}
+        paths.update(original_test=str(first), best_test=str(second))
+        hashed = _input_hashes(exp, {"test_scenes": {"81000": {"path": str(scene)}}},
+                               {"run_one": paths},
+                               {"config_path": str(baseline_config),
+                                "records_path": str(baseline_records)}, selection)
+        self.assertEqual(hashed[str(baseline_config)], runner.sha256_file(baseline_config))
+        self.assertEqual(hashed[str(selection)], runner.sha256_file(selection))
+        self.assertEqual(hashed[str(arrays)], runner.sha256_file(arrays))
+        self.assertFalse((exp / "single_seed_51001" / "analysis").exists())
 
     def test_single_seed_curve_keeps_forty_actual_steps_and_deduplicates_final(self):
         scenes = list(range(71000, 71020))
