@@ -12,7 +12,7 @@
 python -m pip install -e .
 ```
 
-如果当前环境已安装依赖，可运行 `python -m pip install -e . --no-deps --no-build-isolation`。验证环境为 Python 3.11.7、PyTorch 2.3.1 CPU、NumPy 1.26.4、pandas 2.1.4、Matplotlib 3.8.0；这是环境记录，不是新增版本锁定要求。
+如果当前环境已安装依赖，可运行 `python -m pip install -e . --no-deps --no-build-isolation`。原结构迁移验证使用 Python 3.11.7 与 PyTorch 2.3.1 CPU；正式 CUDA 实验使用独立的 `DQN` Conda 环境（Python 3.11.11、PyTorch 2.3.1+cu121、NumPy 1.26.4、pandas 2.1.4、Matplotlib 3.8.0）。正式训练启动前仍须现场核对 CUDA 与源码导入路径。
 
 ## 目录
 
@@ -54,7 +54,7 @@ python -m satellite_rl.training.train_dqn
 
 所有入口保留脚本内参数配置方式，默认 4000 回合；没有引入 `--episodes` 或 `--seed` 等命令行参数。五种 SAC 共用 `training/sac_runner.py` 的训练流程。原三个入口仍使用原参数；新增的 `sac_mlp_matched` 使用两层 512 维隐藏层，`sac_cnn_matched` 使用 128→128 的融合层，学习率、动作转换及其余训练设置沿用共享驱动。
 
-新增两种变体的单个 Actor/Critic 分别为 429,176 和 447,176 个参数，接近 Transformer 的 417,272；原 MLP/CNN 版本独立保留。变体模型、日志、指标和图表分别写入同名目录。结构、计数口径与验证结果见 [匹配规模 SAC 变体说明](docs/匹配规模SAC变体说明.md)。新变体尚未完成完整训练，没有可供原评估列表直接使用的新预训练权重。
+新增两种变体的单个 Actor/Critic 分别为 429,176 和 447,176 个参数，接近 Transformer 的 417,272；原 MLP/CNN 版本独立保留。2026-09-24 已按用户收窄后的范围完成种子 51001 的六组正式训练与补充评价，只有一个训练种子，不能据此估计重训波动；结果见 [单种子六组报告](outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/中文单种子六组报告.md)。训练变体权重和原预训练资产仍分别保存在各自目录。
 
 PPO 参数位于对应训练入口及辅助模块，DQN 原常量保留在 `agents/dqn.py`。两套环境的行为差异、动作映射和默认值均保留。
 
@@ -85,4 +85,8 @@ python -m unittest discover -s tests -v
 
 测试覆盖算法依赖边界、全包导入、跨工作目录路径解析，以及五组原权重的严格加载和前向计算。迁移前后代码核对、运行对照和已知问题详见 [迁移说明](docs/迁移说明.md)。
 
-当前还包含 PPO 终止目标、SAC Critic 保存、终止步资源登记、训练/评估功率一致性、权重失败中止，以及新增匹配规模变体的参数量、更新、保存和单回合训练测试，共 25 项。PPO direct 的训练与评估统一使用 3–30 W；缺少或不兼容的权重会明确报错并停止评估。
+测试按模块放在 `tests/test_*.py`；包括 PPO 终止目标、SAC Critic 保存、终止步资源登记、训练/评估功率一致性、权重失败中止、匹配规模变体，以及六组单种子报告和补充评价入口。PPO direct 的训练与评估统一使用 3–30 W；缺少或不兼容的权重会明确报错并停止评估。
+
+## 完整 Python 文件地图
+
+本项目各个 Python 源码、测试、迁入历史文件的对应关系、生成的验证辅助脚本及模块依赖见 [README_CODEBASE.md](README_CODEBASE.md)。该索引还标明哪些入口为已取消的 18 组历史工具，哪些文件用于当前六组单种子结果。
