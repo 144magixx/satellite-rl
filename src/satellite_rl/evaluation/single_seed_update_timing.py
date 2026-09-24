@@ -13,7 +13,7 @@ from satellite_rl.evaluation import post_training_checks as common
 from satellite_rl.evaluation import update_timing as shared
 from satellite_rl.evaluation.single_seed_scope import current_six_status, require_completed
 from satellite_rl.evaluation.single_seed_postchecks import (
-    GUI_BASELINE_SHA256, SCOPE_NAME, exclusive_gpu_snapshot, scope_root,
+    GUI_BASELINE_SHA256, WPS_GUI_EVIDENCE_SHA256, SCOPE_NAME, exclusive_gpu_snapshot, scope_root,
     verify_prior_scope,
 )
 from satellite_rl.training import experiment_runner as runner
@@ -125,7 +125,8 @@ def run_update_timing(archive_root, frozen_root):
         "prior_scope": prior_scope,
         "inference_timing_index_sha256": runner.sha256_file(timing_index_path),
         "desktop_gui_baseline_sha256": GUI_BASELINE_SHA256,
-        "gpu_exclusivity_policy": "拒绝其他CUDA训练/未知PID；记录经验证的Windows桌面GUI上下文",
+        "wps_gui_evidence_sha256": WPS_GUI_EVIDENCE_SHA256,
+        "gpu_exclusivity_policy": "拒绝其他CUDA训练/未知PID；记录经验证的Windows桌面GUI与唯一已核WPS图形上下文",
         "matched_source_sha256": provenance["matched_file_sha256"],
         "source_replay_run": shared.SOURCE_RUN,
         "source_checkpoint": final[shared.SOURCE_RUN]["checkpoint"],
@@ -150,7 +151,7 @@ def run_update_timing(archive_root, frozen_root):
         "exclusive_gpu_required": True,
         "timer_scope": "synchronize; agent.update(saved fixed batch); synchronize",
         "excluded": ["environment transition", "replay sampling", "batch selection", "checkpoint I/O"],
-        "interpretation": "六个独立模型副本的完整更新计算成本；只有一个训练种子且仍有Windows桌面GPU负载",
+        "interpretation": "六个独立模型副本的完整更新计算成本；只有一个训练种子且仍有Windows桌面/WPS图形GPU负载",
     }
     shared._immutable_json(directory / "manifest.json", config)
     _verify_existing_index(directory, set(final))

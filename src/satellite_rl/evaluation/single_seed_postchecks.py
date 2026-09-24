@@ -32,6 +32,8 @@ OLD_CONDITIONS_SHA256 = "8694d7bdb3806b4ea9196724b3ddb65436fb222386826dd832ca3be
 OLD_ENVIRONMENT_SHA256 = "01b2ac67bfcd947f1feda6c8f0068c15842f3104fba9bc2951e2f71f65a0acb8"
 GUI_BASELINE = Path(r"D:\paper\outputs\verification\single_seed_timing_dwm_20260924\idle_gpu_and_windows_processes.json")
 GUI_BASELINE_SHA256 = "fc95c137579aaefd22c12c9f7636289a3df66b9c734550f624bcdf73054a2a4f"
+WPS_GUI_EVIDENCE = Path(r"D:\paper\outputs\verification\single_seed_timing_dwm_20260924\wps_gui_pid22564.json")
+WPS_GUI_EVIDENCE_SHA256 = "c2587468b9f4ed36490df3ba71467216d0b672905ddd0ea8599132226f94e43a"
 
 
 def scope_root(exp_dir):
@@ -58,7 +60,7 @@ def _windows_process(pid):
     command = (
         "$p=Get-CimInstance Win32_Process -Filter 'ProcessId=" + str(pid) + "'; "
         "if($p){[pscustomobject]@{ProcessId=$p.ProcessId;Name=$p.Name;"
-        "Path=$p.ExecutablePath;SessionId=$p.SessionId;"
+        "Path=$p.ExecutablePath;CommandLine=$p.CommandLine;SessionId=$p.SessionId;"
         "Created=$p.CreationDate.ToString('o')} | ConvertTo-Json -Compress}"
     )
     result = subprocess.run(["powershell", "-NoProfile", "-Command", command],
@@ -82,7 +84,9 @@ def _process_rows(raw):
 
 
 def exclusive_gpu_snapshot(*, baseline_path=GUI_BASELINE,
-                           baseline_sha256=GUI_BASELINE_SHA256):
+                           baseline_sha256=GUI_BASELINE_SHA256,
+                           wps_evidence_path=WPS_GUI_EVIDENCE,
+                           wps_evidence_sha256=WPS_GUI_EVIDENCE_SHA256):
     """Allow only this process and exact, previously verified desktop contexts.
 
     WDDM lists GUI graphics contexts as compute-apps with N/A memory. N/A alone
@@ -96,6 +100,19 @@ def exclusive_gpu_snapshot(*, baseline_path=GUI_BASELINE,
     known = {int(item["pid"]): item for item in baseline["listed_processes"]}
     if not known or any("python" in item["process_name"].casefold() for item in known.values()):
         raise RuntimeError("桌面GPU基线缺失或混入Python进程")
+    wps_evidence_path = Path(wps_evidence_path)
+    if runner.sha256_file(wps_evidence_path).lower() != wps_evidence_sha256.lower():
+        raise RuntimeError("WPS图形进程证据SHA改变，拒绝计时")
+    wps = json.loads(wps_evidence_path.read_text(encoding="utf-8-sig"))
+    if (wps.get("pid") != 22564 or wps.get("process_name") != "promecefpluginhost.exe"
+            or wps.get("signature_status") != "Valid"
+            or "Kingsoft Office" not in wps.get("signer_subject", "")
+            or "--type=gpu-process" not in wps.get("command_line", "")
+            or not wps.get("gpu_engine_summary")
+            or any("compute" in item["Engine"].casefold()
+                   or float(item["MaxPercent"]) > 0
+                   for item in wps["gpu_engine_summary"])):
+        raise RuntimeError("WPS图形进程证据不支持窄范围豁免")
     query = subprocess.run(
         ["nvidia-smi", "--query-compute-apps=pid,process_name,used_gpu_memory",
          "--format=csv,noheader,nounits"],
@@ -108,6 +125,27 @@ def exclusive_gpu_snapshot(*, baseline_path=GUI_BASELINE,
             classification.append({**item, "kind": "current_timing_process"})
             continue
         prior = known.get(pid)
+        if prior is None and pid == wps["pid"]:
+            current = _windows_process(pid)
+            path = str(current.get("Path") or "").replace("/", "\\").casefold() if current else ""
+            expected_path = wps["path"].replace("/", "\\").casefold()
+            if (not current or current.get("ProcessId") != pid
+                    or current.get("Name") != wps["process_name"]
+                    or datetime.fromisoformat(current["Created"]) != datetime.fromisoformat(wps["created_iso"])
+                    or int(current.get("SessionId", -1)) != int(wps["session_id"])
+                    or path != expected_path
+                    or item["gpu_process_name"].replace("/", "\\").casefold() != expected_path
+                    or item["used_gpu_memory"].casefold() != "[n/a]"
+                    or current.get("CommandLine") != wps["command_line"]
+                    or runner.sha256_file(current["Path"]).lower() != wps["path_sha256"].lower()):
+                raise RuntimeError("新增WPS图形进程PID/路径/创建时间/命令不符，拒绝计时")
+            classification.append({**item, "kind": "verified_wps_gui_context",
+                                   "windows_name": current["Name"],
+                                   "windows_path": current["Path"],
+                                   "created": current["Created"],
+                                   "evidence_sha256": wps_evidence_sha256,
+                                   "limit": "采样窗口无正GPU Engine占用；不能排除未来WebGPU活动"})
+            continue
         if prior is None or item["used_gpu_memory"].casefold() != "[n/a]":
             raise RuntimeError(f"存在非基线CUDA/未知GPU进程PID {pid}：{item['raw']}")
         current = _windows_process(pid)
@@ -140,9 +178,11 @@ def exclusive_gpu_snapshot(*, baseline_path=GUI_BASELINE,
     snapshot["process_query_with_names"] = query.stdout.strip()
     snapshot["desktop_baseline_path"] = str(baseline_path)
     snapshot["desktop_baseline_sha256"] = baseline_sha256
+    snapshot["wps_gui_evidence_path"] = str(wps_evidence_path)
+    snapshot["wps_gui_evidence_sha256"] = wps_evidence_sha256
     snapshot["process_classification"] = classification
-    snapshot["timing_limit"] = ("无其他已知CUDA训练进程；Windows桌面/GUI GPU上下文仍在，"
-                                "不能称整个GPU完全独占")
+    snapshot["timing_limit"] = ("无其他已知CUDA训练进程；Windows桌面/GUI和WPS图形上下文仍在，"
+                                "采样窗口未见WPS计算活动，但不能称整个GPU完全独占或排除未来WebGPU")
     return snapshot
 
 
@@ -416,7 +456,8 @@ def run_inference_timing(archive_root, frozen_root):
         "post_commit": provenance["post_commit"],
         "prior_scope": prior_scope,
         "desktop_gui_baseline_sha256": GUI_BASELINE_SHA256,
-        "gpu_exclusivity_policy": "拒绝其他CUDA训练/未知PID；仅允许SHA固定且PID+路径+创建时间匹配的原桌面GUI上下文",
+        "wps_gui_evidence_sha256": WPS_GUI_EVIDENCE_SHA256,
+        "gpu_exclusivity_policy": "拒绝其他CUDA训练/未知PID；仅允许SHA固定且PID+路径+创建时间匹配的原桌面GUI与唯一已核WPS图形上下文",
         "matched_source_sha256": provenance["matched_file_sha256"],
         "state_path": str(path), "state_sha256": state_sha,
         "state_shape": list(states.shape), "scene_ids": list(common.SCENE_IDS),
@@ -428,7 +469,7 @@ def run_inference_timing(archive_root, frozen_root):
         "exclusive_gpu_required": True,
         "scope_forward": "GPU-resident one-state tensor through actor; synchronized before/after",
         "scope_take_action": "host state through SAC.take_action; synchronized before/after",
-        "interpretation": "单种子统一实际观测推理成本；仍有Windows桌面GPU负载，并非整个GPU完全独占",
+        "interpretation": "单种子统一实际观测推理成本；仍有Windows桌面与WPS图形负载，并非整个GPU完全独占",
     }
     common._put_immutable_json(timing_dir / "manifest.json", manifest)
     existing_index = timing_dir / "result_index.json"
