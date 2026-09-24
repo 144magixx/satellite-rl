@@ -16,6 +16,8 @@ python -m pip install -e .
 
 ## 目录
 
+本机浏览器工作台可在项目根目录运行 `powershell -NoProfile -File scripts/start_workbench.ps1` 启动，默认地址为 `http://127.0.0.1:8765/`。支持状态与奖励组合、三算法/三骨干、真实网络结构、后台训练、全面监控和模型测试。详见[使用说明](docs/实验工作台使用说明.md)与[验收记录](docs/实验工作台验收记录.md)。新增网络的学习效果仍需正式对照验证。
+
 ```text
 src/satellite_rl/
   envs/         两套原仿真环境
@@ -24,6 +26,7 @@ src/satellite_rl/
   baselines/    固定、贪心、随机、四色、图着色、拉格朗日
   evaluation/   指标比较、需求扫描、逐波束比较
   plotting/     速率柱状图与需求曲线
+  workbench/    本地工作台、配置、场景、任务与前端
   paths.py      原路径到新位置的统一映射
 data/           城市数据
 models/
@@ -52,7 +55,7 @@ python -m satellite_rl.training.train_ppo_direct
 python -m satellite_rl.training.train_dqn
 ```
 
-所有入口保留脚本内参数配置方式，默认 4000 回合；没有引入 `--episodes` 或 `--seed` 等命令行参数。五种 SAC 共用 `training/sac_runner.py` 的训练流程。原三个入口仍使用原参数；新增的 `sac_mlp_matched` 使用两层 512 维隐藏层，`sac_cnn_matched` 使用 128→128 的融合层，学习率、动作转换及其余训练设置沿用共享驱动。
+上述旧训练入口保留脚本内参数配置方式，默认 4000 回合；没有引入 `--episodes` 或 `--seed` 等命令行参数。五种 SAC 共用 `training/sac_runner.py` 的训练流程。原三个入口仍使用原参数；新增的 `sac_mlp_matched` 使用两层 512 维隐藏层，`sac_cnn_matched` 使用 128→128 的融合层，学习率、动作转换及其余训练设置沿用共享驱动。
 
 新增两种变体的单个 Actor/Critic 分别为 429,176 和 447,176 个参数，接近 Transformer 的 417,272；原 MLP/CNN 版本独立保留。2026-09-24 已按用户收窄后的范围完成种子 51001 的六组正式训练与补充评价，只有一个训练种子，不能据此估计重训波动；结果见 [单种子六组报告](outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/中文单种子六组报告.md)。训练变体权重和原预训练资产仍分别保存在各自目录。
 
