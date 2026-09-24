@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
+import json
 import math
 import os
 from pathlib import Path
+import subprocess
 import statistics
 
 import numpy as np
@@ -23,6 +26,12 @@ from satellite_rl.training.run_monitor import atomic_json, utc_now
 
 
 SCOPE_NAME = "single_seed_51001"
+OLD_POST_COMMIT = "376dd3a00882332b8a8578d3790c26f3be163714"
+OLD_SCOPE_SHA256 = "0ca75ac522e63a3d3348788d4b881d2c27231ef20ef8f9ddb6a0791d18fe97d1"
+OLD_CONDITIONS_SHA256 = "8694d7bdb3806b4ea9196724b3ddb65436fb222386826dd832ca3beaec05020e"
+OLD_ENVIRONMENT_SHA256 = "01b2ac67bfcd947f1feda6c8f0068c15842f3104fba9bc2951e2f71f65a0acb8"
+GUI_BASELINE = Path(r"D:\paper\outputs\verification\single_seed_timing_dwm_20260924\idle_gpu_and_windows_processes.json")
+GUI_BASELINE_SHA256 = "fc95c137579aaefd22c12c9f7636289a3df66b9c734550f624bcdf73054a2a4f"
 
 
 def scope_root(exp_dir):
@@ -45,18 +54,95 @@ def _validate_timing_result(result, config):
     return result
 
 
-def exclusive_gpu_snapshot():
-    """Refuse timing when nvidia-smi sees another CUDA compute process."""
-    snapshot = common._gpu_snapshot()
-    for line in snapshot["compute_process_query"].splitlines():
-        text = line.strip()
-        if not text or text.lower().startswith("no running processes"):
+def _windows_process(pid):
+    command = (
+        "$p=Get-CimInstance Win32_Process -Filter 'ProcessId=" + str(pid) + "'; "
+        "if($p){[pscustomobject]@{ProcessId=$p.ProcessId;Name=$p.Name;"
+        "Path=$p.ExecutablePath;SessionId=$p.SessionId;"
+        "Created=$p.CreationDate.ToString('o')} | ConvertTo-Json -Compress}"
+    )
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", command],
+                            capture_output=True, text=True, check=True)
+    return json.loads(result.stdout) if result.stdout.strip() else None
+
+
+def _process_rows(raw):
+    result = []
+    for line in raw.splitlines():
+        if not line.strip() or line.strip().casefold() == "no running processes found":
             continue
-        pid = text.split(",", 1)[0].strip()
-        if not pid.isdigit():
-            raise RuntimeError(f"不能识别CUDA计算进程快照，拒绝独占计时：{text}")
-        if int(pid) != os.getpid():
-            raise RuntimeError(f"GPU上仍有其他计算进程PID {pid}，拒绝独占计时")
+        fields = [field.strip() for field in line.split(",", 2)]
+        if len(fields) != 3 or not fields[0].isdigit():
+            raise RuntimeError(f"无法解析nvidia-smi计算进程记录：{line}")
+        result.append({"pid": int(fields[0]), "gpu_process_name": fields[1],
+                       "used_gpu_memory": fields[2], "raw": line})
+    if len({item["pid"] for item in result}) != len(result):
+        raise RuntimeError("nvidia-smi中存在重复GPU进程PID")
+    return result
+
+
+def exclusive_gpu_snapshot(*, baseline_path=GUI_BASELINE,
+                           baseline_sha256=GUI_BASELINE_SHA256):
+    """Allow only this process and exact, previously verified desktop contexts.
+
+    WDDM lists GUI graphics contexts as compute-apps with N/A memory. N/A alone
+    is not an exemption: PID, executable identity and creation time must match
+    the saved desktop baseline. Any new or ambiguous process stops timing.
+    """
+    baseline_path = Path(baseline_path)
+    if runner.sha256_file(baseline_path).lower() != baseline_sha256.lower():
+        raise RuntimeError("Windows桌面GPU进程基线校验值改变，拒绝计时")
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    known = {int(item["pid"]): item for item in baseline["listed_processes"]}
+    if not known or any("python" in item["process_name"].casefold() for item in known.values()):
+        raise RuntimeError("桌面GPU基线缺失或混入Python进程")
+    query = subprocess.run(
+        ["nvidia-smi", "--query-compute-apps=pid,process_name,used_gpu_memory",
+         "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, check=True)
+    observed = _process_rows(query.stdout)
+    classification = []
+    for item in observed:
+        pid = item["pid"]
+        if pid == os.getpid():
+            classification.append({**item, "kind": "current_timing_process"})
+            continue
+        prior = known.get(pid)
+        if prior is None or item["used_gpu_memory"].casefold() != "[n/a]":
+            raise RuntimeError(f"存在非基线CUDA/未知GPU进程PID {pid}：{item['raw']}")
+        current = _windows_process(pid)
+        if not current or current.get("ProcessId") != pid or current.get("Name") != prior["process_name"]:
+            raise RuntimeError(f"GPU进程PID {pid} 的Windows身份无法核准")
+        if datetime.fromisoformat(current["Created"]) != datetime.fromisoformat(prior["created"]):
+            raise RuntimeError(f"GPU进程PID {pid} 已复用，拒绝基线豁免")
+        prior_gpu_name = prior["gpu_query"].split(",", 2)[1].strip()
+        if prior["process_name"].casefold() == "dwm.exe":
+            if (item["gpu_process_name"] != "[Insufficient Permissions]"
+                    or prior_gpu_name != "[Insufficient Permissions]"
+                    or int(current.get("SessionId", -1)) != 1
+                    or current.get("Path")):
+                raise RuntimeError("受保护的Windows桌面窗口管理器身份不匹配")
+        else:
+            path = str(current.get("Path") or "").replace("/", "\\").casefold()
+            gpu_path = item["gpu_process_name"].replace("/", "\\").casefold()
+            if not path or path != gpu_path or gpu_path != prior_gpu_name.replace("/", "\\").casefold():
+                raise RuntimeError(f"GPU进程PID {pid} 的可执行路径与桌面基线不符")
+        classification.append({**item, "kind": "verified_preexisting_gui_context",
+                               "windows_name": current["Name"],
+                               "windows_path": current.get("Path"),
+                               "created": current["Created"]})
+    snapshot = common._gpu_snapshot()
+    snapshot_ids = {int(line.split(",", 1)[0].strip())
+                    for line in snapshot["compute_process_query"].splitlines()
+                    if line.strip() and line.split(",", 1)[0].strip().isdigit()}
+    if snapshot_ids != {item["pid"] for item in observed}:
+        raise RuntimeError("GPU进程在两次快照之间变化，拒绝独占计时")
+    snapshot["process_query_with_names"] = query.stdout.strip()
+    snapshot["desktop_baseline_path"] = str(baseline_path)
+    snapshot["desktop_baseline_sha256"] = baseline_sha256
+    snapshot["process_classification"] = classification
+    snapshot["timing_limit"] = ("无其他已知CUDA训练进程；Windows桌面/GUI GPU上下文仍在，"
+                                "不能称整个GPU完全独占")
     return snapshot
 
 
@@ -84,6 +170,33 @@ def _scope_manifest(post_root, plan, provenance, runtime):
         "test_scene_ids": list(common.SCENE_IDS), "action_seeds": list(common.ACTION_SEEDS),
         "interpretation": "单个独立训练种子；条件评价不代表跨种子稳定性",
     })
+
+
+def verify_prior_scope(post_root, plan):
+    """Bind new timing to immutable outputs generated by the prior post commit."""
+    post_root = Path(post_root)
+    paths = {
+        "scope_manifest_sha256": (post_root / "scope_manifest.json", OLD_SCOPE_SHA256),
+        "conditions_index_sha256": (post_root / "conditions" / "result_index.json",
+                                     OLD_CONDITIONS_SHA256),
+        "environment_index_sha256": (post_root / "environment_comparison" / "result_index.json",
+                                      OLD_ENVIRONMENT_SHA256),
+    }
+    for label, (path, expected) in paths.items():
+        if runner.sha256_file(path).lower() != expected:
+            raise RuntimeError(f"旧六组{label}校验值不符，拒绝继续计时")
+    prior = common._load_json(paths["scope_manifest_sha256"][0])
+    if (prior.get("scope") != SCOPE_NAME or
+            prior.get("training_commit") != common.TRAIN_COMMIT or
+            prior.get("generation_commit") != OLD_POST_COMMIT or
+            set(prior.get("run_ids", [])) != {job["run_id"] for job in plan["jobs"]}):
+        raise RuntimeError("旧六组scope_manifest的来源或运行范围不符")
+    _verify_existing_index(paths["conditions_index_sha256"][0], "conditions",
+                           {job["run_id"] for job in plan["jobs"]}, OLD_POST_COMMIT)
+    _verify_existing_index(paths["environment_index_sha256"][0], "environment",
+                           {job["run_id"] for job in plan["jobs"]}, OLD_POST_COMMIT)
+    return {"old_generation_commit": OLD_POST_COMMIT,
+            **{label: expected for label, (_path, expected) in paths.items()}}
 
 
 def _verify_existing_index(path, stage, expected_runs, post_commit):
@@ -293,15 +406,17 @@ def run_environment_pair(archive_root, frozen_root):
 
 def run_inference_timing(archive_root, frozen_root):
     provenance, exp_dir, plan, final, runtime = require_cuda_ready(archive_root, frozen_root)
-    exclusive_gpu_snapshot()
     post_root = scope_root(exp_dir)
-    post_root.mkdir(parents=True, exist_ok=True)
-    _scope_manifest(post_root, plan, provenance, runtime)
+    prior_scope = verify_prior_scope(post_root, plan)
+    exclusive_gpu_snapshot()
     path, state_sha, states = common.make_timing_states(plan, post_root)
     timing_dir = post_root / "timing"
     manifest = {
         "scope": SCOPE_NAME, "training_commit": common.TRAIN_COMMIT,
         "post_commit": provenance["post_commit"],
+        "prior_scope": prior_scope,
+        "desktop_gui_baseline_sha256": GUI_BASELINE_SHA256,
+        "gpu_exclusivity_policy": "拒绝其他CUDA训练/未知PID；仅允许SHA固定且PID+路径+创建时间匹配的原桌面GUI上下文",
         "matched_source_sha256": provenance["matched_file_sha256"],
         "state_path": str(path), "state_sha256": state_sha,
         "state_shape": list(states.shape), "scene_ids": list(common.SCENE_IDS),
@@ -313,7 +428,7 @@ def run_inference_timing(archive_root, frozen_root):
         "exclusive_gpu_required": True,
         "scope_forward": "GPU-resident one-state tensor through actor; synchronized before/after",
         "scope_take_action": "host state through SAC.take_action; synchronized before/after",
-        "interpretation": "单种子统一实际观测推理成本，不是训练或策略成绩",
+        "interpretation": "单种子统一实际观测推理成本；仍有Windows桌面GPU负载，并非整个GPU完全独占",
     }
     common._put_immutable_json(timing_dir / "manifest.json", manifest)
     existing_index = timing_dir / "result_index.json"
@@ -335,15 +450,15 @@ def run_inference_timing(archive_root, frozen_root):
         if result_path.exists():
             _validate_timing_result(common._load_json(result_path), config)
         else:
-            exclusive_gpu_snapshot()
+            before = exclusive_gpu_snapshot()
             agent = common.load_final_agent(job, final[run_id], torch.device("cuda"))
             try:
                 torch.manual_seed(93001)
                 result = {"config": config, "parameters": sum(
                     parameter.numel() for parameter in agent.actor.parameters()),
-                    "gpu_before": common._gpu_snapshot(),
+                    "gpu_before": before,
                     "timing": common._time_actor(agent, states),
-                    "gpu_after": common._gpu_snapshot(), "completed_at": utc_now()}
+                    "gpu_after": exclusive_gpu_snapshot(), "completed_at": utc_now()}
                 result_path.parent.mkdir(parents=True, exist_ok=True)
                 atomic_json(result_path, result)
             finally:
