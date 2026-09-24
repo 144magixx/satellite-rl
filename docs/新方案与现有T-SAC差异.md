@@ -1,6 +1,6 @@
 # 第二阶段基本服务方案与现有 T-SAC 的差异
 
-日期：2026-09-24。状态：**方案与实现差异；代码已在独立开发分支提交，两组后台训练运行中，尚无终点效果结论。**
+日期：2026-09-24。状态：**方案与实现差异；代码已合并到 main，两组后台训练仍从独立冻结提交运行，尚无终点效果结论。**
 
 “现有 T-SAC”以本轮六组实验的冻结源码提交 36c14d74cbe6b9cf7410ee0595ee6d73083afdc8 为基准。当前主目录的主环境及 Transformer SAC 源文件与该冻结目录的 SHA-256 一致。差异仅涉及开题报告第二阶段的频率—功率联合分配；第一阶段波束覆盖规划、第三阶段链路级功率精细优化均不在此次讨论和拟改动范围。
 
@@ -34,9 +34,9 @@
 
 | 文件 | 拟议的最小编辑 | 此刻状态 |
 | --- | --- | --- |
-| [终态指标](../src/satellite_rl/evaluation/terminal_metrics.py) | 用每束需求 10% 的门槛计算达标束数及低容量束名单；原 SI/SGM 字段保留 | 独立开发分支已实现；主分支待合并 |
-| [主环境奖励](../src/satellite_rl/envs/satellite.py) | 旧奖励新环境对照保留原式；融合版改用 $2\Delta B+\Delta S+0.2\Delta G-\Delta P_{\mathrm{actual}}/3000$。SI/SGM 用更新后的全体束速率；零槽不辐射时不计实际功率 | 独立开发分支已实现；主分支待合并 |
-| [正式训练入口](../src/satellite_rl/training/experiment_runner.py) | 记录门槛、奖励版本、场景/种子、40 万步预算与独立输出目录；旧/新奖励共用新环境 | 独立开发分支已实现并启动后台 |
+| [终态指标](../src/satellite_rl/evaluation/terminal_metrics.py) | 用每束需求 10% 的门槛计算达标束数及低容量束名单；原 SI/SGM 字段保留 | 已合并 main；正式两组运行中 |
+| [主环境奖励](../src/satellite_rl/envs/satellite.py) | 旧奖励新环境对照保留原式；融合版改用 $2\Delta B+\Delta S+0.2\Delta G-\Delta P_{\mathrm{actual}}/3000$。SI/SGM 用更新后的全体束速率；零槽不辐射时不计实际功率 | 已合并 main；正式两组运行中 |
+| [正式训练入口](../src/satellite_rl/training/experiment_runner.py) | 记录门槛、奖励版本、场景/种子、40 万步预算与独立输出目录；旧/新奖励共用新环境 | 已合并 main；正式两组运行中 |
 | [Transformer SAC](../src/satellite_rl/agents/sac_transformer.py) | 保留 Actor、Critic、204 维输入与修正 SAC 更新公式；监测温度、损失和真实更新 | 两组共用冻结源码，网络未改 |
 
 若当前评价发现零槽和超功率使最低可用容量难以提高，可以**另提出第二阶段内的后续改动**，例如频率起点×连续槽数的合法性检查或功率请求限制。它们会改变动作/环境含义，不能悄悄混入奖励对照。本次文档不承诺完全消除断供。
@@ -47,7 +47,7 @@
 
 如果实施中触及原本保持不变的动作或环境规则，须另做对应对照，不能把不同物理口径的 SI 直接排名；旧权重仅在输入和动作含义兼容时重评。此前 81000–81099 场景已被用于诊断与方案讨论，新的奖励若据此调整，应使用另一批独立考核场景。任何增加训练种子或长评估的预算，不由本文件自动批准。
 
-2026-09-24 18:12 核对：独立开发分支训练提交 5a73516cd69c632258d37daba51a0f39d5fccc1c，两组 DQN/CUDA 正式作业分别为 transformer_old_reward_repaired_s51001_v2、transformer_fused_s51001_v2。日志修复后 147 项检查通过，单场景评价 JSON/CSV 覆盖计数一致。首次旧奖励预热启动在[实验清单](../outputs/experiments/coverage_reward_20260924/experiment_manifest.json)列为 aborted_with_record，不计入正式结果。新考核场景的贪心、固定评价已启动；终点效果待核验。主分支代码尚未合并，冻结旧训练源码和六组产物不修改。
+2026-09-24 18:12 核对：独立开发分支训练提交 5a73516cd69c632258d37daba51a0f39d5fccc1c，两组 DQN/CUDA 正式作业分别为 transformer_old_reward_repaired_s51001_v2、transformer_fused_s51001_v2。日志修复后 147 项检查通过，单场景评价 JSON/CSV 覆盖计数一致。首次旧奖励预热启动在[实验清单](../outputs/experiments/coverage_reward_20260924/experiment_manifest.json)列为 aborted_with_record，不计入正式结果。通过正确性检查后以合并提交 1d885af53ccafd6e97bb28af259b8c838fd54a96 进入 main；后台作业仍导入独立冻结源码，不受主分支变化影响。
 
 后续只读核对：新考核场景 83000–83099 的贪心和固定策略已完成，平均基本服务达标数分别为 95.09、97.93 束；同场景旧终点权重在新环境采样重评为 91.93 束。三份参照结果分别可追到[新环境基线摘要](../outputs/experiments/coverage_reward_20260924/baselines_repaired/summary.json)与[旧权重重评摘要](../outputs/experiments/coverage_reward_20260924/old_weight_repaired_eval/summary.json)。这不是新旧**从头训练模型**的最终差值；两组正式训练尚未到 40 万步。
 
