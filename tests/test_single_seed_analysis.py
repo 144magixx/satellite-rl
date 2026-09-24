@@ -199,6 +199,10 @@ class SingleSeedAnalysisTests(unittest.TestCase):
         self.assertIn("数学与环境计算的独立证据", text)
         self.assertIn("贪心", text)
         self.assertNotIn("训练种子间标准差：", text)
+        self.assertIn("两组学习公式使用同一环境奖励口径；训练回报可作过程诊断，"
+                      "但最终效果须以相同考核场景的终态需求满足率和资源约束判断。", text)
+        self.assertNotIn("不同公式的累计奖励口径不可直接比高低", text)
+        self.assertIn("| Transformer SAC | +10.00 |", text)
 
     def test_saved_baseline_source_and_scenarios_are_checked(self):
         baseline_root = self.root / "baseline"
