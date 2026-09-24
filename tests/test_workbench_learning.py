@@ -1,6 +1,8 @@
 """True CPU update and package/recovery checks for the new workbench variants."""
 
 import copy
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,8 +14,8 @@ from satellite_rl.agents.workbench_algorithms import build_agent, generalized_ad
 from satellite_rl.workbench.checkpoints import (describe_model, export_policy, load_checkpoint,
                                                  load_policy, save_checkpoint)
 from satellite_rl.workbench.config import config_summary, default_config, validate_config
-from satellite_rl.workbench.runner import (_ensure_finite_agent, _evaluate_job, _fixed_evaluate,
-                                           _reconcile, isolated_rng, run_job, seed_training)
+from satellite_rl.workbench.runner import (Ledger, _ensure_finite_agent, _evaluate_job, _fixed_evaluate,
+                                           _reconcile, _restore_logging, isolated_rng, run_job, seed_training)
 
 
 class WorkbenchLearningTest(unittest.TestCase):
@@ -131,6 +133,23 @@ class WorkbenchLearningTest(unittest.TestCase):
             self.assertEqual(len(restored.replay.rows), 1)
             self.assertEqual(restored.act(initial, deterministic=True), action)
 
+    def test_policy_rejects_nonfinite_weights_even_with_matching_checksum(self):
+        summary = config_summary(self.config)
+        agent = build_agent(self.config, summary["state_dim"], summary["action_dims"], "cpu")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            export_policy(directory, agent, self.config, {"test": True})
+            weight_path = directory / "policy.pt"
+            weights = torch.load(weight_path, map_location="cpu", weights_only=True)
+            next(iter(weights.values())).view(-1)[0] = float("nan")
+            torch.save(weights, weight_path)
+            metadata_path = directory / "model.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["weights_sha256"] = hashlib.sha256(weight_path.read_bytes()).hexdigest()
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "NaN or Inf"):
+                load_policy(directory, self.config)
+
     def test_checkpoint_reproduces_next_stochastic_action_and_update(self):
         for algorithm in ("sac", "ppo", "dqn"):
             with self.subTest(algorithm=algorithm), tempfile.TemporaryDirectory() as temporary:
@@ -170,6 +189,35 @@ class WorkbenchLearningTest(unittest.TestCase):
             with self.assertRaises(FloatingPointError):
                 _ensure_finite_agent(agent)
             self.assertEqual(checkpoint.read_bytes(), original)
+
+    def test_tensorboard_resume_purges_only_after_checkpoint(self):
+        try:
+            from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+        except ImportError:
+            self.skipTest("TensorBoard not installed")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            job = {"run_id": "tb_resume"}
+            preflight = {"gpu": "test"}
+            first = Ledger(directory, job, self.config, preflight)
+            for step in (1, 2, 4, 5, 6):
+                first.record("learning", step, {"loss": float(step)})
+            first.save_status(env_step=6, checkpoint_step=4)
+            first.close()
+            resumed = Ledger(directory, job, self.config, preflight, resume=True)
+            self.assertIsNone(resumed.writer)
+            # The checkpoint is at 4 while status incorrectly advanced to 6.
+            _restore_logging(resumed, directory, 4)
+            resumed.record("learning", 5, {"loss": 50.0})
+            resumed.record("learning", 6, {"loss": 60.0})
+            resumed.close()
+            event_file = directory / "tensorboard"
+            values = EventAccumulator(str(event_file)).Reload().Scalars("learning/loss")
+            self.assertEqual([(x.step, x.value) for x in values],
+                             [(1, 1.0), (2, 2.0), (4, 4.0), (5, 50.0), (6, 60.0)])
+            rows = [__import__("json").loads(line) for line in (directory / "metrics.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([(row["step"], row["values"]["loss"]) for row in rows],
+                             [(1, 1.0), (2, 2.0), (4, 4.0), (5, 50.0), (6, 60.0)])
 
     def test_independent_evaluation_random_stream(self):
         import random

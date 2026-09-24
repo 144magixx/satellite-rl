@@ -100,6 +100,8 @@ def load_policy(path, config=None, device="cpu"):
     if config_hash(saved) != metadata["config_hash"]:
         raise ValueError("Model metadata config hash mismatch")
     weight_path = directory / "policy.pt"
+    if weight_path.stat().st_size > 512 * 1024 ** 2:
+        raise ValueError("Inference weight file exceeds the supported 512 MiB limit")
     if hashlib.sha256(weight_path.read_bytes()).hexdigest() != metadata["weights_sha256"]:
         raise ValueError("Model weights checksum mismatch")
     state_dim, action_dims = _dimensions(saved)
@@ -107,6 +109,8 @@ def load_policy(path, config=None, device="cpu"):
     weights = torch.load(weight_path, map_location=device, weights_only=True)
     if not isinstance(weights, dict) or any(not isinstance(value, torch.Tensor) for value in weights.values()):
         raise ValueError("Model package must contain a tensor-only state dict")
+    if any(not torch.isfinite(value).all().item() for value in weights.values()):
+        raise ValueError("Model weights contain NaN or Inf; refusing invalid inference package")
     agent.policy_network().load_state_dict(weights, strict=True)
     agent.policy_network().eval()
     return Policy(agent, saved, metadata)

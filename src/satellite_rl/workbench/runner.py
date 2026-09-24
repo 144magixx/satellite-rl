@@ -165,12 +165,19 @@ class Ledger:
                            "created_at": now()})
         self.status.update({"pid": os.getpid(), "heartbeat_at": now(), "preflight": preflight})
         self.writer = None
+        if not resume:
+            self.open_tensorboard()
+        self.save_status()
+
+    def open_tensorboard(self, *, purge_step=None):
+        """On resume, use the loaded checkpoint boundary, never the stale status step."""
+        if self.writer is not None:
+            raise RuntimeError("TensorBoard writer already open")
         try:
             from torch.utils.tensorboard import SummaryWriter
-            self.writer = SummaryWriter(log_dir=str(self.directory / "tensorboard"), purge_step=self.status["env_step"] if resume else None)
+            self.writer = SummaryWriter(log_dir=str(self.directory / "tensorboard"), purge_step=purge_step)
         except ImportError:
             self.event("TensorBoard is unavailable; JSONL metrics remain canonical")
-        self.save_status()
 
     def event(self, message, **fields):
         _jsonl(self.directory / "events.jsonl", {"time": now(), "run_id": self.job["run_id"],
@@ -250,6 +257,13 @@ def _reconcile(directory, checkpoint_step):
             for row in rows:
                 stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
         os.replace(temp, path)
+
+
+def _restore_logging(ledger, directory, checkpoint_step):
+    _reconcile(directory, checkpoint_step)
+    # Metrics at the checkpoint's own step were written before it and are
+    # canonical; only later steps belong to the rolled-back tail.
+    ledger.open_tensorboard(purge_step=checkpoint_step + 1)
 
 
 def _ensure_finite_agent(agent):
@@ -356,7 +370,7 @@ def _training(directory, job, config, ledger, resume):
         if not checkpoint.exists():
             raise RuntimeError("No recoverable checkpoint")
         progress, _ = load_checkpoint(checkpoint, agent, config)
-        _reconcile(directory, progress["env_step"])
+        _restore_logging(ledger, directory, progress["env_step"])
     else:
         progress = {"env_step": 0, "episode": 0, "best_validation": None,
                     "last_validation_step": -1, "last_checkpoint_step": 0,
