@@ -13,7 +13,8 @@ from satellite_rl.evaluation import post_training_checks as common
 from satellite_rl.evaluation import update_timing as shared
 from satellite_rl.evaluation.single_seed_scope import current_six_status, require_completed
 from satellite_rl.evaluation.single_seed_postchecks import (
-    SCOPE_NAME, exclusive_gpu_snapshot, scope_root,
+    GUI_BASELINE_SHA256, SCOPE_NAME, exclusive_gpu_snapshot, scope_root,
+    verify_prior_scope,
 )
 from satellite_rl.training import experiment_runner as runner
 from satellite_rl.training.run_monitor import atomic_json, utc_now
@@ -103,6 +104,17 @@ def _finish_reports(directory, plan, results):
 
 def run_update_timing(archive_root, frozen_root):
     provenance, exp_dir, plan, final, runtime = require_ready(archive_root, frozen_root)
+    prior_scope = verify_prior_scope(scope_root(exp_dir), plan)
+    timing_index_path = scope_root(exp_dir) / "timing" / "result_index.json"
+    if not timing_index_path.is_file():
+        raise RuntimeError("六组推理计时未完成，拒绝完整参数更新计时")
+    timing_index = shared._read(timing_index_path)
+    if (set(timing_index.get("runs", {})) != set(final) or
+            runner.sha256_file(timing_index["manifest"]) != timing_index["manifest_sha256"] or
+            runner.sha256_file(timing_index["report"]) != timing_index["report_sha256"] or
+            any(runner.sha256_file(item["path"]) != item["sha256"]
+                for item in timing_index["runs"].values())):
+        raise RuntimeError("六组推理计时原始索引或SHA不一致")
     exclusive_gpu_snapshot()
     directory = scope_root(exp_dir) / "update_timing"
     directory.mkdir(parents=True, exist_ok=True)
@@ -110,6 +122,10 @@ def run_update_timing(archive_root, frozen_root):
     config = {
         "scope": SCOPE_NAME, "one_training_seed": 51001,
         "training_commit": common.TRAIN_COMMIT, "post_commit": provenance["post_commit"],
+        "prior_scope": prior_scope,
+        "inference_timing_index_sha256": runner.sha256_file(timing_index_path),
+        "desktop_gui_baseline_sha256": GUI_BASELINE_SHA256,
+        "gpu_exclusivity_policy": "拒绝其他CUDA训练/未知PID；记录经验证的Windows桌面GUI上下文",
         "matched_source_sha256": provenance["matched_file_sha256"],
         "source_replay_run": shared.SOURCE_RUN,
         "source_checkpoint": final[shared.SOURCE_RUN]["checkpoint"],
@@ -134,7 +150,7 @@ def run_update_timing(archive_root, frozen_root):
         "exclusive_gpu_required": True,
         "timer_scope": "synchronize; agent.update(saved fixed batch); synchronize",
         "excluded": ["environment transition", "replay sampling", "batch selection", "checkpoint I/O"],
-        "interpretation": "六个独立模型副本的完整更新计算成本；只有一个训练种子",
+        "interpretation": "六个独立模型副本的完整更新计算成本；只有一个训练种子且仍有Windows桌面GPU负载",
     }
     shared._immutable_json(directory / "manifest.json", config)
     _verify_existing_index(directory, set(final))
@@ -152,7 +168,7 @@ def run_update_timing(archive_root, frozen_root):
         if result_path.exists():
             result = shared._validate_cached_result(shared._read(result_path), run_config)
         else:
-            exclusive_gpu_snapshot()
+            before = exclusive_gpu_snapshot()
             agent, replay = runner._create_agent(job["model"], job["formula"],
                                                  directory / "temporary_logs" / run_id,
                                                  uuid.uuid4().hex)
@@ -163,14 +179,13 @@ def run_update_timing(archive_root, frozen_root):
                 if progress["env_step"] != 400000 or progress["update_step"] != 398000:
                     raise RuntimeError(f"{run_id} 断点不是预定四十万步终点")
                 torch.manual_seed(shared.UPDATE_SEED)
-                before = shared._gpu_snapshot()
                 milliseconds = shared.time_updates(agent, batches)
                 runner._ensure_finite_agent(agent)
                 result = {"config": run_config, "raw_milliseconds": milliseconds,
                           "statistics": shared.summarize_ms(milliseconds),
                           "parameters_actor": sum(item.numel() for item in agent.actor.parameters()),
                           "temporary_log_file": str(agent.log_file),
-                          "gpu_before": before, "gpu_after": shared._gpu_snapshot(),
+                          "gpu_before": before, "gpu_after": exclusive_gpu_snapshot(),
                           "completed_at": utc_now()}
                 result_path.parent.mkdir(parents=True, exist_ok=True)
                 atomic_json(result_path, result)

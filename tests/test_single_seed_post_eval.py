@@ -2,7 +2,6 @@
 
 import csv
 import json
-import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -124,13 +123,61 @@ class SingleSeedPostEvalTests(unittest.TestCase):
             checks._validate_timing_result(result, result["config"])
 
     def test_exclusive_timing_refuses_another_gpu_compute_process(self):
-        with mock.patch.object(checks.common, "_gpu_snapshot", return_value={
-                "compute_process_query": f"{os.getpid()}, 100\n999999, 200"}):
-            with self.assertRaisesRegex(RuntimeError, "其他计算进程"):
-                checks.exclusive_gpu_snapshot()
-        with mock.patch.object(checks.common, "_gpu_snapshot", return_value={
-                "compute_process_query": f"{os.getpid()}, 100"}):
-            checks.exclusive_gpu_snapshot()
+        self.assertEqual(checks._process_rows("No running processes found\n"), [])
+        baseline = self.root / "gui_baseline.json"
+        baseline.write_text(json.dumps({"listed_processes": [{
+            "pid": 2152, "process_name": "dwm.exe",
+            "created": "2026-09-24T09:17:31.007437+08:00",
+            "gpu_query": "2152, [Insufficient Permissions], [N/A]"}]}), encoding="utf-8")
+        digest = checks.runner.sha256_file(baseline)
+        gui = {"ProcessId": 2152, "Name": "dwm.exe", "Path": None,
+               "SessionId": 1, "Created": "2026-09-24T09:17:31.0074370+08:00"}
+        gpu = mock.Mock(stdout="2152, [Insufficient Permissions], [N/A]\n")
+        snap = {"compute_process_query": "2152, [N/A]", "at": "now"}
+        with mock.patch.object(checks.subprocess, "run", return_value=gpu), \
+             mock.patch.object(checks, "_windows_process", return_value=gui), \
+             mock.patch.object(checks.common, "_gpu_snapshot", return_value=snap):
+            observed = checks.exclusive_gpu_snapshot(
+                baseline_path=baseline, baseline_sha256=digest)
+        self.assertEqual(observed["process_classification"][0]["kind"],
+                         "verified_preexisting_gui_context")
+        gpu.stdout = "999999, C:\\Python\\python.exe, [N/A]\n"
+        with mock.patch.object(checks.subprocess, "run", return_value=gpu), \
+             mock.patch.object(checks.common, "_gpu_snapshot", return_value=snap):
+            with self.assertRaisesRegex(RuntimeError, "未知GPU进程"):
+                checks.exclusive_gpu_snapshot(baseline_path=baseline, baseline_sha256=digest)
+        gui["Created"] = "2026-09-24T10:17:31+08:00"
+        gpu.stdout = "2152, [Insufficient Permissions], [N/A]\n"
+        with mock.patch.object(checks.subprocess, "run", return_value=gpu), \
+             mock.patch.object(checks, "_windows_process", return_value=gui), \
+             mock.patch.object(checks.common, "_gpu_snapshot", return_value=snap):
+            with self.assertRaisesRegex(RuntimeError, "已复用"):
+                checks.exclusive_gpu_snapshot(baseline_path=baseline, baseline_sha256=digest)
+
+    def test_timing_reuses_only_exact_prior_scope_and_stage_hashes(self):
+        post = self.root / "single_seed_51001"
+        (post / "conditions").mkdir(parents=True)
+        (post / "environment_comparison").mkdir()
+        plan = {"jobs": six_jobs()}
+        scope = post / "scope_manifest.json"
+        scope.write_text(json.dumps({"scope": checks.SCOPE_NAME,
+                                     "training_commit": checks.common.TRAIN_COMMIT,
+                                     "generation_commit": checks.OLD_POST_COMMIT,
+                                     "run_ids": [job["run_id"] for job in plan["jobs"]]}),
+                         encoding="utf-8")
+        condition = post / "conditions" / "result_index.json"
+        environment = post / "environment_comparison" / "result_index.json"
+        condition.write_text("{}", encoding="utf-8")
+        environment.write_text("{}", encoding="utf-8")
+        with mock.patch.object(checks, "OLD_SCOPE_SHA256", checks.runner.sha256_file(scope)), \
+             mock.patch.object(checks, "OLD_CONDITIONS_SHA256", checks.runner.sha256_file(condition)), \
+             mock.patch.object(checks, "OLD_ENVIRONMENT_SHA256", checks.runner.sha256_file(environment)), \
+             mock.patch.object(checks, "_verify_existing_index"):
+            self.assertEqual(checks.verify_prior_scope(post, plan)["old_generation_commit"],
+                             checks.OLD_POST_COMMIT)
+            scope.write_text('{"tampered":true}', encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "校验值不符"):
+                checks.verify_prior_scope(post, plan)
 
     def test_saved_condition_and_old_environment_summaries_are_single_seed(self):
         from satellite_rl.evaluation.post_training_checks import ACTION_SEEDS, SCENE_IDS
@@ -222,6 +269,7 @@ class SingleSeedPostEvalTests(unittest.TestCase):
         with mock.patch.object(checks, "require_cuda_ready", return_value=(
                 {"post_commit": "report", "matched_file_sha256": {}}, self.root,
                 plan, final, {"python": "DQN"})), \
+             mock.patch.object(checks, "verify_prior_scope", return_value={"old": "sha"}), \
              mock.patch.object(checks, "exclusive_gpu_snapshot", return_value=snapshot), \
              mock.patch.object(checks.common, "make_timing_states",
                                return_value=(state_path, checks.runner.sha256_file(state_path),
@@ -268,6 +316,24 @@ class SingleSeedPostEvalTests(unittest.TestCase):
             manifest.write_text('{"config_hash":"fixed"}', encoding="utf-8")
         batch = self.root / "fixed_batches.npz"
         batch.write_bytes(b"saved fixed batches")
+        timing_dir = self.root / "single_seed_51001" / "timing"
+        timing_dir.mkdir(parents=True)
+        timing_manifest = timing_dir / "manifest.json"
+        timing_manifest.write_text("{}", encoding="utf-8")
+        timing_report = timing_dir / "中文推理计时.md"
+        timing_report.write_text("单种子", encoding="utf-8")
+        timed = {}
+        for job in plan["jobs"]:
+            timed_path = timing_dir / (job["run_id"] + ".json")
+            timed_path.write_text("{}", encoding="utf-8")
+            timed[job["run_id"]] = {"path": str(timed_path),
+                                    "sha256": checks.runner.sha256_file(timed_path)}
+        (timing_dir / "result_index.json").write_text(json.dumps({
+            "manifest": str(timing_manifest),
+            "manifest_sha256": checks.runner.sha256_file(timing_manifest),
+            "report": str(timing_report),
+            "report_sha256": checks.runner.sha256_file(timing_report),
+            "runs": timed}), encoding="utf-8")
         arrays = {"indices": np.zeros((8, 256), dtype=np.int64)}
         actor = torch.nn.Linear(2, 1)
         agent = mock.Mock(actor=actor, log_file="temporary log")
@@ -276,6 +342,7 @@ class SingleSeedPostEvalTests(unittest.TestCase):
         with mock.patch.object(updates, "require_ready", return_value=(
                 {"post_commit": "report", "matched_file_sha256": {}}, self.root,
                 plan, final, {"python": "DQN"})), \
+             mock.patch.object(updates, "verify_prior_scope", return_value={"old": "sha"}), \
              mock.patch.object(updates, "exclusive_gpu_snapshot", return_value=gpu), \
              mock.patch.object(updates.shared, "_load_or_save_batches",
                                return_value=(batch, "batch-hash", arrays, 20000)), \
