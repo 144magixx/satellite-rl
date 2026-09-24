@@ -45,6 +45,8 @@ TRAIN_SEEDS = (51001, 51002, 51003)
 SCENE_STREAM_SEEDS = (61001, 61002, 61003)
 VALIDATION_SCENE_SEEDS = tuple(range(71000, 71020))
 TEST_SCENE_SEEDS = tuple(range(81000, 81100))
+SERVICE_VALIDATION_SEEDS = tuple(range(82000, 82020))
+SERVICE_TEST_SEEDS = tuple(range(83000, 83100))
 ACTION_SEEDS = (91001, 91002, 91003)
 
 
@@ -309,11 +311,11 @@ def _create_agent(model, formula, run_dir, session_name):
     return agent, module.ReplayBuffer(capacity=20000)
 
 
-def _new_environment(beam_info):
+def _new_environment(beam_info, reward_variant="legacy_original"):
     from satellite_rl.envs.satellite import SatelliteFreqState, CurrentBeamState, Env
     frequency = SatelliteFreqState()
     current = CurrentBeamState(beam_info.beam_info)
-    environment = Env(frequency, beam_info, current)
+    environment = Env(frequency, beam_info, current, reward_variant=reward_variant)
     return environment, environment.reset(beam_info)
 
 
@@ -331,7 +333,7 @@ def _evaluation_action(agent, state, mode):
 
 
 def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_dir,
-             *, include_argmax=False):
+             *, include_argmax=False, reward_variant="legacy_original"):
     """Evaluate saved actual scenes; preserve training RNG and actor mode."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -357,7 +359,7 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
                 trials.append(("argmax", "argmax"))
             for action_seed, action_mode in trials:
                 with isolated_rng(action_seed if action_mode == "sample" else 0):
-                    env, state = _new_environment(_load_scene(reference["path"]))
+                    env, state = _new_environment(_load_scene(reference["path"]), reward_variant)
                     done = False
                     episode_return = 0.0
                     slot_counts = {"requested_slots_total": 0, "actual_slots_total": 0,
@@ -422,12 +424,18 @@ def evaluate(agent, scene_refs, action_seeds, checkpoint, step, monitor, output_
 
 def _config(args, runtime):
     seed_index = TRAIN_SEEDS.index(args.seed)
+    service_run = args.reward_variant != "legacy_original"
+    validation_seeds = SERVICE_VALIDATION_SEEDS if service_run else VALIDATION_SCENE_SEEDS
+    test_seeds = SERVICE_TEST_SEEDS if service_run else TEST_SCENE_SEEDS
     diagnostic = (args.steps != 400000 or args.validation_interval == 0
                   or args.skip_final_evaluation or args.validation_scene_count != 20
                   or args.test_scene_count != 100)
     return {
         "experiment_id": args.experiment_id, "run_id": args.run_id,
         "model": args.model, "formula": args.formula, "train_seed": args.seed,
+        "reward_variant": args.reward_variant, "basic_fraction": 0.1,
+        "validation_selection_metric": ("basic_service_count" if service_run else "si_mean"),
+        "primary_test_checkpoint": "final",
         "train_scene_seed": SCENE_STREAM_SEEDS[seed_index],
         "budget_env_steps": args.steps, "validation_interval": args.validation_interval,
         "checkpoint_interval": args.checkpoint_interval,
@@ -439,8 +447,8 @@ def _config(args, runtime):
         "actor_lr": 1e-5, "critic_lr": 1e-4, "alpha_lr": 1e-4,
         "gamma": 0.99, "tau": 0.005,
         "target_entropy": -6.9 if args.formula == "legacy" else 6.9,
-        "validation_scene_seeds": VALIDATION_SCENE_SEEDS[:args.validation_scene_count],
-        "test_scene_seeds": TEST_SCENE_SEEDS[:args.test_scene_count],
+        "validation_scene_seeds": validation_seeds[:args.validation_scene_count],
+        "test_scene_seeds": test_seeds[:args.test_scene_count],
         "action_seeds": ACTION_SEEDS,
         "trace_policy": "final and best test every step; training last 50 steps on failure",
         "runtime": runtime,
@@ -527,6 +535,8 @@ def _initial_progress():
 
 
 def run(args):
+    if not hasattr(args, "reward_variant"):
+        args.reward_variant = "legacy_original"
     runtime = strict_cuda_preflight()
     if args.run_id is None:
         if args.resume:
@@ -568,11 +578,15 @@ def run(args):
     previous_int = signal.signal(signal.SIGINT, request_stop)
     try:
         # All scenario files are concrete arrays and independent of training RNG.
+        validation_seeds = (SERVICE_VALIDATION_SEEDS if args.reward_variant != "legacy_original"
+                            else VALIDATION_SCENE_SEEDS)
+        test_seeds = (SERVICE_TEST_SEEDS if args.reward_variant != "legacy_original"
+                      else TEST_SCENE_SEEDS)
         validation_refs = (prepare_fixed_scenes(
-            experiment_dir, "validation", VALIDATION_SCENE_SEEDS[:args.validation_scene_count])
+            experiment_dir, "validation", validation_seeds[:args.validation_scene_count])
             if args.validation_interval else {})
         test_refs = (prepare_fixed_scenes(
-            experiment_dir, "test", TEST_SCENE_SEEDS[:args.test_scene_count])
+            experiment_dir, "test", test_seeds[:args.test_scene_count])
             if not args.skip_final_evaluation else {})
         if not args.resume:
             atomic_json(manifest_path, {"config": config, "config_hash": config_hash,
@@ -622,14 +636,21 @@ def run(args):
             monitor.write_status(**_progress_status(progress, replay, started, "validating"))
             result = evaluate(agent, validation_refs, ACTION_SEEDS,
                               "validation", progress["env_step"], monitor,
-                              run_dir / "evaluation")
-            score = result["si_mean"]
+                              run_dir / "evaluation", reward_variant=args.reward_variant)
+            if args.reward_variant == "legacy_original":
+                score = result["si_mean"]
+                selection_key = "best_si_mean"
+            else:
+                score = float(np.mean([row["basic_service_count"] for row in result["rows"]
+                                       if row["action_mode"] == "sample"]))
+                selection_key = "best_basic_service_count"
             if tensorboard:
-                tensorboard.add_scalar("validation/terminal_si_mean", score,
+                tensorboard.add_scalar("validation/" + selection_key, score,
                                        progress["env_step"])
-            monitor.event("validation", env_step=progress["env_step"], si_mean=score)
-            if progress["best_si_mean"] is None or score > progress["best_si_mean"]:
-                progress["best_si_mean"] = score
+            monitor.event("validation", env_step=progress["env_step"],
+                          selection_metric=selection_key, selection_score=score)
+            if progress.get(selection_key) is None or score > progress[selection_key]:
+                progress[selection_key] = score
                 checkpoint("best")
                 save_actor_weights(model_dir / "best_actor.pt", agent.actor)
             while progress["next_validation"] <= progress["env_step"]:
@@ -652,7 +673,7 @@ def run(args):
                 scene_sha = _save_scene(path, beam_info)
                 monitor.event("training_scene", episode=progress["episode"],
                               scene_id=progress["scene_id"], path=str(path), sha256=scene_sha)
-                progress["env"], progress["state"] = _new_environment(beam_info)
+                progress["env"], progress["state"] = _new_environment(beam_info, args.reward_variant)
                 progress["episode_length"] = 0
                 progress["episode_return"] = 0.0
                 for key in ("requested_slots_total", "actual_slots_total", "out_slots_total",
@@ -736,7 +757,11 @@ def run(args):
                     updates_per_second=update_speed,
                     eta_seconds=((args.steps - progress["env_step"]) / speed
                                  if speed and current_phase == "training" else None),
-                    best_validation_si_mean=progress["best_si_mean"],
+                    **({"best_validation_si_mean": progress["best_si_mean"]}
+                       if args.reward_variant == "legacy_original" else
+                       {"best_validation_basic_service_count": progress.get("best_basic_service_count")}),
+                    validation_selection_metric=("basic_service_count"
+                                                 if args.reward_variant != "legacy_original" else "si_mean"),
                     progress_at=utc_now(),
                 ))
                 last_status = now
@@ -775,11 +800,12 @@ def run(args):
         monitor.write_status(**_progress_status(progress, replay, started, "final_validation"))
         final_validation = (evaluate(agent, validation_refs, ACTION_SEEDS,
                                      "final_validation", progress["env_step"], monitor,
-                                     run_dir / "evaluation") if validation_refs else None)
+                                     run_dir / "evaluation", reward_variant=args.reward_variant) if validation_refs else None)
         monitor.write_status(**_progress_status(progress, replay, started, "testing"))
         final_test = evaluate(agent, test_refs, ACTION_SEEDS,
                               "final_test", progress["env_step"], monitor,
-                              run_dir / "evaluation", include_argmax=True)
+                              run_dir / "evaluation", include_argmax=True,
+                              reward_variant=args.reward_variant)
         best_test = None
         if (model_dir / "best_actor.pt").exists():
             agent.actor.load_state_dict(torch.load(model_dir / "best_actor.pt",
@@ -787,7 +813,8 @@ def run(args):
             try:
                 best_test = evaluate(agent, test_refs, ACTION_SEEDS,
                                      "best_test", progress["env_step"], monitor,
-                                     run_dir / "evaluation", include_argmax=True)
+                                     run_dir / "evaluation", include_argmax=True,
+                                     reward_variant=args.reward_variant)
             finally:
                 agent.actor.load_state_dict(torch.load(model_dir / "final_actor.pt",
                                                        map_location="cpu", weights_only=True), strict=True)
@@ -826,6 +853,8 @@ def build_parser():
     parser = argparse.ArgumentParser(description="18 组 SAC 配对实验的单次 CUDA 作业")
     parser.add_argument("--model", choices=MODELS, required=True)
     parser.add_argument("--formula", choices=("legacy", "corrected"), required=True)
+    parser.add_argument("--reward-variant", choices=("legacy_original", "legacy_repaired", "fused"),
+                        default="legacy_original")
     parser.add_argument("--seed", type=int, choices=TRAIN_SEEDS, required=True)
     parser.add_argument("--steps", type=int, default=400000)
     parser.add_argument("--experiment-id", default="sac_comparison_20260924")
