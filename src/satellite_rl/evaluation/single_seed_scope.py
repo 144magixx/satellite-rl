@@ -70,18 +70,17 @@ def _result(path, checkpoint, test_scenes, action_seeds):
     return data
 
 
-def _checkpoint_pair(path, actor_path, config_hash, *, final):
-    path, actor_path = Path(path), Path(actor_path)
-    if not path.is_file() or not actor_path.is_file():
-        raise FileNotFoundError(f"缺少完整断点或独立Actor权重：{path} / {actor_path}")
+def _complete_checkpoint(path, config_hash, *, expected_step=None):
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"缺少完整训练断点：{path}")
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-    actor = torch.load(actor_path, map_location="cpu", weights_only=True)
     progress = checkpoint.get("progress", {})
     step = progress.get("env_step")
     if (checkpoint.get("format_version") != 1
             or checkpoint.get("config_hash") != config_hash
-            or not isinstance(step, int) or not (0 < step <= 400000)
-            or (final and step != 400000)
+            or not isinstance(step, int) or not (0 <= step <= 400000)
+            or (expected_step is not None and step != expected_step)
             or set(checkpoint.get("agent", {}).get("networks", {})) != set(runner.NETWORKS)
             or set(checkpoint["agent"].get("optimizers", {})) != set(runner.OPTIMIZERS)
             or not torch.isfinite(checkpoint["agent"]["log_alpha"]).all()
@@ -89,6 +88,18 @@ def _checkpoint_pair(path, actor_path, config_hash, *, final):
             or not isinstance(checkpoint.get("replay"), list)
             or not isinstance(checkpoint.get("rng"), dict)):
         raise RuntimeError(f"断点缺少完整训练状态或步数不符：{path}")
+    return checkpoint, step
+
+
+def _checkpoint_pair(path, actor_path, config_hash, *, final):
+    path, actor_path = Path(path), Path(actor_path)
+    if not actor_path.is_file():
+        raise FileNotFoundError(f"缺少独立Actor权重：{actor_path}")
+    checkpoint, step = _complete_checkpoint(
+        path, config_hash, expected_step=400000 if final else None)
+    if not final and step <= 0:
+        raise RuntimeError(f"验证选中的模型没有实际训练步数：{path}")
+    actor = torch.load(actor_path, map_location="cpu", weights_only=True)
     saved_actor = checkpoint["agent"]["networks"]["actor"]
     if set(actor) != set(saved_actor) or any(
         not torch.equal(value, saved_actor[key]) for key, value in actor.items()
@@ -119,6 +130,10 @@ def _completed_run(exp_dir, archive_root, frozen_root, plan, job):
             or "dqn" not in (part.lower() for part in Path(runtime.get("python", "")).parts)):
         raise RuntimeError(f"{run_id} 未以固定DQN/CUDA源码完成400000步和398000更新")
     model_dir = archive_root / "models" / "runs" / EXPERIMENT_ID / run_id
+    _, initial_step = _complete_checkpoint(model_dir / "initial.pt",
+                                            manifest["config_hash"], expected_step=0)
+    _, latest_step = _complete_checkpoint(model_dir / "latest.pt",
+                                           manifest["config_hash"], expected_step=400000)
     final = _checkpoint_pair(model_dir / "final.pt", model_dir / "final_actor.pt",
                              manifest["config_hash"], final=True)
     best = _checkpoint_pair(model_dir / "best.pt", model_dir / "best_actor.pt",
@@ -130,6 +145,12 @@ def _completed_run(exp_dir, archive_root, frozen_root, plan, job):
             raise FileNotFoundError(f"{run_id} 缺少{kind}原始考核：{path}")
         _result(path, kind, plan["test_scenes"], plan["action_seeds"])
     return {"job": job, **final,
+            "initial_checkpoint": str(model_dir / "initial.pt"),
+            "initial_checkpoint_sha256": runner.sha256_file(model_dir / "initial.pt"),
+            "initial_checkpoint_step": initial_step,
+            "latest_checkpoint": str(model_dir / "latest.pt"),
+            "latest_checkpoint_sha256": runner.sha256_file(model_dir / "latest.pt"),
+            "latest_checkpoint_step": latest_step,
             "best_checkpoint": best["checkpoint"],
             "best_checkpoint_sha256": best["checkpoint_sha256"],
             "best_checkpoint_step": best["checkpoint_step"],
