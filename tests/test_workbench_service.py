@@ -9,11 +9,14 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import numpy as np
+import torch
 
-from satellite_rl.workbench.config import default_config
+from satellite_rl.workbench.config import default_config, validate_config
 from satellite_rl.workbench.datasets import csv_scene, import_scenes
 from satellite_rl.workbench.environment import validate_scene
-from satellite_rl.workbench.legacy import load_legacy_policy
+from satellite_rl.workbench.legacy import (
+    legacy_architecture, legacy_config, load_legacy_policy, validate_legacy_config,
+)
 from satellite_rl.workbench.runtime import Scheduler
 from satellite_rl.workbench.server import WorkbenchServer
 from satellite_rl.workbench.service import Application
@@ -221,9 +224,80 @@ class LegacyWeightsTests(unittest.TestCase):
                 path = root / kind / filename
                 self.assertTrue(path.is_file())
                 policy = load_legacy_policy(path, kind, device="cpu")
+                self.assertEqual(policy.architecture["variant"], kind)
+                self.assertEqual(policy.architecture["parameter_count"],
+                                 sum(parameter.numel() for parameter in policy.network.parameters()))
                 indices = policy.act(np.zeros(204, dtype=np.float32))
                 self.assertEqual(len(indices), 3)
                 self.assertTrue(all(0 <= value < upper for value, upper in zip(indices, (100, 10, 10))))
+
+    def test_legacy_network_descriptors_and_strict_network_validation(self):
+        expected = {
+            "sac_transformer": ("transformer", [256, 256], 128, 8, 2, 512),
+            "sac_cnn": ("cnn", [256, 128], 64, 4, 2, 128),
+            "sac_mlp": ("mlp", [128], 64, 4, 2, 128),
+            "sac_cnn_matched": ("cnn", [128, 128], 64, 4, 2, 128),
+            "sac_mlp_matched": ("mlp", [512, 512], 64, 4, 2, 128),
+            "ppo_direct": ("mlp", [256, 128], 64, 4, 2, 128),
+            "dqn": ("mlp", [512, 256], 64, 4, 2, 128),
+        }
+        for kind, (network_kind, hidden, embed, heads, layers, ff) in expected.items():
+            with self.subTest(kind=kind):
+                config = validate_config(legacy_config(kind))
+                network = config["network"]
+                self.assertEqual(network["kind"], network_kind)
+                self.assertEqual(network["hidden_sizes"], hidden)
+                self.assertEqual((network["embedding_dim"], network["num_heads"],
+                                  network["num_layers"], network["feedforward_dim"]),
+                                 (embed, heads, layers, ff))
+                self.assertIn("不代表旧权重", legacy_architecture(kind)["training_provenance"])
+                validate_legacy_config(config, kind)
+                modified = json.loads(json.dumps(config))
+                modified["network"]["dropout"] = 0.05 if kind != "sac_transformer" else 0
+                with self.assertRaisesRegex(ValueError, "网络结构不兼容"):
+                    validate_legacy_config(modified, kind)
+
+    def test_all_pretrained_import_and_evaluation_preflight_without_gpu(self):
+        root = Path(__file__).resolve().parents[1] / "models" / "pretrained"
+        models = {"sac_transformer": "actor.pth", "sac_cnn": "actor.pth",
+                  "sac_mlp": "actor.pth", "ppo_direct": "actor.pth",
+                  "dqn": "dqn_online.pth"}
+        with tempfile.TemporaryDirectory() as temporary:
+            application = Application(temporary, source_root=Path(temporary))
+            snapshot = Path(temporary) / "frozen"
+            snapshot.mkdir()
+            scene = application.store.save_record("scenes", {
+                "id": "legacy_scene", "name": "fixture", "path": str(Path(temporary) / "scenes"), "count": 1})
+            with patch.object(Store, "freeze_source", return_value=(snapshot, "f" * 40)):
+                for kind, filename in models.items():
+                    with self.subTest(kind=kind):
+                        record = application.import_model({"path": str(root / kind / filename),
+                                                           "legacy_type": kind})
+                        self.assertTrue(record["compatible"])
+                        validate_legacy_config(record["config"], kind)
+                        job = application.start_evaluation({"model_id": record["id"],
+                                                            "scene_id": scene["id"],
+                                                            "action_mode": "deterministic"})
+                        self.assertEqual(job["model_id"], record["id"])
+                        self.assertEqual(job["scene_id"], scene["id"])
+
+    def test_nonfinite_legacy_weights_are_rejected_before_import(self):
+        original = Path(__file__).resolve().parents[1] / "models" / "pretrained" / "sac_mlp" / "actor.pth"
+        state = torch.load(original, map_location="cpu", weights_only=True)
+        name = next(key for key, value in state.items() if isinstance(value, torch.Tensor) and value.is_floating_point())
+        with tempfile.TemporaryDirectory() as temporary:
+            application = Application(temporary, source_root=Path(temporary))
+            for invalid in (float("nan"), float("inf")):
+                with self.subTest(invalid=invalid):
+                    corrupted = {key: value.clone() if isinstance(value, torch.Tensor) else value
+                                 for key, value in state.items()}
+                    corrupted[name].reshape(-1)[0] = invalid
+                    path = Path(temporary) / "corrupt.pth"
+                    torch.save(corrupted, path)
+                    with self.assertRaisesRegex(ValueError, "NaN或Inf"):
+                        load_legacy_policy(path, "sac_mlp", device="cpu")
+                    with self.assertRaisesRegex(ValueError, "NaN或Inf"):
+                        application.import_model({"path": str(path), "legacy_type": "sac_mlp"})
 
 
 if __name__ == "__main__":

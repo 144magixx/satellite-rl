@@ -102,7 +102,7 @@ class Application:
         return {"runs": sorted(rows, key=lambda row: row.get("created_at") or "", reverse=True)}
 
     def models(self):
-        from .legacy import legacy_config
+        from .legacy import legacy_config, legacy_architecture
         records = {row["id"]: row for row in self.store.records("models")}
         for kind, filename in (("sac_transformer", "actor.pth"), ("sac_cnn", "actor.pth"),
                                ("sac_mlp", "actor.pth"), ("ppo_direct", "actor.pth"), ("dqn", "dqn_online.pth")):
@@ -111,6 +111,7 @@ class Application:
                 records["pretrained_" + kind] = {"id": "pretrained_" + kind, "name": "原预训练 · " + kind,
                     "path": str(path), "format": "legacy_state_dict", "algorithm": kind.split("_")[0],
                     "legacy_type": kind, "config": legacy_config(kind), "compatible": None,
+                    "architecture": legacy_architecture(kind),
                     "note": "原204维与原动作档位，评价前严格检查；旧训练来历以历史记录为准"}
         for path in self.store.models_root.glob("*/*/model.json"):
             metadata = read_json(path, {})
@@ -140,7 +141,7 @@ class Application:
                 raise ValueError("旧权重须为不超过512MB的文件")
             config = validate_config(body.get("config") or legacy_config(legacy_type))
             validate_legacy_config(config, legacy_type)
-            load_legacy_policy(source, legacy_type, "cpu")
+            loaded = load_legacy_policy(source, legacy_type, "cpu")
             target = self.store.record_dir("models", identifier)
             target.mkdir()
             shutil.copy2(source, target / "weights.pt")
@@ -159,6 +160,7 @@ class Application:
         record = {"id": identifier, "name": body.get("name") or source.name,
                   "path": str(path), "format": format_name, "algorithm": config["algorithm"],
                   "config": config, "legacy_type": legacy_type, "compatible": True,
+                  "architecture": loaded.architecture if legacy_type else policy.metadata.get("variant"),
                   "created_at": now(), "source_path": str(source),
                   "sha256": digest(path if path.is_file() else path / "policy.pt")}
         return self.store.save_record("models", record)
