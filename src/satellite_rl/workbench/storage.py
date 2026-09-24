@@ -178,11 +178,13 @@ class Store:
                    "algorithm": config["algorithm"], "network": config["network"]["kind"],
                    **(extra or {})}
             atomic_json(directory / "config.json", config)
-            atomic_json(directory / "job.json", job)
             atomic_json(directory / "status.json", {
                 "run_id": run_id, "stage": "queued", "created_at": now(),
                 "env_step": 0, "update_step": 0, "episode": 0,
                 "budget_env_steps": config["training"]["total_steps"],
                 "heartbeat_at": now(), "queue_reason": "等待后台调度",
             })
+            # Publish the discoverable job last so the scheduler cannot observe
+            # a partially written configuration/status pair.
+            atomic_json(directory / "job.json", job)
             return job

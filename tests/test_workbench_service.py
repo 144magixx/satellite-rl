@@ -60,6 +60,23 @@ class ServiceTests(unittest.TestCase):
             self.application.api("POST", ["runs"], {}, {"config": self.config,
                                  "request_id": "same_request", "scene_id": fake_scene["id"]})
 
+    def test_failed_status_write_does_not_publish_runnable_job(self):
+        from satellite_rl.workbench.storage import atomic_json
+        def fail_status(path, value):
+            if Path(path).name == "status.json":
+                raise OSError("simulated disk write failure")
+            return atomic_json(path, value)
+        with patch("satellite_rl.workbench.storage.atomic_json", side_effect=fail_status):
+            with self.assertRaises(OSError):
+                self.application.store.create_job(self.config, request_id="disk_failure")
+        self.assertEqual(self.application.store.jobs(), [])
+        self.assertEqual(list((self.application.store.root / "jobs").glob("*/job.json")), [])
+        # A retry can create exactly one fully published job; the failed attempt
+        # remains an unlaunched directory for diagnosis.
+        job = self.application.store.create_job(self.config, request_id="disk_failure")
+        self.assertEqual(len(self.application.store.jobs()), 1)
+        self.assertEqual(read_json(self.application.store.job_dir(job["run_id"]) / "status.json")["stage"], "queued")
+
     def test_request_id_includes_evaluation_inputs(self):
         scene = self.application.store.save_record("scenes", {
             "id": "scene_fixture", "name": "fixture", "path": str(self.root / "scenes"), "count": 1})
