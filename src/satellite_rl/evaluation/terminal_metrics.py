@@ -22,7 +22,9 @@ def terminal_beam_arrays(env):
     imag = (rates[positive] - required[positive]) / beta
     sgm[positive] = 1 - (1 - np.exp(-np.abs(real + 1j * imag))) ** 3
     return dict(rates_bps=rates, required_bps=required,
-                satisfaction=satisfaction, sgm=sgm)
+                satisfaction=satisfaction, sgm=sgm,
+                basic_threshold_bps=0.1 * required,
+                basic_met=rates >= 0.1 * required)
 
 
 def terminal_metrics(env):
@@ -36,6 +38,10 @@ def terminal_metrics(env):
         si_sum=float(arrays['satisfaction'].sum()),
         si_mean=float(arrays['satisfaction'].mean()),
         sgm_mean=float(arrays['sgm'].mean()),
+        basic_service_count=int(arrays['basic_met'].sum()),
+        zero_capacity_count=int(np.count_nonzero(arrays['rates_bps'] == 0)),
+        below_basic_indices=np.flatnonzero(~arrays['basic_met']).tolist(),
+        lowest_10_rates_mbps=(np.sort(arrays['rates_bps'])[:10] / 1e6).tolist(),
         throughput_bps=throughput,
         total_power_w=float(env.total_power),
         served_beams=served, total_beams=total,

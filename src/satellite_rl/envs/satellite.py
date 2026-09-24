@@ -398,7 +398,14 @@ class CurrentBeamState:
 
 # -------------------- 卫星环境类 --------------------
 class Env:
-    def __init__(self, satellite_freq_state, beam_info, hist_beam_state):
+    def __init__(self, satellite_freq_state, beam_info, hist_beam_state,
+                 reward_variant="legacy_original", basic_fraction=0.1):
+        if reward_variant not in ("legacy_original", "legacy_repaired", "fused"):
+            raise ValueError(f"未知奖励版本: {reward_variant}")
+        if not 0 < basic_fraction <= 1:
+            raise ValueError("最低可用容量比例必须在 (0, 1] 内")
+        self.reward_variant = reward_variant
+        self.basic_fraction = basic_fraction
         self.beam_idx = 0  # 当前波束
         self.beam_info = beam_info.beam_info
         self.beam_num = beam_num
@@ -410,6 +417,9 @@ class Env:
         self.history_cinr = []  # 记录每一个已分配频率槽CINR
         self.total_power = 0
         self.total_satisfaction = 0
+        self.total_basic_service = 0.0
+        self.reward_satisfaction = 0.0
+        self.total_sgm = 0.0
         self.overload = False
         self.beta = sum(self.beam_info['rate']) / self.beam_num
         self.alpha = power_threshold / self.beam_num
@@ -461,6 +471,9 @@ class Env:
         self.total_power = 0
         self.overload = False
         self.total_satisfaction = 0
+        self.total_basic_service = 0.0
+        self.reward_satisfaction = 0.0
+        self.total_sgm = 0.0
         self.beam_info = beam_info.beam_info
         self.beta = sum(self.beam_info['rate']) / self.beam_num
         self.current_beam_state.reset(self.beam_info)
@@ -768,6 +781,24 @@ class Env:
             input()
         return total_satisfaction.sum()
 
+    def service_totals(self):
+        """使用每次干扰更新后的逐束速率，未处理波束贡献为零。"""
+        rates = np.asarray(self.beam_bps, dtype=np.float64).reshape(-1)
+        demands = np.asarray(self.beam_info['rate'], dtype=np.float64).reshape(-1)[:len(rates)]
+        if np.any(demands <= 0) or not np.isfinite(rates).all():
+            raise ValueError("需求或分配速率无效")
+        rates = np.maximum(rates, 0.0)
+        ratio = rates / demands
+        basic = float(np.minimum(ratio / self.basic_fraction, 1.0).sum())
+        satisfaction = float(np.minimum(ratio, 1.0).sum())
+        positive = rates > 0
+        ratio_positive = ratio[positive]
+        real = np.where(ratio_positive >= 1, ratio_positive - 1,
+                        1 - 1 / ratio_positive)
+        imag = (rates[positive] - demands[positive]) / float(np.asarray(self.beta).item())
+        sgm = float((1 - (1 - np.exp(-np.abs(real + 1j * imag))) ** 3).sum())
+        return basic, satisfaction, sgm
+
     def get_first_free_slot(self, action):
         freq_group, _, _ = action
         group = self.beam_idx % 8
@@ -882,7 +913,10 @@ class Env:
         group, freq, slots, power_dB = action
         power = 10 ** (power_dB / 10)
         power_exceed_penalty = 0
-        self.total_power += power
+        # 零槽不辐射；保留原模式复现旧环境，其余模式按实际发射计账。
+        actual_power = power if slots > 0 else 0.0
+        charged_power = power if self.reward_variant == "legacy_original" else actual_power
+        self.total_power += charged_power
 
         # excess_ratio = 0
         # power_budget = self.get_power_budget_constraint()
@@ -995,6 +1029,16 @@ class Env:
             # + efficiency_avg
             # - excess_ratio
         )
+        if self.reward_variant == "fused":
+            basic, satisfaction, sgm = self.service_totals()
+            delta_basic = basic - getattr(self, "total_basic_service", 0.0)
+            delta_satisfaction = satisfaction - getattr(self, "reward_satisfaction", 0.0)
+            delta_sgm = sgm - getattr(self, "total_sgm", 0.0)
+            reward = (2.0 * delta_basic + delta_satisfaction + 0.2 * delta_sgm
+                      - actual_power / power_threshold)
+            self.total_basic_service = basic
+            self.reward_satisfaction = satisfaction
+            self.total_sgm = sgm
         # if self.overload:
         #     reward = -power_exceed_penalty
             
@@ -1009,7 +1053,9 @@ class Env:
             "satisfaction_increment": satisfaction_increment,
             "success_slots": slots,
             "spectral_efficiency_avg": efficiency_avg,
-            "power": power,
+            "power": charged_power,
+            "requested_power": power,
+            "actual_power": actual_power,
             "is_interfere": interfere_flag,
             "out": out,
             "occupy": occupy,
