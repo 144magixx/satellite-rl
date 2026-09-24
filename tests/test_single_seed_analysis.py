@@ -203,6 +203,26 @@ class SingleSeedAnalysisTests(unittest.TestCase):
                       "但最终效果须以相同考核场景的终态需求满足率和资源约束判断。", text)
         self.assertNotIn("不同公式的累计奖励口径不可直接比高低", text)
         self.assertIn("| Transformer SAC | +10.00 |", text)
+        previous = baseline["config"]["summary"]["greedy"]
+        baseline["config"]["summary"]["four_color"] = {
+            **previous, "group_switch_steps": {"mean": 0},
+            "clipped_steps": {"mean": 17.43},
+        }
+        baseline["config"]["summary"]["random"] = dict(previous)
+        comparisons = [
+            {"run_id": row["run_id"], "policy": policy,
+             "model_minus_baseline_si_mean": 0.02}
+            for row in summary
+            for policy in ("greedy", "fixed", "four_color", "random")
+        ]
+        extended_text = _report_text(summary, paired, baseline, comparisons,
+                                     timing, [], learning, None,
+                                     {"post_commit": "analysis-sha"})
+        self.assertIn("四色（现有实现）", extended_text)
+        self.assertIn("随机动作", extended_text)
+        self.assertIn("本批四色平均每场景换组0.00次、请求被裁剪17.43次", extended_text)
+        self.assertIn("| Transformer SAC · 原学习公式 | +2.00 | +2.00 | +2.00 | +2.00 |",
+                      extended_text)
 
     def test_saved_baseline_source_and_scenarios_are_checked(self):
         baseline_root = self.root / "baseline"
