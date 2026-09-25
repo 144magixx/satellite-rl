@@ -325,7 +325,8 @@ class Application:
                 if method == "POST" and action in ("stop", "resume"):
                     if readonly:
                         raise ValueError("历史实验为只读，本工作台不控制其他管理进程")
-                    return self.scheduler.request_stop(identifier) if action == "stop" else self.scheduler.resume(identifier)
+                    return (self.scheduler.request_stop(identifier) if action == "stop" else
+                            self.scheduler.resume(identifier, source_repair=body.get("source_repair")))
         raise FileNotFoundError("接口不存在")
 
     def download(self, identifier, filename):
