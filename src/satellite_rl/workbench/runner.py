@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -163,7 +164,8 @@ class Ledger:
                            "update_step": 0, "episode": 0,
                            "budget_env_steps": config["training"]["total_steps"],
                            "created_at": now()})
-        self.status.update({"pid": os.getpid(), "heartbeat_at": now(), "preflight": preflight})
+        self.status.update({"pid": os.getpid(), "heartbeat_at": now(), "preflight": preflight,
+                            "action_mask": config["environment"].get("action_mask", "none")})
         self.writer = None
         if not resume:
             self.open_tensorboard()
@@ -285,7 +287,9 @@ def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_p
     done = False
     step = 0
     while not done:
-        action = policy.act(state, deterministic=action_mode == "deterministic")
+        mask = env.action_mask()
+        policy_options = {"action_mask": mask} if mask is not None else {}
+        action = policy.act(state, deterministic=action_mode == "deterministic", **policy_options)
         next_state, reward, done, info = env.step(action)
         reward_total += float(reward)
         row = {"scene_id": scene_id, "step": step, "env_step": env_step, "policy": policy_name,
@@ -293,6 +297,8 @@ def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_p
                "actual_action": info.get("actual_action"), "reward": reward,
                "reward_terms": info.get("reward_terms"), "done": done,
                "beam_id": info.get("beam_id"),
+               "action_mask": info.get("action_mask", "none"),
+               "legal_action_count": info.get("legal_action_count"),
                "policy_action_info": getattr(policy, "last_action_info", {})}
         trace.append(_jsonable(row))
         if trace_path:
@@ -422,11 +428,16 @@ def _training(directory, job, config, ledger, resume):
         length = 0
         episode_terms = {}
         while not done and env_step < training["total_steps"]:
-            action = agent.act(state, env_step=env_step)
+            mask = env.action_mask()
+            policy_options = {"action_mask": mask} if mask is not None else {}
+            action = agent.act(state, env_step=env_step, **policy_options)
             next_state, reward, done, info = env.step(action)
             if not np.isfinite(reward) or not np.isfinite(next_state).all():
                 raise FloatingPointError("Nonfinite environment transition; last checkpoint preserved")
-            agent.observe(state, action, reward, next_state, done)
+            replay_options = ({"action_mask": mask,
+                               "next_action_mask": None if done else env.action_mask()}
+                              if mask is not None else {})
+            agent.observe(state, action, reward, next_state, done, **replay_options)
             env_step += 1
             length += 1
             episode_return += float(reward)
@@ -597,6 +608,9 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
     completed_evaluations = len(results)
     if baseline_names:
         from satellite_rl.workbench.baselines import BaselinePolicy
+        # Baseline names denote the original rules, not silently masked variants.
+        baseline_config = deepcopy(environment_config)
+        baseline_config["environment"]["action_mask"] = "none"
         for name in baseline_names:
             baseline_scenes = []
             mappings = {}
@@ -608,7 +622,7 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
                                         _load_scene(file))
                 seed = config["evaluation"]["test_seed"]
                 with isolated_rng(seed):
-                    env = WorkbenchEnv(environment_config)
+                    env = WorkbenchEnv(baseline_config)
                     baseline_policy = BaselinePolicy(name, env)
                     baseline = _evaluation_episode(env, baseline_policy, _load_scene(scene_ref["path"]),
                                                    f"{file.stem}_{name}", seed, "deterministic",
@@ -631,6 +645,7 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
                             for (source, mapped), count in sorted(mappings.items())]
             baselines[name] = {"name": name, "summary": baseline_summary, "scenes": baseline_scenes,
                                "metadata": {"variant": f"workbench_adapted_{name}_v1", "repeats": 1,
+                                            "action_mask": "none",
                                             "power_mappings": mapping_rows,
                                             "exact_power_match": all(np.isclose(row["source_power_w"], row["mapped_power_w"])
                                                                      for row in mapping_rows),

@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from copy import deepcopy
+from decimal import Decimal
 from threading import RLock
 from types import SimpleNamespace
 import math
@@ -119,6 +120,7 @@ class WorkbenchEnv:
         self._last_legacy_state = None
         self._prior = None
         self._overload_seen = False
+        self._mask_used_power = Decimal(0)
 
     def reset(self, seed=None, scene=None):
         if scene is None:
@@ -143,6 +145,7 @@ class WorkbenchEnv:
             self._last_legacy_state = self.raw_env.reset(beam)
         self._trace = []
         self._overload_seen = False
+        self._mask_used_power = Decimal(0)
         self._prior = self._snapshot()
         return self._state()
 
@@ -226,6 +229,46 @@ class WorkbenchEnv:
         # no-service outcome without passing a zero requested length to legacy step.
         return freq, 0, power_idx
 
+    def action_mask(self):
+        """Exact legal pairs and power levels from the current resource ledger.
+
+        This is independent of the configurable observation layout. Slot-head
+        indices 0..9 represent actual lengths 1..10. Future beams are reserved
+        one slot in their own group and one minimum configured power level.
+        """
+        self._require_reset()
+        if self.config["environment"].get("action_mask", "none") == "none":
+            return None
+        env = self.raw_env
+        if env.beam_idx >= env.beam_num or self._trace and self._trace[-1]["done"]:
+            return None
+        remaining = env.beam_num - env.beam_idx
+        remaining_group = len(range(env.beam_idx, env.beam_num, 8))
+        occupied = np.asarray(env.satellite_freq_state.freq_pool_real[env.beam_idx % 8]) > 0
+        max_slots = int(np.count_nonzero(~occupied)) - (remaining_group - 1)
+        free_run = np.zeros(100, dtype=np.int64)
+        run = 0
+        for position in range(99, -1, -1):
+            run = 0 if occupied[position] else run + 1
+            free_run[position] = run
+        lengths = np.arange(1, 11)
+        frequency_slots = lengths[None, :] <= np.minimum(free_run, max_slots)[:, None]
+        levels = self.config["environment"]["power_levels_w"]
+        budget = float(self.config["environment"]["power_budget_w"])
+        # Exact nominal watt ledger: a relative/absolute tolerance could admit a
+        # genuinely unaffordable level for small/custom power grids. Actual dBW
+        # conversion is conservatively below the selected nominal level at step.
+        power_left = Decimal(str(budget)) - self._mask_used_power
+        reserve = Decimal(str(levels[0])) * (remaining - 1)
+        power = np.array([Decimal(str(level)) + reserve <= power_left for level in levels], dtype=bool)
+        if not frequency_slots.any() or not power.any():
+            raise RuntimeError(
+                "无合法动作：不能在剩余资源下为每束保留一槽和最低功率；"
+                f"beam={env.beam_idx}, free_slots={int((~occupied).sum())}, "
+                f"remaining_group={remaining_group}, power_left={power_left:g}, "
+                f"power_reserve={reserve:g}")
+        return {"frequency_slots": frequency_slots, "power": power}
+
     def step(self, action_indices):
         self._require_reset()
         if self.raw_env.beam_idx >= self.raw_env.beam_num or self._trace and self._trace[-1]["done"]:
@@ -239,6 +282,10 @@ class WorkbenchEnv:
                 raise ValueError(f"动作索引 {i} 超界")
             values.append(int(value))
         freq_idx, slot_idx, power_idx = values
+        mask = self.action_mask()
+        if mask is not None and (not mask["frequency_slots"][freq_idx, slot_idx]
+                                 or not mask["power"][power_idx]):
+            raise ValueError("动作不满足联合无效动作掩码；必须在策略采样前屏蔽非法组合")
         levels = self.config["environment"]["power_levels_w"]
         request = dict(group=self.raw_env.beam_idx % 8, freq=freq_idx, slots=slot_idx + 1,
                        power_w=float(levels[power_idx]), indices=values)
@@ -249,7 +296,7 @@ class WorkbenchEnv:
         power_w = levels[p_power_idx]
         no_feasible = mode == "feasible_projection" and p_slots == 0
         power_db = 10 * np.log10(power_w)
-        if mode == "feasible_projection":
+        if mode == "feasible_projection" or mask is not None:
             power_db -= 1e-12  # Avoid floating-point round-up of an exactly feasible watt budget.
         action = [request["group"], p_freq, 1 if no_feasible else p_slots, power_db]
         with _budget_scope(self.config["environment"]["power_budget_w"]):
@@ -270,6 +317,14 @@ class WorkbenchEnv:
                     legacy_reward += 1
             else:
                 legacy_state, legacy_reward, done, raw_info = self.raw_env.step(action)
+        if mask is not None:
+            if (int(action[1]) != freq_idx or int(action[2]) != slot_idx + 1
+                    or int(raw_info["out"]) or int(raw_info["occupy"]) or self.raw_env.overload):
+                raise RuntimeError("合法动作执行后出现裁剪或超功率；停止并保留现场")
+            if not math.isclose(float(raw_info["actual_power"]), float(levels[power_idx]),
+                                rel_tol=1e-9, abs_tol=1e-9):
+                raise RuntimeError("掩码动作的实际功率与所选功率档位不一致")
+            self._mask_used_power += Decimal(str(levels[power_idx]))
         self._last_legacy_state = legacy_state
         after = self._snapshot()
         self._prior = after
@@ -283,6 +338,11 @@ class WorkbenchEnv:
                     requested_action=request, actual_action=actual, legacy_reward=legacy_reward,
                     projection_applied=mode == "feasible_projection" and projected != (freq_idx, slot_idx + 1, power_idx),
                     reward_total=result[0])
+        info["action_mask"] = self.config["environment"].get("action_mask", "none")
+        if mask is not None:
+            info["legal_frequency_slot_pairs"] = int(mask["frequency_slots"].sum())
+            info["legal_power_levels"] = int(mask["power"].sum())
+            info["legal_action_count"] = info["legal_frequency_slot_pairs"] * info["legal_power_levels"]
         self._trace.append(dict(beam_id=int(raw_info["beam_id"]), requested_action=request,
                                 actual_action=actual, reward=result[0], done=bool(done),
                                 out=int(raw_info["out"]), occupy=int(raw_info["occupy"])))

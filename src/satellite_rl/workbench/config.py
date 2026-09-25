@@ -92,12 +92,14 @@ PRESETS = [
 def default_config():
     return deepcopy(dict(
         schema_version=1, name="新实验", algorithm="sac",
-        network=dict(kind="mlp", hidden_sizes=[256, 256], activation="relu", dropout=0,
+        network=dict(kind="mlp", transformer_layout="scalar_tokens",
+                     hidden_sizes=[256, 256], activation="relu", dropout=0,
                      cnn_channels=[16, 32], kernel_size=3, embedding_dim=64,
                      num_heads=4, num_layers=2, feedforward_dim=128),
         state=dict(features=["beam", "power", "interference", "occupancy"], demand_visibility="known"),
         reward=dict(preset="legacy_repaired", terms=[dict(id="si_delta", weight=1, scale=1, timing="step")]),
         environment=dict(power_budget_w=3000, basic_fraction=0.1, action_mode="legacy_clip",
+                         action_mask="none",
                          power_levels_w=[5, 10, 15, 20, 25, 30, 35, 40, 45, 50]),
         training=dict(seed=51001, total_steps=10000, batch_size=256, actor_lr=0.00001,
                       critic_lr=0.0001, alpha_lr=0.0001, gamma=0.99, tau=0.005,
@@ -152,9 +154,11 @@ def _network_size(config):
         output = widths[-1] * min(16, state_dim)
     else:
         embed, ff = n["embedding_dim"], n["feedforward_dim"]
-        if state_dim ** 2 * n["num_heads"] * n["num_layers"] > 20_000_000:
+        token_count = 13 if n["transformer_layout"] == "tsac_13_tokens" else state_dim
+        if token_count ** 2 * n["num_heads"] * n["num_layers"] > 20_000_000:
             raise ValueError("Transformer 状态长度、注意力头数与层数的组合过大")
-        encoder = (state_dim + 2) * embed + n["num_layers"] * (
+        projection = 42 * embed if n["transformer_layout"] == "tsac_13_tokens" else (state_dim + 2) * embed
+        encoder = projection + n["num_layers"] * (
             4 * embed * embed + 2 * embed * ff + 9 * embed + ff)
         output = embed
     actor = encoder + (output + 1) * heads
@@ -180,6 +184,13 @@ def validate_config(raw):
     n = c["network"]
     if n["kind"] not in ("mlp", "cnn", "transformer") or n["activation"] not in ("relu", "gelu", "tanh"):
         raise ValueError("不支持的网络或激活函数")
+    if n["transformer_layout"] not in ("scalar_tokens", "tsac_13_tokens"):
+        raise ValueError("不支持的 Transformer 输入布局")
+    if n["transformer_layout"] == "tsac_13_tokens":
+        if c["algorithm"] != "sac" or n["kind"] != "transformer":
+            raise ValueError("原 T-SAC 13令牌布局仅支持 SAC 的 Transformer 网络")
+        if c["state"]["features"] != ["beam", "power", "interference", "occupancy"]:
+            raise ValueError("原 T-SAC 13令牌布局要求原204维状态特征及顺序：波束、功率、干扰、占用")
     for key in ("hidden_sizes", "cnn_channels"):
         if not isinstance(n[key], list) or not n[key] or len(n[key]) > 8:
             raise ValueError(f"{key} 必须是非空列表")
@@ -209,12 +220,21 @@ def validate_config(raw):
     _number(e["basic_fraction"], "basic_fraction", 0, 1, strictly=True)
     if e["action_mode"] not in ("legacy_clip", "feasible_projection"):
         raise ValueError("不支持的动作规则")
+    if e["action_mask"] not in ("none", "joint_feasible"):
+        raise ValueError("不支持的无效动作掩码方式")
+    if e["action_mask"] == "joint_feasible":
+        if c["algorithm"] != "sac":
+            raise ValueError("联合无效动作掩码目前仅支持 SAC；PPO 和 DQN 暂不支持")
+        if e["action_mode"] != "legacy_clip":
+            raise ValueError("联合无效动作掩码不能与可行动作投影同时启用；请使用原动作裁剪作为物理校验")
     levels = e["power_levels_w"]
     if not isinstance(levels, list) or not levels or len(levels) > 100:
         raise ValueError("功率档位必须是非空列表")
     for level in levels: _number(level, "功率档位", 0, strictly=True)
     if sorted(set(levels)) != levels:
         raise ValueError("功率档位必须严格递增")
+    if e["action_mask"] == "joint_feasible" and e["power_budget_w"] < 100 * levels[0]:
+        raise ValueError("联合无效动作掩码要求总功率预算至少覆盖100束的最低功率档位")
     r = c["reward"]
     if not isinstance(r["preset"], str) or r["preset"] not in {p["id"] for p in PRESETS}:
         raise ValueError("未知奖励预设")
@@ -252,6 +272,8 @@ def validate_config(raw):
     for key in ("entropy_coef", "value_coef"):
         _number(t[key], key, 0)
     _number(t["target_entropy"], "target_entropy")
+    if e["action_mask"] == "joint_feasible" and not 0 <= t["target_entropy"] <= math.log(100 * 10 * len(levels)):
+        raise ValueError("联合无效动作掩码的 SAC 目标熵须在0至离散动作理论上限之间")
     if t["eps_start"] < t["eps_end"] or t["device"] not in ("cuda", "cpu"):
         raise ValueError("探索率或设备配置无效")
     ev = c["evaluation"]
@@ -278,7 +300,20 @@ def catalog():
                               for i, l, d, t, g in REWARD_TERMS],
                 algorithms=[dict(id=i, label=i.upper(), description="新工作台可训练实现") for i in ("sac", "ppo", "dqn")],
                 networks=[dict(id=i, label=i.upper(), description="可配置骨干网络") for i in ("mlp", "cnn", "transformer")],
-                presets=deepcopy(PRESETS))
+                presets=deepcopy(PRESETS),
+                transformer_layouts=[dict(id="scalar_tokens", label="逐标量令牌（现有工作台）", implemented=True),
+                                     dict(id="tsac_13_tokens", label="原 T-SAC（13 令牌）", implemented=True,
+                                          description="需 SAC、Transformer 和原204维状态顺序；旧权重不直接复用")],
+                network_presets=[dict(id="tsac_13_tokens", label="原 T-SAC（13 令牌）",
+                                      description="一键设置原网络尺寸和204维状态输入；新训练的权重与旧实验不逐位相同",
+                                      algorithm="sac", state_features=["beam", "power", "interference", "occupancy"],
+                                      network=dict(kind="transformer", transformer_layout="tsac_13_tokens",
+                                                   embedding_dim=128, num_heads=8, num_layers=2,
+                                                   feedforward_dim=512, activation="relu", dropout=0.1))],
+                action_masks=[dict(id="none", label="关闭", description="沿用原有动作选择与环境裁剪", implemented=True),
+                              dict(id="joint_feasible", label="开启：联合掩码＋最低资源预留",
+                                   description="仅支持 SAC；联合选择连续空槽和功率，为后续同组波束预留最低频率槽及最低功率", implemented=True,
+                                   algorithms=["sac"])])
 
 
 def config_summary(config):
@@ -317,6 +352,14 @@ def config_summary(config):
         warnings.append("在线需求模式的旧奖励仍按全场景需求计算SGM；观测不包含未来需求。")
     if c["algorithm"] == "sac" and not 0 <= c["training"]["target_entropy"] <= math.log(math.prod([100, 10, len(c["environment"]["power_levels_w"])])):
         warnings.append("SAC 目标熵位于当前离散动作的理论范围之外；请检查温度更新方向与取值。")
+    transformer_layout = c["network"]["transformer_layout"] if c["network"]["kind"] == "transformer" else None
+    layout_description = ({"scalar_tokens": "状态中每个标量各形成一个令牌，全部令牌汇总后输出",
+                           "tsac_13_tokens": "位置、业务需求、功率各1个令牌，干扰与占用按10段合为10个频率槽令牌；读取首令牌输出"}
+                          .get(transformer_layout))
     return dict(state_dim=offset, state_layout=layout,
+                transformer_layout=transformer_layout,
+                network_layout_description=layout_description,
+                network_token_count=(13 if transformer_layout == "tsac_13_tokens" else offset if transformer_layout else None),
                 action_dims=[100, 10, len(c["environment"]["power_levels_w"])],
+                action_mask=c["environment"]["action_mask"],
                 reward_formula=formula, warnings=warnings)

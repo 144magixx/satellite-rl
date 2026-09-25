@@ -17,6 +17,7 @@ class Encoder(nn.Module):
         kind = spec["kind"]
         self.kind = kind
         self.state_dim = state_dim
+        self.transformer_layout = spec.get("transformer_layout", "scalar_tokens")
         activation = _activation(spec["activation"])
         dropout = float(spec["dropout"])
         if kind == "mlp":
@@ -44,12 +45,24 @@ class Encoder(nn.Module):
             self.output_dim = width * bins
         elif kind == "transformer":
             embed = spec["embedding_dim"]
-            self.input_projection = nn.Linear(1, embed)
-            self.position = nn.Parameter(torch.zeros(1, state_dim, embed))
+            if self.transformer_layout == "scalar_tokens":
+                self.input_projection = nn.Linear(1, embed)
+                self.position = nn.Parameter(torch.zeros(1, state_dim, embed))
+            elif self.transformer_layout == "tsac_13_tokens":
+                if state_dim != 204:
+                    raise ValueError("T-SAC 13-token layout requires the ordered 204-dimensional state")
+                self.geo_embed = nn.Linear(2, embed)
+                self.rate_embed = nn.Linear(1, embed)
+                self.power_embed = nn.Linear(1, embed)
+                self.slot_embed = nn.Linear(20, embed)
+                self.pos_embed = nn.Parameter(torch.zeros(1, 13, embed))
+            else:
+                raise ValueError(f"Unsupported transformer layout: {self.transformer_layout}")
             layer = nn.TransformerEncoderLayer(embed, spec["num_heads"],
                                                spec["feedforward_dim"], dropout,
                                                activation=torch.tanh if spec["activation"] == "tanh"
-                                               else spec["activation"], batch_first=True)
+                                               else spec["activation"],
+                                               batch_first=self.transformer_layout == "scalar_tokens")
             self.net = nn.TransformerEncoder(layer, spec["num_layers"], enable_nested_tensor=False)
             self.output_dim = embed
         else:
@@ -62,7 +75,20 @@ class Encoder(nn.Module):
             return self.net(states)
         if self.kind == "cnn":
             return self.net(states.unsqueeze(1))
-        return self.net(self.input_projection(states.unsqueeze(-1)) + self.position).mean(1)
+        if self.transformer_layout == "scalar_tokens":
+            return self.net(self.input_projection(states.unsqueeze(-1)) + self.position).mean(1)
+        batch = states.shape[0]
+        row = states[:, 4:104].reshape(batch, 10, 10)
+        occupancy = states[:, 104:204].reshape(batch, 10, 10)
+        slot_features = torch.cat((row, occupancy), dim=-1)
+        tokens = torch.cat((
+            self.geo_embed(states[:, :2]).unsqueeze(1),
+            self.rate_embed(states[:, 2:3]).unsqueeze(1),
+            self.power_embed(states[:, 3:4]).unsqueeze(1),
+            self.slot_embed(slot_features),
+        ), dim=1) + self.pos_embed
+        encoded = self.net(tokens.permute(1, 0, 2)).permute(1, 0, 2)
+        return encoded[:, 0]
 
 
 class MultiHeadNetwork(nn.Module):
@@ -134,9 +160,13 @@ def _model_description(config, state_dim, action_dims):
     if algorithm == "sac":
         nodes.append({"id": "temperature", "label": "SAC 温度 log_alpha", "shape": [1], "parameters": 1})
         edges.append({"from": "branch_0", "to": "temperature"})
+    layout = config["network"].get("transformer_layout", "scalar_tokens")
+    variant = f"workbench_{algorithm}_{config['network']['kind']}_v1"
+    if config["network"]["kind"] == "transformer" and layout == "tsac_13_tokens":
+        variant = f"workbench_{algorithm}_transformer_tsac_13_tokens_v1"
     return {"graph": nodes, "nodes": nodes, "edges": edges, "branches": branches,
             "parameter_count": count,
-            "variant": f"workbench_{algorithm}_{config['network']['kind']}_v1"}
+            "variant": variant}
 
 
 def model_description(config, state_dim, action_dims):
@@ -152,18 +182,24 @@ def _trace_layers(model, state_dim):
     layers = []
     hooks = []
 
-    def shape(value):
+    tsac_layout = getattr(model.encoder, "transformer_layout", None) == "tsac_13_tokens"
+
+    def shape(value, layer_name):
         if isinstance(value, torch.Tensor):
+            if tsac_layout and layer_name.startswith("encoder.net.") and value.ndim == 3:
+                # T-SAC's encoder is sequence first: [tokens, batch, channels].
+                return [value.shape[0], value.shape[2]]
             return list(value.shape[1:])
         if isinstance(value, (tuple, list)):
-            return shape(value[0])
+            return shape(value[0], layer_name)
         return None
 
     for name, module in model.named_modules():
         if name and isinstance(module, selected):
             def record(inner, inputs, output, layer_name=name):
                 layers.append({"name": layer_name, "type": type(inner).__name__,
-                               "input_shape": shape(inputs), "output_shape": shape(output),
+                               "input_shape": shape(inputs, layer_name),
+                               "output_shape": shape(output, layer_name),
                                "parameters": sum(p.numel() for p in inner.parameters(recurse=False))})
             hooks.append(module.register_forward_hook(record))
     try:
@@ -183,4 +219,19 @@ def _trace_layers(model, state_dim):
                                   "input_shape": list(position.shape[1:]),
                                   "output_shape": list(position.shape[1:]),
                                   "parameters": position.numel()})
+    if hasattr(model.encoder, "pos_embed"):
+        embed = model.encoder.pos_embed.shape[-1]
+        before_net = next((i for i, layer in enumerate(layers)
+                           if layer["name"].startswith("encoder.net.")), len(layers))
+        layers.insert(before_net, {"name": "encoder.pos_embed", "type": "PositionalParameter",
+                                   "input_shape": [13, embed], "output_shape": [13, embed],
+                                   "parameters": model.encoder.pos_embed.numel()})
+        layers.insert(before_net + 1, {"name": "encoder.tokens", "type": "TokenAssembly",
+                                       "input_shape": [state_dim], "output_shape": [13, embed],
+                                       "parameters": 0})
+        after_net = next((i + 1 for i, layer in reversed(list(enumerate(layers)))
+                          if layer["name"].startswith("encoder.net.")), before_net + 2)
+        layers.insert(after_net, {"name": "encoder.first_token", "type": "FirstTokenPool",
+                                  "input_shape": [13, embed], "output_shape": [embed],
+                                  "parameters": 0})
     return layers

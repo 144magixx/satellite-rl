@@ -35,7 +35,8 @@
           </div>
           <aside class="stack">
             <div class="panel preview-card"><div class="panel-head"><div><h2>状态输入</h2><p>按实际拼接顺序</p></div><strong class="big-number" id="state-dim">—</strong></div><ol id="state-layout" class="layout-list"></ol><p class="small muted" id="state-visibility"></p></div>
-            <div class="panel"><div class="panel-head"><div><h2>网络结构</h2><p>来自后台构建结果</p></div><span id="parameter-count" class="pill">— 参数</span></div><div id="network-graph" class="network-graph empty">检查配置后显示实际网络结构。</div></div>
+            <div class="panel"><div class="panel-head"><div><h2>网络结构</h2><p>来自后台构建结果</p></div><span id="parameter-count" class="pill">— 参数</span></div><p id="network-layout-summary" class="small muted">—</p><div id="network-graph" class="network-graph empty">检查配置后显示实际网络结构。</div></div>
+            <div class="panel"><div class="panel-head"><div><h2>动作约束</h2><p>当前方案的掩码状态</p></div></div><p id="action-mask-summary" class="formula">—</p></div>
             <div class="panel"><div class="panel-head"><div><h2>奖励公式</h2><p>以后台校验结果为准</p></div></div><div id="reward-formula" class="formula">—</div><p class="small muted">奖励与功率、频率槽等物理约束分别配置；跨公式的回报不能直接排名。</p></div>
             <div class="panel sticky-actions"><div class="actions"><button id="config-save" type="button">保存方案</button><button id="config-start" class="primary" type="button">提交后台训练</button></div><p class="small muted">提交时服务器会再次验证配置、CUDA 和运行源码。</p></div>
           </aside>
