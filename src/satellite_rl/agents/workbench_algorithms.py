@@ -11,6 +11,9 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from satellite_rl.agents.action_masking import (copy_action_mask, entropy_ratio,
+                                                feasible_target_entropy, mask_batch,
+                                                masked_policy)
 from satellite_rl.agents.workbench_networks import MultiHeadNetwork, ScalarNetwork
 
 
@@ -61,17 +64,24 @@ class Replay:
         self.rows = deque(maxlen=capacity)
         self.rng = random.Random(seed)
 
-    def add(self, state, action, reward, next_state, done):
-        self.rows.append((np.asarray(state, dtype=np.float32).copy(),
-                          tuple(int(x) for x in action), float(reward),
-                          np.asarray(next_state, dtype=np.float32).copy(), bool(done)))
+    def add(self, state, action, reward, next_state, done, action_mask=None, next_action_mask=None):
+        row = (np.asarray(state, dtype=np.float32).copy(),
+               tuple(int(x) for x in action), float(reward),
+               np.asarray(next_state, dtype=np.float32).copy(), bool(done))
+        self.rows.append(row if action_mask is None else row + (action_mask, next_action_mask))
 
-    def sample(self, count, device):
+    def sample(self, count, device, action_dims=None):
         rows = self.rng.sample(self.rows, count)
-        states, actions, rewards, next_states, dones = zip(*rows)
-        return (_state_tensor(states, device), torch.as_tensor(actions, dtype=torch.long, device=device),
-                torch.as_tensor(rewards, dtype=torch.float32, device=device),
-                _state_tensor(next_states, device), torch.as_tensor(dones, dtype=torch.float32, device=device))
+        states, actions, rewards, next_states, dones = zip(*(row[:5] for row in rows))
+        result = (_state_tensor(states, device), torch.as_tensor(actions, dtype=torch.long, device=device),
+                  torch.as_tensor(rewards, dtype=torch.float32, device=device),
+                  _state_tensor(next_states, device), torch.as_tensor(dones, dtype=torch.float32, device=device))
+        if action_dims is None:
+            return result
+        if any(len(row) != 7 for row in rows):
+            raise ValueError("masked SAC replay row has no action masks")
+        return result + (mask_batch([row[5] for row in rows], action_dims, device),
+                         mask_batch([row[6] for row in rows], action_dims, device))
 
     def state_dict(self):
         return {"rows": list(self.rows), "rng": self.rng.getstate(), "capacity": self.rows.maxlen}
@@ -89,9 +99,16 @@ class WorkbenchAgent:
         self.train = config["training"]
         self.device = torch.device(device)
         self.algorithm = config["algorithm"]
+        self.action_mask_mode = config.get("environment", {}).get("action_mask", "none")
+        if self.action_mask_mode not in ("none", "joint_feasible"):
+            raise ValueError(f"Unsupported action mask mode: {self.action_mask_mode}")
+        if self.action_mask_mode != "none" and self.algorithm != "sac":
+            raise ValueError("joint_feasible action mask currently supports SAC only")
         if self.algorithm == "ppo" and config["network"]["dropout"]:
             raise ValueError("PPO does not support dropout: action and update probabilities must match")
         self.action_dims = tuple(action_dims)
+        self.target_entropy_ratio = (entropy_ratio(self.train["target_entropy"], self.action_dims)
+                                     if self.action_mask_mode == "joint_feasible" else None)
         self.rng = random.Random(self.train["seed"] + 31)
         self.update_step = 0
         self.last_action_info = {}
@@ -125,7 +142,20 @@ class WorkbenchAgent:
     def policy_network(self):
         return self.online if self.algorithm == "dqn" else self.actor
 
-    def act(self, state, deterministic=False, env_step=None):
+    def _sac_actor_logits(self, states):
+        """Match action-time probabilities even when the actor has dropout."""
+        was_training = self.actor.training
+        self.actor.eval()
+        try:
+            return self.actor(states)
+        finally:
+            self.actor.train(was_training)
+
+    def act(self, state, deterministic=False, env_step=None, action_mask=None):
+        if self.action_mask_mode == "joint_feasible":
+            action_mask = copy_action_mask(action_mask, self.action_dims)
+        elif action_mask is not None:
+            raise ValueError("action_mask supplied while masking is disabled")
         net = self.policy_network()
         was_training = net.training
         net.eval()
@@ -143,6 +173,28 @@ class WorkbenchAgent:
                                for q, dim in zip(heads, self.action_dims))
                 self.last_action_info = {"epsilon": epsilon, "q_mean": float(_gather(
                     heads, torch.tensor([action], device=self.device)).item())}
+            elif self.action_mask_mode == "joint_feasible":
+                frequency_slots, power = mask_batch([action_mask], self.action_dims, self.device)
+                (fl, p, log_fl, log_p, entropy_fl, entropy_p,
+                 entropy_f, entropy_slots) = masked_policy(heads, frequency_slots, power)
+                flat_fl = fl.flatten(1)
+                fl_index = (flat_fl.argmax(1) if deterministic else
+                            torch.distributions.Categorical(probs=flat_fl).sample())
+                power_index = (p.argmax(1) if deterministic else
+                               torch.distributions.Categorical(probs=p).sample())
+                frequency = fl_index // self.action_dims[1]
+                slots = fl_index % self.action_dims[1]
+                action = (int(frequency.item()), int(slots.item()), int(power_index.item()))
+                self.last_action_info = {
+                    "log_prob": float((log_fl[0, action[0], action[1]] +
+                                       log_p[0, action[2]]).item()),
+                    "entropy": float((entropy_fl + entropy_p).item()),
+                    "entropy_frequency": float(entropy_f.item()),
+                    "entropy_slots": float(entropy_slots.item()),
+                    "entropy_power": float(entropy_p.item()),
+                    "target_entropy": float(feasible_target_entropy(
+                        frequency_slots, power, self.target_entropy_ratio).item()),
+                }
             else:
                 dists = [torch.distributions.Categorical(logits=logits) for logits in heads]
                 action_t = [torch.argmax(logits, 1) if deterministic else dist.sample()
@@ -162,7 +214,26 @@ class WorkbenchAgent:
         net.train(was_training)
         return action
 
-    def observe(self, state, action, reward, next_state, done):
+    def observe(self, state, action, reward, next_state, done,
+                action_mask=None, next_action_mask=None):
+        if self.action_mask_mode == "joint_feasible":
+            action_mask = copy_action_mask(action_mask, self.action_dims)
+            if next_action_mask is None:
+                if not done:
+                    raise ValueError("nonterminal masked SAC transition requires next_action_mask")
+            else:
+                if done:
+                    raise ValueError("terminal masked SAC transition must have no next_action_mask")
+                next_action_mask = copy_action_mask(next_action_mask, self.action_dims)
+            chosen = tuple(int(x) for x in action)
+            if (len(chosen) != 3 or any(x < 0 or x >= dim for x, dim in zip(chosen, self.action_dims)) or
+                    not action_mask["frequency_slots"][chosen[0], chosen[1]] or
+                    not action_mask["power"][chosen[2]]):
+                raise ValueError("observed action is forbidden by action_mask")
+            self.replay.add(state, chosen, reward, next_state, done, action_mask, next_action_mask)
+            return
+        if action_mask is not None or next_action_mask is not None:
+            raise ValueError("action_mask supplied while masking is disabled")
         if self.algorithm == "ppo":
             if tuple(action) != tuple(self.last_action_info.get("action", ())):
                 raise ValueError("PPO observed action differs from the sampled action and log-probability")
@@ -187,11 +258,13 @@ class WorkbenchAgent:
         return self._update_dqn()
 
     def _update_sac(self):
+        if self.action_mask_mode == "joint_feasible":
+            return self._update_masked_sac()
         s, a, r, ns, d = self.replay.sample(self.train["batch_size"], self.device)
         gamma = self.train["gamma"]
         alpha = self.log_alpha.exp().detach()
         with torch.no_grad():
-            logits = self.actor(ns)
+            logits = self._sac_actor_logits(ns)
             probabilities = [q.softmax(-1) for q in logits]
             joint_prob = probabilities[0][:, :, None, None] * probabilities[1][:, None, :, None] * probabilities[2][:, None, None, :]
             min_q = torch.minimum(_joint_q(self.target1(ns)), _joint_q(self.target2(ns)))
@@ -210,7 +283,7 @@ class WorkbenchAgent:
         loss2.backward()
         grad2 = _grad_norm(self.critic2, self.train["gradient_clip"])
         self.critic2_opt.step()
-        logits = self.actor(s)
+        logits = self._sac_actor_logits(s)
         probabilities = [q.softmax(-1) for q in logits]
         joint_prob = probabilities[0][:, :, None, None] * probabilities[1][:, None, :, None] * probabilities[2][:, None, None, :]
         with torch.no_grad():
@@ -239,6 +312,78 @@ class WorkbenchAgent:
                 "critic_2_loss": float(loss2), "alpha_loss": float(alpha_loss),
                 "alpha": float(self.log_alpha.exp()), "entropy": float(entropy_actor.mean()),
                 **{f"entropy_{name}": float(value.mean()) for name, value in zip(HEADS, entropies)},
+                "q_mean": float((q1.mean() + q2.mean()) / 2), "q_min": float(torch.minimum(q1, q2).min()),
+                "q_max": float(torch.maximum(q1, q2).max()), "target_mean": float(target.mean()),
+                "target_std": float(target.std(unbiased=False)),
+                "td_abs_mean": float(((q1 - target).abs().mean() + (q2 - target).abs().mean()) / 2),
+                "actor_grad_norm": actor_grad, "critic_1_grad_norm": grad1, "critic_2_grad_norm": grad2}
+
+    def _update_masked_sac(self):
+        s, a, r, ns, d, current_masks, next_masks = self.replay.sample(
+            self.train["batch_size"], self.device, self.action_dims)
+        current_fl, current_power = current_masks
+        next_fl, next_power = next_masks
+        alpha = self.log_alpha.exp().detach()
+        with torch.no_grad():
+            target = r.clone()
+            active = d < 0.5
+            if active.any():
+                (next_prob_fl, next_prob_power, _, _, next_entropy_fl,
+                 next_entropy_power, _, _) = masked_policy(
+                    self._sac_actor_logits(ns[active]), next_fl[active], next_power[active])
+                next_min_q = torch.minimum(_joint_q(self.target1(ns[active])),
+                                           _joint_q(self.target2(ns[active])))
+                next_expected_q = torch.einsum("bfl,bp,bflp->b", next_prob_fl,
+                                               next_prob_power, next_min_q)
+                target[active] += self.train["gamma"] * (
+                    next_expected_q + alpha * (next_entropy_fl + next_entropy_power))
+        q1 = _gather(self.critic1(s), a)
+        q2 = _gather(self.critic2(s), a)
+        loss1, loss2 = F.mse_loss(q1, target), F.mse_loss(q2, target)
+        _finite_loss(loss1 + loss2)
+        self.critic1_opt.zero_grad(set_to_none=True)
+        loss1.backward()
+        grad1 = _grad_norm(self.critic1, self.train["gradient_clip"])
+        self.critic1_opt.step()
+        self.critic2_opt.zero_grad(set_to_none=True)
+        loss2.backward()
+        grad2 = _grad_norm(self.critic2, self.train["gradient_clip"])
+        self.critic2_opt.step()
+        (prob_fl, prob_power, _, _, entropy_fl, entropy_power,
+         entropy_frequency, entropy_slots) = masked_policy(
+             self._sac_actor_logits(s), current_fl, current_power)
+        with torch.no_grad():
+            min_q_actor = torch.minimum(_joint_q(self.critic1(s)), _joint_q(self.critic2(s)))
+        expected_q_actor = torch.einsum("bfl,bp,bflp->b", prob_fl, prob_power, min_q_actor)
+        entropy_actor = entropy_fl + entropy_power
+        actor_loss = -(expected_q_actor + alpha * entropy_actor).mean()
+        _finite_loss(actor_loss)
+        self.actor_opt.zero_grad(set_to_none=True)
+        actor_loss.backward()
+        actor_grad = _grad_norm(self.actor, self.train["gradient_clip"])
+        self.actor_opt.step()
+        target_entropy = feasible_target_entropy(current_fl, current_power,
+                                                  self.target_entropy_ratio)
+        alpha_loss = self.log_alpha * (entropy_actor.detach() - target_entropy).mean()
+        _finite_loss(alpha_loss)
+        self.alpha_opt.zero_grad(set_to_none=True)
+        alpha_loss.backward()
+        self.alpha_opt.step()
+        self.update_step += 1
+        tau = self.train["tau"]
+        with torch.no_grad():
+            for target_net, source_net in ((self.target1, self.critic1), (self.target2, self.critic2)):
+                for target_p, source_p in zip(target_net.parameters(), source_net.parameters()):
+                    target_p.lerp_(source_p, tau)
+        return {"actor_loss": float(actor_loss), "critic_1_loss": float(loss1),
+                "critic_2_loss": float(loss2), "alpha_loss": float(alpha_loss),
+                "alpha": float(self.log_alpha.exp()), "entropy": float(entropy_actor.mean()),
+                "entropy_frequency": float(entropy_frequency.mean()),
+                "entropy_slots": float(entropy_slots.mean()),
+                "entropy_power": float(entropy_power.mean()),
+                "target_entropy": float(target_entropy.mean()),
+                "legal_frequency_slot_count": float(current_fl.sum((1, 2)).float().mean()),
+                "legal_power_count": float(current_power.sum(1).float().mean()),
                 "q_mean": float((q1.mean() + q2.mean()) / 2), "q_min": float(torch.minimum(q1, q2).min()),
                 "q_max": float(torch.maximum(q1, q2).max()), "target_mean": float(target.mean()),
                 "target_std": float(target.std(unbiased=False)),
@@ -319,14 +464,35 @@ class WorkbenchAgent:
     def state_dict(self):
         names = ("actor", "critic1", "critic2", "target1", "target2", "value", "online", "target")
         optimizers = ("actor_opt", "critic1_opt", "critic2_opt", "alpha_opt", "value_opt", "optimizer")
-        return {"networks": {n: getattr(self, n).state_dict() for n in names if hasattr(self, n)},
-                "optimizers": {n: getattr(self, n).state_dict() for n in optimizers if hasattr(self, n)},
-                "log_alpha": self.log_alpha.detach().cpu() if hasattr(self, "log_alpha") else None,
-                "replay": self.replay.state_dict() if hasattr(self, "replay") else None,
-                "rollout": getattr(self, "rollout", None), "rng": self.rng.getstate(),
-                "update_step": self.update_step}
+        result = {"networks": {n: getattr(self, n).state_dict() for n in names if hasattr(self, n)},
+                  "optimizers": {n: getattr(self, n).state_dict() for n in optimizers if hasattr(self, n)},
+                  "log_alpha": self.log_alpha.detach().cpu() if hasattr(self, "log_alpha") else None,
+                  "replay": self.replay.state_dict() if hasattr(self, "replay") else None,
+                  "rollout": getattr(self, "rollout", None), "rng": self.rng.getstate(),
+                  "update_step": self.update_step}
+        if self.algorithm == "sac":
+            result["policy_probability_mode"] = "eval_v1"
+        return result
 
     def load_state_dict(self, data):
+        if self.algorithm == "sac":
+            mode = data.get("policy_probability_mode")
+            if mode is None:
+                if self.action_mask_mode == "joint_feasible":
+                    raise ValueError("Masked SAC checkpoint lacks policy_probability_mode; cannot resume")
+                if self.config["network"]["dropout"] > 0:
+                    raise ValueError("Historical SAC dropout checkpoint uses different policy probabilities; "
+                                     "resume it with its original frozen source")
+            elif mode != "eval_v1":
+                raise ValueError(f"Unsupported SAC policy_probability_mode: {mode}")
+            if self.action_mask_mode == "joint_feasible":
+                replay = data.get("replay")
+                if not isinstance(replay, dict) or not isinstance(replay.get("rows"), list):
+                    raise ValueError("Masked SAC checkpoint lacks replay with action masks")
+                for row in replay["rows"]:
+                    if (len(row) != 7 or row[5] is None or
+                            (row[6] is None) != bool(row[4])):
+                        raise ValueError("Masked SAC checkpoint replay row lacks current/next action masks")
         for name, state in data["networks"].items():
             getattr(self, name).load_state_dict(state, strict=True)
         for name, state in data["optimizers"].items():

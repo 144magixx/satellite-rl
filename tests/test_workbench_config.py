@@ -1,3 +1,4 @@
+import math
 import unittest
 
 from satellite_rl.workbench.config import catalog, config_summary, default_config, validate_config
@@ -11,6 +12,83 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(summary["state_dim"], 204)
         self.assertEqual(summary["action_dims"], [100, 10, 10])
         self.assertEqual([part["offset"] for part in summary["state_layout"]], [0, 3, 4, 104])
+        self.assertEqual(config["environment"]["action_mask"], "none")
+        self.assertEqual(summary["action_mask"], "none")
+        self.assertEqual(config["network"]["transformer_layout"], "scalar_tokens")
+
+    def test_tsac_layout_preset_and_backward_compatibility(self):
+        legacy = default_config()
+        del legacy["network"]["transformer_layout"]
+        self.assertEqual(validate_config(legacy)["network"]["transformer_layout"], "scalar_tokens")
+        preset = catalog()["network_presets"][0]
+        self.assertEqual(preset["id"], "tsac_13_tokens")
+        self.assertEqual(preset["algorithm"], "sac")
+        self.assertEqual(preset["state_features"], ["beam", "power", "interference", "occupancy"])
+        self.assertEqual(preset["network"], {
+            "kind": "transformer", "transformer_layout": "tsac_13_tokens",
+            "embedding_dim": 128, "num_heads": 8, "num_layers": 2,
+            "feedforward_dim": 512, "activation": "relu", "dropout": 0.1})
+        raw = {"algorithm": preset["algorithm"], "state": {"features": preset["state_features"]},
+               "network": preset["network"], "environment": {"action_mask": "joint_feasible"}}
+        config = validate_config(raw)
+        summary = config_summary(config)
+        self.assertEqual(summary["state_dim"], 204)
+        self.assertEqual(summary["transformer_layout"], "tsac_13_tokens")
+        self.assertEqual(summary["network_token_count"], 13)
+        self.assertIn("10个频率槽令牌", summary["network_layout_description"])
+        self.assertEqual(validate_config(config), config)
+        scalar = config_summary({"network": {"kind": "transformer"}})
+        self.assertEqual(scalar["network_token_count"], 204)
+        self.assertIn("每个标量", scalar["network_layout_description"])
+
+    def test_tsac_layout_rejects_wrong_state_or_algorithm(self):
+        base = {"network": {"kind": "transformer", "transformer_layout": "tsac_13_tokens"}}
+        for change in ({"algorithm": "ppo"}, {"algorithm": "dqn"},
+                       {"network": {"kind": "mlp"}},
+                       {"state": {"features": ["power", "beam", "interference", "occupancy"]}},
+                       {"state": {"features": ["beam", "power", "interference"]}}):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "13令牌"):
+                raw = {"network": dict(base["network"])}
+                for key, value in change.items():
+                    raw[key] = {**raw.get(key, {}), **value} if isinstance(value, dict) else value
+                validate_config(raw)
+        with self.assertRaisesRegex(ValueError, "输入布局"):
+            validate_config({"network": {"transformer_layout": "unknown"}})
+
+    def test_joint_action_mask_config_and_legacy_default(self):
+        legacy = default_config()
+        del legacy["environment"]["action_mask"]
+        self.assertEqual(validate_config(legacy)["environment"]["action_mask"], "none")
+        for network in ("mlp", "cnn", "transformer"):
+            with self.subTest(network=network):
+                config = validate_config({"network": {"kind": network},
+                                          "environment": {"action_mask": "joint_feasible"}})
+                self.assertEqual(config_summary(config)["action_mask"], "joint_feasible")
+                self.assertEqual(validate_config(config), config)
+        choices = catalog()["action_masks"]
+        self.assertEqual([item["id"] for item in choices], ["none", "joint_feasible"])
+        self.assertEqual(choices[1]["algorithms"], ["sac"])
+
+    def test_joint_action_mask_rejects_unsupported_combinations(self):
+        invalid = [
+            ({"algorithm": "ppo"}, "SAC"),
+            ({"algorithm": "dqn"}, "SAC"),
+            ({"environment": {"action_mode": "feasible_projection"}}, "投影"),
+            ({"environment": {"power_budget_w": 499}}, "100束"),
+            ({"training": {"target_entropy": -0.1}}, "目标熵"),
+            ({"training": {"target_entropy": math.log(10000) + 0.01}}, "目标熵"),
+        ]
+        for change, message in invalid:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, message):
+                raw = {"environment": {"action_mask": "joint_feasible"}}
+                for key, value in change.items():
+                    raw[key] = {**raw.get(key, {}), **value} if isinstance(value, dict) else value
+                validate_config(raw)
+        with self.assertRaisesRegex(ValueError, "掩码"):
+            validate_config({"environment": {"action_mask": "unexpected"}})
+        valid = validate_config({"environment": {"action_mask": "joint_feasible", "power_budget_w": 500},
+                                 "training": {"target_entropy": math.log(10000)}})
+        self.assertEqual(valid["environment"]["power_budget_w"], 500)
 
     def test_feature_order_and_visibility(self):
         config = validate_config({"state": {"features": ["progress", "beam", "other_occupancy"]}})

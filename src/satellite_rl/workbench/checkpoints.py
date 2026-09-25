@@ -23,7 +23,16 @@ def _canonical(config):
 def config_hash(config):
     """Hash all semantics, including state order, action mapping and normalization."""
     # Only run budget/log cadence may change without changing an inference policy.
-    return hashlib.sha256(_canonical(config).encode("utf-8")).hexdigest()
+    # Absent and explicitly disabled masking are the same historical semantics.
+    # Keep pre-mask policy/checkpoint hashes loadable without relaxing other fields.
+    semantic = dict(config)
+    semantic["environment"] = dict(config["environment"])
+    if semantic["environment"].get("action_mask", "none") == "none":
+        semantic["environment"].pop("action_mask", None)
+    semantic["network"] = dict(config["network"])
+    if semantic["network"].get("transformer_layout", "scalar_tokens") == "scalar_tokens":
+        semantic["network"].pop("transformer_layout", None)
+    return hashlib.sha256(_canonical(semantic).encode("utf-8")).hexdigest()
 
 
 def _dimensions(config):
@@ -83,8 +92,12 @@ class Policy:
         self.config = config
         self.metadata = metadata
 
-    def act(self, state, deterministic=True):
-        return self.agent.act(state, deterministic=deterministic)
+    @property
+    def last_action_info(self):
+        return self.agent.last_action_info
+
+    def act(self, state, deterministic=True, action_mask=None):
+        return self.agent.act(state, deterministic=deterministic, action_mask=action_mask)
 
 
 def load_policy(path, config=None, device="cpu"):
