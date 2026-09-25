@@ -220,7 +220,7 @@ class Application:
                 raise ValueError("运行 " + identifier + " 缺少可配对的逐场景结果")
             config = detail["config"]
             record = {"run_id": identifier, "name": detail["job"].get("name", identifier),
-                      "config": config, "summary": normalized(result.get("summary", {})), "metadata": result.get("metadata", {})}
+                      "config": config, "summary": normalized(result.get("summary", {})), "metadata": result.get("metadata") or {}}
             records.append(record)
             by_hash = {}
             for scene in result["scenes"]:
@@ -230,12 +230,34 @@ class Application:
             maps.append(by_hash)
         def conditions(record):
             c = record["config"]
+            environment = c.get("environment")
+            if not isinstance(environment, dict):
+                return None
+            mask = environment.get("action_mask", "none")
+            if mask not in ("none", "joint_feasible"):
+                return None
+            physical_environment = {key: value for key, value in environment.items() if key != "action_mask"}
             account = "original" if c.get("reward", {}).get("preset") == "legacy_original" else "repaired"
-            return (c.get("environment"), account, record["metadata"].get("action_mode"))
-        same_conditions = all(conditions(record) == conditions(records[0]) for record in records[1:])
+            metadata_mode = record["metadata"].get("action_mode")
+            mode = metadata_mode if metadata_mode is not None else c.get("evaluation", {}).get("action_mode")
+            mode = "stochastic" if mode == "sample" else mode
+            if mode not in ("deterministic", "stochastic"):
+                return None
+            return (physical_environment, account, mode)
+        def action_mask(record):
+            environment = record["config"].get("environment")
+            return environment.get("action_mask", "none") if isinstance(environment, dict) else None
+        masks = {record["run_id"]: action_mask(record) for record in records}
+        mask_values = list(masks.values())
+        mask_differs = any(mask != mask_values[0] for mask in mask_values[1:])
+        condition_values = [conditions(record) for record in records]
+        same_conditions = (condition_values[0] is not None
+                           and all(value == condition_values[0] for value in condition_values[1:]))
         common = set.intersection(*(set(item) for item in maps))
+        if mask_differs and all(mask in ("none", "joint_feasible") for mask in mask_values):
+            warnings.append("有无动作掩码的配对差值反映掩码、最低资源预留及配套熵目标的总体作用；不能全部归因于网络学习。")
         if not same_conditions:
-            warnings.append("环境、功率记账或动作评价方式不同：只展示摘要，不宣称同条件配对优劣")
+            warnings.append("物理环境、功率记账或动作评价方式不同，或包含未知掩码：只展示摘要，不宣称同条件配对优劣")
         if not common:
             warnings.append("没有校验值一致的实际场景：只展示摘要，不按场景名称猜测配对")
         metrics = ("final_si_mean", "final_sgm_mean", "basic_met_count", "throughput_bps", "power_w",
@@ -258,7 +280,8 @@ class Application:
             rows.append(row)
         warnings.append("配对差值相对所选第一个运行；重复动作先在同场景内平均。回报不跨奖励公式排名。单训练种子不代表跨种子稳定性。")
         output = {"runs": records, "rows": rows, "warnings": warnings,
-                  "created_at": now(), "paired_scene_hashes": sorted(common) if same_conditions else []}
+                  "created_at": now(), "paired_scene_hashes": sorted(common) if same_conditions else [],
+                  "treatment_factors": {"action_mask": masks} if mask_differs else {}}
         directory = self.store.root / "comparisons"
         directory.mkdir(exist_ok=True)
         atomic_json(directory / (new_id("comparison") + ".json"), clean_json(output))
