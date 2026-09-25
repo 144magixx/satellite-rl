@@ -219,8 +219,10 @@ class Scheduler:
                 (directory / "stop.request").write_text(now(), encoding="utf-8")
             return read_json(directory / "status.json", {})
 
-    def resume(self, run_id):
+    def resume(self, run_id, *, source_repair=None):
         with self.lock:
+            if source_repair not in (None, "atomic_io_retry_v1"):
+                raise ValueError("不支持的恢复源码修复类型")
             directory = self.store.job_dir(run_id)
             job = read_json(directory / "job.json")
             status = read_json(directory / "status.json", {})
@@ -232,10 +234,22 @@ class Scheduler:
                 raise ValueError("没有可恢复的训练断点，推理权重不能代替断点")
             if pid_alive(status.get("pid")):
                 raise ValueError("进程仍在运行，不能重复启动")
+            if source_repair is not None:
+                from .recovery import prepare_io_retry_recovery
+                job = prepare_io_retry_recovery(self.store, job)
             (directory / "stop.request").unlink(missing_ok=True)
             job["resume"] = True
             atomic_json(directory / "job.json", job)
-            self._status(directory, status, stage="queued", queue_reason="从正常断点恢复", pid=None)
+            fields = {"stage": "queued", "queue_reason": "从正常断点恢复", "pid": None,
+                      "error": None, "traceback": None, "failure_path": None,
+                      "exit_code": None, "exit_hex": None}
+            if source_repair is not None:
+                proof = job["io_repair"]
+                fields.update(queue_reason="使用已核验的原子I/O重试修复，从正常断点恢复",
+                              env_step=proof["checkpoint_step"], update_step=proof["checkpoint_update_step"],
+                              previous_failure_archive=proof["archive_path"],
+                              source_repair=source_repair)
+            self._status(directory, status, **fields)
             return read_json(directory / "status.json")
 
     def _loop(self):

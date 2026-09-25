@@ -14,6 +14,7 @@ import torch
 
 from satellite_rl.agents.workbench_algorithms import build_agent
 from satellite_rl.agents.workbench_networks import model_description
+from satellite_rl.training.run_monitor import replace_with_retry
 
 
 def _canonical(config):
@@ -52,7 +53,7 @@ def _atomic_torch(path, payload):
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
         torch.save(payload, temporary)
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -63,7 +64,7 @@ def _atomic_json(path, payload):
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
         temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 

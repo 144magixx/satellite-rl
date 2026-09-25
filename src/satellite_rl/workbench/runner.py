@@ -20,6 +20,7 @@ import numpy as np
 import torch
 
 from satellite_rl.agents.workbench_algorithms import build_agent
+from satellite_rl.training.run_monitor import replace_with_retry
 from satellite_rl.workbench.checkpoints import (config_hash, export_policy, load_checkpoint,
                                                  load_policy, save_checkpoint)
 
@@ -58,7 +59,7 @@ def _atomic_json(path, value):
             json.dump(_jsonable(value), stream, ensure_ascii=False, indent=2, allow_nan=False)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp, path)
+        replace_with_retry(temp, path)
     finally:
         temp.unlink(missing_ok=True)
 
@@ -227,7 +228,7 @@ def _save_scene(path, scene):
                 np.savez_compressed(stream, **arrays)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temp, path)
+            replace_with_retry(temp, path)
         finally:
             temp.unlink(missing_ok=True)
     return {"path": str(path), "sha256": _sha256(path)}
@@ -258,7 +259,7 @@ def _reconcile(directory, checkpoint_step):
         with temp.open("w", encoding="utf-8") as stream:
             for row in rows:
                 stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
-        os.replace(temp, path)
+        replace_with_retry(temp, path)
 
 
 def _restore_logging(ledger, directory, checkpoint_step):
