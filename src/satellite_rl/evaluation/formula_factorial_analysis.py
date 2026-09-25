@@ -346,6 +346,8 @@ def _write_csv(path, rows, fields):
 
 
 def _figures(target, models, curves, updates):
+    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+    plt.rcParams["axes.unicode_minus"] = False
     colors = {"legacy": "#4c78a8", "negative_joint": "#f58518",
               "positive_per_head": "#54a24b", "corrected": "#e45756"}
     for model in models:
