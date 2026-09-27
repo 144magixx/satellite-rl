@@ -4,7 +4,7 @@
 
 “现有 T-SAC”以本轮六组实验的冻结源码提交 36c14d74cbe6b9cf7410ee0595ee6d73083afdc8 为基准。当前主目录的主环境及 Transformer SAC 源文件与该冻结目录的 SHA-256 一致。差异仅涉及开题报告第二阶段的频率—功率联合分配；第一阶段波束覆盖规划、第三阶段链路级功率精细优化均不在此次讨论和拟改动范围。
 
-关联文件：[收窄后的新方案](波束基本服务优先的新方案.md)、[六组单种子结果](../outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/中文单种子六组报告.md)、[当前观测诊断](../outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/state_diagnosis/中文204维状态诊断.md)。
+关联文件：[收窄后的新方案](02_波束基本服务优先的新方案.md)、[六组单种子结果](../../outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/中文单种子六组报告.md)、[当前观测诊断](../../outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/state_diagnosis/中文204维状态诊断.md)。
 
 ## 本次拟改的内容
 
@@ -34,29 +34,29 @@
 
 | 文件 | 拟议的最小编辑 | 此刻状态 |
 | --- | --- | --- |
-| [终态指标](../src/satellite_rl/evaluation/terminal_metrics.py) | 用每束需求 10% 的门槛计算达标束数及低容量束名单；原 SI/SGM 字段保留 | 已合并 main；终点逐束核验通过 |
-| [主环境奖励](../src/satellite_rl/envs/satellite.py) | 旧奖励新环境对照保留原式；融合版改用 $2\Delta B+\Delta S+0.2\Delta G-\Delta P_{\mathrm{actual}}/3000$。SI/SGM 用更新后的全体束速率；零槽不辐射时不计实际功率 | 已合并 main；两组 40 万步对照完成，融合效果下降 |
-| [正式训练入口](../src/satellite_rl/training/experiment_runner.py) | 记录门槛、奖励版本、场景/种子、40 万步预算与独立输出目录；旧/新奖励共用新环境 | 已合并 main；原始场景、权重和日志已核验 |
-| [Transformer SAC](../src/satellite_rl/agents/sac_transformer.py) | 保留 Actor、Critic、204 维输入与修正 SAC 更新公式；监测温度、损失和真实更新 | 两组共用冻结源码，网络未改 |
+| [终态指标](../../src/satellite_rl/evaluation/terminal_metrics.py) | 用每束需求 10% 的门槛计算达标束数及低容量束名单；原 SI/SGM 字段保留 | 已合并 main；终点逐束核验通过 |
+| [主环境奖励](../../src/satellite_rl/envs/satellite.py) | 旧奖励新环境对照保留原式；融合版改用 $2\Delta B+\Delta S+0.2\Delta G-\Delta P_{\mathrm{actual}}/3000$。SI/SGM 用更新后的全体束速率；零槽不辐射时不计实际功率 | 已合并 main；两组 40 万步对照完成，融合效果下降 |
+| [正式训练入口](../../src/satellite_rl/training/experiment_runner.py) | 记录门槛、奖励版本、场景/种子、40 万步预算与独立输出目录；旧/新奖励共用新环境 | 已合并 main；原始场景、权重和日志已核验 |
+| [Transformer SAC](../../src/satellite_rl/agents/sac_transformer.py) | 保留 Actor、Critic、204 维输入与修正 SAC 更新公式；监测温度、损失和真实更新 | 两组共用冻结源码，网络未改 |
 
 若当前评价发现零槽和超功率使最低可用容量难以提高，可以**另提出第二阶段内的后续改动**，例如频率起点×连续槽数的合法性检查或功率请求限制。它们会改变动作/环境含义，不能悄悄混入奖励对照。本次文档不承诺完全消除断供。
 
 ## 对照和证据边界
 
-用户已确定最低可用容量为每束需求的 10%；旧场景已从六组逐束终态速率和参照策略的逐束满意度补算新指标，原始记录见[旧结果诊断](../outputs/verification/coverage_baseline_20260924/summary.json)。这不改变历史成绩。贪心、固定策略若需新场景的逐束最终 Mbps，应在相同环境和已保存场景上确定性重评，不能由封顶的满意度倒推出超额分配容量。用户授权的新正式对照为“旧奖励＋一致的零槽功率规则”与“融合奖励＋同一功率规则”各训练一组，使用相同 Transformer 网络和修正 SAC 公式、单种子 51001、各 40 万交互、新独立验证/考核场景；贪心与固定策略在同一新环境和考核场景对比。旧权重可在输入/动作兼容时于新环境只读重评，另列而不代替旧奖励从头训练。若以后需要隔离 $2\Delta B$ 单项的贡献，尚需额外消融训练，本轮不把组合差值全归因于基本服务项。训练回报随奖励定义变化，不跨版本直接排名。
+用户已确定最低可用容量为每束需求的 10%；旧场景已从六组逐束终态速率和参照策略的逐束满意度补算新指标，原始记录见[旧结果诊断](../../outputs/verification/coverage_baseline_20260924/summary.json)。这不改变历史成绩。贪心、固定策略若需新场景的逐束最终 Mbps，应在相同环境和已保存场景上确定性重评，不能由封顶的满意度倒推出超额分配容量。用户授权的新正式对照为“旧奖励＋一致的零槽功率规则”与“融合奖励＋同一功率规则”各训练一组，使用相同 Transformer 网络和修正 SAC 公式、单种子 51001、各 40 万交互、新独立验证/考核场景；贪心与固定策略在同一新环境和考核场景对比。旧权重可在输入/动作兼容时于新环境只读重评，另列而不代替旧奖励从头训练。若以后需要隔离 $2\Delta B$ 单项的贡献，尚需额外消融训练，本轮不把组合差值全归因于基本服务项。训练回报随奖励定义变化，不跨版本直接排名。
 
 如果实施中触及原本保持不变的动作或环境规则，须另做对应对照，不能把不同物理口径的 SI 直接排名；旧权重仅在输入和动作含义兼容时重评。此前 81000–81099 场景已被用于诊断与方案讨论，新的奖励若据此调整，应使用另一批独立考核场景。任何增加训练种子或长评估的预算，不由本文件自动批准。
 
-2026-09-24 18:12 核对：独立开发分支训练提交 5a73516cd69c632258d37daba51a0f39d5fccc1c，两组 DQN/CUDA 正式作业分别为 transformer_old_reward_repaired_s51001_v2、transformer_fused_s51001_v2。日志修复后 147 项检查通过，单场景评价 JSON/CSV 覆盖计数一致。首次旧奖励预热启动在[实验清单](../outputs/experiments/coverage_reward_20260924/experiment_manifest.json)列为 aborted_with_record，不计入正式结果。通过正确性检查后以合并提交 1d885af53ccafd6e97bb28af259b8c838fd54a96 进入 main；后台作业仍导入独立冻结源码，不受主分支变化影响。
+2026-09-24 18:12 核对：独立开发分支训练提交 5a73516cd69c632258d37daba51a0f39d5fccc1c，两组 DQN/CUDA 正式作业分别为 transformer_old_reward_repaired_s51001_v2、transformer_fused_s51001_v2。日志修复后 147 项检查通过，单场景评价 JSON/CSV 覆盖计数一致。首次旧奖励预热启动在[实验清单](../../outputs/experiments/coverage_reward_20260924/experiment_manifest.json)列为 aborted_with_record，不计入正式结果。通过正确性检查后以合并提交 1d885af53ccafd6e97bb28af259b8c838fd54a96 进入 main；后台作业仍导入独立冻结源码，不受主分支变化影响。
 
-后续只读核对：新考核场景 83000–83099 的贪心和固定策略已完成，平均基本服务达标数分别为 95.09、97.93 束；同场景旧终点权重在新环境采样重评为 91.93 束。三份参照结果分别可追到[新环境基线摘要](../outputs/experiments/coverage_reward_20260924/baselines_repaired/summary.json)与[旧权重重评摘要](../outputs/experiments/coverage_reward_20260924/old_weight_repaired_eval/summary.json)。这不是新旧**从头训练模型**的最终差值；两组正式训练尚未到 40 万步。
+后续只读核对：新考核场景 83000–83099 的贪心和固定策略已完成，平均基本服务达标数分别为 95.09、97.93 束；同场景旧终点权重在新环境采样重评为 91.93 束。三份参照结果分别可追到[新环境基线摘要](../../outputs/experiments/coverage_reward_20260924/baselines_repaired/summary.json)与[旧权重重评摘要](../../outputs/experiments/coverage_reward_20260924/old_weight_repaired_eval/summary.json)。这不是新旧**从头训练模型**的最终差值；两组正式训练尚未到 40 万步。
 
-原实现源码依据见[主环境](../src/satellite_rl/envs/satellite.py)、[Transformer SAC](../src/satellite_rl/agents/sac_transformer.py)、[终态统计](../src/satellite_rl/evaluation/terminal_metrics.py)、[六组实验冻结版本说明](单种子六组对照完成条件.md)。六组历史报告中修正 Transformer 终态 SI 为 62.97%、完整处理率 100%、零槽步骤占 7.5%；这些是原实现的观察值，不能当成新增奖励的效果。**新方案效果待验证。**
+原实现源码依据见[主环境](../../src/satellite_rl/envs/satellite.py)、[Transformer SAC](../../src/satellite_rl/agents/sac_transformer.py)、[终态统计](../../src/satellite_rl/evaluation/terminal_metrics.py)、[六组实验冻结版本说明](../实验规范/单种子六组/02_六组对照完成条件.md)。六组历史报告中修正 Transformer 终态 SI 为 62.97%、完整处理率 100%、零槽步骤占 7.5%；这些是原实现的观察值，不能当成新增奖励的效果。**新方案效果待验证。**
 
 ### 完成后的实测差异
 
 两组正式作业均在冻结提交 5a73516c、种子 51001 下完成 400000 次交互与 398000 次更新；主结果采用终点权重，同一新环境、100 个考核场景，每场景 3 次采样。融合组平均 **73.93 束**达到最低可用容量，旧奖励重训为 **89.53 束**，相差 **−15.60 束**；全束终态 SI 为 35.73% 对 66.64%，SGM 为 33.15% 对 70.11%，实际功率 448.25 W 对 2066.55 W。融合组零容量 24.27 束对旧奖励 9.54 束，零槽比例 24.27% 对 9.54%；两组均走完 100 束，300 次采样均未超 3000 W。融合组在 100/100 个配对场景的达标束数都更少，且低于贪心（平均 95.09）和固定策略（97.93）。
 
-核对 80000 束终态数组、60000 个采样步骤功率/频率槽、配对表、权重及场景 SHA 后，上述差异属于**学习效果下降**，不能解释为统计字段丢失或考核场景不一致。融合组 89.5% 的动作请求 5 W，实际功率显著降低，同时请求动作中更多被裁成零槽；这些行为支持“供电不足和无效频率槽选择共同影响服务”的解释，但单种子轨迹不能把原因唯一归于功率成本系数。详见[主对照报告](../outputs/experiments/coverage_reward_20260924/comparison/中文前后对照报告.md)、[逐场景数据](../outputs/experiments/coverage_reward_20260924/comparison/paired_scenes.csv)及[独立验收补充](../outputs/experiments/coverage_reward_20260924/comparison/verification/中文核验补充报告.md)。
+核对 80000 束终态数组、60000 个采样步骤功率/频率槽、配对表、权重及场景 SHA 后，上述差异属于**学习效果下降**，不能解释为统计字段丢失或考核场景不一致。融合组 89.5% 的动作请求 5 W，实际功率显著降低，同时请求动作中更多被裁成零槽；这些行为支持“供电不足和无效频率槽选择共同影响服务”的解释，但单种子轨迹不能把原因唯一归于功率成本系数。详见[主对照报告](../../outputs/experiments/coverage_reward_20260924/comparison/中文前后对照报告.md)、[逐场景数据](../../outputs/experiments/coverage_reward_20260924/comparison/paired_scenes.csv)及[独立验收补充](../../outputs/experiments/coverage_reward_20260924/comparison/verification/中文核验补充报告.md)。
 
 本轮证明的是候选实现可复现且训练已完成，**没有证明基本服务得到改善**。只有一个训练种子，不宣称跨种子稳定性；若要研究为何失效或调整权重，应作为新的受控对照，不能覆盖本轮权重和原始结果。

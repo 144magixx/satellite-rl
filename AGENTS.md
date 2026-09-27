@@ -10,11 +10,17 @@
 - 结果按各组自己的共同场景与指标口径记录，注明训练预算、模型选择方式、单种子限制及是否完成评价。不同奖励的累计回报不直接排名；不同环境/场景的SI、SGM也不拼成统一排行榜。小检查、基线评价和旧权重重评不记作新训练成果。
 - 保留重要历史结果与失败原因，修正结论时标日期及依据。长原始数据留在 `outputs/`、模型留在 `models/runs/`，状态文件维护简明结果与入口。后续方案明确授权状态；维护状态文件本身不批准新训练，也不创建定时任务。
 
+## 文档归档与命名
+
+**2026-09-28 用户要求：今后新增到 docs/ 的文档按现有分类和编号顺序归档，不在根目录散放。** 新建文档先查看 [文档目录](docs/00_目录.md) 和相应系列的最后编号，再放入方案、实验报告、实验规范、工作台、工程文档或资料目录。文件名用两位递增编号加简短主题，例如 “03_新实验结果.md”；编号在同一主题系列内体现先后，不因插入新文档而重编号已引用文件。
+
+建立或移动文档时，同步修正 Markdown 链接、图片、代码引用、README、问答与 EXPERIMENT_STATUS.md。十八组运行说明等过期计划移入“历史十八组”并保留历史范围；原始数据仍放在 outputs/，模型仍放在 models/runs/，不复制第二份证据。纯文档归档按 satellite-rl-change-eval 轻量检查引用和 Git 差异，不启动训练。
+
 ## 项目结构与模块组织
 
 源码位于 `src/satellite_rl/`：`envs/` 保存两套环境，`agents/` 定义网络与参数更新，`training/` 组织训练，`baselines/` 保存启发式策略，`evaluation/` 与 `plotting/` 负责评估和绘图。
 
-输入数据位于 `data/`；原评估权重位于 `models/pretrained/`，新模型写入 `models/runs/`。日志、指标和图表统一放在 `outputs/`。`examples/` 存放草稿和演示，`tests/` 存放自动化检查。旧文件对应关系见 `docs/迁移说明.md`，资产校验值见 `docs/migration_manifest.json`。
+输入数据位于 `data/`；原评估权重位于 `models/pretrained/`，新模型写入 `models/runs/`。日志、指标和图表统一放在 `outputs/`。`examples/` 存放草稿和演示，`tests/` 存放自动化检查。旧文件对应关系见 `docs/工程文档/01_项目迁移说明.md`，资产校验值见 `docs/工程文档/核验记录/01_源码迁移清单.json`。
 
 ## 安装、训练与验证
 
@@ -27,7 +33,7 @@
 | `python -m satellite_rl.evaluation.compare_metrics` | 运行原指标比较流程 |
 | `python -m unittest discover -s tests -v` | 结构、导入、路径和权重兼容性检查 |
 
-原 `train_sac_*` 入口仍默认 4000 回合。新增 `python -m satellite_rl.training.experiment_runner` 用于可复现对照，支持模型、公式版本、种子、交互步数、独立目录与断点恢复；`experiment_suite` 管理已批准的 18 组后台 CUDA 作业。具体参数见 `docs/十八组对照实验运行说明.md`。不要为了检查导入而启动完整训练。
+原 `train_sac_*` 入口仍默认 4000 回合。新增 `python -m satellite_rl.training.experiment_runner` 用于可复现对照，支持模型、公式版本、种子、交互步数、独立目录与断点恢复；`experiment_suite` 管理已批准的 18 组后台 CUDA 作业。具体参数见 `docs/实验规范/历史十八组/03_十八组对照实验运行说明.md`。不要为了检查导入而启动完整训练。
 
 ## 训练环境约定
 

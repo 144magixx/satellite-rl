@@ -7,7 +7,7 @@
 | 关闭 | `train_sac_20260925_152308_c6a4bc88` | 已完成，400000交互/398001更新及终点评价 |
 | 联合掩码＋最低资源预留 | `train_sac_20260925_152308_dcba4f43` | 已完成，400000交互/398001更新及终点评价 |
 
-两组最初由工作台冻结至 `847f7a7cb99a3bcab25f1c8bb4eaa9c821df6feb`，启动时已校验82个快照文件、DQN/CUDA与进程创建时间。后续因Windows状态文件替换故障中断，经等价I/O修复后从原断点恢复，终点使用快照 `5da891fdbcf5fa0255d912677840620d977367c9`，详见文末记录。任务目录在 `outputs/workbench/jobs/<任务编号>`，模型在 `models/runs/workbench/<任务编号>`；任务编号保持不变。[实验清单](../outputs/experiments/workbench_mask_20260925/experiment_manifest.json)保存配置、校验值、源码沿革与正式结果来历。
+两组最初由工作台冻结至 `847f7a7cb99a3bcab25f1c8bb4eaa9c821df6feb`，启动时已校验82个快照文件、DQN/CUDA与进程创建时间。后续因Windows状态文件替换故障中断，经等价I/O修复后从原断点恢复，终点使用快照 `5da891fdbcf5fa0255d912677840620d977367c9`，详见文末记录。任务目录在 `outputs/workbench/jobs/<任务编号>`，模型在 `models/runs/workbench/<任务编号>`；任务编号保持不变。[实验清单](../../outputs/experiments/workbench_mask_20260925/experiment_manifest.json)保存配置、校验值、源码沿革与正式结果来历。
 
 ## 实现与前端入口
 
@@ -47,7 +47,7 @@
 - 浏览器实际验证了原T-SAC预设、204维与13令牌预览、掩码开关、方案保存、刷新后保留，控制台无错误。
 - 独立进程的短检查显存峰值预留约244/248 MiB，本次工作台允许最多两作业并行，并保留原GPU资源排队保护；这不是双作业吞吐提升的证明。
 
-原始证据：[完整测试日志](../outputs/verification/workbench_mask_20260925/all_tests.log)、[CUDA更新及显存核验](../outputs/verification/workbench_mask_20260925/cuda_microcheck_summary.json)、[实验配置与工作台任务清单目录](../outputs/experiments/workbench_mask_20260925)。短核验脚本直接运行属于代码验证；正式两组由工作台任务接口创建，运行源码从提交快照冻结，关闭页面不取消训练。
+原始证据：[完整测试日志](../../outputs/verification/workbench_mask_20260925/all_tests.log)、[CUDA更新及显存核验](../../outputs/verification/workbench_mask_20260925/cuda_microcheck_summary.json)、[实验配置与工作台任务清单目录](../../outputs/experiments/workbench_mask_20260925)。短核验脚本直接运行属于代码验证；正式两组由工作台任务接口创建，运行源码从提交快照冻结，关闭页面不取消训练。
 
 ## 正式结果怎样判断
 
@@ -64,11 +64,11 @@
 | 关闭掩码 | 82100 | 80000 | 2100 |
 | 开启掩码 | 40800 | 40000 | 800 |
 
-两任务根层原始文件共28个已复制并逐项核对SHA-256，断点内部的模型、优化器、回放、温度、随机状态与进度可读取，断点哈希与失败时记录一致。备份见[恢复前清单](../outputs/experiments/workbench_mask_20260925/recovery_20260925_1730/backup_manifest.json)。工作台恢复接口还在各任务`recoveries/`保存旧job、日志、故障和断点及源码迁移证明。
+两任务根层原始文件共28个已复制并逐项核对SHA-256，断点内部的模型、优化器、回放、温度、随机状态与进度可读取，断点哈希与失败时记录一致。备份见[恢复前清单](../../outputs/experiments/workbench_mask_20260925/recovery_20260925_1730/backup_manifest.json)。工作台恢复接口还在各任务`recoveries/`保存旧job、日志、故障和断点及源码迁移证明。
 
-修复提交`6f08b8c`仅在训练入口、场景/日志恢复和权重保存的5个原子替换点复用已有重试函数；配套恢复接口只接受经哈希和语法树核验的等价I/O修复。新冻结提交为`5da891fdbcf5fa0255d912677840620d977367c9`，原847f7a7快照未修改，算法、网络、奖励、环境、配置与数据文件保持相同。**256项检查通过**，包括真实Windows短时读锁；从两份真实断点分别用原/新源码执行一次CPU更新，所有恢复状态及更新后网络/优化器哈希和指标精确相同，见[等价核验](../outputs/verification/workbench_io_retry_20260925/comparison.json)。
+修复提交`6f08b8c`仅在训练入口、场景/日志恢复和权重保存的5个原子替换点复用已有重试函数；配套恢复接口只接受经哈希和语法树核验的等价I/O修复。新冻结提交为`5da891fdbcf5fa0255d912677840620d977367c9`，原847f7a7快照未修改，算法、网络、奖励、环境、配置与数据文件保持相同。**256项检查通过**，包括真实Windows短时读锁；从两份真实断点分别用原/新源码执行一次CPU更新，所有恢复状态及更新后网络/优化器哈希和指标精确相同，见[等价核验](../../outputs/verification/workbench_io_retry_20260925/comparison.json)。
 
-两组通过原工作台任务的恢复API重新排队，已确认DQN/CUDA加载新冻结快照并在80000/40000步之后继续更新；没有新增训练组或重置训练种子。日志按原可信断点回退，回退部分保留在归档中，重做的交互不能重复计入最终预算。根层`failure.json`保留为旧故障证据，须按错误时间与当前stage判断。更新后的恢复摘要和进程/源码检查存放于[恢复目录](../outputs/experiments/workbench_mask_20260925/recovery_20260925_1730)。最终效果仍待两组40万步完成后评价。
+两组通过原工作台任务的恢复API重新排队，已确认DQN/CUDA加载新冻结快照并在80000/40000步之后继续更新；没有新增训练组或重置训练种子。日志按原可信断点回退，回退部分保留在归档中，重做的交互不能重复计入最终预算。根层`failure.json`保留为旧故障证据，须按错误时间与当前stage判断。更新后的恢复摘要和进程/源码检查存放于[恢复目录](../../outputs/experiments/workbench_mask_20260925/recovery_20260925_1730)。最终效果仍待两组40万步完成后评价。
 
 ## 2026-09-26 正式终点结果
 
@@ -89,19 +89,19 @@
 
 两轮独立统计均从原始逐束容量复算SI、SGM、10%达标、零容量和资源账，核对两模型600次加两基线200次评价，共80000束；100场景哈希及模型动作种子一致。两个最终推理权重与各自40万步完整断点Actor逐张量相同。基线任务冻结提交`6a754d35`，其科学源码与训练最终快照5da891f的文件哈希相同，导入场景数组与训练最终考核场景一致。
 
-原始[正式报告](../outputs/experiments/workbench_mask_20260925/comparison/中文正式对照报告.md)、[汇总](../outputs/experiments/workbench_mask_20260925/comparison/summary.json)、[100场景配对表](../outputs/experiments/workbench_mask_20260925/comparison/paired_scenes.csv)及[第二次独立复算](../outputs/experiments/workbench_mask_20260925/comparison/root_terminal_verification.json)已保存。本次为一个训练种子的完整对照，结论限于这批场景与既定资源条件；联合掩码、最低资源预留和动态目标熵作为一个组合一起变化，不能宣称单独某一项已证明有效，也不能推断跨训练种子的稳定性。
+原始[正式报告](../../outputs/experiments/workbench_mask_20260925/comparison/中文正式对照报告.md)、[汇总](../../outputs/experiments/workbench_mask_20260925/comparison/summary.json)、[100场景配对表](../../outputs/experiments/workbench_mask_20260925/comparison/paired_scenes.csv)及[第二次独立复算](../../outputs/experiments/workbench_mask_20260925/comparison/root_terminal_verification.json)已保存。本次为一个训练种子的完整对照，结论限于这批场景与既定资源条件；联合掩码、最低资源预留和动态目标熵作为一个组合一起变化，不能宣称单独某一项已证明有效，也不能推断跨训练种子的稳定性。
 
-工作台原比较器将`action_mask`也作为物理条件，最初未给出配对差值。收尾时已用提交`f2cf781`修正、合并发布为`451b239`：仅把已知掩码开关视为待比较的动作策略因素；预算、功率档位、基本服务门槛、执行裁剪/投影规则、功率记账和确定/随机评价方式不一致时，仍拒绝直接配对。新增5项与既有16项服务检查通过；正式API和实际浏览器均显示100个配对场景，所有返回差值与独立复算一致。原拒配对响应保留作历史，当前[API核验结果](../outputs/experiments/workbench_mask_20260925/comparison/api_compare_verified.json)可直接复查。该修正仅影响结果比较，不改原模型、原场景或评价结果。
+工作台原比较器将`action_mask`也作为物理条件，最初未给出配对差值。收尾时已用提交`f2cf781`修正、合并发布为`451b239`：仅把已知掩码开关视为待比较的动作策略因素；预算、功率档位、基本服务门槛、执行裁剪/投影规则、功率记账和确定/随机评价方式不一致时，仍拒绝直接配对。新增5项与既有16项服务检查通过；正式API和实际浏览器均显示100个配对场景，所有返回差值与独立复算一致。原拒配对响应保留作历史，当前[API核验结果](../../outputs/experiments/workbench_mask_20260925/comparison/api_compare_verified.json)可直接复查。该修正仅影响结果比较，不改原模型、原场景或评价结果。
 
 ## 2026-09-27 补充：奖励曲线与训练过程报告
 
-原正式报告以终点指标和资源核验为主，未附训练曲线。现已使用两任务保存的有效日志补充[带曲线实验报告（HTML）](../outputs/experiments/workbench_mask_20260925/comparison/training_curves/带曲线实验报告.html)及[Markdown版](../outputs/experiments/workbench_mask_20260925/comparison/training_curves/带曲线实验报告.md)。HTML内嵌图片，可单独打开查看；原始正式报告、模型、训练记录和实验清单保留原样，没有新增训练或评价。
+原正式报告以终点指标和资源核验为主，未附训练曲线。现已使用两任务保存的有效日志补充[带曲线实验报告（HTML）](../../outputs/experiments/workbench_mask_20260925/comparison/training_curves/带曲线实验报告.html)及[Markdown版](../../outputs/experiments/workbench_mask_20260925/comparison/training_curves/带曲线实验报告.md)。HTML内嵌图片，可单独打开查看；原始正式报告、模型、训练记录和实验清单保留原样，没有新增训练或评价。
 
 - 训练曲线：每回合奖励、基本服务达标数、零容量束数、实际功率；淡线保留原始回合数据，实线为50回合后向滚动均值，不满50回合不补平滑值。
 - 固定验证曲线：20个场景274000–274019，每场景3次随机动作；每1万步一个节点，共40节点，分别画全部100束终态SI、SGM、基本服务达标、零容量和功率，未作平滑。
 - 奖励分解：旧阈值项、本束SGM、供需偏差罚、占用冲突罚；逐回合分项之和与总奖励一致。掩码使占用冲突罚消失，奖励差包含动作规则的直接作用。
 - 最终考核：单列275000–275099的100场景模型/贪心/固定结果，不混入训练和验证曲线。
 
-两组各4000回合，交互步数均连续为100至400000，未发现重复、倒序或缺口；更新日志各398001次，验证日志各2400行、最终考核各300行。断点恢复前已撤回的旧日志未重复计入。主任务独立核对训练首/末50回合奖励、验证首/末节点和奖励分项求和，与补图脚本一致；三张PNG已检查中文、图例、单位和布局。检查摘要和源日志哈希见[log_audit.json](../outputs/experiments/workbench_mask_20260925/comparison/training_curves/log_audit.json)，同目录保存可复现脚本、原值/平滑值CSV及PNG/SVG。
+两组各4000回合，交互步数均连续为100至400000，未发现重复、倒序或缺口；更新日志各398001次，验证日志各2400行、最终考核各300行。断点恢复前已撤回的旧日志未重复计入。主任务独立核对训练首/末50回合奖励、验证首/末节点和奖励分项求和，与补图脚本一致；三张PNG已检查中文、图例、单位和布局。检查摘要和源日志哈希见[log_audit.json](../../outputs/experiments/workbench_mask_20260925/comparison/training_curves/log_audit.json)，同目录保存可复现脚本、原值/平滑值CSV及PNG/SVG。
 
 曲线能帮助判断学习过程，但不能仅凭奖励抬升宣称已经收敛或将全部差值归因于网络学习。验证节点和最终考核是不同场景，数值不应互相替代。只有一个训练种子，不绘制或声称跨训练种子的置信范围。

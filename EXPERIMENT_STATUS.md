@@ -63,7 +63,7 @@
 
 **运行与版本：**两个训练任务分别为 `train_sac_20260925_152308_c6a4bc88`（关）、`train_sac_20260925_152308_dcba4f43`（开）；基线评价任务 `evaluate_sac_20260926_030645_95e399db`。初始冻结 `847f7a7cb99a3bcab25f1c8bb4eaa9c821df6feb`；Windows文件写入故障后，从80000/40000步经工作台恢复到等价I/O修复提交 **`5da891fdbcf5fa0255d912677840620d977367c9`**。原日志/快照保留。比较器修复提交451b239仅使掩码两组可同场景配对，不改变训练或评价。
 
-**入口：**[实验记录](docs/前端T-SAC无效动作掩码对照实验.md) · [实验清单/哈希](outputs/experiments/workbench_mask_20260925/experiment_manifest.json) · [正式结果汇总](outputs/experiments/workbench_mask_20260925/comparison/summary.json) · [100场景配对表](outputs/experiments/workbench_mask_20260925/comparison/paired_scenes.csv) · [带曲线HTML报告](outputs/experiments/workbench_mask_20260925/comparison/training_curves/带曲线实验报告.html) · [曲线日志核验](outputs/experiments/workbench_mask_20260925/comparison/training_curves/log_audit.json)。
+**入口：**[实验记录](docs/实验报告/02_原T-SAC联合掩码对照实验.md) · [实验清单/哈希](outputs/experiments/workbench_mask_20260925/experiment_manifest.json) · [正式结果汇总](outputs/experiments/workbench_mask_20260925/comparison/summary.json) · [100场景配对表](outputs/experiments/workbench_mask_20260925/comparison/paired_scenes.csv) · [带曲线HTML报告](outputs/experiments/workbench_mask_20260925/comparison/training_curves/带曲线实验报告.html) · [曲线日志核验](outputs/experiments/workbench_mask_20260925/comparison/training_curves/log_audit.json)。
 
 原始任务数据在 `outputs/workbench/jobs/<任务编号>/`（配置、状态、日志、实际场景、results）；最终推理权重分别为[关闭掩码](models/runs/workbench/train_sac_20260925_152308_c6a4bc88/final/policy.pt)、[开启掩码](models/runs/workbench/train_sac_20260925_152308_dcba4f43/final/policy.pt)，元数据为各自同目录 `model.json`。两权重与40万步断点Actor一致，80000束终态已两轮复算。
 
@@ -160,7 +160,7 @@
 | 204维状态信息 | 有严格同观测、不同未来需求导致奖励不同的小例；未证明它是成绩差的主因 | [诊断报告](outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/state_diagnosis/中文204维状态诊断.md) |
 | 融合奖励低功率/零槽 | 固定槽位功率重放及30000步占用核对；为原轨迹诊断，不是新策略重训 | G02中的功率、零槽诊断链接 |
 | DQN/CUDA | 2026-09-24验证Python3.11.11、Torch2.3.1+cu121、RTX4070SUPER及真实GPU更新；启动前仍需现场复核 | [环境/耗时记录](Q&A/算法与训练/训练耗时瓶颈与GPU利用率.md) |
-| 工作台与掩码 | 9种短GPU组合、网络权重映射及掩码概率/真实更新等检查；实现检查不替代正式性能评价 | [工作台验收](docs/实验工作台验收记录.md)、[G01记录](docs/前端T-SAC无效动作掩码对照实验.md) |
+| 工作台与掩码 | 9种短GPU组合、网络权重映射及掩码概率/真实更新等检查；实现检查不替代正式性能评价 | [工作台验收](docs/工作台/02_实验工作台验收记录.md)、[G01记录](docs/实验报告/02_原T-SAC联合掩码对照实验.md) |
 | 状态写入与恢复 | G01等价I/O修复、断点前后一次更新精确核对，原失败现场保留 | [恢复摘要](outputs/experiments/workbench_mask_20260925/recovery_20260925_1730/recovery_summary.json) |
 | 校准/探针 | `sac_comparison_20260924_calibration`、`sac_comparison_20260924_checks`、各`outputs/verification/`短运行用于吞吐/恢复/正确性 | 不将校准种子51002等视作已授权正式多种子结果 |
 
@@ -181,7 +181,7 @@
 3. 已用来分析的83000/81000/275000系列场景是既有诊断资料。后续方案选定后保存新的共同验证/最终考核场景，同场景重评旧参照和基线，不拿历史分数直接排名。验收优先基本服务，再分别看SI、SGM、功率和约束，明确取舍。
 4. 若合法动作下功率学习仍异常，再根据诊断单独讨论让功率选择参考所选频点/槽数。未批准扩展第一/三阶段、增加训练种子、盲目加训练步数或同时更改多个因素。
 
-详细方案：[奖励问答最新追问](Q&A/算法与训练/当前奖励函数.md)。旧[第二阶段候选方案](docs/融合奖励失败后的第二阶段改进方案.md)与四公式问答含历史优先顺序，实际已执行范围以G01为准，当前建议以本节及最新用户指令为准。
+详细方案：[奖励问答最新追问](Q&A/算法与训练/当前奖励函数.md)。旧[第二阶段候选方案](docs/方案/03_融合奖励失败后的第二阶段改进方案.md)与四公式问答含历史优先顺序，实际已执行范围以G01为准，当前建议以本节及最新用户指令为准。
 
 ## 8. 以后怎样维护本文件
 

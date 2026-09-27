@@ -1424,23 +1424,23 @@
     {
       "old": "Transformer-Enhanced SAC for Joint.pdf",
       "new": [
-        "docs/Transformer-Enhanced SAC for Joint.pdf"
+        "docs/资料/02_Transformer-Enhanced SAC for Joint.pdf"
       ],
       "sha256_before": "3f83777b8eb69d58c1b9d963d2a8b9ea8d68417c3102708e268211b724ea5e69",
       "kind": "asset",
       "sha256_after": {
-        "docs/Transformer-Enhanced SAC for Joint.pdf": "3f83777b8eb69d58c1b9d963d2a8b9ea8d68417c3102708e268211b724ea5e69"
+        "docs/资料/02_Transformer-Enhanced SAC for Joint.pdf": "3f83777b8eb69d58c1b9d963d2a8b9ea8d68417c3102708e268211b724ea5e69"
       }
     },
     {
       "old": "开题报告-导出1212最终版.docx",
       "new": [
-        "docs/开题报告-导出1212最终版.docx"
+        "docs/资料/01_开题报告_导出1212最终版.docx"
       ],
       "sha256_before": "209d9ca5ecf24b2a3f21da72be43ed66265f09990165748c09ba239e43c81148",
       "kind": "asset",
       "sha256_after": {
-        "docs/开题报告-导出1212最终版.docx": "209d9ca5ecf24b2a3f21da72be43ed66265f09990165748c09ba239e43c81148"
+        "docs/资料/01_开题报告_导出1212最终版.docx": "209d9ca5ecf24b2a3f21da72be43ed66265f09990165748c09ba239e43c81148"
       }
     }
   ],
