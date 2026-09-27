@@ -318,8 +318,15 @@ def _summarize_scenes(results):
             for key in keys if all(isinstance(row["metrics"][key], (int, float)) for row in results)}
 
 
-def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step, ledger):
+def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step, ledger, scene_set=None):
     from satellite_rl.workbench.environment import WorkbenchEnv
+    files = None
+    if scene_set is not None:
+        from satellite_rl.workbench.datasets import assert_scene_profile, scene_set_files
+        assert_scene_profile(scene_set, config["environment"].get("profile", "china_legacy"))
+        files = scene_set_files(scene_set)
+        if len(files) != count:
+            raise ValueError("冻结评价场景数量与配置不一致")
 
     results = []
     for index in range(count):
@@ -327,9 +334,12 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
         scene_path = Path(directory) / "scenes" / group / f"scene_{seed}.npz"
         with isolated_rng(seed):
             env = WorkbenchEnv(config)
-            env.reset(seed=seed)
+            env.reset(seed=seed, scene=_load_scene(files[index][0]) if files is not None else None)
             scene = env.scene()
             scene_ref = _save_scene(scene_path, scene)
+            if files is not None:
+                scene_ref.update(source_path=str(files[index][0]), source_sha256=files[index][1],
+                                 source_scene_id=scene_set["id"])
         for repeat in range(config["evaluation"]["repeats"]):
             action_seed = seed + repeat * 1000000
             with isolated_rng(action_seed):
@@ -364,6 +374,16 @@ def _artifacts(directory, job, **extras):
     _atomic_json(path, data)
 
 
+def _job_provenance(job, config):
+    from satellite_rl.envs.regions import profile_metadata
+    metadata = profile_metadata(config["environment"].get("profile", "china_legacy"))
+    return {"run_id": job["run_id"], "git_commit": job["git_commit"],
+            "profile": metadata["id"], "environment_version": metadata["environment_version"],
+            "environment_profile": metadata, "scene_sets": job.get("scene_sets", {}),
+            **({key: job.get(key) for key in ("model_files", "model_source_path", "model_provenance")}
+               if job.get("model_files") else {})}
+
+
 def _training(directory, job, config, ledger, resume):
     from satellite_rl.workbench.config import config_summary
     from satellite_rl.workbench.environment import WorkbenchEnv
@@ -376,7 +396,10 @@ def _training(directory, job, config, ledger, resume):
     if resume:
         if not checkpoint.exists():
             raise RuntimeError("No recoverable checkpoint")
-        progress, _ = load_checkpoint(checkpoint, agent, config)
+        progress, restored_environment = load_checkpoint(checkpoint, agent, config)
+        restored_sets = restored_environment.get("scene_sets") if restored_environment else None
+        if restored_sets is not None and restored_sets != job.get("scene_sets", {}):
+            raise ValueError("恢复任务的冻结场景与断点不一致")
         _restore_logging(ledger, directory, progress["env_step"])
     else:
         progress = {"env_step": 0, "episode": 0, "best_validation": None,
@@ -410,10 +433,18 @@ def _training(directory, job, config, ledger, resume):
                  config_hash=config_hash(config))
     model_dir = Path(job["model_dir"])
     model_dir.mkdir(parents=True, exist_ok=True)
-    supplied_scenes = _scene_files(job["training_scene_path"]) if job.get("training_scene_path") else None
+    scene_sets = job.get("scene_sets", {})
+    if scene_sets:
+        from satellite_rl.workbench.datasets import assert_scene_profile, scene_set_files
+        for record in scene_sets.values():
+            assert_scene_profile(record, config["environment"].get("profile", "china_legacy"))
+            scene_set_files(record)
+    supplied_scenes = ([path for path, _ in scene_set_files(scene_sets["train"])] if "train" in scene_sets else
+                       _scene_files(job["training_scene_path"]) if job.get("training_scene_path") else None)
+    provenance = _job_provenance(job, config)
     last_saved_step = progress.get("last_checkpoint_step", env_step)
     if not resume:
-        save_checkpoint(checkpoint, agent, progress, config, {"boundary": "next_episode"})
+        save_checkpoint(checkpoint, agent, progress, config, {**provenance, "boundary": "next_episode"})
         _artifacts(directory, job, checkpoint=str(checkpoint))
     while env_step < training["total_steps"]:
         env = WorkbenchEnv(config)
@@ -504,13 +535,14 @@ def _training(directory, job, config, ledger, resume):
             save_progress("validating")
             _, validation = _fixed_evaluate(config, agent, directory, "validation",
                                              config["evaluation"]["validation_count"],
-                                             config["evaluation"]["validation_seed"], env_step, ledger)
+                                             config["evaluation"]["validation_seed"], env_step, ledger,
+                                             scene_set=scene_sets.get("validation"))
             progress["last_validation_step"] = env_step
             selection = validation.get("final_si_mean")
             if selection is not None and (progress["best_validation"] is None or selection > progress["best_validation"]):
                 progress["best_validation"] = selection
                 export_policy(model_dir / "best_validation", agent, config,
-                              {"run_id": job["run_id"], "git_commit": job["git_commit"],
+                              {**provenance,
                                "env_step": env_step, "selection": "validation_si_mean"})
             save_progress()
         stopped = (Path(directory) / "stop.request").exists()
@@ -518,10 +550,10 @@ def _training(directory, job, config, ledger, resume):
             _ensure_finite_agent(agent)
             progress.update({"env_step": env_step, "episode": episode, "last_checkpoint_step": env_step,
                              "wall_seconds": base_wall_seconds + time.monotonic() - session_started})
-            save_checkpoint(checkpoint, agent, progress, config, {"boundary": "next_episode"})
+            save_checkpoint(checkpoint, agent, progress, config, {**provenance, "boundary": "next_episode"})
             last_saved_step = env_step
             export_policy(model_dir / "latest", agent, config,
-                          {"run_id": job["run_id"], "git_commit": job["git_commit"], "env_step": env_step})
+                          {**provenance, "env_step": env_step})
             _artifacts(directory, job, checkpoint=str(checkpoint), latest_policy=str(model_dir / "latest"),
                        best_validation_policy=str(model_dir / "best_validation") if (model_dir / "best_validation").exists() else None)
             save_progress(checkpoint_step=env_step, best_validation=progress["best_validation"])
@@ -533,11 +565,12 @@ def _training(directory, job, config, ledger, resume):
     save_progress("evaluating")
     test_rows, test_summary = _fixed_evaluate(config, agent, directory, "test",
                                                config["evaluation"]["test_count"],
-                                               config["evaluation"]["test_seed"], env_step, ledger)
+                                               config["evaluation"]["test_seed"], env_step, ledger,
+                                               scene_set=scene_sets.get("test"))
     export_policy(model_dir / "final", agent, config,
-                  {"run_id": job["run_id"], "git_commit": job["git_commit"], "env_step": env_step})
+                  {**provenance, "env_step": env_step})
     _atomic_json(Path(directory) / "results.json", {"summary": test_summary, "scenes": test_rows,
-                                                    "metadata": {"group": "test", "run_id": job["run_id"],
+                                                    "metadata": {**provenance, "group": "test", "run_id": job["run_id"],
                                                                  "git_commit": job["git_commit"],
                                                                  "config_hash": config_hash(config),
                                                                  "action_mode": config["evaluation"]["action_mode"],
@@ -552,15 +585,29 @@ def _training(directory, job, config, ledger, resume):
 
 def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
     from satellite_rl.workbench.environment import WorkbenchEnv
+    for reference in job.get("model_files", []):
+        if _sha256(reference["path"]) != reference["sha256"]:
+            raise ValueError("冻结评价模型校验失败")
 
     if job.get("legacy_type"):
+        if config["environment"].get("profile", "china_legacy") != "china_legacy":
+            raise ValueError("中国历史权重不支持欧洲环境身份")
         from satellite_rl.workbench.legacy import load_legacy_policy
         policy = load_legacy_policy(job["model_path"], job["legacy_type"], device=device)
         environment_config = config
     else:
         policy = load_policy(job["model_path"], config=job.get("model_config"), device=device)
         environment_config = policy.config
-    files = _scene_files(job["scene_path"])
+    scene_set = job.get("scene_sets", {}).get("test")
+    if scene_set is not None:
+        from satellite_rl.workbench.datasets import assert_scene_profile, scene_set_files
+        assert_scene_profile(scene_set, environment_config["environment"].get("profile", "china_legacy"))
+        files = [path for path, _ in scene_set_files(scene_set)]
+    else:
+        # Historical evaluation jobs predate region metadata and freezing.
+        if environment_config["environment"].get("profile", "china_legacy") != "china_legacy":
+            raise ValueError("欧洲评价任务缺少冻结场景与环境来历")
+        files = _scene_files(job["scene_path"])
     results = []
     repeat_count = int(job.get("repeats", 1))
     action_mode = job.get("action_mode", "deterministic")
@@ -654,7 +701,7 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
             ledger.record(f"baseline_{name}", completed_evaluations, baseline_summary)
     result_path = Path(directory) / "results.json"
     _atomic_json(result_path, {"summary": summary, "scenes": results, "baselines": baselines,
-                               "metadata": {"run_id": job["run_id"], "model_path": job["model_path"],
+                               "metadata": {**_job_provenance(job, environment_config), "model_path": job["model_path"],
                                             "git_commit": job["git_commit"], "action_mode": action_mode,
                                             "repeats": repeat_count}})
     _artifacts(directory, job, results=str(result_path))

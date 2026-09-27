@@ -14,7 +14,7 @@ import zipfile
 from satellite_rl.training.run_monitor import atomic_json
 from .monitoring import MetricsReader, log_tail, read_jsonl
 from .runtime import Scheduler, pid_alive, system_info
-from .storage import Store, clean_json, digest, inside, new_id, now, read_json, validate_id
+from .storage import Store, clean_json, digest, inside, model_input_files, new_id, now, read_json, validate_id
 
 
 class Application:
@@ -140,6 +140,8 @@ class Application:
             if not source.is_file() or source.stat().st_size > 512 * 1024 ** 2:
                 raise ValueError("旧权重须为不超过512MB的文件")
             config = validate_config(body.get("config") or legacy_config(legacy_type))
+            if config["environment"].get("profile", "china_legacy") != "china_legacy":
+                raise ValueError("中国历史权重不能以欧洲模型身份导入")
             validate_legacy_config(config, legacy_type)
             loaded = load_legacy_policy(source, legacy_type, "cpu")
             target = self.store.record_dir("models", identifier)
@@ -163,6 +165,11 @@ class Application:
                   "architecture": loaded.architecture if legacy_type else policy.metadata.get("variant"),
                   "created_at": now(), "source_path": str(source),
                   "sha256": digest(path if path.is_file() else path / "policy.pt")}
+        from satellite_rl.envs.regions import profile_metadata
+        metadata = profile_metadata(config["environment"].get("profile", "china_legacy"))
+        record.update(profile=metadata["id"], environment_version=metadata["environment_version"],
+                      environment_profile=metadata,
+                      provenance=None if legacy_type else policy.metadata.get("provenance"))
         return self.store.save_record("models", record)
 
     def start_evaluation(self, body):
@@ -172,6 +179,27 @@ class Application:
         model = self.get_model(body["model_id"])
         scene = self.store.get_record("scenes", body["scene_id"])
         config = validate_config(model["config"])
+        from .datasets import assert_scene_profile
+        profile = config["environment"].get("profile", "china_legacy")
+        if model.get("legacy_type") and profile != "china_legacy":
+            raise ValueError("中国历史权重不能作为欧洲环境模型评价")
+        assert_scene_profile(scene, profile)
+        if (scene.get("source") or {}).get("partition_role") in ("train", "validation"):
+            raise ValueError("最终考核须选择test分区场景")
+        from .datasets import scene_set_files
+        test_hashes = {value for _, value in scene_set_files(scene)}
+        test_dates = self.scene_dates(scene)
+        def check_provenance(provenance):
+            trained_sets = (provenance or {}).get("scene_sets", {})
+            for role in ("train", "validation"):
+                trained = trained_sets.get(role, {})
+                hashes = {ref["sha256"] for ref in trained.get("files", []) if ref.get("sha256")}
+                if test_hashes & hashes:
+                    raise ValueError("考核场景与模型训练/验证场景重复")
+                if test_dates & self.scene_dates(trained):
+                    raise ValueError("考核航空来源或快照日期与模型训练/验证分区重叠")
+        provenance = model.get("provenance")
+        check_provenance(provenance)
         mode = body.get("action_mode", "deterministic")
         if mode == "sample":
             mode = "stochastic"
@@ -183,17 +211,94 @@ class Application:
         baselines = body.get("baselines", [])
         if not isinstance(baselines, list) or any(b not in ("fixed", "greedy") for b in baselines):
             raise ValueError("未知对照基线")
+        model_files = model_input_files(model["path"], bool(model.get("legacy_type")))
         if model.get("legacy_type"):
             validate_legacy_config(config, model["legacy_type"])
             load_legacy_policy(model["path"], model["legacy_type"], "cpu")
         else:
-            load_policy(model["path"], config=config, device="cpu")
+            loaded = load_policy(model["path"], config=config, device="cpu")
+            if isinstance(loaded.metadata, dict):
+                # A live 'latest' export may have changed since catalog lookup.
+                # Validate the provenance of the actual checked policy as well.
+                provenance = loaded.metadata.get("provenance")
+                check_provenance(provenance)
         return self.store.create_job(config, kind="evaluate", request_id=body.get("request_id"), extra={
             "name": "测试 · " + model["name"], "model_id": model["id"], "model_path": model["path"],
             "model_config": config, "legacy_type": model.get("legacy_type"),
             "scene_id": scene["id"], "scene_path": scene["path"], "action_mode": mode,
             "repeats": repeats, "baselines": sorted(set(baselines)),
+            "scene_sets": {"test": scene},
+            "model_files": model_files, "model_provenance": provenance,
         })
+
+    def training_scene_sets(self, config, body):
+        from .datasets import assert_scene_profile, scene_set_files
+        profile = config["environment"].get("profile", "china_legacy")
+        selections = {"train": body.get("scene_id"),
+                      "validation": body.get("validation_scene_id"), "test": body.get("test_scene_id")}
+        counts = {role: config["evaluation"][role + "_count"] for role in ("validation", "test")}
+        if profile == "europe_v1" and selections["train"]:
+            for role, count in counts.items():
+                if count and not selections[role]:
+                    raise ValueError("欧洲自定义训练须显式选择" + role + "场景，防止自动评价改变业务范围")
+        sets, hashes, dates = {}, {}, {}
+        for role, identifier in selections.items():
+            if not identifier:
+                continue
+            record = self.store.get_record("scenes", identifier)
+            assert_scene_profile(record, profile)
+            if role in counts and record["count"] != counts[role]:
+                raise ValueError(role + "场景数与评价配置不一致")
+            source = record.get("source") or {}
+            if source.get("partition_role", role) != role:
+                raise ValueError("航空数据分区角色与" + role + "用途不匹配")
+            hashes[role] = {value for _, value in scene_set_files(record)}
+            dates[role] = self.scene_dates(record)
+            for previous in sets:
+                if hashes[role] & hashes[previous]:
+                    raise ValueError("训练、验证与考核不能复用相同实际场景")
+                if dates[role] & dates[previous]:
+                    raise ValueError("航空轨迹来源日期跨分区重叠")
+            sets[role] = record
+        return sets
+
+    @staticmethod
+    def scene_dates(record):
+        source = record.get("source") or {}
+        return set(source.get("source_dates", [])) | set(source.get("snapshot_dates", []))
+
+    def import_aviation_scenes(self, body):
+        from .aviation import build_aviation_scenes
+        from .datasets import _store_scenes
+        profile = body.get("profile", "europe_v1")
+        if profile != "europe_v1":
+            raise ValueError("航空轨迹导入当前仅支持独立欧洲环境")
+        source_format = body.get("source_format", "csv_snapshot")
+        suffixes = {"csv_snapshot": (".csv",), "readsb_trace": (".json", ".json.gz")}.get(source_format)
+        if suffixes is None:
+            raise ValueError("不支持的航空轨迹格式")
+        path = Path(body["path"]).expanduser().resolve()
+        paths = (sorted(p for p in path.iterdir() if p.name.lower().endswith(suffixes))
+                 if path.is_dir() else [path])
+        if not paths or len(paths) > 1000 or any(not p.is_file() or not p.name.lower().endswith(suffixes) for p in paths):
+            raise ValueError("请选择1–1000个对应格式的航空文件")
+        sizes = [p.stat().st_size for p in paths]
+        if any(size > 100 * 1024 ** 2 for size in sizes) or sum(sizes) > 512 * 1024 ** 2:
+            raise ValueError("航空输入每文件不超过100MB、合计不超过512MB")
+        times = body.get("selected_times")
+        if not isinstance(times, list) or not 1 <= len(times) <= 1000:
+            raise ValueError("需选择1–1000个明确的UTC时刻")
+        if not all(isinstance(value, str) for value in times) or len(set(times)) != len(times):
+            raise ValueError("航空时刻不得重复")
+        units = {"timestamp": "utc_iso8601", "lat": "degrees", "lon": "degrees", "altitude_m": "m", "persons": "count"}
+        arrays, source = build_aviation_scenes(
+            paths, times, source_format=source_format,
+            units=units if source_format == "csv_snapshot" else None,
+            demand_model=body["demand_model"], seed=body["seed"],
+            max_record_age_seconds=body.get("max_record_age_seconds", 300),
+            environment_profile=profile, partition_role=body["partition_role"],
+            window_seconds=body.get("window_seconds", 60))
+        return _store_scenes(self.store, body.get("name") or path.stem, arrays, source, profile)
 
     def results(self, identifier):
         directory, readonly = self.resolve_run(identifier)
@@ -237,6 +342,10 @@ class Application:
             if mask not in ("none", "joint_feasible"):
                 return None
             physical_environment = {key: value for key, value in environment.items() if key != "action_mask"}
+            physical_environment.setdefault("profile", "china_legacy")
+            declared = record["metadata"].get("profile", physical_environment["profile"])
+            if declared != physical_environment["profile"]:
+                return None
             account = "original" if c.get("reward", {}).get("preset") == "legacy_original" else "repaired"
             metadata_mode = record["metadata"].get("action_mode")
             mode = metadata_mode if metadata_mode is not None else c.get("evaluation", {}).get("action_mode")
@@ -304,9 +413,10 @@ class Application:
                 config = validate_config(body["config"])
                 if config["training"]["device"] != "cuda":
                     raise ValueError("正式训练必须使用DQN/CUDA；CPU仅供代码单元检查，工作台不会静默更换设备")
-                extra = {}
-                if body.get("scene_id"):
-                    extra["training_scene_path"] = self.store.get_record("scenes", body["scene_id"])["path"]
+                sets = self.training_scene_sets(config, body)
+                extra = {"scene_sets": sets} if sets else {}
+                if "train" in sets:
+                    extra["training_scene_path"] = sets["train"]["path"]
                 return self.store.create_job(config, request_id=body.get("request_id"), extra=extra)
         if parts == ["models"] and method == "GET":
             return self.models()
@@ -319,10 +429,14 @@ class Application:
                 return {"scenes": self.store.records("scenes")}
             if method == "POST":
                 from .datasets import generate_scenes
-                return generate_scenes(self.store, body.get("name"), body["seed"], body["count"])
+                return generate_scenes(self.store, body.get("name"), body["seed"], body["count"],
+                                       profile=body.get("profile", "china_legacy"))
         if parts == ["scenes", "import"] and method == "POST":
             from .datasets import import_scenes
-            return import_scenes(self.store, body["path"], body.get("name"))
+            return import_scenes(self.store, body["path"], body.get("name"),
+                                 profile=body.get("profile", "china_legacy"))
+        if parts == ["scenes", "aviation"] and method == "POST":
+            return self.import_aviation_scenes(body)
         if parts == ["configs"]:
             if method == "GET":
                 return {"configs": self.store.records("configs")}

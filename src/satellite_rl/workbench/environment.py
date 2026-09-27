@@ -10,6 +10,7 @@ import math
 import numpy as np
 
 from satellite_rl.envs import satellite as legacy
+from satellite_rl.envs.regions import get_profile, profile_metadata, geo_distances_km, validate_locations
 from satellite_rl.workbench.config import FEATURES, config_summary, validate_config
 
 
@@ -40,7 +41,7 @@ def _seed_scope(seed):
             np.random.set_state(previous)
 
 
-def validate_scene(scene):
+def validate_scene(scene, profile="china_legacy"):
     """Copy and check a full 100-beam scene in processing order."""
     if not isinstance(scene, dict):
         raise ValueError("场景必须是数组映射")
@@ -63,11 +64,9 @@ def validate_scene(scene):
         raise ValueError("业务需求、噪声温度与距离必须为正")
     if ((out["beam_location"][:, 0] < -90) | (out["beam_location"][:, 0] > 90)).any() or ((out["beam_location"][:, 1] < -180) | (out["beam_location"][:, 1] > 180)).any():
         raise ValueError("波束位置超出经纬度范围")
-    lat = np.deg2rad(out["beam_location"][:, 0])
-    lon = np.deg2rad(out["beam_location"][:, 1])
-    sat_lon = np.deg2rad(legacy.satellite_lon)
-    expected_distance = np.sqrt(legacy.R ** 2 + legacy.r ** 2
-                                - 2 * legacy.R * legacy.r * np.cos(lat) * np.cos(lon - sat_lon))
+    region = get_profile(profile)
+    validate_locations(out["beam_location"], region)
+    expected_distance = geo_distances_km(out["beam_location"], region)
     if not np.allclose(out["distances"], expected_distance, rtol=1e-8, atol=1e-6):
         raise ValueError("场景距离与波束位置不一致")
     return out
@@ -114,6 +113,9 @@ class WorkbenchEnv:
     def __init__(self, config):
         self.config = validate_config(config)
         self.summary = config_summary(self.config)
+        self.region_profile = get_profile(self.config["environment"]["profile"])
+        self.environment_metadata = profile_metadata(self.region_profile)
+        self.scene_metadata = None
         self.raw_env = None
         self._scene = None
         self._trace = []
@@ -126,22 +128,27 @@ class WorkbenchEnv:
         if scene is None:
             scenario_seed = np.random.SeedSequence().generate_state(1)[0] if seed is None else seed
             with _seed_scope(scenario_seed):
-                beam = legacy.BeamInfo()
+                beam = legacy.BeamInfo(profile=self.region_profile)
             arrays = {key: np.array(beam.beam_info[key], copy=True) for key in SCENE_KEYS}
             arrays["original_indices"] = np.array(beam.shuffle_indices, copy=True)
-            arrays = validate_scene(arrays)
+            arrays = validate_scene(arrays, self.region_profile)
+            scene_metadata = deepcopy(beam.generation_metadata) or dict(
+                kind=self.region_profile.default_scene_kind, measured_traffic=False)
         else:
-            arrays = validate_scene(scene)
+            arrays = validate_scene(scene, self.region_profile)
+            scene_metadata = dict(kind="imported_scene", measured_traffic=None)
         self._scene = arrays
+        self.scene_metadata = scene_metadata
         beam = SimpleNamespace(beam_info={key: np.array(arrays[key], copy=True) for key in SCENE_KEYS})
         frequency = legacy.SatelliteFreqState()
-        current = legacy.CurrentBeamState(beam.beam_info)
+        current = legacy.CurrentBeamState(beam.beam_info, profile=self.region_profile)
         preset = self.config["reward"]["preset"]
         raw_variant = preset if preset in ("legacy_original", "legacy_repaired", "fused") else "legacy_repaired"
         budget = self.config["environment"]["power_budget_w"]
         with _budget_scope(budget):
             self.raw_env = legacy.Env(frequency, beam, current, reward_variant=raw_variant,
-                                      basic_fraction=self.config["environment"]["basic_fraction"])
+                                      basic_fraction=self.config["environment"]["basic_fraction"],
+                                      profile=self.region_profile)
             self._last_legacy_state = self.raw_env.reset(beam)
         self._trace = []
         self._overload_seen = False

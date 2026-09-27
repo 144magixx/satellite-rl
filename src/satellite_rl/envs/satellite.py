@@ -1,4 +1,5 @@
 from satellite_rl.paths import project_path
+from satellite_rl.envs.regions import get_profile, synthetic_reference_locations
 import numpy as np
 import pandas as pd
 import math
@@ -41,12 +42,13 @@ satellite_lat = 0.0  # GEO卫星位于赤道
 
 
 
-def geo_to_cartesian(lat, lon):
+def geo_to_cartesian(lat, lon, earth_radius_km=None):
+    radius = r if earth_radius_km is None else earth_radius_km
     lat_rad = np.deg2rad(lat)
     lon_rad = np.deg2rad(lon)
-    x = r * np.cos(lat_rad) * np.cos(lon_rad)
-    y = r * np.cos(lat_rad) * np.sin(lon_rad)
-    z = r * np.sin(lat_rad)
+    x = radius * np.cos(lat_rad) * np.cos(lon_rad)
+    y = radius * np.cos(lat_rad) * np.sin(lon_rad)
+    z = radius * np.sin(lat_rad)
     return np.array([x, y, z])
 
 
@@ -250,7 +252,9 @@ class SatelliteFreqState:
 
 
 class BeamInfo:
-    def __init__(self, shuffle=False):
+    def __init__(self, shuffle=False, profile=None):
+        self.region_profile = None if profile is None else get_profile(profile)
+        self.generation_metadata = None
         # np.random.seed(None)
         a = np.random.get_state()
         # 状态元组的第二个元素即为当前种子
@@ -320,17 +324,21 @@ class BeamInfo:
             'noise_temperature': self.noise_temperature
         }
     def cal_distance(self):
-        satellite_lon_rad = np.deg2rad(satellite_lon)
-        x_sat = R * np.cos(satellite_lon_rad)
-        y_sat = R * np.sin(satellite_lon_rad)
+        p = self.region_profile
+        orbit = R if p is None else p.orbit_radius_km
+        earth = r if p is None else p.earth_radius_km
+        sat_lon = satellite_lon if p is None else p.satellite_longitude_deg
+        satellite_lon_rad = np.deg2rad(sat_lon)
+        x_sat = orbit * np.cos(satellite_lon_rad)
+        y_sat = orbit * np.sin(satellite_lon_rad)
         z_sat = 0.0
 
         lat_rad = np.deg2rad(self.beam_location[:, 0])
         lon_rad = np.deg2rad(self.beam_location[:, 1])
 
-        x_ground = r * np.cos(lat_rad) * np.cos(lon_rad)
-        y_ground = r * np.cos(lat_rad) * np.sin(lon_rad)
-        z_ground = r * np.sin(lat_rad)
+        x_ground = earth * np.cos(lat_rad) * np.cos(lon_rad)
+        y_ground = earth * np.cos(lat_rad) * np.sin(lon_rad)
+        z_ground = earth * np.sin(lat_rad)
 
         dx = x_sat - x_ground
         dy = y_sat - y_ground
@@ -338,7 +346,10 @@ class BeamInfo:
         self.distances = np.sqrt(dx ** 2 + dy ** 2 + dz ** 2)  # km
 
     def randomize_beam_location(self, use_city=True):
-        if use_city:
+        if self.region_profile is not None and self.region_profile.id == "europe_v1":
+            self.beam_location, self.generation_metadata = synthetic_reference_locations(
+                self.region_profile, beam_num)
+        elif use_city:
             df = pd.read_csv(project_path('cities_china.csv'))
             sel = df.sample(beam_num, replace=len(df) < beam_num)
             self.beam_location = sel[['lat', 'lon']].values
@@ -348,7 +359,8 @@ class BeamInfo:
             self.beam_location = np.column_stack((lat, lon))
 
 class CurrentBeamState:
-    def __init__(self, beam_info):
+    def __init__(self, beam_info, profile=None):
+        self.region_profile = None if profile is None else get_profile(profile)
         self.beam_id = 0
         self.beam_info = beam_info
         self.current_state = []
@@ -371,11 +383,11 @@ class CurrentBeamState:
 
         # 2. 归一化地理位置
         # 纬度归一化到 [-1, 1]
-        lat_min, lat_max = 4.0, 54.0
+        lat_min, lat_max = (4.0, 54.0) if self.region_profile is None else self.region_profile.latitude_bounds_deg
         normalized_lat = 2 * (lat - (lat_max + lat_min) / 2) / (lat_max - lat_min)
 
         # 经度归一化到 [-1, 1]
-        lon_min, lon_max = 73.0, 135.0
+        lon_min, lon_max = (73.0, 135.0) if self.region_profile is None else self.region_profile.longitude_bounds_deg
         normalized_lon = 2 * (lon - (lon_max + lon_min) / 2) / (lon_max - lon_min)
         self.current_state = np.array([
             normalized_lat,
@@ -399,7 +411,11 @@ class CurrentBeamState:
 # -------------------- 卫星环境类 --------------------
 class Env:
     def __init__(self, satellite_freq_state, beam_info, hist_beam_state,
-                 reward_variant="legacy_original", basic_fraction=0.1):
+                 reward_variant="legacy_original", basic_fraction=0.1, profile=None):
+        inferred_profile = getattr(beam_info, "region_profile", None) if profile is None else profile
+        self.region_profile = None if inferred_profile is None else get_profile(inferred_profile)
+        if self.region_profile is not None:
+            hist_beam_state.region_profile = self.region_profile
         if reward_variant not in ("legacy_original", "legacy_repaired", "fused"):
             raise ValueError(f"未知奖励版本: {reward_variant}")
         if not 0 < basic_fraction <= 1:
@@ -496,8 +512,8 @@ class Env:
         其中 h = 42164(地球静止轨道半径) - 6371(地球半径) = 35793 km
         """
         # 轨道参数
-        R_geo = 42164  # 地球静止轨道半径 (km)
-        R_earth = 6371  # 地球半径 (km)
+        R_geo = 42164 if self.region_profile is None else self.region_profile.orbit_radius_km
+        R_earth = 6371 if self.region_profile is None else self.region_profile.earth_radius_km
         h = R_geo - R_earth  # 卫星到地面高度
 
         # 角度转换
@@ -511,17 +527,22 @@ class Env:
 
     def _beam_direction(self, lat, lon):
         """Cache scene geometry without changing the scalar operation order."""
-        parameters = (R, r, satellite_lon, type(R), type(r), type(satellite_lon))
+        p = self.region_profile
+        orbit = R if p is None else p.orbit_radius_km
+        earth = r if p is None else p.earth_radius_km
+        sat_lon = satellite_lon if p is None else p.satellite_longitude_deg
+        parameters = (orbit, earth, sat_lon, type(orbit), type(earth), type(sat_lon))
         if parameters != self._beam_geometry_parameters:
             self._beam_geometry_cache.clear()
             self._beam_geometry_parameters = parameters
         # Equal numeric coordinates with different scalar dtypes can round differently.
         key = (lat, lon, type(lat), type(lon))
         if key not in self._beam_geometry_cache:
-            sat_lon_rad = np.deg2rad(satellite_lon)
-            x_sat = R * np.cos(sat_lon_rad)
-            y_sat = R * np.sin(sat_lon_rad)
-            vector = geo_to_cartesian(lat, lon) - [x_sat, y_sat, 0.0]
+            sat_lon_rad = np.deg2rad(sat_lon)
+            x_sat = orbit * np.cos(sat_lon_rad)
+            y_sat = orbit * np.sin(sat_lon_rad)
+            ground = geo_to_cartesian(lat, lon) if p is None else geo_to_cartesian(lat, lon, earth)
+            vector = ground - [x_sat, y_sat, 0.0]
             # Bound memory even when this public geometry API receives arbitrary points.
             if len(self._beam_geometry_cache) >= max(2, 2 * self.beam_num):
                 self._beam_geometry_cache.clear()

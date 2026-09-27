@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import threading
 import uuid
@@ -69,6 +70,15 @@ def inside(path, root):
     if not path.is_relative_to(root):
         raise ValueError("文件路径超出允许的目录")
     return path
+
+
+def model_input_files(path, legacy=False):
+    source = Path(path).resolve()
+    directory = source.parent if source.is_file() else source
+    files = [source] if legacy else [directory / "policy.pt", directory / "model.json"]
+    if any(not file.is_file() for file in files):
+        raise ValueError("评价模型文件不完整")
+    return [{"path": str(file), "sha256": digest(file)} for file in files]
 
 
 class Store:
@@ -170,13 +180,47 @@ class Store:
             directory.mkdir()
             model_dir = self.models_root / run_id
             model_dir.mkdir()
+            frozen_extra = dict(extra or {})
+            profile = config.get("environment", {}).get("profile", "china_legacy")
+            from satellite_rl.envs.regions import profile_metadata
+            frozen_extra.update(profile=profile, environment_profile=profile_metadata(profile),
+                                environment_version=profile_metadata(profile)["environment_version"])
+            if frozen_extra.get("scene_sets"):
+                from .datasets import freeze_scene_set
+                frozen_sets = {role: freeze_scene_set(record, directory / "scene_inputs" / role, profile)
+                               for role, record in frozen_extra["scene_sets"].items()}
+                frozen_extra["scene_sets"] = frozen_sets
+                for role, record in frozen_sets.items():
+                    path_key = ("scene_path" if kind == "evaluate" and role == "test" else
+                                "training_scene_path" if role == "train" else role + "_scene_path")
+                    frozen_extra[path_key] = record["path"]
+            if kind == "evaluate":
+                model_target = directory / "model_input"
+                model_target.mkdir()
+                references = frozen_extra.get("model_files") or model_input_files(
+                    frozen_extra["model_path"], bool(frozen_extra.get("legacy_type")))
+                frozen_models = []
+                for reference in references:
+                    source = Path(reference["path"])
+                    if digest(source) != reference["sha256"]:
+                        raise ValueError("评价模型在提交期间发生变化")
+                    name = "weights.pt" if frozen_extra.get("legacy_type") else source.name
+                    destination = model_target / name
+                    shutil.copyfile(source, destination)
+                    if digest(destination) != reference["sha256"]:
+                        raise ValueError("冻结评价模型校验失败")
+                    frozen_models.append({"path": str(destination), "sha256": reference["sha256"],
+                                          "source_path": str(source)})
+                frozen_extra["model_source_path"] = frozen_extra["model_path"]
+                frozen_extra["model_files"] = frozen_models
+                frozen_extra["model_path"] = str(model_target / "weights.pt" if frozen_extra.get("legacy_type") else model_target)
             job = {"run_id": run_id, "kind": kind, "name": config.get("name", run_id),
                    "created_at": now(), "request_id": request_id,
                    "request_hash": request_hash,
                    "archive_root": str(self.archive_root), "model_dir": str(model_dir),
                    "source_root": str(snapshot), "git_commit": commit,
                    "algorithm": config["algorithm"], "network": config["network"]["kind"],
-                   **(extra or {})}
+                   **frozen_extra}
             atomic_json(directory / "config.json", config)
             atomic_json(directory / "status.json", {
                 "run_id": run_id, "stage": "queued", "created_at": now(),

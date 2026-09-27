@@ -28,6 +28,14 @@ def config_hash(config):
     # Keep pre-mask policy/checkpoint hashes loadable without relaxing other fields.
     semantic = dict(config)
     semantic["environment"] = dict(config["environment"])
+    profile = semantic["environment"].get("profile", "china_legacy")
+    if profile == "china_legacy":
+        # Old China policies predate regional configuration; the absent default
+        # must retain its original hash. Europe uses a distinct physical/input contract.
+        semantic["environment"].pop("profile", None)
+    else:
+        from satellite_rl.envs.regions import profile_metadata
+        semantic["environment"]["profile_metadata"] = profile_metadata(profile)
     if semantic["environment"].get("action_mask", "none") == "none":
         semantic["environment"].pop("action_mask", None)
     semantic["network"] = dict(config["network"])
@@ -77,7 +85,9 @@ def export_policy(directory, agent, config, provenance):
     weights = {name: value.detach().cpu() for name, value in policy.state_dict().items()}
     weight_path = directory / "policy.pt"
     _atomic_torch(weight_path, weights)
+    from satellite_rl.envs.regions import profile_metadata
     metadata = {"format": "satellite_rl_workbench_policy_v1", "algorithm": config["algorithm"],
+                "environment_profile": profile_metadata(config["environment"].get("profile", "china_legacy")),
                 "variant": describe_model(config)["variant"], "config": config,
                 "config_hash": config_hash(config), "provenance": provenance,
                 "weights_sha256": hashlib.sha256(weight_path.read_bytes()).hexdigest(),
@@ -109,6 +119,12 @@ def load_policy(path, config=None, device="cpu"):
     if metadata.get("format") != "satellite_rl_workbench_policy_v1":
         raise ValueError("Unsupported model package")
     saved = metadata["config"]
+    from satellite_rl.envs.regions import profile_metadata
+    expected_profile = profile_metadata(saved["environment"].get("profile", "china_legacy"))
+    if expected_profile["id"] != "china_legacy" and "environment_profile" not in metadata:
+        raise ValueError("Model environment profile metadata missing")
+    if metadata.get("environment_profile", expected_profile) != expected_profile:
+        raise ValueError("Model environment profile metadata mismatch")
     if config is not None and config_hash(config) != metadata["config_hash"]:
         raise ValueError("Model config differs in state, actions, normalization or other semantics")
     if config_hash(saved) != metadata["config_hash"]:
@@ -135,7 +151,9 @@ def save_checkpoint(path, agent, progress, config, environment_state):
     rng = {"python": random.getstate(), "numpy": np.random.get_state(),
            "torch": torch.get_rng_state(),
            "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None}
+    from satellite_rl.envs.regions import profile_metadata
     _atomic_torch(path, {"format": "satellite_rl_workbench_checkpoint_v1", "config_hash": config_hash(config),
+                         "environment_profile": profile_metadata(config["environment"].get("profile", "china_legacy")),
                          "agent": agent.state_dict(), "progress": progress,
                          "environment_state": environment_state, "rng": rng})
     return str(path)
@@ -149,6 +167,12 @@ def load_checkpoint(path, agent, config):
     payload = torch.load(path, map_location="cpu", weights_only=False)
     if payload.get("format") != "satellite_rl_workbench_checkpoint_v1" or payload.get("config_hash") != config_hash(config):
         raise ValueError("Checkpoint format/config mismatch")
+    from satellite_rl.envs.regions import profile_metadata
+    expected_profile = profile_metadata(config["environment"].get("profile", "china_legacy"))
+    if expected_profile["id"] != "china_legacy" and "environment_profile" not in payload:
+        raise ValueError("Checkpoint environment profile metadata missing")
+    if payload.get("environment_profile", expected_profile) != expected_profile:
+        raise ValueError("Checkpoint environment profile metadata mismatch")
     agent.load_state_dict(payload["agent"])
     rng = payload["rng"]
     random.setstate(rng["python"])

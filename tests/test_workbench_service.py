@@ -13,7 +13,7 @@ import torch
 
 from satellite_rl.workbench.config import default_config, validate_config
 from satellite_rl.workbench.datasets import csv_scene, import_scenes
-from satellite_rl.workbench.environment import validate_scene
+from satellite_rl.workbench.environment import WorkbenchEnv, validate_scene
 from satellite_rl.workbench.legacy import (
     legacy_architecture, legacy_config, load_legacy_policy, validate_legacy_config,
 )
@@ -21,6 +21,15 @@ from satellite_rl.workbench.runtime import Scheduler
 from satellite_rl.workbench.server import WorkbenchServer
 from satellite_rl.workbench.service import Application
 from satellite_rl.workbench.storage import Store, inside, read_json, validate_id
+
+
+def scene_fixture(store, root, identifier, seed=103):
+    directory = Path(root) / identifier
+    directory.mkdir()
+    env = WorkbenchEnv(default_config())
+    env.reset(seed=seed)
+    np.savez_compressed(directory / "scene.npz", **env.scene())
+    return store.save_record("scenes", {"id": identifier, "name": "fixture", "path": str(directory), "count": 1})
 
 
 class ServiceTests(unittest.TestCase):
@@ -54,8 +63,7 @@ class ServiceTests(unittest.TestCase):
         repeated = self.application.api("POST", ["runs"], {},
                                         {"config": self.config, "request_id": "same_request"})
         self.assertEqual(first["run_id"], repeated["run_id"])
-        fake_scene = self.application.store.save_record("scenes", {
-            "id": "scene_fixture", "name": "fixture", "path": str(self.root / "scenes"), "count": 1})
+        fake_scene = scene_fixture(self.application.store, self.root, "scene_fixture")
         with self.assertRaises(ValueError):
             self.application.api("POST", ["runs"], {}, {"config": self.config,
                                  "request_id": "same_request", "scene_id": fake_scene["id"]})
@@ -78,12 +86,13 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(read_json(self.application.store.job_dir(job["run_id"]) / "status.json")["stage"], "queued")
 
     def test_request_id_includes_evaluation_inputs(self):
-        scene = self.application.store.save_record("scenes", {
-            "id": "scene_fixture", "name": "fixture", "path": str(self.root / "scenes"), "count": 1})
-        second_scene = self.application.store.save_record("scenes", {
-            "id": "scene_other", "name": "other", "path": str(self.root / "other_scenes"), "count": 1})
+        scene = scene_fixture(self.application.store, self.root, "scene_fixture")
+        second_scene = scene_fixture(self.application.store, self.root, "scene_other", seed=104)
         model = {"id": "model_fixture", "name": "fixture", "path": str(self.root / "model"),
                  "config": self.config, "algorithm": "sac"}
+        Path(model["path"]).mkdir()
+        (Path(model["path"]) / "policy.pt").write_bytes(b"fixture weights")
+        (Path(model["path"]) / "model.json").write_text("{}", encoding="utf-8")
         with patch.object(self.application, "get_model", return_value=model), \
              patch("satellite_rl.workbench.checkpoints.load_policy"):
             request = {"model_id": model["id"], "scene_id": scene["id"],
@@ -305,8 +314,7 @@ class LegacyWeightsTests(unittest.TestCase):
             application = Application(temporary, source_root=Path(temporary))
             snapshot = Path(temporary) / "frozen"
             snapshot.mkdir()
-            scene = application.store.save_record("scenes", {
-                "id": "legacy_scene", "name": "fixture", "path": str(Path(temporary) / "scenes"), "count": 1})
+            scene = scene_fixture(application.store, temporary, "legacy_scene")
             with patch.object(Store, "freeze_source", return_value=(snapshot, "f" * 40)):
                 for kind, filename in models.items():
                     with self.subTest(kind=kind):

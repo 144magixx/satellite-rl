@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import math
+from satellite_rl.envs.regions import get_profile, profile_catalog, profile_metadata
 
 
 FEATURES = [
@@ -98,7 +99,7 @@ def default_config():
                      num_heads=4, num_layers=2, feedforward_dim=128),
         state=dict(features=["beam", "power", "interference", "occupancy"], demand_visibility="known"),
         reward=dict(preset="legacy_repaired", terms=[dict(id="si_delta", weight=1, scale=1, timing="step")]),
-        environment=dict(power_budget_w=3000, basic_fraction=0.1, action_mode="legacy_clip",
+        environment=dict(profile="china_legacy", power_budget_w=3000, basic_fraction=0.1, action_mode="legacy_clip",
                          action_mask="none",
                          power_levels_w=[5, 10, 15, 20, 25, 30, 35, 40, 45, 50]),
         training=dict(seed=51001, total_steps=10000, batch_size=256, actor_lr=0.00001,
@@ -216,6 +217,9 @@ def validate_config(raw):
         if feature["visibility"] == "known" and s["demand_visibility"] != "known":
             raise ValueError(f"在线需求模式不可读取未来需求: {fid}")
     e = c["environment"]
+    if not isinstance(e["profile"], str):
+        raise ValueError("environment.profile 必须是地区版本字符串")
+    get_profile(e["profile"])
     _number(e["power_budget_w"], "power_budget_w", 0, strictly=True)
     _number(e["basic_fraction"], "basic_fraction", 0, 1, strictly=True)
     if e["action_mode"] not in ("legacy_clip", "feasible_projection"):
@@ -298,6 +302,7 @@ def catalog():
     return dict(features=features,
                 reward_terms=[dict(id=i, label=l, description=d, formula=REWARD_FORMULAS[i], kind="penalty" if i.endswith("penalty") or i in ("power_cost", "slot_cost", "interference_loss", "excess_supply") else "reward", default_weight=1, timing=t, group=g, implemented=True)
                               for i, l, d, t, g in REWARD_TERMS],
+                environment_profiles=profile_catalog(),
                 algorithms=[dict(id=i, label=i.upper(), description="新工作台可训练实现") for i in ("sac", "ppo", "dqn")],
                 networks=[dict(id=i, label=i.upper(), description="可配置骨干网络") for i in ("mlp", "cnn", "transformer")],
                 presets=deepcopy(PRESETS),
@@ -327,6 +332,9 @@ def config_summary(config):
         offset += dim
     r = c["reward"]
     warnings = []
+    environment_metadata = profile_metadata(c["environment"]["profile"])
+    if c["environment"]["profile"] == "europe_v1":
+        warnings.append("欧洲环境的几何与位置归一化独立；默认场景仅为合成参考，不能视作航空或真实业务。旧中国权重不构成欧洲已验证策略。")
     if r["preset"] == "custom":
         terms = r["terms"]
         formula = " + ".join(f"{x['weight']:g}×({REWARD_FORMULAS[x['id']]})/{x['scale']:g}" for x in terms)
@@ -357,6 +365,8 @@ def config_summary(config):
                            "tsac_13_tokens": "位置、业务需求、功率各1个令牌，干扰与占用按10段合为10个频率槽令牌；读取首令牌输出"}
                           .get(transformer_layout))
     return dict(state_dim=offset, state_layout=layout,
+                environment_profile=c["environment"]["profile"],
+                environment_metadata=environment_metadata,
                 transformer_layout=transformer_layout,
                 network_layout_description=layout_description,
                 network_token_count=(13 if transformer_layout == "tsac_13_tokens" else offset if transformer_layout else None),

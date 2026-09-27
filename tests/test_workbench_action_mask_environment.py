@@ -136,6 +136,7 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         config = default_config()
         historical = copy.deepcopy(config)
         historical["environment"].pop("action_mask", None)
+        historical["environment"].pop("profile", None)
         historical["network"].pop("transformer_layout", None)
         expected = hashlib.sha256(json.dumps(historical, ensure_ascii=False, sort_keys=True,
                                             separators=(",", ":")).encode("utf-8")).hexdigest()
