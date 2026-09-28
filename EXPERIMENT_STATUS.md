@@ -88,7 +88,7 @@
 
 场景ID：训练`scenes_20260928_142049_09674a59`（576），验证`scenes_20260928_142053_e9083bfc`（20），最终考核`scenes_20260928_142054_9bc86790`（100）。四日原包、逐帧CSV/NPZ/外置明细SHA、日期隔离及8个训练场景短规则检查已核验；需求仍是工程假设。
 
-入口：[结果报告](docs/实验报告/03_欧洲ADS-B首轮训练结果.md) · [通俗说明](docs/方案/05_欧洲ADS-B首轮训练说明.md) · [工作台任务](outputs/workbench/jobs/train_sac_20260928_142100_38559f37/) · [考核原始数据](outputs/workbench/jobs/train_sac_20260928_142100_38559f37/results.json) · [最终权重](models/runs/workbench/train_sac_20260928_142100_38559f37/final/policy.pt) · [来源清单](outputs/experiments/europe_adsb_20260928/source_manifest.json) · [场景统计](outputs/experiments/europe_adsb_20260928/preflight/actual_data_summary.json)。下一步可分析低基本服务波束；任何新对照训练按后续授权执行。
+入口：[含训练/验证/考核曲线的结果报告](docs/实验报告/03_欧洲ADS-B首轮训练结果.md) · [通俗说明](docs/方案/05_欧洲ADS-B首轮训练说明.md) · [工作台任务](outputs/workbench/jobs/train_sac_20260928_142100_38559f37/) · [考核原始数据](outputs/workbench/jobs/train_sac_20260928_142100_38559f37/results.json) · [最终权重](models/runs/workbench/train_sac_20260928_142100_38559f37/final/policy.pt) · [来源清单](outputs/experiments/europe_adsb_20260928/source_manifest.json) · [场景统计](outputs/experiments/europe_adsb_20260928/preflight/actual_data_summary.json)。2026-09-28补图：原始指标、验证评价与最终考核各有曲线，绘图脚本及哈希见报告；训练曲线周期起伏且损失波动，不能只凭最终均值断言稳定收敛。下一步可分析低基本服务波束；任何新对照训练按后续授权执行。
 
 ### G02——旧奖励与融合奖励（无掩码）
 
@@ -235,3 +235,4 @@
 | 2026-09-28 | G07四日数据及三组场景核验完成，待提交训练 | 576/20/100场景SHA、日期隔离、8个训练场景规则与资源账；非训练结果 |
 | 2026-09-28 | G07正式任务已创建并核验真实GPU更新 | 工作台 train_sac_20260928_142100_38559f37，冻结 01457f245bf0ab0e23873616e44975693014e3d0，核验时2200步/201次更新；效果待验证 |
 | 2026-09-28 | 22:48核对G07于20:45完成40万步及终点评价，归档报告 | API/完成事件/100场景×3结果与模型SHA一致；SI88.93%、基本服务99.24束、全束达标54%；未重训或独立复测，泛化改善待对照 |
+| 2026-09-28 | G07结果报告补齐训练、验证、学习过程和考核分布曲线；以后正式实验报告均附相关曲线 | 原始工作台日志绘图，保存脚本、输入/图像哈希及平滑口径；未改训练/前端或追加评价，损失波动不等于已证明不收敛 |
