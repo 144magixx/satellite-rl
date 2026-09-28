@@ -66,6 +66,12 @@ flowchart LR
 
 最终把100束按需求从大到小排列，同步位置、距离及身份；资源组沿用处理序号对8取余的规则。模型输入中的“需求”是目标值，实际能提供的容量由分配结果和干扰计算决定。
 
+下面用第一训练日00:02 UTC的实际快照说明：左图有293架有效航空器，右图生成100个波束中心并汇总需求。此单一夜间样本的全部293架都落入覆盖内，合成需求合计约6.181 Gbit/s；不能据此推断全天覆盖率或模型效果。
+
+![从ADS-B快照到波束输入](../../outputs/experiments/europe_adsb_20260928/explanation/adsb_to_beams_example.png)
+
+图的[来源与参数](../../outputs/experiments/europe_adsb_20260928/explanation/figure_source.json)、[生成脚本](../../outputs/experiments/europe_adsb_20260928/explanation/plot_scene_example.py)均已保存，图来自真实位置及明确的需求模型，没有模型评价分数。
+
 ## 4. 欧洲环境是什么样的
 
 欧洲版使用独立的`europe_v1`环境：GEO经度13°E，外包范围25–80°N、40°W–50°E，并要求至少10°仰角。范围及仰角条件都要满足。卫星位置、星地距离、干扰方向和位置归一化对应欧洲版本。
@@ -116,3 +122,5 @@ flowchart LR
 - 统一接手入口：[EXPERIMENT_STATUS.md](../../EXPERIMENT_STATUS.md)。正式任务创建后补任务编号、源码提交和实际状态。
 
 本轮不改变算法、奖励或前端能力；使用已经提供的欧洲环境、航空导入、三用途场景及监控入口。必要数据准备通过可复现脚本完成，再由相同工作台API校验、登记并冻结。
+
+真实文件接入时补了两项I/O修复（提交`dc903dc123bcca2185fd2f5ad1cced7b87705831`）：按gzip文件头识别原包中“后缀.json但内容压缩”的轨迹文件；再导入场景前核对其来源清单声明的NPZ哈希。45项相关检查及真实记录的格式等价核对通过，CSV输入/需求公式/学习行为未改。沿用已有前端控件，不需新增选项；服务重启加载修复后再做正式导入。[修复核验记录](../../outputs/experiments/europe_adsb_20260928/import_fix_verification/README.md)
