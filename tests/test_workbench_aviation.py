@@ -6,12 +6,13 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from satellite_rl.envs.regions import get_profile
 from satellite_rl.workbench.aviation import (
-    AviationSceneError, CSV_UNITS, _cover, build_aviation_scenes,
+    AviationSceneError, CSV_UNITS, _cover, _read_sources, build_aviation_scenes,
 )
 
 
@@ -173,6 +174,28 @@ class AviationAdapterTests(unittest.TestCase):
         self.assertEqual(snap["counts"]["stale_aircraft"], 1)
         self.assertEqual(snap["counts"]["future_records"], 102)
         self.assertAlmostEqual(snap["source_observations"][0]["altitude_m"], 9144)
+
+    def test_readsb_gzip_magic_with_json_name_and_decompressed_limit(self):
+        payload = json.dumps({"icao": "abc123", "timestamp": 1790510400,
+                              "trace": [[0, 45, 5, 30000, None, None, 0]],
+                              "padding": "x" * 2048}).encode()
+        plain = self.root / "plain.json"
+        hidden_gzip = self.root / "compressed.json"
+        named_gzip = self.root / "compressed.json.gz"
+        plain.write_bytes(payload)
+        hidden_gzip.write_bytes(gzip.compress(payload))
+        named_gzip.write_bytes(gzip.compress(payload))
+        parsed = [_read_sources([path], "readsb_trace", None)[0][0]
+                  for path in (plain, hidden_gzip, named_gzip)]
+        for observation in parsed[1:]:
+            self.assertEqual({k: v for k, v in observation.items() if k != "source_sha256"},
+                             {k: v for k, v in parsed[0].items() if k != "source_sha256"})
+        with patch("satellite_rl.workbench.aviation.MAX_BYTES", 256):
+            with self.assertRaisesRegex(ValueError, "解压后超过"):
+                _read_sources([hidden_gzip], "readsb_trace", None)
+        named_gzip.write_bytes(payload)
+        with self.assertRaisesRegex(ValueError, "缺少gzip文件头"):
+            _read_sources([named_gzip], "readsb_trace", None)
 
     def test_persons_override_requires_unit_and_utc_required(self):
         rows = self.rows()

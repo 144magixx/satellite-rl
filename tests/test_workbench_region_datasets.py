@@ -5,6 +5,7 @@ import csv
 import json
 from pathlib import Path
 import random
+import shutil
 from types import SimpleNamespace
 import tempfile
 import unittest
@@ -337,6 +338,65 @@ class RegionDatasetTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "日期"):
                 self.app.start_evaluation({"model_id": model_record["id"], "scene_id": test["id"]})
             loader.assert_not_called()
+
+    def test_reimport_binds_sidecar_hashes_after_directory_move(self):
+        original = self.scene()
+        staged = self.root / "moved-staged"
+        shutil.copytree(original["path"], staged)
+        sidecar = staged / "record.json"
+        record = json.loads(sidecar.read_text(encoding="utf-8"))
+        record["source"].update(partition_role="train", source_dates=["2024-01-08"])
+        sidecar.write_text(json.dumps(record), encoding="utf-8")
+        imported = self.app.api("POST", ["scenes", "import"], {},
+                                {"path": str(staged), "profile": "europe_v1"})
+        self.assertEqual(imported["source"]["partition_role"], "train")
+        self.assertEqual(imported["source"]["source_dates"], ["2024-01-08"])
+        scene_file = next(staged.glob("*.npz"))
+        scene_file.write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "SHA-256校验失败"):
+            self.app.api("POST", ["scenes", "import"], {},
+                         {"path": str(staged), "profile": "europe_v1"})
+        shutil.copyfile(original["files"][0]["path"], scene_file)
+        record.pop("files")
+        sidecar.write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "缺少数组文件"):
+            self.app.api("POST", ["scenes", "import"], {},
+                         {"path": str(staged), "profile": "europe_v1"})
+        record["files"] = original["files"]
+        record["files"][0].pop("sha256")
+        sidecar.write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "缺少完整SHA-256"):
+            self.app.api("POST", ["scenes", "import"], {},
+                         {"path": str(staged), "profile": "europe_v1"})
+
+    def test_reimport_rejects_unknown_or_conflicting_sidecar_files(self):
+        original = self.app.api("POST", ["scenes"], {},
+                                {"seed": 19, "count": 2, "profile": "europe_v1"})
+        staged = self.root / "staged-pair"
+        shutil.copytree(original["path"], staged)
+        sidecar = staged / "record.json"
+        record = json.loads(sidecar.read_text(encoding="utf-8"))
+        record["files"][1]["path"] = record["files"][0]["path"]
+        sidecar.write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "文件名重复"):
+            self.app.api("POST", ["scenes", "import"], {},
+                         {"path": str(staged), "profile": "europe_v1"})
+        record = json.loads((Path(original["path"]) / "record.json").read_text(encoding="utf-8"))
+        record["files"][1]["path"] = "elsewhere/unknown.npz"
+        sidecar.write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "实际文件不一致"):
+            self.app.api("POST", ["scenes", "import"], {},
+                         {"path": str(staged), "profile": "europe_v1"})
+
+    def test_legacy_china_npz_without_sidecar_still_imports(self):
+        original = self.scene(profile="china_legacy")
+        directory = self.root / "legacy-npz"
+        directory.mkdir()
+        shutil.copyfile(original["files"][0]["path"], directory / "scene_00000.npz")
+        imported = self.app.api("POST", ["scenes", "import"], {},
+                                {"path": str(directory), "profile": "china_legacy"})
+        self.assertEqual(imported["count"], 1)
+        self.assertEqual(imported["profile"], "china_legacy")
 
 
 if __name__ == "__main__":

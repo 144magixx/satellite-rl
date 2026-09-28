@@ -10,6 +10,7 @@ import csv
 from datetime import datetime, timezone
 import gzip
 import hashlib
+import io
 import json
 from pathlib import Path
 
@@ -111,12 +112,14 @@ def _read_sources(paths, source_format, units):
                 raise ValueError("CSV含persons列时必须声明persons=count")
             iterator = rows
         else:
-            if path.name.endswith(".gz"):
-                with gzip.open(path, "rb") as stream:
+            if raw[:2] == b"\x1f\x8b":
+                with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
                     decoded = stream.read(MAX_BYTES + 1)
                 if len(decoded) > MAX_BYTES:
                     raise ValueError("航空gzip解压后超过100MB")
             else:
+                if path.name.lower().endswith(".gz"):
+                    raise ValueError("航空gzip文件缺少gzip文件头")
                 decoded = raw
             data = json.loads(decoded)
             if not isinstance(data, dict) or not isinstance(data.get("trace"), list) or not data.get("icao"):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+import re
 import shutil
 
 import numpy as np
@@ -75,15 +76,54 @@ def csv_scene(path, profile="china_legacy"):
             "noise_temperature": np.full((100, 1), 290.0), "original_indices": np.array(identifiers)}
 
 
+def _sidecar_hashes(record, files, profile):
+    """Bind a sidecar to the selected files by unique basename, even after a move."""
+    declared = record.get("files")
+    if declared is None:
+        if profile == "europe_v1":
+            raise ValueError("欧洲场景侧车缺少数组文件与SHA-256绑定")
+        return None
+    if not isinstance(declared, list) or not declared or record.get("count") != len(declared):
+        raise ValueError("场景侧车数组文件数量无效")
+    expected = {}
+    has_hash = []
+    for item in declared:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            raise ValueError("场景侧车数组文件路径无效")
+        filename = Path(item["path"]).name
+        if not filename or filename in expected:
+            raise ValueError("场景侧车数组文件名重复或无效")
+        value = item.get("sha256")
+        has_hash.append(value is not None)
+        if value is not None and (not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value)):
+            raise ValueError("场景侧车SHA-256无效")
+        expected[filename] = value.lower() if value is not None else None
+    if set(expected) != {file.name for file in files}:
+        raise ValueError("场景侧车数组文件与所选实际文件不一致")
+    if not all(has_hash) and (profile == "europe_v1" or any(has_hash)):
+        raise ValueError("场景侧车数组文件缺少完整SHA-256绑定")
+    return expected if all(has_hash) else None
+
+
 def import_scenes(store, path, name=None, profile="china_legacy"):
     path = Path(path).expanduser().resolve()
     files = sorted(path.glob("*.npz")) if path.is_dir() else [path]
     if not files or len(files) > 1000:
         raise ValueError("请选择含1–1000个npz场景的目录或一个npz/CSV文件")
+    sidecar = path / "record.json" if path.is_dir() else path.parent / "record.json"
+    record = None
+    expected_hashes = None
+    if sidecar.is_file():
+        record = json.loads(sidecar.read_text(encoding="utf-8-sig"))
+        assert_scene_profile(record, profile)
+        expected_hashes = _sidecar_hashes(record, files, profile)
     arrays, refs = [], []
     for file in files:
         if not file.is_file() or file.stat().st_size > 100 * 1024 * 1024:
             raise ValueError("场景文件不存在或超过100MB")
+        actual_hash = digest(file)
+        if expected_hashes is not None and actual_hash != expected_hashes[file.name]:
+            raise ValueError("场景侧车数组文件SHA-256校验失败：" + file.name)
         if file.suffix.lower() == ".npz":
             with np.load(file, allow_pickle=False) as data:
                 arrays.append({key: data[key].copy() for key in data.files})
@@ -91,14 +131,11 @@ def import_scenes(store, path, name=None, profile="china_legacy"):
             arrays.append(csv_scene(file, profile))
         else:
             raise ValueError("场景仅支持npz或有明确单位的CSV")
-        refs.append({"path": str(file), "sha256": digest(file)})
+        refs.append({"path": str(file), "sha256": actual_hash})
     # Preserve an archived dataset's region identity, including when users import
     # its directory instead of selecting its existing workbench record.
-    sidecar = path / "record.json" if path.is_dir() else path.parent / "record.json"
     source = {"type": "imported", "files": refs}
-    if sidecar.is_file():
-        record = json.loads(sidecar.read_text(encoding="utf-8-sig"))
-        assert_scene_profile(record, profile)
+    if record is not None:
         # Reimport must not erase an aircraft dataset's split or observation dates.
         if record.get("source"):
             source = dict(record["source"])
