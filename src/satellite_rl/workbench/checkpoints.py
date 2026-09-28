@@ -27,6 +27,9 @@ def config_hash(config):
     # Absent and explicitly disabled masking are the same historical semantics.
     # Keep pre-mask policy/checkpoint hashes loadable without relaxing other fields.
     semantic = dict(config)
+    # Telemetry changes persistence/display latency only, never learning inputs,
+    # losses, RNG, actions or model compatibility. Full configs still retain it.
+    semantic.pop("telemetry", None)
     semantic["environment"] = dict(config["environment"])
     profile = semantic["environment"].get("profile", "china_legacy")
     if profile == "china_legacy":

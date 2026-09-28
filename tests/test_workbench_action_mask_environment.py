@@ -141,6 +141,7 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         historical["state"].pop("context_level", None)
         historical["training"].pop("scene_order", None)
         historical["training"].pop("scene_order_seed", None)
+        historical.pop("telemetry", None)
         expected = hashlib.sha256(json.dumps(historical, ensure_ascii=False, sort_keys=True,
                                             separators=(",", ":")).encode("utf-8")).hexdigest()
         self.assertEqual(config_hash(config), expected)

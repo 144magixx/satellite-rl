@@ -27,6 +27,11 @@ from satellite_rl.workbench.learning_snapshots import FORMAT as LEARNING_SNAPSHO
 from satellite_rl.workbench.scene_order import SceneOrder
 
 
+# Only asynchronous jobs register here. The historical synchronous path remains
+# byte-for-byte identical in its per-call persistence behavior.
+_TELEMETRY_SINKS = {}
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -67,6 +72,13 @@ def _atomic_json(path, value):
 
 
 def _jsonl(path, value):
+    if _TELEMETRY_SINKS:
+        # These paths are constructed from the already resolved job directory;
+        # avoid a filesystem resolve/open on every parameter update.
+        sink = _TELEMETRY_SINKS.get(Path(path).absolute().parent)
+        if sink is not None:
+            sink.append_jsonl(path, value)
+            return
     with Path(path).open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(_jsonable(value), ensure_ascii=False, allow_nan=False) + "\n")
         stream.flush()
@@ -170,6 +182,18 @@ class Ledger:
         self.status.update({"pid": os.getpid(), "heartbeat_at": now(), "preflight": preflight,
                             "action_mask": config["environment"].get("action_mask", "none")})
         self.writer = None
+        self.sink = None
+        self.closed = False
+        self.telemetry = config.get("telemetry", {"mode": "sync", "flush_interval_seconds": 2.0,
+                                                  "queue_capacity": 2048})
+        if self.telemetry["mode"] == "async":
+            from satellite_rl.workbench.telemetry import AsyncTelemetrySink
+            key = self.directory.resolve()
+            if key in _TELEMETRY_SINKS:
+                raise RuntimeError("A telemetry sink is already active for this job")
+            self.sink = AsyncTelemetrySink(max_queue=self.telemetry["queue_capacity"],
+                                           flush_interval=self.telemetry["flush_interval_seconds"])
+            _TELEMETRY_SINKS[key] = self.sink
         if not resume:
             self.open_tensorboard()
         self.save_status()
@@ -181,6 +205,8 @@ class Ledger:
         try:
             from torch.utils.tensorboard import SummaryWriter
             self.writer = SummaryWriter(log_dir=str(self.directory / "tensorboard"), purge_step=purge_step)
+            if self.sink is not None:
+                self.sink.attach_tensorboard(self.writer)
         except ImportError:
             self.event("TensorBoard is unavailable; JSONL metrics remain canonical")
 
@@ -201,18 +227,38 @@ class Ledger:
         row = {"step": int(step), "wall_time": now(), "group": group, "values": clean}
         _jsonl(self.directory / "metrics.jsonl", row)
         if self.writer:
-            for key, value in clean.items():
-                self.writer.add_scalar(f"{group}/{key}", value, step)
-            self.writer.flush()
+            if self.sink is not None:
+                self.sink.record_tensorboard(group, step, clean)
+            else:
+                for key, value in clean.items():
+                    self.writer.add_scalar(f"{group}/{key}", value, step)
+                self.writer.flush()
 
     def save_status(self, **fields):
         self.status.update(fields)
         self.status["heartbeat_at"] = now()
-        _atomic_json(self.status_path, self.status)
+        if self.sink is not None:
+            self.status["telemetry"] = {**self.telemetry, **self.sink.health}
+            self.sink.write_status(self.status_path, self.status)
+        else:
+            _atomic_json(self.status_path, self.status)
+
+    def flush(self):
+        if self.sink is not None:
+            self.sink.flush()
 
     def close(self):
-        if self.writer:
-            self.writer.close()
+        if self.closed:
+            return
+        try:
+            if self.sink is not None:
+                self.sink.close()
+            elif self.writer:
+                self.writer.close()
+        finally:
+            self.closed = True
+            if self.sink is not None:
+                _TELEMETRY_SINKS.pop(self.directory.resolve(), None)
 
 
 def _save_scene(path, scene):
@@ -255,16 +301,29 @@ def _reconcile(directory, checkpoint_step):
         path = Path(directory) / f"{name}.jsonl"
         if not path.exists():
             continue
-        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        rows = [row for row in rows if int(row.get("env_step", row.get("step", 0))) <= checkpoint_step]
         temp = path.with_name(path.name + ".tmp")
-        with temp.open("w", encoding="utf-8") as stream:
-            for row in rows:
-                stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
-        replace_with_retry(temp, path)
+        try:
+            with path.open(encoding="utf-8") as source, temp.open("w", encoding="utf-8") as stream:
+                for line in source:
+                    if not line.strip():
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        # Abrupt process exit can leave the final append partial.
+                        # Never hide corruption of a newline-terminated record.
+                        if not line.endswith("\n"):
+                            break
+                        raise
+                    if int(row.get("env_step", row.get("step", 0))) <= checkpoint_step:
+                        stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
+            replace_with_retry(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
 
 
 def _restore_logging(ledger, directory, checkpoint_step):
+    ledger.flush()
     _reconcile(directory, checkpoint_step)
     # Metrics at the checkpoint's own step were written before it and are
     # canonical; only later steps belong to the rolled-back tail.
@@ -581,6 +640,7 @@ def _training(directory, job, config, ledger, resume):
         interval = config["evaluation"]["interval_steps"]
         if interval > 0 and env_step - progress["last_validation_step"] >= interval:
             save_progress("validating")
+            ledger.flush()
             _, validation = _fixed_evaluate(config, agent, directory, "validation",
                                              config["evaluation"]["validation_count"],
                                              config["evaluation"]["validation_seed"], env_step, ledger,
@@ -596,6 +656,7 @@ def _training(directory, job, config, ledger, resume):
         stopped = (Path(directory) / "stop.request").exists()
         if stopped or env_step - last_saved_step >= training["checkpoint_interval"] or env_step >= training["total_steps"]:
             _ensure_finite_agent(agent)
+            ledger.flush()
             progress.update({"env_step": env_step, "episode": episode, "last_checkpoint_step": env_step,
                              "wall_seconds": base_wall_seconds + time.monotonic() - session_started})
             save_checkpoint(checkpoint, agent, progress, config,
@@ -610,6 +671,7 @@ def _training(directory, job, config, ledger, resume):
                        best_validation_policy=str(model_dir / "best_validation") if (model_dir / "best_validation").exists() else None,
                        **({"learning_snapshots": snapshot_record} if snapshot_record else {}))
             save_progress(checkpoint_step=env_step, best_validation=progress["best_validation"])
+            ledger.flush()
         if stopped:
             ledger.event("training_stopped", env_step=env_step)
             save_progress("stopped")
@@ -633,6 +695,7 @@ def _training(directory, job, config, ledger, resume):
                                                                  "model_selection": "fixed_budget_final"}})
     _artifacts(directory, job, final_policy=str(model_dir / "final"), results=str(Path(directory) / "results.json"))
     ledger.event("training_completed", env_step=env_step)
+    ledger.flush()
     save_progress("completed", metrics=test_summary)
 
 
@@ -783,8 +846,16 @@ def run_job(job_dir, *, resume=False):
             _evaluate_job(directory, job, config, ledger)
         else:
             raise ValueError(f"Unsupported job kind: {job['kind']}")
+        # Surface background writer/flush/close failures inside the normal
+        # failure-record path, before run_job can return success.
+        ledger.close()
     except BaseException as error:
         failure_traceback = traceback.format_exc()
+        if ledger is not None:
+            try:
+                ledger.close()
+            except BaseException:
+                pass  # Preserve the original failure; use synchronous reporting below.
         checkpoint_path = directory / "checkpoint.pt"
         prior_status = _read_json(directory / "status.json", {})
         # The checkpoint may already be at a newer boundary when an artifact
@@ -811,9 +882,12 @@ def run_job(job_dir, *, resume=False):
                       "failure_path": str(directory / "failure.json")}
             _atomic_json(directory / "status.json", status)
         else:
-            ledger.event("worker_failed", error=str(error), traceback=failure_traceback)
-            ledger.save_status(stage="failed", error=str(error), traceback=failure_traceback,
-                               failure_path=str(directory / "failure.json"))
+            _jsonl(directory / "events.jsonl", {"time": now(), "run_id": job["run_id"],
+                                                "message": "worker_failed", "error": str(error),
+                                                "traceback": failure_traceback})
+            ledger.status.update(stage="failed", error=str(error), traceback=failure_traceback,
+                                 failure_path=str(directory / "failure.json"), heartbeat_at=now())
+            _atomic_json(ledger.status_path, ledger.status)
         raise
     finally:
         if ledger:

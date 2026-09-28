@@ -118,6 +118,7 @@ def default_config():
         evaluation=dict(validation_count=3, test_count=5, validation_seed=94000,
                         test_seed=95000, interval_steps=1000,
                         action_mode="deterministic", repeats=1),
+        telemetry=dict(mode="sync", flush_interval_seconds=2.0, queue_capacity=2048),
     ))
 
 
@@ -314,6 +315,11 @@ def validate_config(raw):
         raise ValueError("场景种子超出NumPy允许范围")
     if ev["action_mode"] not in ("deterministic", "stochastic"):
         raise ValueError("不支持的评价动作方式")
+    telemetry = c["telemetry"]
+    if telemetry["mode"] not in ("sync", "async"):
+        raise ValueError("记录方式仅支持sync或async")
+    _number(telemetry["flush_interval_seconds"], "异步记录刷新间隔", 0.1, 30)
+    _number(telemetry["queue_capacity"], "异步记录队列容量", 16, 32768, integer=True)
     _network_size(c)
     return c
 
@@ -421,6 +427,7 @@ def config_summary(config):
                 network_layout_description=layout_description,
                 network_token_count=({"tsac_13_tokens": 13, "tsac_14_context": 14, "tsac_32_context": 32}.get(transformer_layout, offset) if transformer_layout else None),
                 context_level=c["state"]["context_level"],
+                telemetry=c["telemetry"],
                 action_dims=[100, 10, len(c["environment"]["power_levels_w"])],
                 action_mask=c["environment"]["action_mask"],
                 reward_formula=formula, warnings=warnings)
