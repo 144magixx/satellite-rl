@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 import csv
 from datetime import datetime, timezone
+import json
 import math
+import os
 from pathlib import Path
-import time
+import threading
 
 from .storage import clean_json, read_json
 
@@ -91,16 +93,133 @@ def reduce_points(points, limit):
 
 
 class MetricsReader:
+    """Incremental canonical JSONL and TensorBoard reader with bounded LRU state."""
+
+    MAX_RUNS = 4
+    MAX_POINTS = 1_000_000
+
     def __init__(self):
-        self.cache = {}
+        self.cache = OrderedDict()
+        self.lock = threading.RLock()
+
+    def _state(self, directory):
+        key = str(directory)
+        state = self.cache.get(key)
+        if state is None:
+            state = {"json_identity": None, "json_size": 0, "json_mtime": None,
+                     "json_offset": 0, "json_pending_size": None,
+                     "json_series": {}, "invalid": deque(maxlen=30),
+                     "tb_signature": None, "tb_accumulator": None, "tb_events": {}}
+            self.cache[key] = state
+        self.cache.move_to_end(key)
+        return state
+
+    @staticmethod
+    def _identity(stat):
+        # Windows ctime is file creation time; it catches an atomic replacement
+        # even where st_ino is not provided by the filesystem.
+        return (stat.st_dev, stat.st_ino, stat.st_ctime_ns if os.name == "nt" else None)
+
+    @staticmethod
+    def _add_json_metric(state, row):
+        group = row.get("group", "training")
+        values = row.get("values", {})
+        if not isinstance(values, dict):
+            return
+        for name, value in values.items():
+            tag = name if name.startswith(group + "/") else group + "/" + name
+            numeric = _number(value)
+            if numeric is None:
+                if str(value).lower() in ("nan", "inf", "-inf", "infinity"):
+                    state["invalid"].append({"tag": tag, "step": row.get("step", row.get("env_step", 0)),
+                                             "value": str(value)})
+                continue
+            step = _number(row.get("step", row.get("env_step", 0)))
+            if step is not None:
+                state["json_series"].setdefault(tag, {})[float(step)] = (
+                    numeric, _time_value(row.get("wall_time", row.get("wall_seconds"))))
+
+    def _read_json_increment(self, path, state):
+        try:
+            stat = path.stat()
+        except OSError:
+            state.update(json_identity=None, json_size=0, json_mtime=None, json_offset=0,
+                         json_pending_size=None, json_series={}, invalid=deque(maxlen=30))
+            return False
+        identity = self._identity(stat)
+        if (state["json_identity"] == identity and state["json_pending_size"] == stat.st_size and
+                state["json_mtime"] == stat.st_mtime_ns):
+            return True
+        if (state["json_identity"] != identity or stat.st_size < state["json_size"] or
+                state["json_pending_size"] is not None or
+                (stat.st_size == state["json_size"] and state["json_mtime"] != stat.st_mtime_ns)):
+            state.update(json_identity=identity, json_size=0, json_mtime=None, json_offset=0,
+                         json_pending_size=None, json_series={}, invalid=deque(maxlen=30))
+        if stat.st_size > state["json_offset"]:
+            with path.open("rb") as stream:
+                stream.seek(state["json_offset"])
+                chunk = stream.read(stat.st_size - state["json_offset"])
+            offset = state["json_offset"]
+            for line in chunk.splitlines(keepends=True):
+                complete = line.endswith(b"\n")
+                try:
+                    row = json.loads(line.decode("utf-8-sig", errors="replace"))
+                except ValueError:
+                    if not complete:
+                        state["json_pending_size"] = stat.st_size
+                        break  # Re-read this partial record after its next append.
+                else:
+                    if isinstance(row, dict):
+                        self._add_json_metric(state, row)
+                    if not complete:
+                        state["json_pending_size"] = stat.st_size
+                        break  # Valid unterminated line may still gain its newline.
+                offset += len(line)
+            state["json_offset"] = offset
+        state["json_identity"] = identity
+        state["json_size"] = stat.st_size
+        state["json_mtime"] = stat.st_mtime_ns
+        return True
+
+    def _tensorboard_events(self, path, state):
+        signature = []
+        for file in sorted(path.glob("events.out.tfevents.*")):
+            stat = file.stat()
+            signature.append((file.name, self._identity(stat), stat.st_size, stat.st_mtime_ns))
+        signature = tuple(signature)
+        if signature == state["tb_signature"] and state["tb_accumulator"] is not None:
+            return state["tb_events"]
+        current = {name: (identity, size, mtime) for name, identity, size, mtime in signature}
+        replaced = any(name not in current or current[name][0] != identity or
+                       current[name][1] < size or
+                       (current[name][1] == size and current[name][2] != mtime)
+                       for name, identity, size, mtime in (state["tb_signature"] or ()))
+        if state["tb_accumulator"] is None or replaced:
+            from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+            state["tb_accumulator"] = EventAccumulator(str(path), size_guidance={"scalars": 10000})
+        accumulator = state["tb_accumulator"]
+        accumulator.Reload()
+        state["tb_events"] = {tag: [(float(event.step), event.value, event.wall_time)
+                                     for event in accumulator.Scalars(tag)]
+                              for tag in accumulator.Tags().get("scalars", [])}
+        state["tb_signature"] = signature
+        return state["tb_events"]
+
+    def _bound_cache(self):
+        while (len(self.cache) > self.MAX_RUNS or
+               sum(sum(len(points) for points in state["json_series"].values()) +
+                   sum(len(points) for points in state["tb_events"].values())
+                   for state in self.cache.values()) > self.MAX_POINTS):
+            self.cache.popitem(last=False)
 
     def read(self, directory, limit=2000):
+        with self.lock:
+            return self._read_locked(directory, limit)
+
+    def _read_locked(self, directory, limit):
         directory = Path(directory)
         limit = min(20000, max(50, int(limit)))
-        key = (str(directory), limit)
-        cached = self.cache.get(key)
-        if cached and time.monotonic() - cached[0] < 4:
-            return cached[1]
+        state = self._state(directory)
         series, sources, invalid, time_bases = {}, set(), [], {}
 
         def add(tag, step, value, wall_time=None):
@@ -117,14 +236,12 @@ class MetricsReader:
             }
 
         json_path = directory / "metrics.jsonl"
-        if json_path.exists():
+        if self._read_json_increment(json_path, state):
             sources.add("metrics.jsonl")
-            for row in read_jsonl(json_path, limit=0):
-                group = row.get("group", "training")
-                for name, value in row.get("values", {}).items():
-                    add(name if name.startswith(group + "/") else group + "/" + name,
-                        row.get("step", row.get("env_step", 0)), value,
-                        row.get("wall_time", row.get("wall_seconds")))
+            series = {tag: {step: {"step": step, "value": value, "wall_time": wall_time}
+                            for step, (value, wall_time) in points.items()}
+                      for tag, points in state["json_series"].items()}
+            invalid = list(state["invalid"])
         skip = {"run_id", "env_step", "update_step", "episode", "scene_id", "action_seed", "wall_seconds"}
         for filename, group in (("updates", "learning"), ("episodes", "training"), ("evaluations", "evaluation")):
             path = directory / (filename + ".csv")
@@ -173,24 +290,23 @@ class MetricsReader:
         tb_error = None
         if tb_path.is_dir():
             try:
-                from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-                accumulator = EventAccumulator(str(tb_path), size_guidance={"scalars": 10000})
-                accumulator.Reload()
-                tags = accumulator.Tags().get("scalars", [])
-                if tags:
+                events = self._tensorboard_events(tb_path, state)
+                if events:
                     sources.add("TensorBoard（每项最多读取10000个事件）")
-                for tag in tags:
+                for tag, rows in events.items():
                     if tag in series:
-                        for event in accumulator.Scalars(tag):
-                            point = series[tag].get(float(event.step))
+                        for step, value, wall_time in rows:
+                            point = series[tag].get(step)
                             if point is not None:
-                                point["wall_time"] = event.wall_time
+                                point["wall_time"] = wall_time
                         time_bases[tag] = "TensorBoard实际记录时间"
                         continue
-                    for event in accumulator.Scalars(tag):
-                        add(tag, event.step, event.value, event.wall_time)
+                    for step, value, wall_time in rows:
+                        add(tag, step, value, wall_time)
             except (ImportError, OSError, ValueError, KeyError) as error:
                 tb_error = str(error)
+        else:
+            state.update(tb_signature=None, tb_accumulator=None, tb_events={})
         result = []
         for tag, by_step in sorted(series.items()):
             points = sorted(by_step.values(), key=lambda point: point["step"])
@@ -217,5 +333,5 @@ class MetricsReader:
         output = {"series": result, "available_tags": [s["tag"] for s in result],
                   "diagnostics": warnings, "sources": sorted(sources), "groups": GROUP_LABELS,
                   "note": "图来自原始记录；稠密曲线按时间分段保留极值。历史回合CSV的时间为累计交互耗时，不含验证与保存；同名TensorBoard标签优先提供实际时间。缺失时间不补零；不同奖励回报不直接排名。"}
-        self.cache[key] = (time.monotonic(), output)
+        self._bound_cache()
         return output
