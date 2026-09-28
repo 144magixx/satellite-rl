@@ -138,6 +138,9 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         historical["environment"].pop("action_mask", None)
         historical["environment"].pop("profile", None)
         historical["network"].pop("transformer_layout", None)
+        historical["state"].pop("context_level", None)
+        historical["training"].pop("scene_order", None)
+        historical["training"].pop("scene_order_seed", None)
         expected = hashlib.sha256(json.dumps(historical, ensure_ascii=False, sort_keys=True,
                                             separators=(",", ":")).encode("utf-8")).hexdigest()
         self.assertEqual(config_hash(config), expected)
@@ -146,6 +149,12 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         self.assertNotEqual(config_hash(changed), expected)
         changed = copy.deepcopy(config)
         changed["network"]["transformer_layout"] = "tsac_13_tokens"
+        self.assertNotEqual(config_hash(changed), expected)
+        changed = copy.deepcopy(config)
+        changed["training"]["scene_order"] = "shuffle_each_cycle"
+        self.assertNotEqual(config_hash(changed), expected)
+        changed = copy.deepcopy(config)
+        changed["state"]["context_level"] = "full"
         self.assertNotEqual(config_hash(changed), expected)
 
 

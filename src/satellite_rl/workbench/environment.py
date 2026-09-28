@@ -235,6 +235,10 @@ class WorkbenchEnv:
                 definitions["served_met"][0], definitions["served_min"][0],
                 definitions["longest_free"][0],
             )
+            if idx == count:
+                # There is no next beam at the terminal state. Keep aggregate
+                # service/resource records, but zero current-beam-only fields.
+                global_context[[4, 5, 9]] = 0
             occupancy = np.asarray(env.satellite_freq_state.freq_pool_real)
             for group in range(8):
                 occupied = occupancy[group] > 0

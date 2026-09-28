@@ -41,6 +41,9 @@ def config_hash(config):
     semantic["network"] = dict(config["network"])
     if semantic["network"].get("transformer_layout", "scalar_tokens") == "scalar_tokens":
         semantic["network"].pop("transformer_layout", None)
+    semantic["state"] = dict(config["state"])
+    if semantic["state"].get("context_level", "none") == "none":
+        semantic["state"].pop("context_level", None)
     semantic["training"] = dict(config["training"])
     # Old tasks predate scene-order options; the explicit defaults preserve
     # their exact ordering and therefore retain their original semantic hash.

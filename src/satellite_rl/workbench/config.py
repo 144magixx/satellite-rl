@@ -411,7 +411,8 @@ def config_summary(config):
     transformer_layout = c["network"]["transformer_layout"] if c["network"]["kind"] == "transformer" else None
     layout_description = ({"scalar_tokens": "状态中每个标量各形成一个令牌，全部令牌汇总后输出",
                            "tsac_13_tokens": "位置、业务需求、功率各1个令牌，干扰与占用按10段合为10个频率槽令牌；读取首令牌输出",
-                           "tsac_14_context": "保留原13令牌，另加平均需求、处理进度与剩余需求组成的全局令牌；207维输入，读取首令牌输出"}
+                           "tsac_14_context": "保留原13令牌，另加平均需求、处理进度与剩余需求组成的全局令牌；207维输入，读取首令牌输出",
+                           "tsac_32_context": "四档同2946维封装：原13令牌＋全局1＋每10束一段共10＋8个资源组；未开放信息置零，共32令牌"}
                           .get(transformer_layout))
     return dict(state_dim=offset, state_layout=layout,
                 environment_profile=c["environment"]["profile"],
