@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 import copy
+import math
 import random
 
 import numpy as np
@@ -32,14 +33,60 @@ def _gather(heads, actions):
     return sum(q.gather(1, actions[:, i:i + 1]).squeeze(1) for i, q in enumerate(heads))
 
 
+def finite_tensor_check(tensors):
+    """Check every tensor while synchronizing once per device on success."""
+    by_device = {}
+    for tensor in tensors:
+        by_device.setdefault(tensor.device, []).append(tensor)
+    with torch.no_grad():
+        for group in by_device.values():
+            if not bool(torch.stack([torch.isfinite(tensor).all() for tensor in group]).all()):
+                return False
+    return True
+
+
+def ensure_finite_modules(modules, log_alpha=None):
+    """Check all network parameters and SAC temperature before a checkpoint."""
+    pairs = tuple(modules.items() if isinstance(modules, dict) else modules)
+    tensors = [parameter for _, module in pairs for parameter in module.parameters()]
+    if log_alpha is not None:
+        tensors.append(log_alpha)
+    if finite_tensor_check(tensors):
+        return
+    # A failure is rare; recover the original precise network/temperature error.
+    for name, module in pairs:
+        for parameter in module.parameters():
+            if not bool(torch.isfinite(parameter).all()):
+                raise FloatingPointError(f"Nonfinite {name} parameter")
+    if log_alpha is not None and not bool(torch.isfinite(log_alpha).all()):
+        raise FloatingPointError("Nonfinite SAC temperature")
+    raise FloatingPointError("Nonfinite network parameter")
+
+
+def _diagnostics(values):
+    """Transfer scalar tensor diagnostics in one batch per device and dtype."""
+    groups = {}
+    for name, value in values.items():
+        if isinstance(value, torch.Tensor):
+            if value.numel() != 1:
+                raise ValueError(f"Diagnostic {name} must be scalar")
+            groups.setdefault((value.device, value.dtype), []).append((name, value.detach().reshape(())))
+    converted = {}
+    for group in groups.values():
+        numbers = torch.stack([value for _, value in group]).cpu().tolist()
+        converted.update((name, float(number)) for (name, _), number in zip(group, numbers))
+    return {name: converted[name] if name in converted else value for name, value in values.items()}
+
+
 def _grad_norm(module, clip):
-    for param in module.parameters():
-        if param.grad is not None and not torch.isfinite(param.grad).all():
-            raise FloatingPointError("Nonfinite gradient before optimizer step")
+    grads = [param.grad for param in module.parameters() if param.grad is not None]
+    if not finite_tensor_check(grads):
+        raise FloatingPointError("Nonfinite gradient before optimizer step")
     norm = nn.utils.clip_grad_norm_(module.parameters(), clip)
-    if not torch.isfinite(norm):
+    norm_value = float(norm.detach())
+    if not math.isfinite(norm_value):
         raise FloatingPointError("Nonfinite gradient norm")
-    return float(norm.detach())
+    return norm_value
 
 
 def _finite_loss(loss):
@@ -308,15 +355,17 @@ class WorkbenchAgent:
             for target_net, source_net in ((self.target1, self.critic1), (self.target2, self.critic2)):
                 for target_p, source_p in zip(target_net.parameters(), source_net.parameters()):
                     target_p.lerp_(source_p, tau)
-        return {"actor_loss": float(actor_loss), "critic_1_loss": float(loss1),
-                "critic_2_loss": float(loss2), "alpha_loss": float(alpha_loss),
-                "alpha": float(self.log_alpha.exp()), "entropy": float(entropy_actor.mean()),
-                **{f"entropy_{name}": float(value.mean()) for name, value in zip(HEADS, entropies)},
-                "q_mean": float((q1.mean() + q2.mean()) / 2), "q_min": float(torch.minimum(q1, q2).min()),
-                "q_max": float(torch.maximum(q1, q2).max()), "target_mean": float(target.mean()),
-                "target_std": float(target.std(unbiased=False)),
-                "td_abs_mean": float(((q1 - target).abs().mean() + (q2 - target).abs().mean()) / 2),
-                "actor_grad_norm": actor_grad, "critic_1_grad_norm": grad1, "critic_2_grad_norm": grad2}
+        return _diagnostics({"actor_loss": actor_loss, "critic_1_loss": loss1,
+                             "critic_2_loss": loss2, "alpha_loss": alpha_loss,
+                             "alpha": self.log_alpha.exp(), "entropy": entropy_actor.mean(),
+                             **{f"entropy_{name}": value.mean() for name, value in zip(HEADS, entropies)},
+                             "q_mean": (q1.mean() + q2.mean()) / 2,
+                             "q_min": torch.minimum(q1, q2).min(),
+                             "q_max": torch.maximum(q1, q2).max(), "target_mean": target.mean(),
+                             "target_std": target.std(unbiased=False),
+                             "td_abs_mean": ((q1 - target).abs().mean() + (q2 - target).abs().mean()) / 2,
+                             "actor_grad_norm": actor_grad, "critic_1_grad_norm": grad1,
+                             "critic_2_grad_norm": grad2})
 
     def _update_masked_sac(self):
         s, a, r, ns, d, current_masks, next_masks = self.replay.sample(
@@ -375,20 +424,22 @@ class WorkbenchAgent:
             for target_net, source_net in ((self.target1, self.critic1), (self.target2, self.critic2)):
                 for target_p, source_p in zip(target_net.parameters(), source_net.parameters()):
                     target_p.lerp_(source_p, tau)
-        return {"actor_loss": float(actor_loss), "critic_1_loss": float(loss1),
-                "critic_2_loss": float(loss2), "alpha_loss": float(alpha_loss),
-                "alpha": float(self.log_alpha.exp()), "entropy": float(entropy_actor.mean()),
-                "entropy_frequency": float(entropy_frequency.mean()),
-                "entropy_slots": float(entropy_slots.mean()),
-                "entropy_power": float(entropy_power.mean()),
-                "target_entropy": float(target_entropy.mean()),
-                "legal_frequency_slot_count": float(current_fl.sum((1, 2)).float().mean()),
-                "legal_power_count": float(current_power.sum(1).float().mean()),
-                "q_mean": float((q1.mean() + q2.mean()) / 2), "q_min": float(torch.minimum(q1, q2).min()),
-                "q_max": float(torch.maximum(q1, q2).max()), "target_mean": float(target.mean()),
-                "target_std": float(target.std(unbiased=False)),
-                "td_abs_mean": float(((q1 - target).abs().mean() + (q2 - target).abs().mean()) / 2),
-                "actor_grad_norm": actor_grad, "critic_1_grad_norm": grad1, "critic_2_grad_norm": grad2}
+        return _diagnostics({"actor_loss": actor_loss, "critic_1_loss": loss1,
+                             "critic_2_loss": loss2, "alpha_loss": alpha_loss,
+                             "alpha": self.log_alpha.exp(), "entropy": entropy_actor.mean(),
+                             "entropy_frequency": entropy_frequency.mean(),
+                             "entropy_slots": entropy_slots.mean(),
+                             "entropy_power": entropy_power.mean(),
+                             "target_entropy": target_entropy.mean(),
+                             "legal_frequency_slot_count": current_fl.sum((1, 2)).float().mean(),
+                             "legal_power_count": current_power.sum(1).float().mean(),
+                             "q_mean": (q1.mean() + q2.mean()) / 2,
+                             "q_min": torch.minimum(q1, q2).min(),
+                             "q_max": torch.maximum(q1, q2).max(), "target_mean": target.mean(),
+                             "target_std": target.std(unbiased=False),
+                             "td_abs_mean": ((q1 - target).abs().mean() + (q2 - target).abs().mean()) / 2,
+                             "actor_grad_norm": actor_grad, "critic_1_grad_norm": grad1,
+                             "critic_2_grad_norm": grad2})
 
     def _update_dqn(self):
         s, a, r, ns, d = self.replay.sample(self.train["batch_size"], self.device)
@@ -407,11 +458,11 @@ class WorkbenchAgent:
         target_updated = self.update_step % self.train["target_update_interval"] == 0
         if target_updated:
             self.target.load_state_dict(self.online.state_dict())
-        return {"dqn_loss": float(loss), "q_mean": float(current.mean()),
-                "q_min": float(current.min()), "q_max": float(current.max()),
-                "target_mean": float(target.mean()), "target_std": float(target.std(unbiased=False)),
-                "td_abs_mean": float((current - target).abs().mean()),
-                "critic_grad_norm": grad, "target_updated": int(target_updated)}
+        return _diagnostics({"dqn_loss": loss, "q_mean": current.mean(),
+                             "q_min": current.min(), "q_max": current.max(),
+                             "target_mean": target.mean(), "target_std": target.std(unbiased=False),
+                             "td_abs_mean": (current - target).abs().mean(),
+                             "critic_grad_norm": grad, "target_updated": int(target_updated)})
 
     def _update_ppo(self):
         rows = self.rollout
@@ -450,13 +501,13 @@ class WorkbenchAgent:
             with torch.no_grad():
                 residual = ret - value_pred
                 explained = 1 - torch.var(residual, unbiased=False) / (torch.var(ret, unbiased=False) + 1e-8)
-                metrics = {"actor_loss": float(actor_loss), "value_loss": float(value_loss),
-                           "entropy": float(entropy.mean()), "approx_kl": float((logp0 - logp).mean()),
-                           "clip_fraction": float(((ratio - 1).abs() > self.train["clip_ratio"]).float().mean()),
-                           "explained_variance": float(explained), "value_mean": float(value_pred.mean()),
-                           "return_target_mean": float(ret.mean()), "actor_grad_norm": actor_grad,
-                           "value_grad_norm": value_grad,
-                           **{f"entropy_{name}": float(value.mean()) for name, value in zip(HEADS, entropy_heads)}}
+                metrics = _diagnostics({"actor_loss": actor_loss, "value_loss": value_loss,
+                                        "entropy": entropy.mean(), "approx_kl": (logp0 - logp).mean(),
+                                        "clip_fraction": ((ratio - 1).abs() > self.train["clip_ratio"]).float().mean(),
+                                        "explained_variance": explained, "value_mean": value_pred.mean(),
+                                        "return_target_mean": ret.mean(), "actor_grad_norm": actor_grad,
+                                        "value_grad_norm": value_grad,
+                                        **{f"entropy_{name}": value.mean() for name, value in zip(HEADS, entropy_heads)}})
             self.update_step += 1
         self.rollout = []
         return metrics

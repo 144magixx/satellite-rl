@@ -19,7 +19,7 @@ import traceback
 import numpy as np
 import torch
 
-from satellite_rl.agents.workbench_algorithms import build_agent
+from satellite_rl.agents.workbench_algorithms import build_agent, ensure_finite_modules
 from satellite_rl.training.run_monitor import replace_with_retry
 from satellite_rl.workbench.checkpoints import (config_hash, export_policy, load_checkpoint,
                                                  load_policy, save_checkpoint)
@@ -331,14 +331,13 @@ def _restore_logging(ledger, directory, checkpoint_step):
 
 
 def _ensure_finite_agent(agent):
-    for name in ("actor", "critic1", "critic2", "target1", "target2", "value", "online", "target"):
-        module = getattr(agent, name, None)
-        if module is not None:
-            for parameter in module.parameters():
-                if not torch.isfinite(parameter).all():
-                    raise FloatingPointError(f"Nonfinite {name} parameter; last checkpoint preserved")
-    if hasattr(agent, "log_alpha") and not torch.isfinite(agent.log_alpha):
-        raise FloatingPointError("Nonfinite SAC temperature; last checkpoint preserved")
+    names = ("actor", "critic1", "critic2", "target1", "target2", "value", "online", "target")
+    try:
+        ensure_finite_modules(((name, getattr(agent, name)) for name in names
+                               if getattr(agent, name, None) is not None),
+                              getattr(agent, "log_alpha", None))
+    except FloatingPointError as error:
+        raise FloatingPointError(f"{error}; last checkpoint preserved") from error
 
 
 def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_path=None,
