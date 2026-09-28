@@ -34,13 +34,37 @@ def _gather(heads, actions):
 
 
 def finite_tensor_check(tensors):
-    """Check every tensor while synchronizing once per device on success."""
+    """Check every tensor, using a fused CUDA max norm only when it is safe.
+
+    The infinity norm of a nonempty real tensor is finite exactly when every
+    element is finite. Empty and complex tensors use the original elementwise
+    check: the norm of an empty tensor is undefined, and complex magnitude can
+    overflow even when both components are finite.
+    """
     by_device = {}
     for tensor in tensors:
         by_device.setdefault(tensor.device, []).append(tensor)
     with torch.no_grad():
         for group in by_device.values():
-            if not bool(torch.stack([torch.isfinite(tensor).all() for tensor in group]).all()):
+            checks = []
+            eligible = {}
+            foreach_norm = getattr(torch, "_foreach_norm", None)
+            for tensor in group:
+                if (foreach_norm is not None and tensor.device.type == "cuda"
+                        and tensor.layout == torch.strided and tensor.is_contiguous()
+                        and tensor.numel() > 0 and tensor.dtype in
+                        (torch.float16, torch.bfloat16, torch.float32, torch.float64)):
+                    eligible.setdefault(tensor.dtype, []).append(tensor)
+                else:
+                    checks.append(torch.isfinite(tensor).all())
+            for same_dtype in eligible.values():
+                try:
+                    norms = foreach_norm(same_dtype, ord=math.inf)
+                except (RuntimeError, TypeError, NotImplementedError):
+                    checks.extend(torch.isfinite(tensor).all() for tensor in same_dtype)
+                else:
+                    checks.append(torch.isfinite(torch.stack(norms)).all())
+            if not bool(torch.stack(checks).all()):
                 return False
     return True
 

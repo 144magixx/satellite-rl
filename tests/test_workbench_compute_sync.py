@@ -2,6 +2,7 @@
 
 import copy
 import unittest
+from unittest import mock
 
 import torch
 from torch import nn
@@ -22,6 +23,36 @@ def tiny_network(kind, device):
 
 
 class ComputeSynchronizationTests(unittest.TestCase):
+    def check_foreach_boundaries(self, device):
+        make = lambda values, dtype=torch.float32: torch.tensor(values, dtype=dtype, device=device)
+        cases = [
+            [torch.empty(0, device=device)],
+            [make(1.0)],
+            [make([0.0, -0.0])],
+            [make([3e38, -3e38])],
+            [make([1.0, float("nan")])],
+            [make([1.0, float("inf")])],
+            [make([1.0, float("-inf")])],
+            [make([float("nan"), float("inf")])],
+            [torch.arange(12.0, device=device).reshape(3, 4)[:, ::2]],
+            [make([1.0], torch.float16), make([2.0], torch.float64)],
+            [torch.empty(0, device=device), make([float("nan")])],
+            [make([complex(3e38, 3e38)], torch.complex64)],
+            [make([complex(float("nan"), 1.0)], torch.complex64)],
+            [make([65504.0, -65504.0], torch.float16)],
+            [make([1.0, float("nan")], torch.float16)],
+            [make([3e38], torch.bfloat16)],
+            [make([1e308, -1e308], torch.float64)],
+        ]
+        for position in (0, 7, 15):
+            tensors = [make([float(index + 1)]) for index in range(16)]
+            tensors[position][0] = float("nan")
+            cases.append(tensors)
+        for index, tensors in enumerate(cases):
+            with self.subTest(device=device, case=index):
+                expected = all(bool(torch.isfinite(tensor).all()) for tensor in tensors)
+                self.assertEqual(finite_tensor_check(tensors), expected)
+
     def check_device(self, device):
         for kind in ("mlp", "cnn", "transformer"):
             with self.subTest(device=device, network=kind):
@@ -61,10 +92,21 @@ class ComputeSynchronizationTests(unittest.TestCase):
                 self.assertLessEqual(float(clipped), 1.000001)
 
     def test_cpu_finite_checks_and_clipping(self):
+        self.check_foreach_boundaries("cpu")
         self.check_device("cpu")
 
     @unittest.skipUnless(torch.cuda.is_available(), "DQN CUDA unavailable")
     def test_gpu_finite_checks_and_clipping(self):
+        self.check_foreach_boundaries("cuda")
+        real_foreach = torch._foreach_norm
+        with mock.patch.object(torch, "_foreach_norm", wraps=real_foreach) as checked:
+            self.assertTrue(finite_tensor_check([torch.ones(3, device="cuda"),
+                                                 torch.ones(2, device="cuda")]))
+            checked.assert_called()
+        with mock.patch.object(torch, "_foreach_norm", side_effect=RuntimeError("unsupported")):
+            self.assertFalse(finite_tensor_check([torch.tensor([float("nan")], device="cuda")]))
+        with mock.patch.object(torch, "_foreach_norm", None):
+            self.assertFalse(finite_tensor_check([torch.tensor([float("inf")], device="cuda")]))
         self.check_device("cuda")
 
     def test_loss_and_diagnostic_semantics(self):
