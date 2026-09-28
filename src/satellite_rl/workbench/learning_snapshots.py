@@ -82,7 +82,7 @@ def _source_identity(provenance):
 
 
 def _verified_source_chain(saved, current, source_history):
-    """Accept only the existing, reverified atomic-I/O repair path."""
+    """Accept only reverified I/O repair or approved performance source paths."""
     from satellite_rl.workbench.recovery import REPAIR_ID, verify_io_retry_repair
 
     prior = _source_identity(saved)
@@ -96,14 +96,19 @@ def _verified_source_chain(saved, current, source_history):
             raise ValueError("Learning snapshot I/O repair source chain has a cycle")
         seen.add(prior)
         matches = [item for item in source_history if isinstance(item, dict) and
-                   item.get("repair_id") == REPAIR_ID and
+                   (item.get("repair_id") == REPAIR_ID or
+                    item.get("upgrade_type") == "async_telemetry_v1") and
                    (item.get("old_commit"), item.get("old_source_root"),
                     item.get("old_manifest_sha256")) == prior]
         if len(matches) != 1:
             raise ValueError("Learning snapshot source is absent from the verified I/O repair chain")
         item = matches[0]
-        verified = verify_io_retry_repair(item["old_source_root"], item["old_commit"],
-                                          item["new_source_root"], item["new_commit"])
+        if item.get("upgrade_type") == "async_telemetry_v1":
+            from satellite_rl.workbench.performance_upgrade import verify_source_history_entry
+            verified = verify_source_history_entry(item)
+        else:
+            verified = verify_io_retry_repair(item["old_source_root"], item["old_commit"],
+                                              item["new_source_root"], item["new_commit"])
         if any(item.get(key) != value for key, value in verified.items()):
             raise ValueError("Learning snapshot I/O repair proof differs from frozen source files")
         prior = (verified["new_commit"], verified["new_source_root"],
@@ -166,9 +171,18 @@ def save_learning_snapshot(directory, agent, config, provenance, env_step, sourc
         comparable["provenance"] = dict(previous_source)
         for key in SOURCE_FIELDS:
             comparable["provenance"][key] = current_source.get(key)
-        if not _same(comparable, payload):
-            raise ValueError(f"Existing learning snapshot semantics differ at step {env_step}: {path}")
         proofs = _verified_source_chain(previous_source, current_source, source_history)
+        expected = payload
+        if any(proof.get("upgrade_type") == "async_telemetry_v1" for proof in proofs):
+            # Only the separately verified operational telemetry choice may
+            # differ. No scientific state, tensors, replay sample or RNG changes.
+            comparable["config"] = dict(saved["config"])
+            comparable["config"].pop("telemetry", None)
+            expected = dict(payload)
+            expected["config"] = dict(payload["config"])
+            expected["config"].pop("telemetry", None)
+        if not _same(comparable, expected):
+            raise ValueError(f"Existing learning snapshot semantics differ at step {env_step}: {path}")
         _record_recovery(path, previous_source, current_source, proofs)
         return str(path)
     temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
