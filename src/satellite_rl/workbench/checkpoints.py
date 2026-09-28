@@ -41,6 +41,13 @@ def config_hash(config):
     semantic["network"] = dict(config["network"])
     if semantic["network"].get("transformer_layout", "scalar_tokens") == "scalar_tokens":
         semantic["network"].pop("transformer_layout", None)
+    semantic["training"] = dict(config["training"])
+    # Old tasks predate scene-order options; the explicit defaults preserve
+    # their exact ordering and therefore retain their original semantic hash.
+    if semantic["training"].get("scene_order", "sequential") == "sequential":
+        semantic["training"].pop("scene_order", None)
+        if semantic["training"].get("scene_order_seed", 51001) == 51001:
+            semantic["training"].pop("scene_order_seed", None)
     return hashlib.sha256(_canonical(semantic).encode("utf-8")).hexdigest()
 
 
@@ -129,6 +136,8 @@ def load_policy(path, config=None, device="cpu"):
         raise ValueError("Model config differs in state, actions, normalization or other semantics")
     if config_hash(saved) != metadata["config_hash"]:
         raise ValueError("Model metadata config hash mismatch")
+    if metadata.get("variant") != describe_model(saved)["variant"]:
+        raise ValueError("Model variant does not match its configured network layout")
     weight_path = directory / "policy.pt"
     if weight_path.stat().st_size > 512 * 1024 ** 2:
         raise ValueError("Inference weight file exceeds the supported 512 MiB limit")

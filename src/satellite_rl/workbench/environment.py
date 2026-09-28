@@ -207,6 +207,8 @@ class WorkbenchEnv:
             definitions.update(beta=[float(demands.mean()) / 6e8],
                                remaining_demand=[float(demands[idx:].sum()) / (count * 6e8)],
                                remaining_demand_mean=[float(demands[idx:].mean()) / 6e8 if idx < count else 0])
+        if "global_context" in self.config["state"]["features"]:
+            definitions.update(self._structured_context(definitions, ratios))
         for fid in self.config["state"]["features"]:
             value = np.asarray(base[fid] if fid in base else definitions[fid], dtype=np.float32).reshape(-1)
             parts.append(value)
@@ -214,6 +216,81 @@ class WorkbenchEnv:
         if state.size != self.summary["state_dim"] or not np.isfinite(state).all():
             raise ValueError("状态维度或数值无效")
         return state
+
+    def _structured_context(self, definitions, ratios):
+        """Build four visibility levels from information available before the action."""
+        env = self.raw_env
+        idx, count = env.beam_idx, env.beam_num
+        level = self.config["state"]["context_level"]
+        global_context = np.zeros(10, dtype=np.float32)
+        beam_context = np.zeros((10, 10, 11), dtype=np.float32)
+        resource_context = np.zeros((8, 204), dtype=np.float32)
+
+        global_context[:3] = (definitions["beta"][0], definitions["progress"][0],
+                              definitions["remaining_demand"][0])
+        if level in ("summary", "layout", "full"):
+            global_context[3:] = (
+                definitions["remaining_count"][0], definitions["group"][0],
+                definitions["power_per_remaining"][0], definitions["served_shortfall"][0],
+                definitions["served_met"][0], definitions["served_min"][0],
+                definitions["longest_free"][0],
+            )
+            occupancy = np.asarray(env.satellite_freq_state.freq_pool_real)
+            for group in range(8):
+                occupied = occupancy[group] > 0
+                free = ~occupied
+                longest = max((len(x) for x in np.split(free, np.flatnonzero(np.diff(free.astype(int))) + 1)
+                               if len(x) and x[0]), default=0)
+                historical = [item for item in env.history_beam if item[1] == group and item[3] > 0]
+                group_ids = np.arange(group, idx, 8)
+                resource_context[group, :4] = (
+                    float(occupied.mean()), longest / 100,
+                    sum(10 ** (entry[4] / 10) for entry in historical)
+                    / self.config["environment"]["power_budget_w"],
+                    float(ratios[group_ids].mean()) if len(group_ids) else 0,
+                )
+
+        if level in ("layout", "full"):
+            locations = self._scene["beam_location"]
+            lat_min, lat_max = self.region_profile.latitude_bounds_deg
+            lon_min, lon_max = self.region_profile.longitude_bounds_deg
+            rows = beam_context.reshape(count, 11)
+            rows[:, 0] = 2 * (locations[:, 0] - (lat_max + lat_min) / 2) / (lat_max - lat_min)
+            rows[:, 1] = 2 * (locations[:, 1] - (lon_max + lon_min) / 2) / (lon_max - lon_min)
+            rate_mean = (legacy.rate_min + legacy.rate_max - legacy.rate_step) / 2 * 1e6
+            demands = self._scene["rate"].reshape(-1)
+            rows[:, 2] = demands / rate_mean
+            rows[:, 3] = np.arange(count) % 8 / 7
+            rows[:, 4] = np.arange(count) / (count - 1)
+
+        if level == "full":
+            rows = beam_context.reshape(count, 11)
+            rows[:idx, 5] = 1
+            rates = np.maximum(np.asarray(env.beam_bps, dtype=np.float64), 0)
+            rows[:idx, 9] = rates / 6e8
+            rows[:idx, 10] = ratios
+            for beam_id, group, frequency, slots, power_db in env.history_beam:
+                if not 0 <= beam_id < idx or group != beam_id % 8:
+                    raise ValueError("历史波束记录与处理顺序不一致")
+                rows[beam_id, 6:9] = (
+                    frequency / 99, slots / 10,
+                    (10 ** (power_db / 10) if slots > 0 else 0)
+                    / max(self.config["environment"]["power_levels_w"]),
+                )
+            occupancy = np.asarray(env.satellite_freq_state.freq_pool_real, dtype=np.float32)
+            resource_context[:, 4:104] = occupancy
+            if idx < count:
+                # Interference depends on the prospective group's polarization,
+                # so the eight groups share two exact historical calculations.
+                for polarization in (0, 1):
+                    watts = env._calc_group_slot_interference(polarization)
+                    db = 10 * np.log10(watts + 1e-30)
+                    normalized = np.clip((db - legacy.P_MIN_DB) /
+                                         (legacy.P_MAX_DB - legacy.P_MIN_DB), 0, 1)
+                    resource_context[polarization::2, 104:204] = normalized
+        return {"global_context": global_context,
+                "beam_context": beam_context,
+                "resource_context": resource_context}
 
     def _project(self, requested):
         """Choose the first jointly feasible contiguous allocation from requested start onward."""

@@ -265,6 +265,7 @@ class RegionDatasetTests(unittest.TestCase):
         ledger = Mock(status={"preflight": {"gpu": "CPU interface fixture"}})
         with patch("satellite_rl.workbench.runner.build_agent", return_value=agent), \
              patch("satellite_rl.workbench.runner.save_checkpoint") as checkpoint, \
+             patch("satellite_rl.workbench.runner.save_learning_snapshot", return_value=None), \
              patch("satellite_rl.workbench.runner.export_policy") as export, \
              patch("satellite_rl.workbench.runner._ensure_finite_agent"):
             _training(directory, job, self.config, ledger, resume=False)

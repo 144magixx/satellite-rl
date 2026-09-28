@@ -236,6 +236,8 @@ class Application:
         profile = config["environment"].get("profile", "china_legacy")
         selections = {"train": body.get("scene_id"),
                       "validation": body.get("validation_scene_id"), "test": body.get("test_scene_id")}
+        if config["training"].get("scene_order", "sequential") == "shuffle_each_cycle" and not selections["train"]:
+            raise ValueError("每轮随机场景顺序需要选择固定训练场景集")
         counts = {role: config["evaluation"][role + "_count"] for role in ("validation", "test")}
         if profile == "europe_v1" and selections["train"]:
             for role, count in counts.items():

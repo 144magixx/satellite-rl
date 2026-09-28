@@ -23,6 +23,8 @@ from satellite_rl.agents.workbench_algorithms import build_agent
 from satellite_rl.training.run_monitor import replace_with_retry
 from satellite_rl.workbench.checkpoints import (config_hash, export_policy, load_checkpoint,
                                                  load_policy, save_checkpoint)
+from satellite_rl.workbench.learning_snapshots import FORMAT as LEARNING_SNAPSHOT_FORMAT, save_learning_snapshot
+from satellite_rl.workbench.scene_order import SceneOrder
 
 
 def now():
@@ -400,7 +402,6 @@ def _training(directory, job, config, ledger, resume):
         restored_sets = restored_environment.get("scene_sets") if restored_environment else None
         if restored_sets is not None and restored_sets != job.get("scene_sets", {}):
             raise ValueError("恢复任务的冻结场景与断点不一致")
-        _restore_logging(ledger, directory, progress["env_step"])
     else:
         progress = {"env_step": 0, "episode": 0, "best_validation": None,
                     "last_validation_step": -1, "last_checkpoint_step": 0,
@@ -428,9 +429,6 @@ def _training(directory, job, config, ledger, resume):
                            gpu_memory_mb=torch.cuda.memory_allocated() / 1048576,
                            **fields)
 
-    save_progress()
-    ledger.event("training_started" if not resume else "training_resumed", env_step=env_step,
-                 config_hash=config_hash(config))
     model_dir = Path(job["model_dir"])
     model_dir.mkdir(parents=True, exist_ok=True)
     scene_sets = job.get("scene_sets", {})
@@ -439,17 +437,55 @@ def _training(directory, job, config, ledger, resume):
         for record in scene_sets.values():
             assert_scene_profile(record, config["environment"].get("profile", "china_legacy"))
             scene_set_files(record)
-    supplied_scenes = ([path for path, _ in scene_set_files(scene_sets["train"])] if "train" in scene_sets else
-                       _scene_files(job["training_scene_path"]) if job.get("training_scene_path") else None)
-    provenance = _job_provenance(job, config)
+    supplied_scenes = (scene_set_files(scene_sets["train"]) if "train" in scene_sets else
+                       [(path, _sha256(path)) for path in _scene_files(job["training_scene_path"])]
+                       if job.get("training_scene_path") else [])
+    scene_order = SceneOrder(training.get("scene_order", "sequential"),
+                             training.get("scene_order_seed", 51001),
+                             [digest for _, digest in supplied_scenes])
+    if resume:
+        scene_order.verify_checkpoint((restored_environment or {}).get("scene_order"), episode)
+    order_provenance = {"mode": scene_order.mode, "seed": scene_order.seed,
+                        "source_count": len(supplied_scenes),
+                        "source_set_sha256": scene_order.source_set_sha256}
+    provenance = {**_job_provenance(job, config), "training_scene_order": order_provenance}
+    source_manifest = Path(job["source_root"]) / "source_manifest.json"
+    snapshot_provenance = {**provenance, "source_root": job["source_root"],
+                           "source_manifest_sha256": _sha256(source_manifest) if source_manifest.is_file() else None,
+                           "training_scene_path": job.get("training_scene_path")}
+
+    def snapshot_artifact(step):
+        path = save_learning_snapshot(directory, agent, config, snapshot_provenance, step)
+        if path is None:
+            return None
+        return {"directory": str(Path(directory) / "learning_snapshots"), "latest": path,
+                "format": LEARNING_SNAPSHOT_FORMAT,
+                "description": "SAC网络参数及最多64条终止、64条非终止转移；用于离线学习诊断，不可用于恢复训练"}
+
+    if resume:
+        snapshot_record = snapshot_artifact(env_step)
+        _restore_logging(ledger, directory, env_step)
+        if snapshot_record:
+            _artifacts(directory, job, learning_snapshots=snapshot_record)
+    save_progress(scene_order=scene_order.checkpoint_state(episode))
+    ledger.event("training_started" if not resume else "training_resumed", env_step=env_step,
+                 config_hash=config_hash(config), training_scene_order=order_provenance)
     last_saved_step = progress.get("last_checkpoint_step", env_step)
     if not resume:
-        save_checkpoint(checkpoint, agent, progress, config, {**provenance, "boundary": "next_episode"})
-        _artifacts(directory, job, checkpoint=str(checkpoint))
+        save_checkpoint(checkpoint, agent, progress, config,
+                        {**provenance, "boundary": "next_episode",
+                         "scene_order": scene_order.checkpoint_state(episode)})
+        snapshot_record = snapshot_artifact(env_step)
+        _artifacts(directory, job, checkpoint=str(checkpoint),
+                   **({"learning_snapshots": snapshot_record} if snapshot_record else {}))
     while env_step < training["total_steps"]:
         env = WorkbenchEnv(config)
         scene_seed = training["seed"] + 100000 + episode
-        source_scene = supplied_scenes[episode % len(supplied_scenes)] if supplied_scenes else None
+        selection = scene_order.selection(episode)
+        source_index = selection["source_index"]
+        source_scene = supplied_scenes[source_index][0] if source_index is not None else None
+        if source_scene is not None and _sha256(source_scene) != supplied_scenes[source_index][1]:
+            raise ValueError("训练场景文件SHA-256与冻结场景来源不一致")
         with isolated_rng(scene_seed):
             state = env.reset(seed=scene_seed, scene=_load_scene(source_scene) if source_scene else None)
             scene = env.scene()
@@ -523,13 +559,20 @@ def _training(directory, job, config, ledger, resume):
         episode_row = {"env_step": env_step, "episode": episode, "length": length,
                        "return": episode_return, "duration_seconds": time.monotonic() - episode_start,
                        "scene_seed": scene_seed, "scene": scene_ref, "terminal": bool(done),
-                       "source_scene": {"path": str(source_scene), "sha256": _sha256(source_scene)} if source_scene else None,
+                       "source_scene": ({"path": str(source_scene), "sha256": supplied_scenes[source_index][1],
+                                         "index": source_index,
+                                         "scene_id": scene_sets["train"]["files"][source_index].get("scene_id")
+                                         if "train" in scene_sets else source_scene.stem,
+                                         "set_id": scene_sets["train"]["id"] if "train" in scene_sets else None}
+                                        if source_scene else None),
+                       "scene_order": selection,
                        "metrics": terminal_metrics, "reward_terms": episode_terms}
         _jsonl(Path(directory) / "episodes.jsonl", episode_row)
         ledger.record("training", env_step, {"return": episode_return, "episode_length": length,
                                              **{k: v for k, v in terminal_metrics.items() if isinstance(v, (int, float))}})
         ledger.record("reward", env_step, episode_terms)
         episode += 1
+        save_progress(scene_order=scene_order.checkpoint_state(episode))
         interval = config["evaluation"]["interval_steps"]
         if interval > 0 and env_step - progress["last_validation_step"] >= interval:
             save_progress("validating")
@@ -550,12 +593,16 @@ def _training(directory, job, config, ledger, resume):
             _ensure_finite_agent(agent)
             progress.update({"env_step": env_step, "episode": episode, "last_checkpoint_step": env_step,
                              "wall_seconds": base_wall_seconds + time.monotonic() - session_started})
-            save_checkpoint(checkpoint, agent, progress, config, {**provenance, "boundary": "next_episode"})
+            save_checkpoint(checkpoint, agent, progress, config,
+                            {**provenance, "boundary": "next_episode",
+                             "scene_order": scene_order.checkpoint_state(episode)})
+            snapshot_record = snapshot_artifact(env_step)
             last_saved_step = env_step
             export_policy(model_dir / "latest", agent, config,
                           {**provenance, "env_step": env_step})
             _artifacts(directory, job, checkpoint=str(checkpoint), latest_policy=str(model_dir / "latest"),
-                       best_validation_policy=str(model_dir / "best_validation") if (model_dir / "best_validation").exists() else None)
+                       best_validation_policy=str(model_dir / "best_validation") if (model_dir / "best_validation").exists() else None,
+                       **({"learning_snapshots": snapshot_record} if snapshot_record else {}))
             save_progress(checkpoint_step=env_step, best_validation=progress["best_validation"])
         if stopped:
             ledger.event("training_stopped", env_step=env_step)
