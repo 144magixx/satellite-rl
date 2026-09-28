@@ -7,13 +7,18 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import numpy as np
 import torch
 
+from satellite_rl.agents.workbench_algorithms import build_agent
 from satellite_rl.workbench.checkpoints import config_hash
-from satellite_rl.workbench.config import default_config
+from satellite_rl.workbench.config import config_summary, default_config
+from satellite_rl.workbench.learning_snapshots import save_learning_snapshot
 from satellite_rl.workbench.recovery import REPAIR_ID, WORKER_FILES, verify_io_retry_repair
+from satellite_rl.workbench.runner import run_job
 from satellite_rl.workbench.service import Application
 from satellite_rl.workbench.storage import atomic_json, digest, read_json
+from satellite_rl.envs.regions import profile_metadata
 
 
 class IoRecoveryTests(unittest.TestCase):
@@ -143,6 +148,113 @@ class IoRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "不支持"):
             self.app.api("POST", ["runs", self.job["run_id"], "resume"], {}, {"source_repair": "arbitrary"})
         self.assertEqual(read_json(self.directory / "job.json"), self.job)
+
+    def test_learning_snapshot_accepts_only_verified_source_repair_and_keeps_original(self):
+        config = default_config()
+        config["network"]["hidden_sizes"] = [8]
+        summary = config_summary(config)
+        agent = build_agent(config, summary["state_dim"], summary["action_dims"], "cpu")
+        zeros = np.zeros(summary["state_dim"], dtype=np.float32)
+        agent.replay.add(zeros, (0, 0, 0), 0.25, zeros, True)
+        old_source = {"run_id": "snapshot_repair", "git_commit": self.old_commit,
+                      "source_root": str(self.old),
+                      "source_manifest_sha256": digest(self.old / "source_manifest.json"),
+                      "environment_profile": profile_metadata("china_legacy"), "scene_sets": {}}
+        new_source = dict(old_source, git_commit=self.new_commit, source_root=str(self.new),
+                          source_manifest_sha256=digest(self.new / "source_manifest.json"))
+        snapshots = self.root / "learning_test"
+        original = Path(save_learning_snapshot(snapshots, agent, config, old_source, 100))
+        original_sha = digest(original)
+        proof = verify_io_retry_repair(self.old, self.old_commit, self.new, self.new_commit)
+        self.assertEqual(save_learning_snapshot(snapshots, agent, config, new_source, 100,
+                                                source_history=[proof]), str(original))
+        self.assertEqual(digest(original), original_sha)
+        audit = original.with_name(f"{original.stem}_recovery_{self.new_commit[:12]}.json")
+        self.assertTrue(audit.is_file())
+        self.assertEqual(read_json(audit)["verified_repair_chain"], [proof])
+
+        unrelated = dict(old_source, git_commit="c" * 40,
+                         source_root=str(self.root / "unrelated"),
+                         source_manifest_sha256="0" * 64)
+        with self.assertRaisesRegex(ValueError, "absent from"):
+            save_learning_snapshot(snapshots, agent, config, unrelated, 100,
+                                   source_history=[proof])
+        with torch.no_grad():
+            next(agent.critic1.parameters()).add_(1)
+        with self.assertRaisesRegex(ValueError, "semantics differ"):
+            save_learning_snapshot(snapshots, agent, config, new_source, 100,
+                                   source_history=[proof])
+        self.assertEqual(digest(original), original_sha)
+
+    def test_snapshot_io_failure_after_new_checkpoint_records_recoverable_step(self):
+        class TinyEnv:
+            def __init__(self, _config):
+                self.data = {"value": np.array([1], dtype=np.int64)}
+
+            def reset(self, *, seed=None, scene=None):
+                return np.array([0.0], dtype=np.float32)
+
+            def scene(self):
+                return self.data
+
+            def action_mask(self):
+                return None
+
+            def step(self, _action):
+                return np.array([0.0], dtype=np.float32), 0.0, True, {}
+
+            def metrics(self):
+                return {"final_si_mean": 0.0}
+
+        class TinyAgent:
+            update_step = 0
+            last_action_info = {}
+
+            def act(self, _state, **_kwargs):
+                return [0, 0, 0]
+
+            def observe(self, *_args, **_kwargs):
+                pass
+
+            def ready(self, *_args):
+                return False
+
+            def state_dict(self):
+                return {"rng": random.getstate(), "update_step": 0}
+
+        config = default_config()
+        config["training"].update(total_steps=2, checkpoint_interval=1, log_interval=100)
+        config["evaluation"]["interval_steps"] = 0
+        with patch.object(self.app.store, "freeze_source", return_value=(self.old, self.old_commit)):
+            job = self.app.store.create_job(config, request_id="snapshot_io_failure")
+        directory = self.app.store.job_dir(job["run_id"])
+
+        def snapshot(_directory, _agent, _config, _provenance, step, source_history=None):
+            if step == 1:
+                raise PermissionError("[WinError 5] replace failed for learning snapshot")
+            return None
+
+        with patch("satellite_rl.workbench.runner.strict_cuda_preflight", return_value={"gpu": "fixture"}), \
+             patch("satellite_rl.workbench.environment.WorkbenchEnv", TinyEnv), \
+             patch("satellite_rl.workbench.runner.build_agent", return_value=TinyAgent()), \
+             patch("satellite_rl.workbench.runner._ensure_finite_agent"), \
+             patch("satellite_rl.workbench.runner.save_learning_snapshot", side_effect=snapshot), \
+             self.assertRaisesRegex(PermissionError, "replace failed"):
+            run_job(directory)
+        failure = read_json(directory / "failure.json")
+        self.assertEqual(failure["last_normal_checkpoint"]["env_step"], 1)
+        self.assertEqual(failure["last_normal_checkpoint"]["sha256"], digest(directory / "checkpoint.pt"))
+        self.assertEqual(torch.load(directory / "checkpoint.pt", map_location="cpu",
+                                    weights_only=False)["progress"]["env_step"], 1)
+        status = read_json(directory / "status.json")
+        self.assertEqual(status["checkpoint_step"], 1)
+        atomic_json(directory / "status.json", {**status, "pid": None})
+        with patch.object(self.app.store, "freeze_source", return_value=(self.new, self.new_commit)), \
+             patch("satellite_rl.workbench.runtime.pid_alive", return_value=False):
+            resumed = self.app.api("POST", ["runs", job["run_id"], "resume"], {},
+                                   {"source_repair": REPAIR_ID})
+        self.assertEqual(resumed["stage"], "queued")
+        self.assertEqual(resumed["env_step"], 1)
 
 
 if __name__ == "__main__":

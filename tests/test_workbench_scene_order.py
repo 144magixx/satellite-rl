@@ -122,7 +122,7 @@ class SceneOrderTests(unittest.TestCase):
                         (directory / "stop.request").touch()
 
                 ledger.record.side_effect = record
-                def snapshot(_directory, _agent, _config, _provenance, step):
+                def snapshot(_directory, _agent, _config, _provenance, step, source_history=None):
                     snapshot_steps.append(step)
                     return str(_directory / "learning_snapshots" / f"step_{step:09d}.pt")
 

@@ -455,11 +455,15 @@ def _training(directory, job, config, ledger, resume):
                            "training_scene_path": job.get("training_scene_path")}
 
     def snapshot_artifact(step):
-        path = save_learning_snapshot(directory, agent, config, snapshot_provenance, step)
+        path = save_learning_snapshot(directory, agent, config, snapshot_provenance, step,
+                                      source_history=job.get("source_history"))
         if path is None:
             return None
+        recovery_records = sorted(str(item) for item in Path(path).parent.glob(
+            f"{Path(path).stem}_recovery_*.json"))
         return {"directory": str(Path(directory) / "learning_snapshots"), "latest": path,
                 "format": LEARNING_SNAPSHOT_FORMAT,
+                "source_recovery_records": recovery_records,
                 "description": "SAC网络参数及最多64条终止、64条非终止转移；用于离线学习诊断，不可用于恢复训练"}
 
     if resume:
@@ -475,6 +479,7 @@ def _training(directory, job, config, ledger, resume):
         save_checkpoint(checkpoint, agent, progress, config,
                         {**provenance, "boundary": "next_episode",
                          "scene_order": scene_order.checkpoint_state(episode)})
+        ledger.status["checkpoint_step"] = env_step
         snapshot_record = snapshot_artifact(env_step)
         _artifacts(directory, job, checkpoint=str(checkpoint),
                    **({"learning_snapshots": snapshot_record} if snapshot_record else {}))
@@ -596,6 +601,7 @@ def _training(directory, job, config, ledger, resume):
             save_checkpoint(checkpoint, agent, progress, config,
                             {**provenance, "boundary": "next_episode",
                              "scene_order": scene_order.checkpoint_state(episode)})
+            ledger.status["checkpoint_step"] = env_step
             snapshot_record = snapshot_artifact(env_step)
             last_saved_step = env_step
             export_policy(model_dir / "latest", agent, config,
@@ -781,11 +787,16 @@ def run_job(job_dir, *, resume=False):
         failure_traceback = traceback.format_exc()
         checkpoint_path = directory / "checkpoint.pt"
         prior_status = _read_json(directory / "status.json", {})
+        # The checkpoint may already be at a newer boundary when an artifact
+        # write fails before status.json is persisted. The in-memory boundary
+        # advances only after save_checkpoint returns successfully.
+        checkpoint_step = (ledger.status.get("checkpoint_step", prior_status.get("checkpoint_step"))
+                           if ledger is not None else prior_status.get("checkpoint_step"))
         failure = {"run_id": job.get("run_id"), "time": now(), "error": str(error),
                    "traceback": failure_traceback, "config_hash": config_hash(config) if config else None,
                    "last_normal_checkpoint": {"path": str(checkpoint_path),
                                               "sha256": _sha256(checkpoint_path),
-                                              "env_step": prior_status.get("checkpoint_step")}
+                                              "env_step": checkpoint_step}
                    if checkpoint_path.exists() else None,
                    "recent_trace": _tail_jsonl(directory / "traces.jsonl", 10),
                    "last_status": prior_status,

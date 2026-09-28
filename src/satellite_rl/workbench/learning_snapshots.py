@@ -7,6 +7,8 @@ recoverable training checkpoints and deliberately omit optimizer/replay state.
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -21,6 +23,7 @@ FORMAT = "satellite_rl_sac_learning_snapshot_v1"
 SAMPLE_SEED = 51001
 SAMPLE_PER_STRATUM = 64
 NETWORKS = ("actor", "critic1", "critic2", "target1", "target2")
+SOURCE_FIELDS = ("git_commit", "source_root", "source_manifest_sha256")
 
 
 def _cpu_state(module):
@@ -74,7 +77,62 @@ def _same(left, right):
     return left == right
 
 
-def save_learning_snapshot(directory, agent, config, provenance, env_step):
+def _source_identity(provenance):
+    return tuple(provenance.get(key) for key in SOURCE_FIELDS)
+
+
+def _verified_source_chain(saved, current, source_history):
+    """Accept only the existing, reverified atomic-I/O repair path."""
+    from satellite_rl.workbench.recovery import REPAIR_ID, verify_io_retry_repair
+
+    prior = _source_identity(saved)
+    target = _source_identity(current)
+    if not all(prior) or not all(target) or not isinstance(source_history, list):
+        raise ValueError("Learning snapshot source differs without a complete I/O repair chain")
+    proofs = []
+    seen = set()
+    while prior != target:
+        if prior in seen:
+            raise ValueError("Learning snapshot I/O repair source chain has a cycle")
+        seen.add(prior)
+        matches = [item for item in source_history if isinstance(item, dict) and
+                   item.get("repair_id") == REPAIR_ID and
+                   (item.get("old_commit"), item.get("old_source_root"),
+                    item.get("old_manifest_sha256")) == prior]
+        if len(matches) != 1:
+            raise ValueError("Learning snapshot source is absent from the verified I/O repair chain")
+        item = matches[0]
+        verified = verify_io_retry_repair(item["old_source_root"], item["old_commit"],
+                                          item["new_source_root"], item["new_commit"])
+        if any(item.get(key) != value for key, value in verified.items()):
+            raise ValueError("Learning snapshot I/O repair proof differs from frozen source files")
+        prior = (verified["new_commit"], verified["new_source_root"],
+                 verified["new_manifest_sha256"])
+        proofs.append(verified)
+    return proofs
+
+
+def _record_recovery(path, saved, current, proofs):
+    current_commit = current["git_commit"]
+    audit = path.with_name(f"{path.stem}_recovery_{current_commit[:12]}.json")
+    record = {"format": "satellite_rl_learning_snapshot_source_recovery_v1",
+              "snapshot": str(path), "snapshot_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              "previous_source": {key: saved[key] for key in SOURCE_FIELDS},
+              "current_source": {key: current[key] for key in SOURCE_FIELDS},
+              "verified_repair_chain": proofs}
+    if audit.exists():
+        if json.loads(audit.read_text(encoding="utf-8")) != record:
+            raise ValueError(f"Existing learning snapshot recovery record differs: {audit}")
+        return
+    temporary = audit.with_name(audit.name + f".{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        replace_with_retry(temporary, audit)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def save_learning_snapshot(directory, agent, config, provenance, env_step, source_history=None):
     """Save one immutable step file without sampling from any training RNG."""
     if config["algorithm"] != "sac":
         return None
@@ -96,8 +154,22 @@ def save_learning_snapshot(directory, agent, config, provenance, env_step):
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         saved = torch.load(path, map_location="cpu", weights_only=True)
-        if not _same(saved, payload):
+        if _same(saved, payload):
+            return str(path)
+        if not isinstance(saved, dict) or not isinstance(saved.get("provenance"), dict):
             raise ValueError(f"Existing learning snapshot differs at step {env_step}: {path}")
+        previous_source = saved["provenance"]
+        current_source = payload["provenance"]
+        if _source_identity(previous_source) == _source_identity(current_source):
+            raise ValueError(f"Existing learning snapshot differs at step {env_step}: {path}")
+        comparable = dict(saved)
+        comparable["provenance"] = dict(previous_source)
+        for key in SOURCE_FIELDS:
+            comparable["provenance"][key] = current_source.get(key)
+        if not _same(comparable, payload):
+            raise ValueError(f"Existing learning snapshot semantics differ at step {env_step}: {path}")
+        proofs = _verified_source_chain(previous_source, current_source, source_history)
+        _record_recovery(path, previous_source, current_source, proofs)
         return str(path)
     temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
     try:
