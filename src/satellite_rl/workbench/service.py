@@ -448,6 +448,15 @@ class Application:
                                               "config": config, "created_at": now()})
         if parts == ["compare"] and method == "POST":
             return self.compare(body["run_ids"])
+        if parts == ["dispatch", "hold"]:
+            if method == "GET":
+                return self.scheduler.dispatch_hold()
+            if method == "POST":
+                return self.scheduler.hold_dispatch(body.get("ttl_seconds"), body.get("reason"))
+            if method == "DELETE":
+                return self.scheduler.release_dispatch()
+        if parts == ["dispatch", "hold", "release"] and method == "POST":
+            return self.scheduler.release_dispatch()
         if len(parts) >= 2 and parts[0] == "runs":
             identifier = parts[1]
             directory, readonly = self.resolve_run(identifier)
@@ -466,6 +475,11 @@ class Application:
                         raise ValueError("历史实验为只读，本工作台不控制其他管理进程")
                     return (self.scheduler.request_stop(identifier) if action == "stop" else
                             self.scheduler.resume(identifier, source_repair=body.get("source_repair")))
+                if action == "upgrade" and method == "POST":
+                    if readonly:
+                        raise ValueError("历史实验为只读，不能升级")
+                    return self.scheduler.upgrade(identifier, upgrade_type=body.get("upgrade_type"),
+                                                  receipt_path=body.get("receipt_path"))
         raise FileNotFoundError("接口不存在")
 
     def download(self, identifier, filename):

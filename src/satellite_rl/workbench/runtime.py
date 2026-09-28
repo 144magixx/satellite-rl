@@ -122,6 +122,34 @@ class Scheduler:
     def _status(self, directory, status, **changes):
         atomic_json(directory / "status.json", {**status, **changes, "heartbeat_at": now()})
 
+    def dispatch_hold(self):
+        with self.lock:
+            path = self.store.root / "dispatch_hold.json"
+            record = read_json(path, {})
+            active = isinstance(record, dict) and record.get("type") == "temporary_dispatch_hold_v1" and \
+                isinstance(record.get("expires_at_unix"), (int, float)) and \
+                time.time() < record["expires_at_unix"]
+            if not active:
+                path.unlink(missing_ok=True)
+                return {"active": False}
+            return {**record, "active": True, "remaining_seconds": max(0, record["expires_at_unix"] - time.time())}
+
+    def hold_dispatch(self, ttl_seconds, reason):
+        with self.lock:
+            if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 600:
+                raise ValueError("临时派发保留须为1至600秒整数")
+            if not isinstance(reason, str) or not reason.strip() or len(reason) > 120:
+                raise ValueError("临时派发保留原因无效")
+            record = {"type": "temporary_dispatch_hold_v1", "reason": reason.strip(),
+                      "created_at": now(), "expires_at_unix": time.time() + ttl_seconds}
+            atomic_json(self.store.root / "dispatch_hold.json", record)
+            return {**record, "active": True, "remaining_seconds": ttl_seconds}
+
+    def release_dispatch(self):
+        with self.lock:
+            (self.store.root / "dispatch_hold.json").unlink(missing_ok=True)
+            return {"active": False}
+
     def tick(self):
         with self.lock:
             jobs = list(reversed(self.store.jobs()))
@@ -160,6 +188,8 @@ class Scheduler:
                 self.children.pop(run_id, None)
             queued = [(j, s) for j, s in jobs if s.get("stage") == "queued"]
             if not queued or len(active) >= self.max_workers:
+                return
+            if self.dispatch_hold()["active"]:
                 return
             gpu = gpu_snapshot()
             available = gpu.get("memory_total_mb", 0) - gpu.get("memory_used_mb", 0)
@@ -251,6 +281,38 @@ class Scheduler:
                               source_repair=source_repair)
             self._status(directory, status, **fields)
             return read_json(directory / "status.json")
+
+    def upgrade(self, run_id, *, upgrade_type, receipt_path):
+        """Rebind a stopped/queued G08 job; never stop or start a worker here."""
+        from .performance_upgrade import UPGRADE_TYPE, commit_upgrade, prepare_upgrade
+        with self.lock:
+            if upgrade_type != UPGRADE_TYPE or not self.dispatch_hold()["active"]:
+                raise ValueError("性能升级需要已核验类型与有效的临时派发保留")
+            directory = self.store.job_dir(run_id)
+            job = read_json(directory / "job.json")
+            status = read_json(directory / "status.json", {})
+            if not job or status.get("stage") not in ("stopped", "queued"):
+                raise ValueError("性能升级仅允许已停止或排队的工作台训练任务")
+            launch = read_json(directory / "launch.json", {})
+            child = self.children.get(run_id)
+            if (pid_alive(status.get("pid"), launch.get("process_start_time")) or
+                    pid_alive(launch.get("pid"), launch.get("process_start_time")) or
+                    (child is not None and child.poll() is None)):
+                raise ValueError("原工作进程仍在运行，不能升级源码")
+            checkpoint = directory / "checkpoint.pt"
+            if status["stage"] == "stopped" and not checkpoint.is_file():
+                raise ValueError("已停止任务缺少完整断点")
+            if status["stage"] == "queued" and checkpoint.is_file() and job.get("resume") is not True:
+                raise ValueError("排队任务有断点但未标记从断点恢复，不能升级")
+            if (status["stage"] == "queued" and not checkpoint.is_file() and
+                    (any(status.get(key, 0) != 0 for key in ("env_step", "update_step", "episode")) or
+                     job.get("resume"))):
+                raise ValueError("排队任务记录非零进度却没有完整断点")
+            new_root, new_commit = self.store.freeze_source()
+            upgraded_config, proof = prepare_upgrade(self.store, job, receipt_path, new_root, new_commit)
+            if not self.dispatch_hold()["active"]:
+                raise ValueError("验证期间临时派发保留已过期，请重新设置")
+            return commit_upgrade(self.store, job, status, upgraded_config, proof)
 
     def _loop(self):
         while not self.shutdown.is_set():
