@@ -583,3 +583,5 @@ NVIDIA 将该 GPU 利用率定义为采样期间有内核运行的时间比例�
 日志不会抽样丢弃；缓冲满时主线程等待，结束与保存前等待写完。完整验证、断点和场景保存仍保留一致的同步边界。2秒是目标刷新间隔，页面还受指标采样与轮询影响。351项CPU回归（1项跳过）、真实GPU更新、断点恢复及原始日志核对通过。原六ID、原进度、种子51001与各40万步保留；后续共同评价helper已恢复。模型效果仍待正式考核，工程提速不代表需求满足率已经提高。
 
 证据与实现：[设计报告](../../docs/方案/08_异步采集与训练吞吐优化设计.md)、[验证报告与曲线](../../docs/实验报告/05_异步采集与训练提速验证.md)、[任务接续](../../outputs/verification/async_telemetry_20260929/migration/final_handoff.json)。代码主要在`workbench/telemetry.py`、`runner.py`、`monitoring.py`和`agents/workbench_algorithms.py`。
+
+**2026-09-29 13:59运行补记：**A/B已完成40万步，C1/C3/C4继续。C2首次启动在0步发生CUDA驱动模块原生退出，原因尚未确定，不能据此断言是异步记录或显存不足。完整初始断点保留，现已通过工作台按同一任务ID恢复排队；实际更新须等其重新获得运行槽位后核验。共同评价helper已恢复，未修改算法或冻结源码。见[故障现场与恢复记录](../../outputs/experiments/europe_ablation_20260929/recovery_20260929_1350/recovery_summary.json)。
