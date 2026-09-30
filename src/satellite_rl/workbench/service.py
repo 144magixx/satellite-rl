@@ -405,6 +405,9 @@ class Application:
         return output
 
     def api(self, method, parts, query, body):
+        if parts and parts[0] == "coverage":
+            from .coverage import CoverageApplication
+            return CoverageApplication(self).api(method, parts[1:], query, body)
         from .config import catalog, default_config, validate_config, config_summary
         if parts == ["catalog"] and method == "GET":
             return {**catalog(), "defaults": default_config()}
@@ -434,7 +437,8 @@ class Application:
             return self.start_evaluation(body)
         if parts == ["scenes"]:
             if method == "GET":
-                return {"scenes": self.store.records("scenes")}
+                return {"scenes": [s for s in self.store.records("scenes")
+                                   if s.get("research_stage") != "coverage"]}
             if method == "POST":
                 from .datasets import generate_scenes
                 return generate_scenes(self.store, body.get("name"), body["seed"], body["count"],
@@ -447,7 +451,8 @@ class Application:
             return self.import_aviation_scenes(body)
         if parts == ["configs"]:
             if method == "GET":
-                return {"configs": self.store.records("configs")}
+                return {"configs": [c for c in self.store.records("configs")
+                                    if c.get("config", {}).get("research_stage") != "coverage"]}
             if method == "POST":
                 config = validate_config(body["config"])
                 return self.store.save_record("configs", {"id": new_id("config"), "name": body.get("name") or config["name"],

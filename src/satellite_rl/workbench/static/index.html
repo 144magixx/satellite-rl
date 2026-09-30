@@ -7,20 +7,62 @@
   <title>卫星资源分配实验工作台</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
+  <script src="/coverage.js" defer></script>
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand"><div class="brand-icon" aria-hidden="true">◈</div><div><strong>卫星资源分配实验工作台</strong><span>本机实验 · 配置、训练、测试与对照</span></div></div>
+      <div class="brand"><div class="brand-icon" aria-hidden="true">◈</div><div><strong>卫星资源分配实验工作台</strong><span>实验管理 · 配置、训练、测试与对照</span></div></div>
       <div class="system-line"><span class="status-dot" id="system-dot"></span><span id="system-label">正在连接本地服务…</span><button class="quiet" id="system-refresh" type="button">检查环境</button></div>
     </header>
     <nav class="main-nav" aria-label="工作台页面">
+      <button type="button" data-page="coverage"><span>Ⅰ</span> 第一阶段覆盖规划</button>
       <button type="button" data-page="config" aria-current="page"><span>01</span> 配置实验</button>
       <button type="button" data-page="monitor"><span>02</span> 训练监控</button>
       <button type="button" data-page="test"><span>03</span> 模型测试</button>
       <button type="button" data-page="compare"><span>04</span> 结果对比</button>
     </nav>
     <main>
+      <section class="page" id="page-coverage" hidden>
+        <div class="page-heading"><div><p class="eyebrow">FIRST STAGE</p><h1>波束覆盖规划</h1><p>比较规则或聚类基础布局的微调，以及从空布局由PPO逐束构建；覆盖与负载独立于第二阶段资源分配评价。</p></div><button type="button" id="coverage-refresh">刷新任务与数据</button></div>
+        <div class="layout-two"><div class="stack">
+          <div class="panel"><h2>覆盖方案</h2><div class="field-grid">
+            <label class="field">方案名称<input id="coverage-name" value="第一阶段 · 规则布局＋PPO"></label>
+            <label class="field">环境<select id="coverage-profile" disabled><option value="europe_v1">欧洲版（航空业务）</option></select></label>
+            <label class="field">基础布局<select id="coverage-initialization"><option value="rule">现有需求加权覆盖规则</option><option value="cluster">需求加权聚类</option><option value="empty">无基础布局（纯PPO逐束构建）</option></select></label>
+            <label class="field">布局决策<select id="coverage-method"><option value="ppo">PPO</option><option value="none">不微调（评价基线）</option><option value="local_search">普通局部搜索（评价基线）</option></select></label>
+            <label class="field">每束轮询次数<input type="number" id="coverage-sweeps" min="1" max="20" value="2"></label>
+            <label class="field">经纬度格步长（度）<input type="number" id="coverage-coordinate-step" step="0.01" min="0.001" value="0.1"></label>
+            <label class="field">最大累计移动（卫星视角度）<input type="number" id="coverage-max-movement" step="0.01" min="0.001" value="0.25"></label>
+            <label class="field">需求覆盖下限<input type="number" id="coverage-demand-floor" min="0" max="1" step="0.001" value="0.99"></label>
+            <label class="field">用户覆盖下限<input type="number" id="coverage-user-floor" min="0" max="1" step="0.001" value="0.99"></label>
+            <label class="field">聚类迭代次数<input type="number" id="coverage-cluster-iterations" min="1" max="100" value="12"></label>
+          </div><p class="small muted" id="coverage-action-note">固定100束、0.5°全宽，规则/聚类组每步局部微调；纯PPO从空布局逐束选择原始航空器位置，100步构建完成。终态覆盖、负载与约束分别记录。</p></div>
+          <div class="panel"><h2>航空业务数据</h2><div class="field-grid">
+            <label class="field">远端逐机目录或已准备NPZ<input id="coverage-data-path" placeholder="/home/.../data_inputs/train"></label>
+            <label class="field">数据用途<select id="coverage-data-role"><option value="train">训练</option><option value="validation">验证</option><option value="test">独立考核</option></select></label>
+          </div><button id="coverage-import-data" type="button">准备并登记数据</button><p class="small muted">按当前布局模式准备数据，保留原始飞机需求、UTC日期与来源校验。规则、聚类和空布局各自登记训练、验证与考核数据。</p>
+          <div class="field-grid"><label class="field">训练数据<select id="coverage-data-train"></select></label><label class="field">验证数据<select id="coverage-data-validation"></select></label><label class="field">独立考核数据<select id="coverage-data-test"></select></label></div></div>
+          <div class="panel"><h2>PPO训练与评价</h2><div class="field-grid">
+            <label class="field">任务用途<select id="coverage-purpose"><option value="formal">正式实验</option><option value="verification">工程短验证（不计训练成果）</option></select></label>
+            <label class="field">训练种子<input id="coverage-seed" type="number" value="51001"></label>
+            <label class="field">交互步数<input id="coverage-total-steps" type="number" min="1" value="409600"></label>
+            <label class="field">并行环境数<input id="coverage-num-envs" type="number" min="1" max="2048" value="512"></label>
+            <label class="field">每批采集步数<input id="coverage-rollout-steps" type="number" min="1" value="16"></label>
+            <label class="field">更新小批量<input id="coverage-minibatch" type="number" min="1" value="1024"></label>
+            <label class="field">每批更新轮数<input id="coverage-epochs" type="number" min="1" value="4"></label>
+            <label class="field">学习率<input id="coverage-lr" type="number" step="0.0001" value="0.0003"></label>
+            <label class="field">验证间隔（交互步）<input id="coverage-validation-interval" type="number" min="0" value="20480"></label>
+            <label class="field">断点间隔（交互步）<input id="coverage-checkpoint-interval" type="number" min="1" value="20480"></label>
+            <label class="field">PPO评价模型<select id="coverage-model"></select></label>
+          </div><details><summary>完整配置</summary><textarea id="coverage-config-json" rows="12" spellcheck="false"></textarea><button id="coverage-apply-json" type="button">应用配置</button></details>
+          <div class="actions"><button id="coverage-validate" type="button">检查配置</button><button id="coverage-save" type="button">保存方案</button><button id="coverage-start" class="primary" type="button">提交PPO训练</button><button id="coverage-evaluate" type="button">提交评价或基线</button></div><div id="coverage-message" class="notice muted" role="status">正在读取第一阶段配置…</div></div>
+        </div><aside class="stack"><div class="panel"><h2>远端运行记录</h2><label class="field">任务<select id="coverage-run"></select></label><div class="actions"><button id="coverage-stop" type="button">停止并保存</button><button id="coverage-resume" type="button">从断点恢复</button></div><div id="coverage-status" class="facts"></div></div>
+          <div class="panel"><h2>覆盖与学习曲线</h2><div id="coverage-curves"></div></div>
+          <div class="panel"><h2>原始日志</h2><pre id="coverage-logs" class="log-box">选择任务查看日志。</pre></div>
+          <div class="panel"><h2>模型与评价结果</h2><pre id="coverage-results" class="log-box">评价完成后显示结果。</pre></div>
+        </aside></div>
+      </section>
       <section class="page active" id="page-config" aria-labelledby="config-title">
         <div class="page-heading"><div><p class="eyebrow">EXPERIMENT DESIGN</p><h1 id="config-title">配置实验</h1><p>选择有实际实现的状态、网络和奖励，保存经过后台校验的方案。</p></div><div class="actions"><button id="config-load" type="button">载入方案</button><button id="config-import" type="button">导入 JSON</button><button id="config-export" type="button">导出 JSON</button></div></div>
         <div class="layout-two">

@@ -24,6 +24,8 @@ python -m pip install -e .
 
 现已增加独立欧洲环境选项、航空轨迹与合成需求导入、按环境与用途区分的训练/验证/考核场景，并冻结评价数据和权重。操作及295项验证结果见[欧洲航空环境使用与核验](docs/工作台/04_欧洲航空环境使用与核验.md)。欧洲正式训练及共同考核已完成，结果见[欧洲六组独立场景报告](docs/第二阶段/实验报告/07_欧洲六组独立场景对照.md)；最新范围和第一阶段方案状态以EXPERIMENT_STATUS为准。
 
+第一阶段布局环境、PPO与基线的本地源码在 `src/satellite_rl/coverage/`；工作台提供规则、聚类和无基础布局纯PPO三种入口。计算在用户指定的远端4090D/DQN执行，通过SSH隧道访问 `http://127.0.0.1:8876/#coverage`。`scripts/remote_stage1.py`负责已提交源码同步与隧道，认证读取 `BUPT_PASSWORD`；`scripts/run_stage1_suite.py`只通过同一工作台API协调七组任务。布局覆盖与负载采用独立评价，不使用第二阶段T-SAC奖励。预算、数据划分和并行依据见[第一阶段技术方案03](docs/第一阶段/方案/03_远端4090D部署与七组并行实验技术方案.md)，实际任务及结果以[实验状态](EXPERIMENT_STATUS.md)为准。
+
 ```text
 src/satellite_rl/
   envs/         两套原仿真环境
@@ -32,6 +34,7 @@ src/satellite_rl/
   baselines/    固定、贪心、随机、四色、图着色、拉格朗日
   evaluation/   指标比较、需求扫描、逐波束比较
   plotting/     速率柱状图与需求曲线
+  coverage/     第一阶段布局环境、PPO、基础规则和独立覆盖评价
   workbench/    本地工作台、配置、场景、任务与前端
   paths.py      原路径到新位置的统一映射
 data/           城市数据

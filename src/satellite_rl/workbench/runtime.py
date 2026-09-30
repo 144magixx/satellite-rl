@@ -19,7 +19,15 @@ _SYSTEM_CACHE = (0, None)
 
 def process_start_time(pid):
     if os.name != "nt":
-        return None
+        try:
+            stat = Path(f"/proc/{int(pid)}/stat").read_text()
+            # The parenthesized process name can contain whitespace.
+            ticks = int(stat.rsplit(")", 1)[1].split()[19])
+            boot = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+                        if line.startswith("btime "))
+            return boot + ticks / os.sysconf("SC_CLK_TCK")
+        except (OSError, ValueError, IndexError, StopIteration):
+            return None
     import ctypes
     from ctypes import wintypes
     kernel = ctypes.windll.kernel32
@@ -61,7 +69,10 @@ def pid_alive(pid, expected_start_time=None):
             actual_start = process_start_time(pid)
             return expected_start_time is None or (actual_start is not None and abs(actual_start - expected_start_time) < 0.01)
         os.kill(int(pid), 0)
-        return True
+        if expected_start_time is None:
+            return True
+        actual = process_start_time(pid)
+        return actual is not None and abs(actual - expected_start_time) < 0.01
     except (OSError, ValueError, TypeError):
         return False
 

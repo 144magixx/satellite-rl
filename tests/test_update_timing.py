@@ -144,12 +144,14 @@ class UpdateTimingTests(unittest.TestCase):
                 _immutable_json(path, {"seed": 93003})
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"seed": 93002})
 
+    @unittest.skipUnless(os.name == "nt", "Historical GPU process inventory is Windows-specific")
     def test_process_scan_parses_one_live_worker(self):
         with mock.patch("satellite_rl.evaluation.update_timing.subprocess.run") as run:
             run.return_value.stdout = json.dumps({"ProcessId": 111,
                                                   "CommandLine": "experiment_runner"})
             self.assertEqual(_experiment_gpu_children()[0]["ProcessId"], 111)
 
+    @unittest.skipUnless(os.name == "nt", "Historical GPU process inventory is Windows-specific")
     def test_process_scan_includes_peer_update_timing_but_excludes_self(self):
         with mock.patch("satellite_rl.evaluation.update_timing.subprocess.run") as run:
             run.return_value.stdout = json.dumps([

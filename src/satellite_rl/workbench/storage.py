@@ -181,7 +181,9 @@ class Store:
             model_dir = self.models_root / run_id
             model_dir.mkdir()
             frozen_extra = dict(extra or {})
-            profile = config.get("environment", {}).get("profile", "china_legacy")
+            is_coverage = config.get("research_stage") == "coverage"
+            profile = (config["coverage"]["environment_profile"] if is_coverage else
+                       config.get("environment", {}).get("profile", "china_legacy"))
             from satellite_rl.envs.regions import profile_metadata
             frozen_extra.update(profile=profile, environment_profile=profile_metadata(profile),
                                 environment_version=profile_metadata(profile)["environment_version"])
@@ -194,7 +196,14 @@ class Store:
                     path_key = ("scene_path" if kind == "evaluate" and role == "test" else
                                 "training_scene_path" if role == "train" else role + "_scene_path")
                     frozen_extra[path_key] = record["path"]
-            if kind == "evaluate":
+            if is_coverage:
+                from .coverage import freeze_dataset
+                config = dict(config)
+                config["datasets"] = {role: freeze_dataset(record, directory / "scene_inputs" / role)
+                                      for role, record in config["datasets"].items()}
+                frozen_extra["research_stage"] = "coverage"
+                frozen_extra["dataset_provenance"] = config["datasets"]
+            if kind == "evaluate" and (not is_coverage or config["coverage"]["method"] == "ppo"):
                 model_target = directory / "model_input"
                 model_target.mkdir()
                 references = frozen_extra.get("model_files") or model_input_files(
