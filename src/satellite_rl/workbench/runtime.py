@@ -117,7 +117,7 @@ class Scheduler:
     def __init__(self, store, python_executable=sys.executable, max_workers=1):
         self.store = store
         self.python = str(Path(python_executable).resolve())
-        self.max_workers = max(1, min(3, int(max_workers)))
+        self.max_workers = max(1, min(5, int(max_workers)))
         self.children = {}
         self.lock = threading.RLock()
         self.shutdown = threading.Event()
