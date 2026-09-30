@@ -63,7 +63,7 @@
     el("import-data").onclick=()=>guarded(async()=>{message("正在按基础布局准备逐机数据…");const record=await request("coverage/datasets/import",{path:el("data-path").value,partition_role:el("data-role").value,coverage:readForm().coverage});await refresh();el("data-"+record.partition_role).value=record.id;message(`已保存${record.count}个场景；初始化失败${record.failed_initializations}个，来源SHA已保留。`);});
     async function submit(kind) {
       const selected={};for(const role of ["train","validation","test"])if(el("data-"+role).value)selected[role]=el("data-"+role).value;
-      const job=await request("coverage/runs",{kind,config:readForm(),dataset_ids:selected,model_id:el("model").value,request_id:"coverage_ui_"+crypto.randomUUID()});runId=job.run_id;await refresh();message("工作台任务已提交："+job.run_id);
+      const job=await request("coverage/runs",{kind,config:readForm(),dataset_ids:selected,model_id:el("model").value,experiment_role:el("purpose").value,request_id:"coverage_ui_"+crypto.randomUUID()});runId=job.run_id;await refresh();message("工作台任务已提交："+job.run_id);
     }
     el("start").onclick=()=>guarded(()=>submit("train"));el("evaluate").onclick=()=>guarded(()=>submit("evaluate"));
     el("run").onchange=()=>{runId=el("run").value;runDetail();};

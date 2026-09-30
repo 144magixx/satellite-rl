@@ -44,6 +44,7 @@
           </div><button id="coverage-import-data" type="button">准备并登记数据</button><p class="small muted">按当前基础布局和聚类配置准备数据，保留原始飞机需求、UTC日期与来源校验。规则/聚类需要各自的数据记录。</p>
           <div class="field-grid"><label class="field">训练数据<select id="coverage-data-train"></select></label><label class="field">验证数据<select id="coverage-data-validation"></select></label><label class="field">独立考核数据<select id="coverage-data-test"></select></label></div></div>
           <div class="panel"><h2>PPO训练与评价</h2><div class="field-grid">
+            <label class="field">任务用途<select id="coverage-purpose"><option value="formal">正式实验</option><option value="verification">工程短验证（不计训练成果）</option></select></label>
             <label class="field">训练种子<input id="coverage-seed" type="number" value="51001"></label>
             <label class="field">交互步数<input id="coverage-total-steps" type="number" min="1" value="409600"></label>
             <label class="field">并行环境数<input id="coverage-num-envs" type="number" min="1" max="2048" value="64"></label>

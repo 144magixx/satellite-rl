@@ -184,6 +184,7 @@ def _load_torch(path, device):
 def _model_metadata(job, config, policy, dataset_hashes, step):
     from .config import config_hash
     return {"format_version": 1, "algorithm": "ppo", "research_stage": "coverage",
+            "experiment_role": job.get("experiment_role", "formal"),
             "network": "coverage_mlp", "obs_dim": policy.obs_dim,
             "action_dim": policy.action_dim, "hidden_sizes": list(policy.hidden_sizes),
             "dropout": 0, "training_seed": config["training"]["seed"],
