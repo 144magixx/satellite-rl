@@ -121,7 +121,10 @@ class CoverageApplication:
         purpose = body.get("experiment_role", "formal")
         if purpose not in ("formal", "verification"):
             raise ValueError("任务用途须为正式实验或工程验证")
-        extra = {"research_stage": "coverage", "experiment_role": purpose,
+        variant = ("P0" if config["coverage"]["initialization"] == "empty" else
+                   ("R" if config["coverage"]["initialization"] == "rule" else "C") +
+                   {"none":"0", "local_search":"1", "ppo":"2"}[config["coverage"]["method"]])
+        extra = {"research_stage": "coverage", "experiment_role": purpose, "variant": variant,
                  "execution_target": "u2024110224@10.160.17.102:20418"}
         if kind == "evaluate" and config["coverage"]["method"] == "ppo":
             model = next((m for m in self.models() if m["id"] == body.get("model_id")), None)
@@ -143,7 +146,8 @@ class CoverageApplication:
         if parts == ["catalog"] and method == "GET":
             return {"defaults": default_config(), "summary": summary(default_config()),
                     "initializations": [{"id": "rule", "label": "现有需求加权覆盖规则"},
-                                        {"id": "cluster", "label": "需求加权聚类"}],
+                                        {"id": "cluster", "label": "需求加权聚类"},
+                                        {"id": "empty", "label": "无基础布局（纯PPO逐束构建）"}],
                     "methods": [{"id": "none", "label": "不微调（评价基线）"},
                                 {"id": "local_search", "label": "局部搜索（评价基线）"},
                                 {"id": "ppo", "label": "PPO微调"}]}

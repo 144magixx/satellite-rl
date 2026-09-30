@@ -9,26 +9,28 @@ import math
 
 def default_config():
     return {
-        "schema_version": 1, "research_stage": "coverage", "algorithm": "ppo",
+        "schema_version": 2, "research_stage": "coverage", "algorithm": "ppo",
         "name": "第一阶段 · 规则基础布局＋PPO微调",
-        "network": {"kind": "coverage_mlp", "hidden_sizes": [256, 256], "dropout": 0.0},
+        "network": {"kind": "coverage_candidate_mlp", "hidden_sizes": [256, 256], "dropout": 0.0},
         "coverage": {
             "environment_profile": "europe_v1", "initialization": "rule", "method": "ppo",
             "beam_count": 100, "beam_width_deg": 0.5, "sweeps": 2,
             "coordinate_step_deg": 0.1, "max_movement_deg": 0.25,
             "min_coverage_demand": 0.99, "min_coverage_users": 0.99,
             "cluster_iterations": 12,
+            "candidate_capacity": 2048, "heatmap_bins": 16,
             "score_coverage_demand_weight": 100.0,
             "score_coverage_users_weight": 1.0, "score_load_cv_weight": 1.0,
             "score_movement_weight": 0.1,
         },
         "training": {
             "device": "cuda", "seed": 51001, "total_steps": 409600,
-            "num_envs": 64, "rollout_steps": 64, "minibatch_size": 1024,
+            "num_envs": 512, "rollout_steps": 16, "minibatch_size": 1024,
             "epochs": 4, "lr": 0.0003, "gamma": 1.0, "gae_lambda": 0.95,
             "clip_ratio": 0.2, "entropy_coef": 0.01, "value_coef": 0.5,
             "max_grad_norm": 0.5, "validation_interval": 20480,
             "checkpoint_interval": 20480, "torch_threads": 2,
+            "reward_scale": 0.01,
         },
         "evaluation": {"action_mode": "deterministic", "repeats": 1},
         "datasets": {},
@@ -63,13 +65,13 @@ def _merge(default, supplied, path=""):
 
 def validate_config(config):
     c = _merge(default_config(), config)
-    if c["research_stage"] != "coverage" or c["algorithm"] != "ppo" or c["schema_version"] != 1:
-        raise ValueError("当前仅支持第一阶段coverage/ppo/v1配置")
+    if c["research_stage"] != "coverage" or c["algorithm"] != "ppo" or c["schema_version"] != 2:
+        raise ValueError("当前仅支持第一阶段coverage/ppo/v2配置；旧网络配置不可静默转换")
     if not isinstance(c["name"], str) or not 1 <= len(c["name"].strip()) <= 100:
         raise ValueError("方案名称须为1–100字符")
     n, v, t = c["network"], c["coverage"], c["training"]
-    if n["kind"] != "coverage_mlp" or n["dropout"] != 0:
-        raise ValueError("布局PPO首版使用独立coverage_mlp且dropout=0")
+    if n["kind"] != "coverage_candidate_mlp" or n["dropout"] != 0:
+        raise ValueError("布局PPO使用共用候选评分网络且dropout=0")
     _number(n["dropout"], "dropout", 0, 0)
     if not isinstance(n["hidden_sizes"], list) or not 1 <= len(n["hidden_sizes"]) <= 4:
         raise ValueError("hidden_sizes须为1–4层宽度")
@@ -77,8 +79,12 @@ def validate_config(config):
         _number(width, "隐藏层宽度", 16, 2048, integer=True)
     if v["environment_profile"] != "europe_v1" or v["beam_count"] != 100 or v["beam_width_deg"] != 0.5:
         raise ValueError("首版固定欧洲环境、100束与0.5°全宽")
-    if v["initialization"] not in ("rule", "cluster") or v["method"] not in ("none", "local_search", "ppo"):
+    if v["initialization"] not in ("rule", "cluster", "empty") or v["method"] not in ("none", "local_search", "ppo"):
         raise ValueError("不支持的基础布局或微调方法")
+    if v["initialization"] == "empty" and (v["method"] != "ppo" or v["sweeps"] != 1):
+        raise ValueError("无基础布局仅支持纯PPO从空布局构建，轮询次数须为1（100次全局放置）")
+    if v["candidate_capacity"] != 2048 or v["heatmap_bins"] != 16:
+        raise ValueError("本轮共用2048候选上限与16×16业务需求栅格，超上限数据不能裁剪")
     _number(v["sweeps"], "轮询次数", 1, 20, integer=True)
     _number(v["coordinate_step_deg"], "经纬度格步长", 0.001, 2.0)
     _number(v["max_movement_deg"], "最大累计卫星视角移动", 0.001, 1.0)
@@ -108,6 +114,8 @@ def validate_config(config):
         _number(t[key], key, 1e-8, 10)
     for key in ("entropy_coef", "value_coef"):
         _number(t[key], key, 0, 100)
+    if t["reward_scale"] != 0.01:
+        raise ValueError("本轮三种PPO共用0.01学习奖励缩放，终态物理评分仍单列")
     ev = c["evaluation"]
     if ev["action_mode"] not in ("deterministic", "stochastic"):
         raise ValueError("评价动作方式未知")
@@ -129,8 +137,10 @@ def config_hash(config):
 
 def summary(config):
     c = validate_config(config)
-    return {"research_stage": "coverage", "state_dim": 508, "action_dim": 9,
+    pure = c["coverage"]["initialization"] == "empty"
+    return {"research_stage": "coverage", "state_dim": 964,
+            "candidate_feature_dim": 4, "action_dim": 2048 if pure else 9,
             "initialization": c["coverage"]["initialization"], "method": c["coverage"]["method"],
             "seed": c["training"]["seed"], "total_steps": c["training"]["total_steps"],
-            "reward": "全体需求覆盖、用户覆盖、负载CV与移动代价的评分差分（gamma=1）",
+            "reward": "终态覆盖/负载评分差分×0.01（gamma=1）；纯构建无移动代价",
             "config_hash": config_hash(c)}

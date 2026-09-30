@@ -10,12 +10,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from satellite_rl.coverage import CoverageBatchEnv, CoverageDataset, CoverageScene, load_dataset, save_dataset
+from satellite_rl.coverage import (
+    CoverageBatchEnv, CoverageDataset, CoverageScene, load_dataset, run_baseline, save_dataset)
 from satellite_rl.coverage.geometry import (
     assign_numpy, ray_angle_numpy, ray_angle_torch, satellite_rays_numpy,
     satellite_rays_torch, squared_ray_limit)
 from satellite_rl.workbench.aviation import _cover
 from satellite_rl.envs.regions import get_profile
+from satellite_rl.coverage.scenes import EMPTY_PARKING_LATLON, positive_position_candidates
 
 
 def reference_scene():
@@ -56,6 +58,127 @@ def full_distance_reference(env):
 
 
 class CoverageEnvironmentTests(unittest.TestCase):
+    def test_empty_start_places_only_original_unique_users_and_preserves_checkpoint(self):
+        scene = reference_scene()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "source_observations_00000.jsonl.gz"
+            records = [{"aircraft_id": scene.aircraft_ids[i], "lat": float(scene.positions[i, 0]),
+                        "lon": float(scene.positions[i, 1]), "demand_bps": float(scene.demands[i])}
+                       for i in reversed(range(100))]
+            path.write_bytes(gzip.compress("\n".join(json.dumps(row) for row in records).encode()))
+            config = {"coverage": {"initialization": "empty", "candidate_capacity": 2048,
+                                   "sweeps": 2}}
+            data = load_dataset(path, "empty", config)
+            candidate_positions = positive_position_candidates(data.scenes[0].positions,
+                                                               data.scenes[0].demands)
+            self.assertEqual(data.scenes[0].metadata["candidate_count"], 100)
+            self.assertEqual(data.scenes[0].metadata["initial_active_count"], 0)
+            np.testing.assert_array_equal(data.scenes[0].centers,
+                                          np.tile(EMPTY_PARKING_LATLON, (100, 1)))
+            prepared = Path(temp) / "prepared" / "empty.npz"
+            save_dataset(data, prepared)
+            reloaded = load_dataset(prepared, "empty", config)
+            self.assertEqual(reloaded.scenes[0].metadata["candidate_sha256"],
+                             data.scenes[0].metadata["candidate_sha256"])
+            env = CoverageBatchEnv(reloaded, config, num_envs=1, device="cpu", auto_reset=False)
+            observation, mask = env.reset(scene_indices=[0])
+            self.assertEqual((env.obs_dim, env.action_dim, env.horizon), (964, 2048, 100))
+            self.assertEqual(observation.shape, (1, 964))
+            self.assertEqual(env.candidate_features().shape, (1, 2048, 4))
+            self.assertTrue(mask[0, :100].all())
+            self.assertFalse(mask[0, 100:].any())
+            self.assertFalse(env.active_masks().any())
+            self.assertEqual(int(env.metrics()["active_beams"][0]), 0)
+            self.assertEqual(env.metrics()["coverage_demand"][0].item(), 0.0)
+            self.assertEqual(env.metrics()["uncovered_demand_bps"][0].item(),
+                             float(data.scenes[0].demands.sum()))
+            self.assertEqual(env.loads.sum().item(), 0.0)
+            self.assertTrue(torch.isinf(env._distance_cache).all())
+            self.assertTrue((env.assignment == -1).all())
+            self.assertFalse(bool(env.metrics()["movement_applicable"][0]))
+            self.assertEqual(env.metrics()["score"][0].item(), 0.0)
+            self.assertTrue(torch.equal(env.candidate_features()[0, :100, 3], torch.zeros(100)))
+            self.assertTrue(torch.equal(observation[0, :400], torch.zeros(400)))
+            self.assertTrue(torch.equal(observation[0, 508:708], torch.zeros(200)))
+            self.assertTrue(torch.isclose(observation[0, 708:].sum(), torch.tensor(1.0)))
+
+            _, first_reward, first_done, _ = env.step(torch.tensor([0]))
+            self.assertFalse(bool(first_done[0]))
+            self.assertAlmostEqual(first_reward[0].item(), env.metrics()["score"][0].item(), places=5)
+            self.assertTrue(bool(env.active_masks()[0, 0]))
+            self.assertFalse(bool(env.active_masks()[0, 1:].any()))
+            self.assertFalse(bool(env.action_mask()[0, 0]))
+            np.testing.assert_array_equal(env.layouts()[0, 0].numpy(), candidate_positions[0])
+            self.assertTrue(torch.isinf(env._distance_cache[0, :, 1:]).all())
+            user_rays = env._user_rays[env.scene_index]
+            placed_ray = satellite_rays_torch(env.centers[:, 0])
+            full_first_column = (user_rays - placed_ray[:, None, :]).square().sum(-1)
+            torch.testing.assert_close(env._distance_cache[:, :, 0], full_first_column, rtol=1e-12, atol=1e-14)
+            first_covered = full_first_column[0] <= squared_ray_limit(0.25) + 1e-14
+            expected_assignment = torch.where(first_covered, 0, -1)
+            self.assertTrue(torch.equal(env.assignment[0], expected_assignment))
+            expected_load = torch.where(first_covered, env._demands[0], 0.0).sum()
+            self.assertEqual(env.loads[0, 0].item(), expected_load.item())
+            saved = env.state_dict()
+            self.assertNotIn("_distance_cache", saved)
+            self.assertEqual(saved["candidate_hashes"], env._candidate_hashes)
+            restored = CoverageBatchEnv(reloaded, config, num_envs=1, device="cpu", auto_reset=False)
+            restored.load_state_dict(saved)
+            self.assertTrue(torch.equal(restored.action_mask(), env.action_mask()))
+            torch.testing.assert_close(restored.candidate_features(), env.candidate_features(), rtol=0, atol=0)
+            torch.testing.assert_close(restored._distance_cache, env._distance_cache, rtol=0, atol=0)
+            second_action = torch.tensor([1])
+            expected = env.step(second_action)
+            actual = restored.step(second_action)
+            torch.testing.assert_close(actual[0], expected[0], rtol=0, atol=0)
+            torch.testing.assert_close(actual[1], expected[1], rtol=0, atol=0)
+            altered = dict(saved)
+            altered["candidate_hashes"] = ["wrong"]
+            with self.assertRaisesRegex(ValueError, "checkpoint configuration/scene mismatch"):
+                restored.load_state_dict(altered)
+            with self.assertRaisesRegex(ValueError, "no approved"):
+                run_baseline(data.scenes[0], config, method="none")
+
+    def test_empty_start_finishes_100_distinct_placements(self):
+        scene = reference_scene()
+        scene.centers = np.tile(EMPTY_PARKING_LATLON, (100, 1))
+        scene.metadata = {"initialization_valid": True, "initial_active_count": 0}
+        config = {"coverage": {"initialization": "empty", "candidate_capacity": 2048}}
+        env = CoverageBatchEnv(CoverageDataset([scene], {"initialization": "empty"}),
+                               config, num_envs=1, device="cpu", auto_reset=False)
+        total_reward = 0.0
+        for turn in range(100):
+            action = torch.tensor([turn])
+            _, reward, done, _ = env.step(action)
+            total_reward += reward.item()
+            self.assertEqual(bool(done[0]), turn == 99)
+        self.assertEqual(int(env.metrics()["active_beams"][0]), 100)
+        self.assertEqual(int(env.candidate_used[0].sum()), 100)
+        self.assertTrue(bool(env.metrics()["feasible"][0]))
+        self.assertEqual(env.metrics()["uncovered_demand_bps"][0].item(), 0.0)
+        self.assertEqual(env.metrics()["movement_mean_deg"][0].item(), 0.0)
+        self.assertAlmostEqual(total_reward, env.metrics()["score"][0].item(), places=3)
+        self.assertEqual(len(np.unique(env.layouts()[0].numpy(), axis=0)), 100)
+
+    def test_empty_start_capacity_and_insufficient_unique_candidates_are_explicit(self):
+        scene = reference_scene()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "source_observations_00000.jsonl.gz"
+            rows = [{"aircraft_id": scene.aircraft_ids[i], "lat": float(scene.positions[i, 0]),
+                     "lon": float(scene.positions[i, 1]), "demand_bps": float(scene.demands[i])}
+                    for i in range(100)]
+            rows.append({"aircraft_id": "extra", "lat": 50.2, "lon": 10.3, "demand_bps": 1e6})
+            path.write_bytes(gzip.compress("\n".join(json.dumps(row) for row in rows).encode()))
+            with self.assertRaisesRegex(ValueError, "increase candidate_capacity"):
+                load_dataset(path, "empty", {"candidate_capacity": 100})
+            path.write_bytes(gzip.compress("\n".join(json.dumps(row) for row in rows[:99]).encode()))
+            insufficient = load_dataset(path, "empty", {"candidate_capacity": 2048})
+            self.assertEqual(insufficient.scenes[0].metadata["candidate_count"], 99)
+            self.assertFalse(insufficient.scenes[0].metadata["initialization_valid"])
+            with self.assertRaisesRegex(ValueError, "no representable 100-beam layout"):
+                CoverageBatchEnv(insufficient, {"coverage": {"initialization": "empty"}},
+                                 num_envs=1, device="cpu")
+
     def test_blocked_distance_cache_matches_full_geometry_actions_and_restore(self):
         first = reference_scene()
         second = reference_scene()
@@ -220,6 +343,13 @@ class CoverageEnvironmentTests(unittest.TestCase):
         scene.aircraft_ids.append("extra")
         env = CoverageBatchEnv(CoverageDataset([scene]), {"coverage": {"sweeps": 1}},
                                num_envs=1, device="cpu", auto_reset=False)
+        observation, mask_actions = env.reset(scene_indices=[0])
+        self.assertEqual(observation.shape, (1, 964))
+        self.assertEqual(mask_actions.shape, (1, 9))
+        self.assertEqual(env.candidate_features().shape, (1, 9, 4))
+        self.assertTrue(env.active_masks().all())
+        self.assertTrue(torch.equal(observation[0, 508:708], torch.ones(200)))
+        self.assertTrue(torch.isclose(observation[0, 708:].sum(), torch.tensor(1.0)))
         association, loads = assign_numpy(scene.positions, scene.demands, scene.centers)
         actual, mask = env.associations()
         np.testing.assert_array_equal(actual[0][mask[0]].numpy(), association)

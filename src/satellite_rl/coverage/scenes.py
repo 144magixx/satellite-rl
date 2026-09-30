@@ -14,6 +14,7 @@ from satellite_rl.coverage.geometry import assign_numpy, satellite_rays_numpy, v
 
 
 BEAM_COUNT = 100
+EMPTY_PARKING_LATLON = (45.0, 13.0)
 
 
 def _real_numeric(array):
@@ -197,29 +198,71 @@ def _cluster_centers(positions, demands, iterations=12):
                      "cluster_repairs": repairs, "initializer": "weighted_satellite_ray_kmeans_medoid_v1"}
 
 
-def _initial_centers(positions, demands, initialization, cluster_iterations=12):
+def positive_position_candidates(positions, demands):
+    """All distinct positive-request user coordinates in stable lexicographic order."""
+    positions = np.asarray(positions, dtype=np.float64)
+    demands = np.asarray(demands, dtype=np.float64)
+    return np.unique(positions[demands > 0], axis=0)
+
+
+def candidate_positions_sha256(candidates):
+    return hashlib.sha256(np.ascontiguousarray(candidates, dtype="<f8").tobytes()).hexdigest()
+
+
+def _empty_centers(positions, demands, candidate_capacity):
+    candidates = positive_position_candidates(positions, demands)
+    count = len(candidates)
+    if count > candidate_capacity:
+        raise ValueError(f"empty-start scene has {count} unique positive-demand candidates; "
+                         f"increase candidate_capacity above {candidate_capacity}, never truncate users")
+    return np.tile(np.asarray(EMPTY_PARKING_LATLON, dtype=np.float64), (BEAM_COUNT, 1)), {
+        "initialization_valid": count >= BEAM_COUNT,
+        "initialization_error": None if count >= BEAM_COUNT else "unique_positive_positions_below_100",
+        "unique_positive_positions": count,
+        "candidate_count": count,
+        "candidate_capacity": candidate_capacity,
+        "candidate_sha256": candidate_positions_sha256(candidates),
+        "initial_active_count": 0,
+        "parking_coordinates": list(EMPTY_PARKING_LATLON),
+        "initializer": "empty_positive_aircraft_candidates_v1",
+    }
+
+
+def _initial_centers(positions, demands, initialization, cluster_iterations=12,
+                     candidate_capacity=2048):
     if initialization == "rule":
-        return _rule_centers(positions, demands)
-    if initialization == "cluster":
-        return _cluster_centers(positions, demands, iterations=cluster_iterations)
-    raise ValueError("initialization must be 'rule' or 'cluster'")
+        centers, metadata = _rule_centers(positions, demands)
+    elif initialization == "cluster":
+        centers, metadata = _cluster_centers(positions, demands, iterations=cluster_iterations)
+    elif initialization == "empty":
+        return _empty_centers(positions, demands, candidate_capacity)
+    else:
+        raise ValueError("initialization must be 'rule', 'cluster' or 'empty'")
+    return centers, {**metadata, "initial_active_count": BEAM_COUNT if centers is not None else 0,
+                     "parking_coordinates": None}
 
 
 def _initializer_settings(initialization, config):
-    if initialization not in ("rule", "cluster"):
-        raise ValueError("initialization must be 'rule' or 'cluster'")
+    if initialization not in ("rule", "cluster", "empty"):
+        raise ValueError("initialization must be 'rule', 'cluster' or 'empty'")
     options = {} if config is None else config.get("coverage", config)
     if not isinstance(options, dict):
         raise TypeError("coverage configuration must be a mapping")
     iterations = options.get("cluster_iterations", 12)
     if isinstance(iterations, bool) or not isinstance(iterations, (int, np.integer)) or not 1 <= iterations <= 100:
         raise ValueError("cluster_iterations must be an integer in [1,100]")
+    capacity = options.get("candidate_capacity", 2048)
+    if (isinstance(capacity, bool) or not isinstance(capacity, (int, np.integer)) or
+            not 100 <= capacity <= 65536):
+        raise ValueError("candidate_capacity must be an integer in [100,65536]")
     # R is scientifically independent of the unused C iteration setting.
     parameters = {"initialization": initialization}
     if initialization == "cluster":
         parameters["cluster_iterations"] = int(iterations)
+    if initialization == "empty":
+        parameters["candidate_capacity"] = int(capacity)
     digest = hashlib.sha256(json.dumps(parameters, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return int(iterations), digest
+    return int(iterations), int(capacity), digest
 
 
 def _read_source(path):
@@ -282,7 +325,7 @@ def load_dataset(path, initialization="rule", config=None):
     record.json and source_observations_*.jsonl.gz files. Existing stage-two
     scene_*.npz files are deliberately rejected: they lack aircraft records.
     """
-    cluster_iterations, initializer_hash = _initializer_settings(initialization, config)
+    cluster_iterations, candidate_capacity, initializer_hash = _initializer_settings(initialization, config)
     path = Path(path)
     if path.suffix == ".npz":
         prepared_sha = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -314,21 +357,41 @@ def load_dataset(path, initialization="rule", config=None):
                 if (saved_centers is not None and
                         metadata.get("initializer_sha256") == initializer_hash):
                     centers, init_meta = saved_centers[i].copy(), {}
-                    original_meta = scene_meta[i]
+                    original_meta = dict(scene_meta[i])
+                    original_meta.setdefault("initial_active_count",
+                                             0 if initialization == "empty" or np.isnan(centers).all()
+                                             else BEAM_COUNT)
+                    original_meta.setdefault("parking_coordinates",
+                                             list(EMPTY_PARKING_LATLON) if initialization == "empty" else None)
                 else:
-                    centers, init_meta = _initial_centers(p, d, initialization, cluster_iterations)
+                    centers, init_meta = _initial_centers(p, d, initialization,
+                                                          cluster_iterations, candidate_capacity)
                     initializer_keys = {"initialization_valid", "initialization_error",
                                         "unique_positive_positions", "initial_empty_beams",
-                                        "initializer", "cluster_iterations", "cluster_repairs"}
+                                        "initializer", "cluster_iterations", "cluster_repairs",
+                                        "candidate_count", "candidate_capacity", "candidate_sha256",
+                                        "initial_active_count", "parking_coordinates"}
                     original_meta = {key: value for key, value in scene_meta[i].items()
                                      if key not in initializer_keys}
                 if centers is not None:
                     _validate_centers(centers, f"{path}: scene {i}")
+                if initialization == "empty":
+                    candidates = positive_position_candidates(p, d)
+                    candidate_meta = {**original_meta, **init_meta}
+                    if len(candidates) > candidate_capacity:
+                        raise ValueError(f"{path}: scene {i} has {len(candidates)} unique positive-demand "
+                                         f"candidates; increase candidate_capacity above {candidate_capacity}")
+                    if (candidate_meta.get("candidate_count") != len(candidates) or
+                            candidate_meta.get("candidate_sha256") != candidate_positions_sha256(candidates) or
+                            candidate_meta.get("candidate_capacity") != candidate_capacity or
+                            candidate_meta.get("initialization_valid") != (len(candidates) >= BEAM_COUNT)):
+                        raise ValueError(f"{path}: scene {i} empty-start candidate metadata differs from aircraft input")
                 scenes.append(CoverageScene(scene_ids[i], p, d,
                                             np.full((BEAM_COUNT, 2), np.nan) if centers is None else centers,
                                             ids[i], {**original_meta, **init_meta}, source_hashes[i]))
             return CoverageDataset(scenes, {**metadata, "initialization": initialization,
                                             "cluster_iterations": cluster_iterations if initialization == "cluster" else None,
+                                            "candidate_capacity": candidate_capacity if initialization == "empty" else None,
                                             "initializer_sha256": initializer_hash,
                                             "prepared_npz_sha256": prepared_sha})
     files = sorted(path.glob("source_observations_*.jsonl.gz")) if path.is_dir() else [path]
@@ -341,7 +404,8 @@ def load_dataset(path, initialization="rule", config=None):
     snapshots = source.get("snapshots", [])
     for file in files:
         rows, positions, demands, ids, source_sha = _read_source(file)
-        centers, init_meta = _initial_centers(positions, demands, initialization, cluster_iterations)
+        centers, init_meta = _initial_centers(positions, demands, initialization,
+                                              cluster_iterations, candidate_capacity)
         if centers is not None:
             _validate_centers(centers, str(file))
         identity = _business_hash(rows)
@@ -360,6 +424,7 @@ def load_dataset(path, initialization="rule", config=None):
     return CoverageDataset(scenes, {
         "format_version": "coverage_aircraft_v1", "initialization": initialization,
         "cluster_iterations": cluster_iterations if initialization == "cluster" else None,
+        "candidate_capacity": candidate_capacity if initialization == "empty" else None,
         "initializer_sha256": initializer_hash,
         "partition_role": source.get("partition_role"),
         "source_dates": source.get("source_dates", []),
@@ -406,6 +471,7 @@ def save_dataset(dataset, destination):
               "prepared_npz_sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
               "initialization": dataset.metadata.get("initialization"),
               "cluster_iterations": dataset.metadata.get("cluster_iterations"),
+              "candidate_capacity": dataset.metadata.get("candidate_capacity"),
               "initializer_sha256": dataset.metadata.get("initializer_sha256"),
               "partition_role": dataset.metadata.get("partition_role"),
               "source_dates": dataset.metadata.get("source_dates", []),

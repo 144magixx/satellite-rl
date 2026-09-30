@@ -26,6 +26,9 @@ def run_baseline(scene, config, method="none"):
     """
     if method not in ("none", "local_search"):
         raise ValueError("baseline method must be 'none' or 'local_search'")
+    options = config.get("coverage", config) if isinstance(config, dict) else {}
+    if options.get("initialization") == "empty":
+        raise ValueError("empty-start has no approved none/local_search baseline; use the P0 PPO construction task")
     start = time.perf_counter()
     common = {"method": method, "scene_id": scene.scene_id,
               "source_hash": scene.source_hash,

@@ -14,7 +14,13 @@
     el("name").value = config.name;
     for (const [id,key] of Object.entries(coverageFields)) el(id).value = config.coverage[key];
     for (const [id,key] of Object.entries(trainingFields)) el(id).value = config.training[key];
-    el("config-json").value = JSON.stringify(config,null,2); renderDatasets();
+    el("config-json").value = JSON.stringify(config,null,2); applyMode(); renderDatasets();
+  }
+  function applyMode() {
+    const pure=config.coverage.initialization==="empty";
+    for(const id of ["coordinate-step","max-movement","sweeps"])el(id).disabled=pure;
+    for(const option of el("method").options)option.disabled=pure&&option.value!=="ppo";
+    el("action-note").textContent=pure?"纯PPO起始真实激活束为0；从原始正需求航空器位置池中逐次选100个唯一波位。局部格步长、移动范围与移动代价不适用。":"规则/聚类提供100束基础布局，PPO每步保持或局部移动一束；固定0.5°全宽。";
   }
   function readForm() {
     config.name = el("name").value;
@@ -56,8 +62,8 @@
   document.addEventListener("DOMContentLoaded", async () => {
     try {config=(await request("coverage/catalog")).defaults;writeForm();await refresh();message("第一阶段配置已加载；正式任务在当前连接的远端工作台执行。");}catch(error){message(error.message,true);return;}
     el("refresh").onclick=()=>guarded(refresh);
-    el("initialization").onchange=()=>{readForm();renderDatasets();};
-    el("validate").onclick=()=>guarded(async()=>{const result=await request("coverage/validate",readForm());config=result.config;writeForm();message(`校验通过：${result.summary.state_dim}维状态，${result.summary.action_dim}个中心动作；评分差分，gamma=1。`);});
+    el("initialization").onchange=()=>{config.coverage.initialization=el("initialization").value;if(config.coverage.initialization==="empty"){config.coverage.method="ppo";config.coverage.sweeps=1;}else{config.coverage.sweeps=2;}writeForm();};
+    el("validate").onclick=()=>guarded(async()=>{const result=await request("coverage/validate",readForm());config=result.config;writeForm();message(`校验通过：${result.summary.state_dim}维共用状态，${result.summary.action_dim}个候选动作；学习回报为评分差分×0.01，gamma=1。`);});
     el("apply-json").onclick=()=>guarded(async()=>{const result=await request("coverage/validate",JSON.parse(el("config-json").value));config=result.config;writeForm();message("完整配置已校验并应用。");});
     el("save").onclick=()=>guarded(async()=>{const saved=await request("coverage/configs",{config:readForm()});message("方案已保存："+saved.id);});
     el("import-data").onclick=()=>guarded(async()=>{message("正在按基础布局准备逐机数据…");const record=await request("coverage/datasets/import",{path:el("data-path").value,partition_role:el("data-role").value,coverage:readForm().coverage});await refresh();el("data-"+record.partition_role).value=record.id;message(`已保存${record.count}个场景；初始化失败${record.failed_initializations}个，来源SHA已保留。`);});
