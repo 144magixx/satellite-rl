@@ -36,6 +36,9 @@ EARTH_KM = 6371.0
 ORBIT_KM = 42164.0
 SAT_LON_DEG = 13.0
 BEAM_COUNT = 100
+BPS_ATOL = 1e-6
+OTHER_METRIC_ATOL = 1e-7
+METRIC_RTOL = 1e-9
 
 
 def sha256(path: Path) -> str:
@@ -139,7 +142,8 @@ def layouts_hash(centers):
     return hashlib.sha256(np.asarray(centers, dtype="<f8").tobytes()).hexdigest()
 
 
-def require_close(issues, context, key, actual, expected, *, rtol=1e-11, atol=1e-6):
+def require_close(issues, context, key, actual, expected, *, rtol=METRIC_RTOL,
+                  atol=OTHER_METRIC_ATOL):
     if not np.isclose(actual, expected, rtol=rtol, atol=atol):
         issues.append(f"{context}: {key} saved={actual!r}, recomputed={expected!r}")
 
@@ -253,7 +257,12 @@ def physical_metrics(positions, demands, centers, active, initial, options):
     movement_applicable = options["initialization"] != "empty"
     movement = view_angles(center_rays, rays(initial)) if movement_applicable else np.zeros(BEAM_COUNT)
     coverage_demand = covered_total / total if total > 0 else 0.0
-    coverage_users = float(np.count_nonzero(covered) / len(demands))
+    # Torch divides two int64 count tensors into float32 in the frozen GPU
+    # environment. Reproduce that one rounding point before the float64 score
+    # combines it with demand coverage and load CV. NumPy's default division
+    # here would silently use float64 and report false 1e-8 audit failures.
+    coverage_users = float(np.float32(np.count_nonzero(covered)) /
+                           np.float32(len(demands)))
     empty = int(np.count_nonzero(loads <= 0))
     feasible = bool(coverage_demand >= options["min_coverage_demand"] and
                     coverage_users >= options["min_coverage_users"] and
@@ -327,10 +336,10 @@ def audit_terminal(label, row, source, options, issues):
                                     centers, active, initial, options)
         if not np.array_equal(associated, physical["assignment"]):
             issues.append(f"{context}: saved unique aircraft associations differ")
-        if not np.allclose(loads_saved, physical["loads"], rtol=1e-12, atol=1e-5):
+        if not np.allclose(loads_saved, physical["loads"], rtol=METRIC_RTOL, atol=BPS_ATOL):
             issues.append(f"{context}: saved all-100-beam loads differ")
         if not np.isclose(float(loads_saved.sum() + physical["uncovered_demand_bps"]),
-                          source["requested_demand_bps"], rtol=1e-12, atol=1e-5):
+                              source["requested_demand_bps"], rtol=1e-12, atol=BPS_ATOL):
             issues.append(f"{context}: source demand is not conserved")
         for key in METRICS:
             if key not in saved_metrics:
@@ -346,7 +355,8 @@ def audit_terminal(label, row, source, options, issues):
                     issues.append(f"{context}: saved {key} differs from physical count")
             else:
                 require_close(issues, context, key, float(actual), float(expected),
-                              rtol=1e-11, atol=1e-5 if key.endswith("bps") else 1e-9)
+                              rtol=METRIC_RTOL,
+                              atol=BPS_ATOL if key.endswith("bps") else OTHER_METRIC_ATOL)
         for name, value in (("initial_layout_hash", initial), ("final_layout_hash", centers)):
             if row.get(name) is not None and row[name] != layouts_hash(value):
                 issues.append(f"{context}: {name} differs from saved center bytes")
@@ -454,8 +464,8 @@ def audit_group(label, result, result_sha, originals, issues, *, require_frozen)
             issues.append(f"{label}: saved summary missing {key}")
             continue
         require_close(issues, label, f"summary.{key}", float(observed[key]),
-                      float(summary[key]), rtol=1e-10,
-                      atol=1e-5 if key.endswith("bps") else 1e-9)
+                      float(summary[key]), rtol=METRIC_RTOL,
+                      atol=BPS_ATOL if key.endswith("bps") else OTHER_METRIC_ATOL)
     return {"result_sha256": result_sha, "frozen_dataset_sha256": frozen["sha256"] if frozen else None,
             "saved_summary": observed, "audited_summary": summary, "scenes": ordered}
 
@@ -661,6 +671,10 @@ def main():
              "original_aircraft_record_sha256": originals["record_sha256"] if originals else None,
              "metric_policy": {"beam_count": 100, "full_width_deg": 0.5,
                                "association": "nearest active satellite ray, lowest beam ID ties",
+                               "numeric_contract": {"bps_atol": BPS_ATOL,
+                                                    "other_metric_atol": OTHER_METRIC_ATOL,
+                                                    "metric_rtol": METRIC_RTOL},
+                               "coverage_users_precision": "float32 count division, matching frozen Torch environment",
                                "failure_denominator": "all 100 scenes, failed initializer counts zero coverage/feasible",
                                "movement": "satellite-view angle to each initial center; P0 not applicable",
                                "pair_delta": "new minus old, one independent scene per index"},
