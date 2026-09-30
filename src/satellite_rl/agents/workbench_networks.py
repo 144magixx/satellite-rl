@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from satellite_rl.state_layouts import natural_dim, natural_shapes, natural_token_count
 
 
 def _activation(name):
@@ -48,9 +49,13 @@ class Encoder(nn.Module):
             if self.transformer_layout == "scalar_tokens":
                 self.input_projection = nn.Linear(1, embed)
                 self.position = nn.Parameter(torch.zeros(1, state_dim, embed))
-            elif self.transformer_layout in ("tsac_13_tokens", "tsac_14_context", "tsac_32_context"):
+            elif self.transformer_layout in ("tsac_13_tokens", "tsac_14_context", "tsac_32_context", "tsac_natural_context"):
                 expected_dim = {"tsac_13_tokens": 204, "tsac_14_context": 207,
-                                "tsac_32_context": 2946}[self.transformer_layout]
+                                "tsac_32_context": 2946}.get(self.transformer_layout)
+                if self.transformer_layout == "tsac_natural_context":
+                    self.natural_level = config["state"]["context_level"]
+                    self.natural_shapes = natural_shapes(self.natural_level)
+                    expected_dim = natural_dim(self.natural_level)
                 if state_dim != expected_dim:
                     raise ValueError(f"T-SAC {self.transformer_layout} layout requires the ordered {expected_dim}-dimensional state")
                 self.geo_embed = nn.Linear(2, embed)
@@ -80,6 +85,19 @@ class Encoder(nn.Module):
                     self.beam_embed = nn.Linear(110, embed)
                     self.resource_embed = nn.Linear(204, embed)
                 self.extra_pos_embed = nn.Parameter(torch.zeros(1, 19, embed))
+            elif self.transformer_layout == "tsac_natural_context":
+                # Preserve the common 13-token and encoder initialization. Only
+                # actual visible fields receive a projection and position.
+                with torch.random.fork_rng(devices=[]):
+                    if "natural_global_context" in self.natural_shapes:
+                        self.global_embed = nn.Linear(self.natural_shapes["natural_global_context"][0], embed)
+                    if "natural_beam_context" in self.natural_shapes:
+                        self.beam_embed = nn.Linear(10 * self.natural_shapes["natural_beam_context"][-1], embed)
+                    if "natural_resource_context" in self.natural_shapes:
+                        self.resource_embed = nn.Linear(self.natural_shapes["natural_resource_context"][-1], embed)
+                extra = natural_token_count(self.natural_level) - 13
+                if extra:
+                    self.extra_pos_embed = nn.Parameter(torch.zeros(1, extra, embed))
             self.output_dim = embed
         else:
             raise ValueError(f"Unsupported network: {kind}")
@@ -113,6 +131,23 @@ class Encoder(nn.Module):
                 self.resource_embed(states[:, 1314:2946].reshape(batch, 8, 204)),
             ), dim=1) + self.extra_pos_embed
             tokens = torch.cat((tokens, context), dim=1)
+        elif self.transformer_layout == "tsac_natural_context":
+            offset = 204
+            parts = []
+            if "natural_global_context" in self.natural_shapes:
+                width = self.natural_shapes["natural_global_context"][0]
+                parts.append(self.global_embed(states[:, offset:offset + width]).unsqueeze(1))
+                offset += width
+            if "natural_beam_context" in self.natural_shapes:
+                width = 100 * self.natural_shapes["natural_beam_context"][-1]
+                parts.append(self.beam_embed(states[:, offset:offset + width].reshape(batch, 10, width // 10)))
+                offset += width
+            if "natural_resource_context" in self.natural_shapes:
+                width = 8 * self.natural_shapes["natural_resource_context"][-1]
+                parts.append(self.resource_embed(states[:, offset:offset + width].reshape(batch, 8, width // 8)))
+                offset += width
+            if parts:
+                tokens = torch.cat((tokens, torch.cat(parts, dim=1) + self.extra_pos_embed), dim=1)
         encoded = self.net(tokens.permute(1, 0, 2)).permute(1, 0, 2)
         return encoded[:, 0]
 
@@ -194,6 +229,8 @@ def _model_description(config, state_dim, action_dims):
         variant = f"workbench_{algorithm}_transformer_tsac_14_context_v1"
     elif config["network"]["kind"] == "transformer" and layout == "tsac_32_context":
         variant = f"workbench_{algorithm}_transformer_tsac_32_context_v1"
+    elif config["network"]["kind"] == "transformer" and layout == "tsac_natural_context":
+        variant = f"workbench_{algorithm}_transformer_tsac_natural_context_{config['state']['context_level']}_v1"
     return {"graph": nodes, "nodes": nodes, "edges": edges, "branches": branches,
             "parameter_count": count,
             "variant": variant}
@@ -213,8 +250,9 @@ def _trace_layers(model, state_dim):
     hooks = []
 
     layout = getattr(model.encoder, "transformer_layout", None)
-    tsac_layout = layout in ("tsac_13_tokens", "tsac_14_context", "tsac_32_context")
-    token_count = {"tsac_14_context": 14, "tsac_32_context": 32}.get(layout, 13)
+    tsac_layout = layout in ("tsac_13_tokens", "tsac_14_context", "tsac_32_context", "tsac_natural_context")
+    token_count = (natural_token_count(model.encoder.natural_level) if layout == "tsac_natural_context"
+                   else {"tsac_14_context": 14, "tsac_32_context": 32}.get(layout, 13))
 
     def shape(value, layer_name):
         if isinstance(value, torch.Tensor):
@@ -258,14 +296,14 @@ def _trace_layers(model, state_dim):
         layers.insert(before_net, {"name": "encoder.pos_embed", "type": "PositionalParameter",
                                    "input_shape": [13, embed], "output_shape": [13, embed],
                                    "parameters": model.encoder.pos_embed.numel()})
-        if token_count == 14:
+        if layout == "tsac_14_context":
             layers.insert(before_net + 1, {"name": "encoder.context_pos_embed", "type": "PositionalParameter",
                                            "input_shape": [1, embed], "output_shape": [1, embed],
                                            "parameters": model.encoder.context_pos_embed.numel()})
             before_net += 1
-        elif token_count == 32:
+        elif hasattr(model.encoder, "extra_pos_embed"):
             layers.insert(before_net + 1, {"name": "encoder.extra_pos_embed", "type": "PositionalParameter",
-                                           "input_shape": [19, embed], "output_shape": [19, embed],
+                                           "input_shape": [token_count - 13, embed], "output_shape": [token_count - 13, embed],
                                            "parameters": model.encoder.extra_pos_embed.numel()})
             before_net += 1
         layers.insert(before_net + 1, {"name": "encoder.tokens", "type": "TokenAssembly",

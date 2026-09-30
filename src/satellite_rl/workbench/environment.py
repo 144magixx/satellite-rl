@@ -207,8 +207,17 @@ class WorkbenchEnv:
             definitions.update(beta=[float(demands.mean()) / 6e8],
                                remaining_demand=[float(demands[idx:].sum()) / (count * 6e8)],
                                remaining_demand_mean=[float(demands[idx:].mean()) / 6e8 if idx < count else 0])
-        if "global_context" in self.config["state"]["features"]:
+        features = self.config["state"]["features"]
+        if "global_context" in features:
             definitions.update(self._structured_context(definitions, ratios))
+        elif "natural_global_context" in features:
+            context = self._structured_context(definitions, ratios)
+            level = self.config["state"]["context_level"]
+            definitions["natural_global_context"] = context["global_context"][:3 if level == "compact" else 10]
+            if "natural_beam_context" in features:
+                definitions["natural_beam_context"] = context["beam_context"][:, :, :5 if level == "layout" else 11]
+            if "natural_resource_context" in features:
+                definitions["natural_resource_context"] = context["resource_context"][:, :204 if level == "full" else 4]
         for fid in self.config["state"]["features"]:
             value = np.asarray(base[fid] if fid in base else definitions[fid], dtype=np.float32).reshape(-1)
             parts.append(value)

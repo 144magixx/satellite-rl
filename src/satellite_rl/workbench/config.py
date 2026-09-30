@@ -3,6 +3,8 @@
 from copy import deepcopy
 import math
 from satellite_rl.envs.regions import get_profile, profile_catalog, profile_metadata
+from satellite_rl.state_layouts import (NATURAL_CONTEXT_LEVELS, natural_dim,
+                                        natural_shapes, natural_token_count)
 
 
 FEATURES = [
@@ -25,7 +27,16 @@ FEATURES = [
     dict(id="global_context", label="分档全局信息", description="平均需求、进度、剩余需求及资源服务概况；按信息档位开放", shape=[10], unit="归一化", timing="动作前", source="全场景与当前分配", visibility="known"),
     dict(id="beam_context", label="分档全部波束信息", description="100束的几何需求与当前分配记录；10束一段，不含未来动作或最终容量", shape=[10, 10, 11], unit="归一化", timing="动作前", source="全场景与已执行动作", visibility="known"),
     dict(id="resource_context", label="分档全部频率组信息", description="8组资源服务概况及逐槽占用、当前束视角历史干扰", shape=[8, 204], unit="归一化", timing="动作前", source="真实资源账与历史波束", visibility="known"),
+    dict(id="natural_global_context", label="自然全局信息", description="仅包含本档实际开放的全局信息", shape=[10], unit="归一化", timing="动作前", source="全场景与当前分配", visibility="known"),
+    dict(id="natural_beam_context", label="自然波束信息", description="仅包含本档实际开放的波束字段", shape=[10, 10, 11], unit="归一化", timing="动作前", source="全场景与已执行动作", visibility="known"),
+    dict(id="natural_resource_context", label="自然频率组信息", description="仅包含本档实际开放的资源字段", shape=[8, 204], unit="归一化", timing="动作前", source="真实资源账与历史波束", visibility="known"),
 ]
+
+
+def _feature_shape(config, fid):
+    if config["network"]["transformer_layout"] == "tsac_natural_context" and fid in natural_shapes(config["state"]["context_level"]):
+        return natural_shapes(config["state"]["context_level"])[fid]
+    return next(f["shape"] for f in FEATURES if f["id"] == fid)
 
 REWARD_TERMS = [
     ("si_delta", "需求满足率增量", "所有已处理波束当前满足率总和的变化", "step", "service"),
@@ -147,7 +158,7 @@ def _number(value, name, lower=None, upper=None, integer=False, strictly=False):
 def _network_size(config):
     """Cheap conservative bound before the API constructs any PyTorch modules."""
     n = config["network"]
-    state_dim = sum(math.prod(next(f["shape"] for f in FEATURES if f["id"] == fid))
+    state_dim = sum(math.prod(_feature_shape(config, fid))
                     for fid in config["state"]["features"])
     heads = 110 + len(config["environment"]["power_levels_w"])
     if n["kind"] == "mlp":
@@ -160,11 +171,22 @@ def _network_size(config):
         output = widths[-1] * min(16, state_dim)
     else:
         embed, ff = n["embedding_dim"], n["feedforward_dim"]
-        token_count = {"tsac_13_tokens": 13, "tsac_14_context": 14, "tsac_32_context": 32}.get(n["transformer_layout"], state_dim)
+        token_count = (natural_token_count(config["state"]["context_level"])
+                       if n["transformer_layout"] == "tsac_natural_context" else
+                       {"tsac_13_tokens": 13, "tsac_14_context": 14, "tsac_32_context": 32}.get(n["transformer_layout"], state_dim))
         if token_count ** 2 * n["num_heads"] * n["num_layers"] > 20_000_000:
             raise ValueError("Transformer 状态长度、注意力头数与层数的组合过大")
         projection = {"tsac_13_tokens": 42 * embed, "tsac_14_context": 47 * embed, "tsac_32_context": 388 * embed}.get(
             n["transformer_layout"], (state_dim + 2) * embed)
+        if n["transformer_layout"] == "tsac_natural_context":
+            shapes = natural_shapes(config["state"]["context_level"])
+            projection = 42 * embed
+            if "natural_global_context" in shapes:
+                projection += (shapes["natural_global_context"][0] + 2) * embed
+            if "natural_beam_context" in shapes:
+                projection += (10 * shapes["natural_beam_context"][-1] + 1 + 10) * embed
+            if "natural_resource_context" in shapes:
+                projection += (shapes["natural_resource_context"][-1] + 1 + 8) * embed
         encoder = projection + n["num_layers"] * (
             4 * embed * embed + 2 * embed * ff + 9 * embed + ff)
         output = embed
@@ -191,7 +213,7 @@ def validate_config(raw):
     n = c["network"]
     if n["kind"] not in ("mlp", "cnn", "transformer") or n["activation"] not in ("relu", "gelu", "tanh"):
         raise ValueError("不支持的网络或激活函数")
-    if n["transformer_layout"] not in ("scalar_tokens", "tsac_13_tokens", "tsac_14_context", "tsac_32_context"):
+    if n["transformer_layout"] not in ("scalar_tokens", "tsac_13_tokens", "tsac_14_context", "tsac_32_context", "tsac_natural_context"):
         raise ValueError("不支持的 Transformer 输入布局")
     if n["transformer_layout"] == "tsac_13_tokens":
         if c["algorithm"] != "sac" or n["kind"] != "transformer":
@@ -212,7 +234,15 @@ def validate_config(raw):
             raise ValueError("32令牌分档状态须为原204维后依次追加全局、全部波束、全部频率组信息，共2946维")
         if c["state"]["demand_visibility"] != "known" or c["state"]["context_level"] not in ("compact", "summary", "layout", "full"):
             raise ValueError("32令牌布局需要需求已知及有效的状态信息档位")
-    elif c["state"]["context_level"] != "none" or any(fid in c["state"]["features"] for fid in ("global_context", "beam_context", "resource_context")):
+    elif n["transformer_layout"] == "tsac_natural_context":
+        level = c["state"]["context_level"]
+        if c["algorithm"] != "sac" or n["kind"] != "transformer" or level not in NATURAL_CONTEXT_LEVELS:
+            raise ValueError("自然状态布局仅支持需求已知的SAC Transformer与有效档位")
+        if c["state"]["demand_visibility"] != "known" or c["state"]["features"] != list(natural_shapes(level)):
+            raise ValueError("自然状态布局要求本档实际开放的状态特征及规范顺序")
+        if n["dropout"] != 0 or c["reward"]["preset"] != "legacy_repaired" or c["training"]["scene_order"] != "shuffle_each_cycle":
+            raise ValueError("自然状态对照固定旧奖励、dropout=0与每轮打乱场景")
+    elif c["state"]["context_level"] != "none" or any(fid in c["state"]["features"] for fid in ("global_context", "beam_context", "resource_context", "natural_global_context", "natural_beam_context", "natural_resource_context")):
         raise ValueError("状态信息档位与分档特征仅适用于32令牌布局，旧布局使用none")
     for key in ("hidden_sizes", "cnn_channels"):
         if not isinstance(n[key], list) or not n[key] or len(n[key]) > 8:
@@ -344,7 +374,9 @@ def catalog():
                                      dict(id="tsac_14_context", label="T-SAC＋全局状态（14令牌）", implemented=True,
                                           description="207维：原204维后加平均需求、进度、剩余需求；独立权重版本"),
                                      dict(id="tsac_32_context", label="状态分档对照（32令牌）", implemented=True,
-                                          description="四档共用2946维封装与32令牌骨干，未开放信息严格置零")],
+                                          description="四档共用2946维封装与32令牌骨干，未开放信息严格置零"),
+                                     dict(id="tsac_natural_context", label="自然维度状态对照", implemented=True,
+                                          description="输入仅含实际开放信息；状态与令牌数随档位变化")],
                 network_presets=[dict(id="tsac_13_tokens", label="原 T-SAC（13 令牌）",
                                       description="一键设置原网络尺寸和204维状态输入；新训练的权重与旧实验不逐位相同",
                                       algorithm="sac", state_features=["beam", "power", "interference", "occupancy"],
@@ -364,11 +396,28 @@ def catalog():
                                       state_features=["beam", "power", "interference", "occupancy", "global_context", "beam_context", "resource_context"],
                                       network=dict(kind="transformer", transformer_layout="tsac_32_context",
                                                    embedding_dim=128, num_heads=8, num_layers=2,
-                                                   feedforward_dim=512, activation="relu", dropout=0.1))],
+                                                   feedforward_dim=512, activation="relu", dropout=0.1)),
+                                 dict(id="tsac_natural_context", label="自然维度状态对照",
+                                      description="状态输入及令牌随档位变化；旧奖励、关闭dropout、每轮打乱场景",
+                                      algorithm="sac", demand_visibility="known", context_level="none",
+                                      reward_preset="legacy_repaired", scene_order="shuffle_each_cycle",
+                                      state_features=list(natural_shapes("none")),
+                                      network=dict(kind="transformer", transformer_layout="tsac_natural_context",
+                                                   embedding_dim=128, num_heads=8, num_layers=2,
+                                                   feedforward_dim=512, activation="relu", dropout=0))],
                 context_levels=[dict(id="compact", label="少量全局信息", description="原204维＋平均需求、进度、剩余需求"),
                                 dict(id="summary", label="资源与服务概况", description="再开放全局及8组资源服务概况"),
                                 dict(id="layout", label="完整布局与需求", description="再开放全部100束的位置、需求、分组与顺序"),
                                 dict(id="full", label="布局、分配与干扰", description="再开放已执行动作、逐束当前服务、全部组逐槽占用与历史干扰")],
+                natural_context_levels=[dict(id=level, label=label, description=description,
+                                             state_dim=natural_dim(level), token_count=natural_token_count(level),
+                                             features=list(natural_shapes(level)))
+                                        for level, label, description in (
+                                            ("none", "原204维", "仅原有波束、功率、干扰与占用"),
+                                            ("compact", "少量全局信息", "增加平均需求、进度与剩余需求"),
+                                            ("summary", "资源与服务概况", "增加全局10项与8组资源概况"),
+                                            ("layout", "完整布局与需求", "增加100束位置、需求、分组与顺序"),
+                                            ("full", "布局、分配与干扰", "增加已执行动作、当前服务、逐槽占用与历史干扰"))],
                 action_masks=[dict(id="none", label="关闭", description="沿用原有动作选择与环境裁剪", implemented=True),
                               dict(id="joint_feasible", label="开启：联合掩码＋最低资源预留",
                                    description="仅支持 SAC；联合选择连续空槽和功率，为后续同组波束预留最低频率槽及最低功率", implemented=True,
@@ -380,7 +429,7 @@ def config_summary(config):
     layout, offset = [], 0
     definitions = {f["id"]: f for f in FEATURES}
     for fid in c["state"]["features"]:
-        shape = definitions[fid]["shape"]
+        shape = _feature_shape(c, fid)
         dim = math.prod(shape)
         layout.append(dict(id=fid, offset=offset, dim=dim, shape=shape))
         offset += dim
@@ -418,14 +467,18 @@ def config_summary(config):
     layout_description = ({"scalar_tokens": "状态中每个标量各形成一个令牌，全部令牌汇总后输出",
                            "tsac_13_tokens": "位置、业务需求、功率各1个令牌，干扰与占用按10段合为10个频率槽令牌；读取首令牌输出",
                            "tsac_14_context": "保留原13令牌，另加平均需求、处理进度与剩余需求组成的全局令牌；207维输入，读取首令牌输出",
-                           "tsac_32_context": "四档同2946维封装：原13令牌＋全局1＋每10束一段共10＋8个资源组；未开放信息置零，共32令牌"}
+                           "tsac_32_context": "四档同2946维封装：原13令牌＋全局1＋每10束一段共10＋8个资源组；未开放信息置零，共32令牌",
+                           "tsac_natural_context": "状态与令牌仅包含本档实际开放的信息；无未开放字段占位"}
                           .get(transformer_layout))
     return dict(state_dim=offset, state_layout=layout,
                 environment_profile=c["environment"]["profile"],
                 environment_metadata=environment_metadata,
                 transformer_layout=transformer_layout,
                 network_layout_description=layout_description,
-                network_token_count=({"tsac_13_tokens": 13, "tsac_14_context": 14, "tsac_32_context": 32}.get(transformer_layout, offset) if transformer_layout else None),
+                network_token_count=(natural_token_count(c["state"]["context_level"])
+                                     if transformer_layout == "tsac_natural_context" else
+                                     {"tsac_13_tokens": 13, "tsac_14_context": 14, "tsac_32_context": 32}.get(transformer_layout, offset)
+                                     if transformer_layout else None),
                 context_level=c["state"]["context_level"],
                 telemetry=c["telemetry"],
                 action_dims=[100, 10, len(c["environment"]["power_levels_w"])],

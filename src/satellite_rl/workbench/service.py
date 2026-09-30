@@ -120,7 +120,9 @@ class Application:
             key = "model_" + hashlib.sha256(str(path.parent).encode()).hexdigest()[:20]
             records[key] = {"id": key, "name": path.parent.parent.name + " / " + path.parent.name,
                 "path": str(path.parent), "format": metadata.get("format"), "algorithm": metadata.get("algorithm"),
-                "config": metadata["config"], "provenance": metadata.get("provenance"), "compatible": None}
+                "config": metadata["config"], "provenance": metadata.get("provenance"), "compatible": None,
+                "state_dim": metadata.get("state_dim"), "network_token_count": metadata.get("network_token_count"),
+                "parameter_count": metadata.get("parameter_count")}
         return {"models": list(records.values())}
 
     def get_model(self, identifier):
@@ -165,6 +167,10 @@ class Application:
                   "architecture": loaded.architecture if legacy_type else policy.metadata.get("variant"),
                   "created_at": now(), "source_path": str(source),
                   "sha256": digest(path if path.is_file() else path / "policy.pt")}
+        if not legacy_type:
+            record.update(state_dim=policy.metadata.get("state_dim"),
+                          network_token_count=policy.metadata.get("network_token_count"),
+                          parameter_count=policy.metadata.get("parameter_count"))
         from satellite_rl.envs.regions import profile_metadata
         metadata = profile_metadata(config["environment"].get("profile", "china_legacy"))
         record.update(profile=metadata["id"], environment_version=metadata["environment_version"],
