@@ -118,7 +118,11 @@ class CoverageApplication:
                 if left < right and set(a["dates"]) & set(b["dates"]):
                     raise ValueError("训练/验证/考核航空日期必须隔离")
         config["datasets"] = datasets
-        extra = {"research_stage": "coverage", "execution_target": "u2024110224@10.160.17.102:20418"}
+        purpose = body.get("experiment_role", "formal")
+        if purpose not in ("formal", "verification"):
+            raise ValueError("任务用途须为正式实验或工程验证")
+        extra = {"research_stage": "coverage", "experiment_role": purpose,
+                 "execution_target": "u2024110224@10.160.17.102:20418"}
         if kind == "evaluate" and config["coverage"]["method"] == "ppo":
             model = next((m for m in self.models() if m["id"] == body.get("model_id")), None)
             if not model:

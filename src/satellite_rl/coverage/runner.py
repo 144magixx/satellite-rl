@@ -67,6 +67,17 @@ def _jsonl(path, value):
         stream.flush()
 
 
+def _jsonl_many(path, values):
+    if not values:
+        return
+    path = Path(path)
+    lines = [json.dumps(_jsonable(value), ensure_ascii=False, allow_nan=False) + "\n"
+             for value in values]
+    with path.open("a", encoding="utf-8") as stream:
+        stream.writelines(lines)
+        stream.flush()
+
+
 def _read(path, default=None):
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -234,14 +245,58 @@ def _metrics_row(metrics, index):
 
 def _summary(rows):
     if not rows:
-        return {"scene_count": 0, "valid_scene_count": 0, "failed_scene_count": 0}
-    valid = [row for row in rows if row.get("metrics") is not None]
-    result = {"scene_count": len(rows), "valid_scene_count": len(valid),
-              "failed_scene_count": len(rows) - len(valid)}
-    if valid:
-        result.update({key: float(np.mean([row["metrics"][key] for row in valid]))
-                       for key in valid[0]["metrics"]})
+        return {"scene_count": 0, "valid_scene_count": 0,
+                "valid_metric_scene_count": 0, "failed_scene_count": 0,
+                "pooled_demand_coverage": 0.0}
+    valid_metrics = [row for row in rows if row.get("metrics") is not None]
+    failed = [row.get("metrics") is None or
+              row.get("input", {}).get("metadata", {}).get("initialization_valid") is False
+              for row in rows]
+    result = {"scene_count": len(rows), "valid_scene_count": len(rows) - sum(failed),
+              "valid_metric_scene_count": len(valid_metrics),
+              "failed_scene_count": sum(failed)}
+    requested = [float(np.asarray(row["input"]["demands_bps"], dtype=np.float64).sum())
+                 for row in rows]
+    users = [len(row["input"]["demands_bps"]) for row in rows]
+    coverage_demand = [float(np.clip(row["metrics"]["coverage_demand"], 0, 1))
+                       if not is_failed else 0.0 for row, is_failed in zip(rows, failed)]
+    coverage_users = [float(np.clip(row["metrics"]["coverage_users"], 0, 1))
+                      if not is_failed else 0.0 for row, is_failed in zip(rows, failed)]
+    uncovered_demand = [max(0.0, float(row["metrics"]["uncovered_demand_bps"]))
+                        if not is_failed else total
+                        for row, total, is_failed in zip(rows, requested, failed)]
+    uncovered_users = [float(row["metrics"]["uncovered_users"])
+                       if not is_failed else float(count)
+                       for row, count, is_failed in zip(rows, users, failed)]
+    result.update(coverage_demand=float(np.mean(coverage_demand)),
+                  coverage_users=float(np.mean(coverage_users)),
+                  uncovered_demand_bps=float(np.mean(uncovered_demand)),
+                  uncovered_users=float(np.mean(uncovered_users)),
+                  feasible=float(np.mean([float(row["metrics"]["feasible"])
+                                          if not is_failed else 0.0
+                                          for row, is_failed in zip(rows, failed)])),
+                  pooled_demand_coverage=(float(np.dot(coverage_demand, requested) /
+                                                sum(requested)) if sum(requested) > 0 else 0.0),
+                  requested_demand_bps=float(sum(requested)),
+                  total_uncovered_demand_bps=float(sum(uncovered_demand)),
+                  total_uncovered_users=float(sum(uncovered_users)))
+    if valid_metrics:
+        result.update({key: float(np.mean([row["metrics"][key] for row in valid_metrics]))
+                       for key in valid_metrics[0]["metrics"]
+                       if key not in ("coverage_demand", "coverage_users",
+                                      "uncovered_demand_bps", "uncovered_users", "feasible")})
     return result
+
+
+def _summary_scopes():
+    return {"coverage_demand": "all evaluations; initializer failure=0 even if a partial layout exists",
+            "coverage_users": "all evaluations; initializer failure=0 even if a partial layout exists",
+            "feasible": "all evaluations; initializer failure=false",
+            "uncovered_demand_bps": "all evaluations; initializer failure=all input demand",
+            "uncovered_users": "all evaluations; initializer failure=all input aircraft",
+            "pooled_demand_coverage": "sum covered requested demand / sum all input requested demand",
+            "load_cv/load_std_bps/max_load_bps/movement/score":
+                "representable layouts only; denominator=valid_metric_scene_count; partial failed initializers remain raw"}
 
 
 def _evaluate_policy(config, policy, dataset, *, device, job=None, directory=None,
@@ -422,12 +477,23 @@ def _train(directory, job, config, resume, preflight):
             next_mask = info.get("mask") if "mask" in info else env.action_mask()
             if info.get("episodes_finished", False):
                 terminal = info["episode_metrics"]
+                metric_names = [name for name in terminal
+                                if name not in ("done", "scene_index")]
+                # One device-to-host transfer for the complete vector batch;
+                # preserve the original per-environment row order below.
+                packed = torch.stack(
+                    [terminal[name].to(torch.float64) for name in metric_names] +
+                    [terminal["scene_index"].to(torch.float64),
+                     episode_return.to(torch.float64)], dim=1).cpu().numpy()
                 for i in range(count):
-                    scene_index = int(terminal["scene_index"][i].item())
-                    completed.append({**_metrics_row(terminal, i),
-                                      "episode_return": float(episode_return[i].item()),
+                    scene_index = int(packed[i, -2])
+                    completed.append({**{name: float(packed[i, j])
+                                          for j, name in enumerate(metric_names)},
+                                      "episode_return": float(packed[i, -1]),
                                       "scene_index": scene_index,
-                                      "scene_sha256": train_data.scenes[scene_index].source_hash})
+                                      "scene_sha256": train_data.scenes[scene_index].source_hash,
+                                      "completion_env_step": step + (offset + 1) * count,
+                                      "collected_update_step": update})
                 episode_return.zero_()
             obs, mask = next_obs, next_mask
             if time.monotonic() - last_heartbeat >= 20:
@@ -456,13 +522,22 @@ def _train(directory, job, config, resume, preflight):
                "rollout_steps": length * count, "episode": episode, **diagnostics})
         _jsonl(directory / "metrics.jsonl", {"step": step, "group": "ppo_update",
                "values": diagnostics, "wall_time": _now()})
-        for offset, metrics in enumerate(completed, start=1):
-            _jsonl(directory / "episodes.jsonl", {"env_step": step, "episode": first_episode + offset,
-                   "metrics": metrics})
+        _jsonl_many(directory / "episodes.jsonl", [
+            {"env_step": metrics["completion_env_step"],
+             "update_step": metrics["collected_update_step"],
+             "episode": first_episode + offset,
+             "seed": int(training["seed"]),
+             "training_seed": int(training["seed"]),
+             "scene_index": metrics["scene_index"],
+             "scene_sha256": metrics["scene_sha256"],
+             "metrics": {key: value for key, value in metrics.items()
+                         if key not in ("completion_env_step", "collected_update_step")}}
+            for offset, metrics in enumerate(completed, start=1)])
         if completed:
             terminal_mean = {name: float(np.mean([m[name] for m in completed]))
                              for name in completed[0]
-                             if name not in ("scene_index", "scene_sha256")}
+                             if name not in ("scene_index", "scene_sha256",
+                                             "completion_env_step", "collected_update_step")}
             _jsonl(directory / "metrics.jsonl", {"step": step, "group": "terminal",
                    "values": terminal_mean, "wall_time": _now()})
         if step - last_validation_step >= int(training["validation_interval"]) or step == total:
@@ -479,7 +554,8 @@ def _train(directory, job, config, resume, preflight):
                 _event(directory, job, "training_stopped", env_step=step)
                 return
             _jsonl(directory / "metrics.jsonl", {"step": step, "group": "validation",
-                   "values": summary, "wall_time": _now()})
+                   "values": summary, "metric_scopes": _summary_scopes(),
+                   "wall_time": _now()})
             last_validation_step = step
         elapsed = elapsed_base + time.monotonic() - started
         rate = step / max(elapsed, 1e-9)
@@ -573,6 +649,7 @@ def _evaluation(directory, job, config, preflight):
                              "git_commit": job["git_commit"], "datasets": config["datasets"],
                              "model_path": job.get("model_path"), "config": config,
                              "preflight": preflight,
+                             "metric_scopes": _summary_scopes(),
                              "evaluation_execution": ("batched_deterministic" if
                                  method == "ppo" and config["evaluation"]["action_mode"] == "deterministic"
                                  else "serial_stochastic_reference" if method == "ppo"

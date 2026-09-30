@@ -70,6 +70,7 @@ def validate_config(config):
     n, v, t = c["network"], c["coverage"], c["training"]
     if n["kind"] != "coverage_mlp" or n["dropout"] != 0:
         raise ValueError("布局PPO首版使用独立coverage_mlp且dropout=0")
+    _number(n["dropout"], "dropout", 0, 0)
     if not isinstance(n["hidden_sizes"], list) or not 1 <= len(n["hidden_sizes"]) <= 4:
         raise ValueError("hidden_sizes须为1–4层宽度")
     for width in n["hidden_sizes"]:
@@ -83,7 +84,7 @@ def validate_config(config):
     _number(v["max_movement_deg"], "最大累计卫星视角移动", 0.001, 1.0)
     for key in ("min_coverage_demand", "min_coverage_users"):
         _number(v[key], key, 0, 1)
-    _number(v["cluster_iterations"], "聚类迭代次数", 1, 200, integer=True)
+    _number(v["cluster_iterations"], "聚类迭代次数", 1, 100, integer=True)
     for key in ("score_coverage_demand_weight", "score_coverage_users_weight", "score_load_cv_weight", "score_movement_weight"):
         _number(v[key], key, 0, 10000)
     if t["device"] not in ("cuda", "cpu"):
@@ -98,10 +99,11 @@ def validate_config(config):
         raise ValueError("正式交互预算须能被并行环境数整除")
     if t["seed"] != 51001:
         raise ValueError("当前第一阶段已授权范围固定训练种子51001")
+    _number(t["gamma"], "gamma", 1, 1)
     if t["gamma"] != 1.0:
         raise ValueError("首版以有限时域评分差分为奖励，要求gamma=1以对应终态目标")
     for key in ("gae_lambda", "clip_ratio"):
-        _number(t[key], key, 0, 1)
+        _number(t[key], key, 1e-8, 1)
     for key in ("lr", "max_grad_norm"):
         _number(t[key], key, 1e-8, 10)
     for key in ("entropy_coef", "value_coef"):

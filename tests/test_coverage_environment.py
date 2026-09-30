@@ -1,6 +1,7 @@
 """Small deterministic CPU references; formal computation runs on the remote host."""
 
 import hashlib
+import gzip
 import json
 import tempfile
 import unittest
@@ -10,7 +11,9 @@ import numpy as np
 import torch
 
 from satellite_rl.coverage import CoverageBatchEnv, CoverageDataset, CoverageScene, load_dataset, save_dataset
-from satellite_rl.coverage.geometry import assign_numpy, ray_angle_numpy, satellite_rays_numpy
+from satellite_rl.coverage.geometry import (
+    assign_numpy, ray_angle_numpy, ray_angle_torch, satellite_rays_numpy,
+    satellite_rays_torch, squared_ray_limit)
 from satellite_rl.workbench.aviation import _cover
 from satellite_rl.envs.regions import get_profile
 
@@ -23,7 +26,150 @@ def reference_scene():
                          [f"ac-{i}" for i in range(100)], {"initialization_valid": True}, "source-hash")
 
 
+def full_distance_reference(env):
+    """Original unblocked [N,U,100,3] float64 geometry and metric arithmetic."""
+    users = env._user_rays[env.scene_index]
+    rays = satellite_rays_torch(env.centers)
+    squared = (users[:, :, None, :] - rays[:, None, :, :]).square().sum(-1)
+    nearest_distance, nearest = squared.min(dim=-1)
+    valid = env._user_mask[env.scene_index]
+    covered = valid & (nearest_distance <= squared_ray_limit(0.25) + 1e-14)
+    assignment = torch.where(covered, nearest, -1)
+    demand = env._demands[env.scene_index]
+    loads = torch.zeros_like(env.loads)
+    loads.scatter_add_(1, nearest, torch.where(covered, demand, 0.0))
+    total = torch.where(valid, demand, 0.0).sum(1)
+    covered_demand = torch.where(covered, demand, 0.0).sum(1)
+    uncovered = torch.where(valid & ~covered, demand, 0.0).sum(1)
+    coverage_demand = torch.where(total > 0, covered_demand / total, torch.zeros_like(total))
+    coverage_users = covered.sum(1) / valid.sum(1).clamp_min(1)
+    mean = loads.mean(1)
+    cv = torch.where(mean > 0, loads.std(1, unbiased=False) / mean, torch.zeros_like(mean))
+    movement = ray_angle_torch(rays, satellite_rays_torch(env.initial_centers))
+    score = (env.options["score_coverage_demand_weight"] * coverage_demand +
+             env.options["score_coverage_users_weight"] * coverage_users -
+             env.options["score_load_cv_weight"] * cv -
+             env.options["score_movement_weight"] * movement.mean(1) / env.options["max_movement_deg"])
+    return {"distance": squared, "assignment": assignment, "loads": loads,
+            "coverage_demand": coverage_demand, "coverage_users": coverage_users,
+            "uncovered_demand_bps": uncovered, "score": score}
+
+
 class CoverageEnvironmentTests(unittest.TestCase):
+    def test_blocked_distance_cache_matches_full_geometry_actions_and_restore(self):
+        first = reference_scene()
+        second = reference_scene()
+        second.scene_id = "more-aircraft"
+        second.positions = np.vstack((second.positions, [50.2, 10.3], [65.0, 25.0], [30.0, -35.0]))
+        second.demands = np.r_[second.demands, 1.25e6, 2.5e6, 3.75e6]
+        second.aircraft_ids.extend(("extra-covered", "extra-a", "extra-b"))
+        dataset = CoverageDataset([first, second])
+        config = {"coverage": {"sweeps": 1}}
+        env = CoverageBatchEnv(dataset, config, num_envs=3, device="cpu", auto_reset=False)
+        env._distance_env_chunk = 2
+        env._distance_user_chunk = 17
+        env._column_env_chunk = 2
+        env.reset(scene_indices=[0, 1, 0])
+        initial = full_distance_reference(env)
+        torch.testing.assert_close(env._distance_cache, initial["distance"], rtol=1e-12, atol=1e-14)
+        torch.testing.assert_close(env.loads, initial["loads"], rtol=1e-12, atol=1e-6)
+        self.assertTrue(torch.equal(env.assignment, initial["assignment"]))
+
+        actions_and_results = []
+        snapshot = None
+        for turn in range(8):
+            mask = env.action_mask()
+            actions = torch.tensor([int(mask[i].nonzero()[((turn + i) % int(mask[i].sum()))][0])
+                                    for i in range(env.num_envs)])
+            before = full_distance_reference(env)
+            observation, reward, done, _ = env.step(actions)
+            after = full_distance_reference(env)
+            torch.testing.assert_close(env._distance_cache, after["distance"], rtol=1e-12, atol=1e-14)
+            torch.testing.assert_close(env.loads, after["loads"], rtol=1e-12, atol=1e-6)
+            self.assertTrue(torch.equal(env.assignment, after["assignment"]))
+            for key in ("coverage_demand", "coverage_users", "uncovered_demand_bps", "score"):
+                torch.testing.assert_close(env.metrics()[key], after[key], rtol=1e-12, atol=1e-10)
+            torch.testing.assert_close(reward, (after["score"] - before["score"]).float(),
+                                       rtol=1e-6, atol=1e-6)
+            actions_and_results.append((actions, observation.clone(), reward.clone(), done.clone()))
+            if turn == 3:
+                snapshot = env.state_dict()
+                self.assertNotIn("distance_cache", snapshot)
+                self.assertNotIn("_distance_cache", snapshot)
+        restored = CoverageBatchEnv(dataset, config, num_envs=3, device="cpu", auto_reset=False)
+        restored._distance_env_chunk = 2
+        restored._distance_user_chunk = 17
+        restored._column_env_chunk = 2
+        restored.load_state_dict(snapshot)
+        torch.testing.assert_close(restored._distance_cache, full_distance_reference(restored)["distance"],
+                                   rtol=1e-12, atol=1e-14)
+        for actions, observation, reward, done in actions_and_results[4:]:
+            actual_observation, actual_reward, actual_done, _ = restored.step(actions)
+            torch.testing.assert_close(actual_observation, observation, rtol=0, atol=0)
+            torch.testing.assert_close(actual_reward, reward, rtol=0, atol=0)
+            self.assertTrue(torch.equal(actual_done, done))
+        torch.testing.assert_close(restored.layouts(), env.layouts(), rtol=0, atol=0)
+        torch.testing.assert_close(restored._distance_cache, env._distance_cache, rtol=0, atol=0)
+
+    def test_source_rejects_invalid_coordinates_visibility_and_duplicate_ids(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "source_observations_00000.jsonl.gz"
+            valid = {"aircraft_id": "ABC001", "lat": 50.0, "lon": 13.0, "demand_bps": 1e6}
+            bad_rows = [
+                ({**valid, "lat": 91.0}, "geographic coordinates"),
+                ({**valid, "lon": 51.0}, "outside europe_v1"),
+                ({**valid, "lat": 70.0, "lon": -35.0}, "below 10 degree elevation"),
+            ]
+            for row, reason in bad_rows:
+                with self.subTest(reason=reason):
+                    path.write_bytes(gzip.compress((json.dumps(row) + "\n").encode()))
+                    with self.assertRaisesRegex(ValueError, reason):
+                        load_dataset(path, "rule")
+            rows = [valid, {**valid, "aircraft_id": "abc001", "lon": 13.1}]
+            path.write_bytes(gzip.compress("\n".join(json.dumps(r) for r in rows).encode()))
+            with self.assertRaisesRegex(ValueError, "duplicate aircraft ID"):
+                load_dataset(path, "rule")
+
+    def test_prepared_rechecks_lengths_business_and_visibility(self):
+        scene = reference_scene()
+        with tempfile.TemporaryDirectory() as temp:
+            prepared = Path(temp) / "valid" / "aircraft.npz"
+            save_dataset(CoverageDataset([scene], {"initialization": "rule"}), prepared)
+            with np.load(prepared, allow_pickle=False) as original:
+                payload = {key: original[key] for key in original.files}
+            corruptions = (
+                ("fractional_length", "lengths", np.array([99.5]), "integer vector"),
+                ("excess_length", "lengths", np.array([101]), "length exceeds padded"),
+                ("outside", "positions", np.where(
+                    np.arange(100)[None, :, None] == 0,
+                    np.array([[[50.0, 51.0]]]), payload["positions"]), "outside europe_v1"),
+                ("negative_demand", "demands", np.r_[-1.0, scene.demands[1:]][None],
+                 "invalid nonnegative demand"),
+                ("duplicate_id", "aircraft_ids_json", json.dumps(
+                    [["ac-0", "ac-0", *scene.aircraft_ids[2:]]]), "duplicate aircraft ID"),
+            )
+            for label, key, value, reason in corruptions:
+                with self.subTest(label=label):
+                    target = Path(temp) / f"{label}.npz"
+                    np.savez_compressed(target, **{**payload, key: value})
+                    with self.assertRaisesRegex(ValueError, reason):
+                        load_dataset(target, "rule")
+
+    def test_prepared_preserves_failed_initializer_without_fake_centers(self):
+        scene = reference_scene()
+        scene.positions = scene.positions[:99]
+        scene.demands = scene.demands[:99]
+        scene.aircraft_ids = scene.aircraft_ids[:99]
+        scene.centers = np.full((100, 2), np.nan)
+        scene.metadata = {"initialization_valid": False,
+                          "initialization_error": "unique_positive_positions_below_100"}
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "failed.npz"
+            save_dataset(CoverageDataset([scene], {"initialization": "rule"}), target)
+            restored = load_dataset(target, "rule")
+            self.assertFalse(restored.scenes[0].metadata["initialization_valid"])
+            self.assertTrue(np.isnan(restored.scenes[0].centers).all())
+
     def test_rule_matches_existing_aviation_medoids(self):
         scene = reference_scene()
         with tempfile.TemporaryDirectory() as temp:
@@ -82,6 +228,30 @@ class CoverageEnvironmentTests(unittest.TestCase):
         self.assertAlmostEqual(float(env.loads.sum() + env.metrics()["uncovered_demand_bps"][0]),
                                float(scene.demands.sum()), delta=1e-5)
         self.assertTrue(bool(env.metrics()["feasible"][0]))
+
+    def test_uncovered_demand_uses_direct_aircraft_sum(self):
+        scene = reference_scene()
+        scene.demands = scene.demands + np.linspace(0.0123, 0.9876, 100)
+        env = CoverageBatchEnv(CoverageDataset([scene]), {"coverage": {"sweeps": 1}},
+                               num_envs=1, device="cpu", auto_reset=False)
+        self.assertEqual(env.metrics()["uncovered_demand_bps"][0].item(), 0.0)
+        self.assertEqual(int(env.metrics()["uncovered_users"][0]), 0)
+        self.assertTrue(np.isclose(env.loads[0].sum().item(), scene.demands.sum(), rtol=1e-12))
+
+        scene.positions = np.vstack((scene.positions, [65.0, 25.0], [30.0, -35.0]))
+        scene.demands = np.r_[scene.demands, 5_123_456.125, 7_765_432.875]
+        scene.aircraft_ids.extend(("uncovered-one", "uncovered-two"))
+        partial = CoverageBatchEnv(CoverageDataset([scene]), {"coverage": {"sweeps": 1}},
+                                   num_envs=1, device="cpu", auto_reset=False)
+        assignments, mask = partial.associations()
+        unserved = assignments[0][mask[0]].numpy() < 0
+        direct_uncovered = scene.demands[unserved].sum()
+        self.assertEqual(partial.metrics()["uncovered_demand_bps"][0].item(), direct_uncovered)
+        self.assertEqual(int(partial.metrics()["uncovered_users"][0]), int(unserved.sum()))
+        self.assertTrue(np.isclose(partial.metrics()["coverage_demand"][0].item(),
+                                   scene.demands[~unserved].sum() / scene.demands.sum(), rtol=1e-12))
+        self.assertTrue(np.isclose(partial.loads[0].sum().item() + direct_uncovered,
+                                   scene.demands.sum(), rtol=1e-12, atol=1e-6))
 
     def test_changed_center_reassigns_every_user_against_dot_acos_reference(self):
         scene = reference_scene()

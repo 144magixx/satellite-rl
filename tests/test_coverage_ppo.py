@@ -99,6 +99,42 @@ class CoveragePPOTests(unittest.TestCase):
         actual = (random.random(), float(np.random.random()), torch.rand(1).item())
         self.assertEqual(actual, expected)
 
+    def test_summary_keeps_failed_initializer_in_coverage_denominator(self):
+        from satellite_rl.coverage.runner import _summary
+
+        rows = [
+            {"input": {"demands_bps": [40.0, 60.0],
+                       "metadata": {"initialization_valid": True}},
+             "metrics": {"coverage_demand": 0.8, "coverage_users": 0.5,
+                         "uncovered_demand_bps": 20.0, "uncovered_users": 1,
+                         "feasible": 1.0, "load_cv": 0.7}},
+            {"input": {"demands_bps": [100.0, 100.0, 100.0],
+                       "metadata": {"initialization_valid": False}},
+             "metrics": None},
+        ]
+        summary = _summary(rows)
+        self.assertEqual(summary["scene_count"], 2)
+        self.assertEqual(summary["valid_metric_scene_count"], 1)
+        self.assertEqual(summary["failed_scene_count"], 1)
+        self.assertAlmostEqual(summary["coverage_demand"], 0.4)
+        self.assertAlmostEqual(summary["coverage_users"], 0.25)
+        self.assertAlmostEqual(summary["pooled_demand_coverage"], 0.2)
+        self.assertAlmostEqual(summary["uncovered_demand_bps"], 160.0)
+        self.assertAlmostEqual(summary["feasible"], 0.5)
+        self.assertAlmostEqual(summary["load_cv"], 0.7)
+
+        partial = [{"input": {"demands_bps": [10.0, 90.0],
+                              "metadata": {"initialization_valid": False}},
+                    "metrics": {"coverage_demand": 0.9, "coverage_users": 0.5,
+                                "uncovered_demand_bps": 10.0, "uncovered_users": 1,
+                                "feasible": 0.0, "load_cv": 0.8}}]
+        partial_summary = _summary(partial)
+        self.assertEqual(partial_summary["failed_scene_count"], 1)
+        self.assertEqual(partial_summary["valid_metric_scene_count"], 1)
+        self.assertEqual(partial_summary["coverage_demand"], 0.0)
+        self.assertEqual(partial_summary["uncovered_demand_bps"], 100.0)
+        self.assertEqual(partial_summary["load_cv"], 0.8)
+
 
 if __name__ == "__main__":
     unittest.main()

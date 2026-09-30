@@ -10,10 +10,52 @@ from pathlib import Path
 
 import numpy as np
 
-from satellite_rl.coverage.geometry import assign_numpy, satellite_rays_numpy
+from satellite_rl.coverage.geometry import assign_numpy, satellite_rays_numpy, visible_numpy
 
 
 BEAM_COUNT = 100
+
+
+def _real_numeric(array):
+    return np.issubdtype(array.dtype, np.floating) or np.issubdtype(array.dtype, np.integer)
+
+
+def _validate_aircraft(positions, demands, aircraft_ids, context):
+    """Reject malformed aircraft business without clipping or dropping users."""
+    if (not isinstance(aircraft_ids, list) or
+            any(not isinstance(identifier, str) or not identifier.strip()
+                for identifier in aircraft_ids)):
+        raise ValueError(f"{context}: aircraft IDs must be nonempty strings")
+    canonical_ids = [identifier.strip().lower() for identifier in aircraft_ids]
+    if len(canonical_ids) != len(set(canonical_ids)):
+        raise ValueError(f"{context}: duplicate aircraft ID")
+    if (positions.ndim != 2 or positions.shape[1] != 2 or demands.ndim != 1 or
+            len(positions) == 0 or len(positions) != len(demands) or
+            len(positions) != len(aircraft_ids)):
+        raise ValueError(f"{context}: aircraft positions, demands and IDs have incompatible lengths")
+    if (not _real_numeric(positions) or not _real_numeric(demands) or
+            not np.isfinite(positions).all() or not np.isfinite(demands).all() or
+            np.any(demands < 0)):
+        raise ValueError(f"{context}: nonfinite position or invalid nonnegative demand")
+    if (np.any(np.abs(positions[:, 0]) > 90) or
+            np.any(np.abs(positions[:, 1]) > 180)):
+        raise ValueError(f"{context}: latitude/longitude outside geographic coordinates")
+    visible = visible_numpy(positions, "europe_v1")
+    if not np.all(visible):
+        raise ValueError(f"{context}: {int(np.count_nonzero(~visible))} aircraft outside europe_v1 bounds or below 10 degree elevation")
+
+
+def _validate_centers(centers, context):
+    if centers.shape != (BEAM_COUNT, 2):
+        raise ValueError(f"{context}: initializer must supply exactly 100 latitude/longitude centers")
+    if not _real_numeric(centers):
+        raise ValueError(f"{context}: beam centers must have real numeric coordinates")
+    if np.isnan(centers).all():
+        return  # Explicit failed-initialization sentinel; no artificial beams.
+    if not np.isfinite(centers).all():
+        raise ValueError(f"{context}: partial/nonfinite beam centers")
+    if not np.all(visible_numpy(centers, "europe_v1")):
+        raise ValueError(f"{context}: initial centers outside europe_v1 visibility")
 
 
 @dataclass
@@ -188,14 +230,49 @@ def _read_source(path):
     records = [json.loads(line) for line in raw.splitlines() if line.strip()]
     if not records:
         raise ValueError(f"empty aircraft scene: {path}")
-    ids = [str(r["aircraft_id"]) for r in records]
-    if len(ids) != len(set(ids)):
-        raise ValueError(f"duplicate aircraft ID: {path}")
-    positions = np.array([[r["lat"], r["lon"]] for r in records], dtype=np.float64)
-    demands = np.array([r["demand_bps"] for r in records], dtype=np.float64)
-    if not np.isfinite(positions).all() or not np.isfinite(demands).all() or np.any(demands < 0):
-        raise ValueError(f"nonfinite position or invalid demand: {path}")
+    try:
+        ids = [r["aircraft_id"] for r in records]
+        positions = np.array([[r["lat"], r["lon"]] for r in records], dtype=np.float64)
+        demands = np.array([r["demand_bps"] for r in records], dtype=np.float64)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"{path}: malformed aircraft business fields: {error}") from error
+    _validate_aircraft(positions, demands, ids, str(path))
     return records, positions, demands, ids, sha
+
+
+def _validate_prepared_arrays(lengths, positions, demands, ids, scene_meta,
+                              scene_ids, source_hashes, saved_centers, path):
+    context = str(path)
+    if lengths.ndim != 1 or not np.issubdtype(lengths.dtype, np.integer) or len(lengths) == 0:
+        raise ValueError(f"{context}: prepared aircraft lengths must be a nonempty integer vector")
+    count = len(lengths)
+    if (positions.ndim != 3 or positions.shape[0] != count or positions.shape[2] != 2 or
+            demands.shape != positions.shape[:2] or
+            not _real_numeric(positions) or not _real_numeric(demands)):
+        raise ValueError(f"{context}: prepared positions/demands shape or dtype mismatch")
+    if np.any(lengths <= 0) or np.any(lengths > positions.shape[1]):
+        raise ValueError(f"{context}: prepared aircraft length exceeds padded storage or is empty")
+    if (not isinstance(ids, list) or len(ids) != count or
+            not isinstance(scene_meta, list) or len(scene_meta) != count or
+            any(not isinstance(item, dict) for item in scene_meta) or
+            not isinstance(scene_ids, list) or len(scene_ids) != count or
+            not isinstance(source_hashes, list) or len(source_hashes) != count or
+            any(not isinstance(value, str) or not value for value in scene_ids + source_hashes)):
+        raise ValueError(f"{context}: prepared scene IDs, aircraft IDs, hashes or metadata mismatch")
+    if saved_centers is not None and (
+            saved_centers.shape != (count, BEAM_COUNT, 2) or
+            not _real_numeric(saved_centers)):
+        raise ValueError(f"{context}: prepared beam centers shape or dtype mismatch")
+    for i, length in enumerate(lengths):
+        length = int(length)
+        if (np.any(positions[i, length:] != 0) or
+                np.any(demands[i, length:] != 0)):
+            raise ValueError(f"{context}: scene {i} contains nonzero/invalid padded aircraft data")
+        _validate_aircraft(positions[i, :length], demands[i, :length], ids[i], f"{context}: scene {i}")
+        if saved_centers is not None:
+            _validate_centers(saved_centers[i], f"{context}: scene {i}")
+            if np.isnan(saved_centers[i]).all() and scene_meta[i].get("initialization_valid") is not False:
+                raise ValueError(f"{context}: scene {i} has failed centers without a failed initialization record")
 
 
 def load_dataset(path, initialization="rule", config=None):
@@ -221,13 +298,18 @@ def load_dataset(path, initialization="rule", config=None):
             metadata = json.loads(str(archive["metadata_json"]))
             ids = json.loads(str(archive["aircraft_ids_json"]))
             scene_meta = json.loads(str(archive["scene_metadata_json"]))
-            lengths = archive["lengths"].astype(int)
+            lengths = archive["lengths"]
             positions, demands = archive["positions"], archive["demands"]
             saved_centers = archive["centers"] if "centers" in archive else None
             scene_ids = archive["scene_ids"].tolist()
             source_hashes = archive["source_hashes"].tolist()
+            if not isinstance(metadata, dict):
+                raise ValueError(f"{path}: prepared metadata must be a mapping")
+            _validate_prepared_arrays(lengths, positions, demands, ids, scene_meta,
+                                      scene_ids, source_hashes, saved_centers, path)
             scenes = []
             for i, length in enumerate(lengths):
+                length = int(length)
                 p, d = positions[i, :length].copy(), demands[i, :length].copy()
                 if (saved_centers is not None and
                         metadata.get("initializer_sha256") == initializer_hash):
@@ -240,6 +322,8 @@ def load_dataset(path, initialization="rule", config=None):
                                         "initializer", "cluster_iterations", "cluster_repairs"}
                     original_meta = {key: value for key, value in scene_meta[i].items()
                                      if key not in initializer_keys}
+                if centers is not None:
+                    _validate_centers(centers, f"{path}: scene {i}")
                 scenes.append(CoverageScene(scene_ids[i], p, d,
                                             np.full((BEAM_COUNT, 2), np.nan) if centers is None else centers,
                                             ids[i], {**original_meta, **init_meta}, source_hashes[i]))
@@ -258,6 +342,8 @@ def load_dataset(path, initialization="rule", config=None):
     for file in files:
         rows, positions, demands, ids, source_sha = _read_source(file)
         centers, init_meta = _initial_centers(positions, demands, initialization, cluster_iterations)
+        if centers is not None:
+            _validate_centers(centers, str(file))
         identity = _business_hash(rows)
         try:
             source_index = int(file.name.removeprefix("source_observations_").split(".")[0])
@@ -283,6 +369,15 @@ def load_dataset(path, initialization="rule", config=None):
 
 def save_dataset(dataset, destination):
     """Save aircraft arrays, original hashes and provenance without pickle."""
+    if len(dataset) == 0:
+        raise ValueError("cannot save an empty aircraft coverage dataset")
+    for index, scene in enumerate(dataset.scenes):
+        _validate_aircraft(np.asarray(scene.positions), np.asarray(scene.demands),
+                           scene.aircraft_ids, f"prepared output scene {index}")
+        _validate_centers(np.asarray(scene.centers), f"prepared output scene {index}")
+        if (np.isnan(scene.centers).all() and
+                scene.metadata.get("initialization_valid") is not False):
+            raise ValueError(f"prepared output scene {index}: failed centers need a failure record")
     destination = Path(destination)
     if destination.suffix != ".npz":
         raise ValueError("prepared coverage destination must end in .npz")

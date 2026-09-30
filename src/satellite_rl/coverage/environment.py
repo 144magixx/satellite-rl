@@ -59,6 +59,12 @@ class CoverageBatchEnv:
 
     obs_dim = OBS_DIM
     action_dim = len(ACTION_OFFSETS)
+    # The persistent cache is [parallel environments, padded users, 100].
+    # Build it in small float64 blocks; a 2048-env/1887-user batch otherwise
+    # materializes a much larger [N,U,100,3] temporary on the GPU.
+    _distance_env_chunk = 64
+    _distance_user_chunk = 256
+    _column_env_chunk = 128
 
     def __init__(self, dataset, config, num_envs=32, device="cuda", seed=51001,
                  auto_reset=True):
@@ -101,6 +107,8 @@ class CoverageBatchEnv:
                                      device=self.device, dtype=torch.long)
         self.loads = torch.zeros((self.num_envs, BEAM_COUNT), device=self.device,
                                  dtype=torch.float64)
+        self._distance_cache = torch.empty((self.num_envs, self.max_users, BEAM_COUNT),
+                                            device=self.device, dtype=torch.float64)
         self._metrics = {}
         # Construction must permit an evaluation collection containing failed
         # initializers; its caller records each failure explicitly. A later
@@ -140,23 +148,51 @@ class CoverageBatchEnv:
         self.step_count[rows] = 0
         self.initial_centers[rows] = initial
         self.centers[rows] = initial
-        self._recompute()
+        self._build_distance_cache(rows)
+        self._recompute_from_cache()
+
+    def _build_distance_cache(self, rows):
+        """Rebuild all columns for reset/restore in bounded float64 blocks."""
+        for offset in range(0, rows.numel(), self._distance_env_chunk):
+            batch_rows = rows[offset:offset + self._distance_env_chunk]
+            rays = satellite_rays_torch(self.centers[batch_rows])
+            for start in range(0, self.max_users, self._distance_user_chunk):
+                users_slice = slice(start, min(start + self._distance_user_chunk, self.max_users))
+                users = self._user_rays[self.scene_index[batch_rows], users_slice, :]
+                # Preserve the original subtraction, square and reduction
+                # order for each user/beam pair; only the outer batch is tiled.
+                squared = (users[:, :, None, :] - rays[:, None, :, :]).square().sum(-1)
+                self._distance_cache[batch_rows, users_slice, :] = squared
+
+    def _refresh_distance_column(self, beam):
+        """A step changes one center per environment; update only those rays."""
+        for start in range(0, self.num_envs, self._column_env_chunk):
+            rows = torch.arange(start, min(start + self._column_env_chunk, self.num_envs),
+                                device=self.device)
+            selected_beam = beam[rows]
+            rays = satellite_rays_torch(self.centers[rows, selected_beam])
+            users = self._user_rays[self.scene_index[rows]]
+            squared = (users[:, :, None, :] - rays[:, None, None, :]).square().sum(-1).squeeze(-1)
+            self._distance_cache[rows, :, selected_beam] = squared
 
     def _recompute(self):
-        rays = satellite_rays_torch(self.centers)
-        users = self._user_rays[self.scene_index]
-        # [parallel scenes, aircraft, all 100 beams]. A changed center must
-        # reassign every aircraft, including users formerly on other beams.
-        squared = (users[:, :, None, :] - rays[:, None, :, :]).square().sum(-1)
-        nearest_distance, nearest = squared.min(dim=-1)
+        """Full rebuild for explicit center edits and exact checkpoint restore."""
+        self._build_distance_cache(torch.arange(self.num_envs, device=self.device))
+        self._recompute_from_cache()
+
+    def _recompute_from_cache(self):
+        # Nearest beam, every user's unique association, every beam's load and
+        # uncovered demand are still recomputed globally after each action.
+        nearest_distance, nearest = self._distance_cache.min(dim=-1)
         valid_users = self._user_mask[self.scene_index]
         covered = valid_users & (nearest_distance <= squared_ray_limit(0.25) + 1e-14)
         self.assignment = torch.where(covered, nearest, -1)
         demand = self._demands[self.scene_index]
         self.loads = torch.zeros((self.num_envs, BEAM_COUNT), device=self.device, dtype=torch.float64)
         self.loads.scatter_add_(1, nearest, torch.where(covered, demand, 0.0))
-        total = demand.sum(dim=1)
-        covered_demand = self.loads.sum(dim=1)
+        total = torch.where(valid_users, demand, 0.0).sum(dim=1)
+        covered_demand = torch.where(covered, demand, 0.0).sum(dim=1)
+        uncovered_demand = torch.where(valid_users & ~covered, demand, 0.0).sum(dim=1)
         counts = valid_users.sum(dim=1)
         covered_counts = covered.sum(dim=1)
         coverage_demand = torch.where(total > 0, covered_demand / total, torch.zeros_like(total))
@@ -164,7 +200,8 @@ class CoverageBatchEnv:
         mean = self.loads.mean(dim=1)
         std = self.loads.std(dim=1, unbiased=False)
         cv = torch.where(mean > 0, std / mean, torch.zeros_like(mean))
-        movement = ray_angle_torch(rays, satellite_rays_torch(self.initial_centers))
+        movement = ray_angle_torch(satellite_rays_torch(self.centers),
+                                   satellite_rays_torch(self.initial_centers))
         score = (self.options["score_coverage_demand_weight"] * coverage_demand +
                  self.options["score_coverage_users_weight"] * coverage_users -
                  self.options["score_load_cv_weight"] * cv -
@@ -177,7 +214,7 @@ class CoverageBatchEnv:
         self._metrics = {
             "coverage_demand": coverage_demand,
             "coverage_users": coverage_users,
-            "uncovered_demand_bps": total - covered_demand,
+            "uncovered_demand_bps": uncovered_demand,
             "uncovered_users": counts - covered_counts,
             "load_cv": cv,
             "load_std_bps": std,
@@ -246,7 +283,8 @@ class CoverageBatchEnv:
         self.centers[rows, beam] += self.options["coordinate_step_deg"] * self._offsets[actions]
         self.step_count += 1
         self._step_in_episode += 1
-        self._recompute()
+        self._refresh_distance_column(beam)
+        self._recompute_from_cache()
         reward = (self._metrics["score"] - previous_score).to(torch.float32)
         done = self.step_count >= self.horizon
         terminal = {key: value.clone() for key, value in self._metrics.items()}

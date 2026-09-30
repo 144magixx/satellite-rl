@@ -1,6 +1,7 @@
 """First-stage task/source/data contract, without a formal training run."""
 import copy
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -77,6 +78,14 @@ class CoverageWorkbenchTests(unittest.TestCase):
             with mock.patch("satellite_rl.workbench.coverage.sys.prefix", "wrong-prefix"):
                 with self.assertRaisesRegex(ValueError, "4090D"):
                     coverage.submit({"config": default_config(), "kind":"train"})
+
+    @unittest.skipUnless(Path("/proc/stat").is_file(), "Linux process creation identity")
+    def test_linux_process_identity_matches_creation_time(self):
+        from satellite_rl.workbench.runtime import pid_alive, process_start_time
+        started = process_start_time(os.getpid())
+        self.assertIsNotNone(started)
+        self.assertTrue(pid_alive(os.getpid(), started))
+        self.assertFalse(pid_alive(os.getpid(), started + 20))
 
 
 if __name__ == "__main__":
