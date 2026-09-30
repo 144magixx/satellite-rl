@@ -138,7 +138,10 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         historical["environment"].pop("action_mask", None)
         historical["environment"].pop("profile", None)
         historical["network"].pop("transformer_layout", None)
+        historical["network"].pop("sac_policy_structure", None)
+        historical["network"].pop("sac_critic_structure", None)
         historical["state"].pop("context_level", None)
+        historical["evaluation"].pop("extra_steps", None)
         historical["training"].pop("scene_order", None)
         historical["training"].pop("scene_order_seed", None)
         historical.pop("telemetry", None)
@@ -157,6 +160,15 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         changed = copy.deepcopy(config)
         changed["state"]["context_level"] = "full"
         self.assertNotEqual(config_hash(changed), expected)
+        masked = copy.deepcopy(config)
+        masked["environment"]["action_mask"] = "joint_feasible"
+        structure_hashes = {config_hash(masked)}
+        for key, value in (("sac_policy_structure", "conditional"),
+                           ("sac_critic_structure", "joint")):
+            changed = copy.deepcopy(masked)
+            changed["network"][key] = value
+            structure_hashes.add(config_hash(changed))
+        self.assertEqual(len(structure_hashes), 3)
 
 
 if __name__ == "__main__":
