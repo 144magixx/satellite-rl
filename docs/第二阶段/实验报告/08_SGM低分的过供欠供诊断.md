@@ -62,7 +62,7 @@ A/B过供束的总比例与G07接近，但过供的程度降低了，接近需�
 
 90%–110%、超过2倍、不足50%是本次诊断阈值，未改变原SGM公式或训练奖励；它们是另一组互斥区间，不能和第一节过供/欠供比例重复相加。
 
-![容量需求分布与SGM缺口贡献](../../outputs/experiments/europe_ablation_20260929/analysis/sgm_supply_diagnosis_20260930/sgm_supply_decomposition.png)
+![容量需求分布与SGM缺口贡献](../../../outputs/experiments/europe_ablation_20260929/analysis/sgm_supply_diagnosis_20260930/sgm_supply_decomposition.png)
 
 图由全部保存的终态波束记录生成，无抽样或平滑。左图是容量/需求区间，右图是按原SGM缺口分摊的两侧贡献；精确匹配组没有可见记录。
 
@@ -72,7 +72,7 @@ A/B过供束的总比例与G07接近，但过供的程度降低了，接近需�
 
 这里“过供”指经过全部后续干扰后的最终容量超过需求，并不直接证明该束哪项功率或频率槽多分了多少。本次没有区分初始欠供与后续干扰造成的欠供，也没有做资源重分配或连续功率调整实验。由于束间干扰，任何候选调整仍要重算全部束的终态指标。
 
-代码依据：[SGM实现](../../src/satellite_rl/workbench/environment.py:99)。复现入口：[逐束诊断脚本](../../outputs/experiments/europe_ablation_20260929/analysis/sgm_supply_diagnosis_20260930/analyze_sgm_supply.py)、[完整统计和输入SHA](../../outputs/experiments/europe_ablation_20260929/analysis/sgm_supply_diagnosis_20260930/summary.json)、[图像指纹](../../outputs/experiments/europe_ablation_20260929/analysis/sgm_supply_diagnosis_20260930/figure_manifest.json)。各行SGM从容量/需求按原公式重算，并与原逐束值及工作台汇总核对一致。本次是CPU读取与统计，不新增评价任务；没有新页面操作，前端无需修改，G08自动跟进保持暂停。
+代码依据：[SGM实现](../../../src/satellite_rl/workbench/environment.py:99)。复现入口：[逐束诊断脚本](../../../outputs/experiments/europe_ablation_20260929/analysis/sgm_supply_diagnosis_20260930/analyze_sgm_supply.py)、[完整统计和输入SHA](../../../outputs/experiments/europe_ablation_20260929/analysis/sgm_supply_diagnosis_20260930/summary.json)、[图像指纹](../../../outputs/experiments/europe_ablation_20260929/analysis/sgm_supply_diagnosis_20260930/figure_manifest.json)。各行SGM从容量/需求按原公式重算，并与原逐束值及工作台汇总核对一致。本次是CPU读取与统计，不新增评价任务；没有新页面操作，前端无需修改，G08自动跟进保持暂停。
 
 ## 5. 追问：是不是一个槽也太大，小需求只能过供？
 
@@ -102,8 +102,8 @@ C_5=B\log_2\left(1+\frac{5}{P}\left(2^{C/B}-1\right)\right),\qquad B=25\times10^
 
 A的10406条单槽记录中7222条（69.40%，占全部记录24.07%）、B的10534条中6808条（64.63%，占全部记录22.69%）在这个局部计算下仍过供。B虽然实际没有1槽、5W记录，也不能据此认为B的小需求没有粒度问题。本检查没有重放模型、遍历频点或改变其他束，未计算调整后的全体服务与SGM，不能当作资源重分配的性能结论。多槽记录不能用总容量除以槽数套用这个公式。
 
-![过供缺口与实际分配动作](../../outputs/experiments/europe_ablation_20260929/analysis/slot_granularity_20260930/over_deficit_by_recorded_action.png)
+![过供缺口与实际分配动作](../../../outputs/experiments/europe_ablation_20260929/analysis/slot_granularity_20260930/over_deficit_by_recorded_action.png)
 
-图使用既有100场景×3动作的全量结果，无平滑或抽样，展示实际动作的分类贡献，不表示因果贡献。复现入口：[统计及单槽公式脚本](../../outputs/experiments/europe_ablation_20260929/analysis/slot_granularity_20260930/analyze_slot_granularity.py)、[统计、实际小例及冻结源码SHA](../../outputs/experiments/europe_ablation_20260929/analysis/slot_granularity_20260930/summary.json)、[图像指纹](../../outputs/experiments/europe_ablation_20260929/analysis/slot_granularity_20260930/figure_manifest.json)。代码审计使用共同评价的冻结源码`a0556de7b598f3dd13971b105eb55650aabc1172`：`envs/satellite.py:612,715–729`为功率均分与容量公式，`workbench/environment.py:377–389`为槽数和功率映射；未修改该源码或启动评价。
+图使用既有100场景×3动作的全量结果，无平滑或抽样，展示实际动作的分类贡献，不表示因果贡献。复现入口：[统计及单槽公式脚本](../../../outputs/experiments/europe_ablation_20260929/analysis/slot_granularity_20260930/analyze_slot_granularity.py)、[统计、实际小例及冻结源码SHA](../../../outputs/experiments/europe_ablation_20260929/analysis/slot_granularity_20260930/summary.json)、[图像指纹](../../../outputs/experiments/europe_ablation_20260929/analysis/slot_granularity_20260930/figure_manifest.json)。代码审计使用共同评价的冻结源码`a0556de7b598f3dd13971b105eb55650aabc1172`：`envs/satellite.py:612,715–729`为功率均分与容量公式，`workbench/environment.py:377–389`为槽数和功率映射；未修改该源码或启动评价。
 
 因此后续应分两件事：先确认小需求在最小合法动作下的匹配限制，再区分较大需求的功率和槽数是否过量。降低最低功率、细化带宽或增加时隙占用比例都是候选方法，效果待验证；若研究细化频率槽，应同时保持总带宽与总功率可比，不能只缩小每槽带宽而连总频谱资源一起缩小，也不应为了提高SGM人为放大业务需求。未来真正修改动作粒度时须同步工作台配置、服务端校验、动作维度、元数据和评价，本次仅诊断已有结果，前端无需修改。

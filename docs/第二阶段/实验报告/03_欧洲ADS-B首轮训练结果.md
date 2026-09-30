@@ -32,21 +32,21 @@
 
 下图直接由工作台保存的4000条训练回合指标和40次验证汇总绘制。横轴是环境交互步数；浅蓝线为每个训练回合的原值，深蓝线为**最近100回合的向后平均**（相当于最近约1万步），橙线为每1万步在固定20个验证场景各执行3次随机动作后的均值。训练场景与验证场景来自不同日期，因此两条线反映各自场景上的表现，不应把同一步两条线的差值直接称为泛化差距。红色虚线是3000 W功率预算。
 
-![训练回合与验证的需求满足率、基本服务、供需匹配、功率、回报和频率槽变化](../../outputs/experiments/europe_adsb_20260928/curves/service_resource_curves.png)
+![训练回合与验证的需求满足率、基本服务、供需匹配、功率、回报和频率槽变化](../../../outputs/experiments/europe_adsb_20260928/curves/service_resource_curves.png)
 
-[高清矢量图](../../outputs/experiments/europe_adsb_20260928/curves/service_resource_curves.svg)。训练场景依固定顺序循环使用576份，曲线起伏可能含场景难度周期；单次高低点不能单独解释为模型学好或退化。40次验证的最终需求满足率约88.69%，期间有波动，最高约89.15%；训练回合回报和需求满足率也没有单调上升。不同日期场景间的差别使“训练首尾100回合均值”不能作为严格的学习增益对照。
+[高清矢量图](../../../outputs/experiments/europe_adsb_20260928/curves/service_resource_curves.svg)。训练场景依固定顺序循环使用576份，曲线起伏可能含场景难度周期；单次高低点不能单独解释为模型学好或退化。40次验证的最终需求满足率约88.69%，期间有波动，最高约89.15%；训练回合回报和需求满足率也没有单调上升。不同日期场景间的差别使“训练首尾100回合均值”不能作为严格的学习增益对照。
 
 下图记录了参数更新时的Actor、两个Critic损失和探索温度`alpha`。浅色是每50步保存的原始值，深色是最近100条日志点的向后平均（约5000步）。纵轴采用**对称对数刻度**，既显示负值，也显示大幅正值；图中曲线不是普通线性刻度。损失从早期小值变到较大且反复波动，不能仅凭最终考核的88.93%认定训练过程稳定收敛；这些损失也不是需求满足率。
 
-![Actor与Critic损失、探索温度变化](../../outputs/experiments/europe_adsb_20260928/curves/learning_diagnostics.png)
+![Actor与Critic损失、探索温度变化](../../../outputs/experiments/europe_adsb_20260928/curves/learning_diagnostics.png)
 
-[高清矢量图](../../outputs/experiments/europe_adsb_20260928/curves/learning_diagnostics.svg)。图展示保存的7960条学习日志，398001次实际参数更新以工作台任务状态为准；绘图没有把日志点数当作总更新次数。
+[高清矢量图](../../../outputs/experiments/europe_adsb_20260928/curves/learning_diagnostics.svg)。图展示保存的7960条学习日志，398001次实际参数更新以工作台任务状态为准；绘图没有把日志点数当作总更新次数。
 
 下图展示固定终点模型在**100个考核场景**上的分布：每个场景先对3次随机动作取均值，再把100个场景从低到高累计。橙色虚线是100个场景均值。左图显示部分场景的需求满足率明显低于总平均；中图的场景平均达标束数也不能代替上表“162/300次全部100束达标”的单次分配比例。
 
-![独立考核场景中需求满足率、基本服务束数与功率的累计分布](../../outputs/experiments/europe_adsb_20260928/curves/test_scene_distribution.png)
+![独立考核场景中需求满足率、基本服务束数与功率的累计分布](../../../outputs/experiments/europe_adsb_20260928/curves/test_scene_distribution.png)
 
-[高清矢量图](../../outputs/experiments/europe_adsb_20260928/curves/test_scene_distribution.svg)。图来自[训练/验证指标原始日志](../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37/metrics.jsonl)与[逐场景评价原始日志](../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37/evaluations.jsonl)；[绘图脚本](../../examples/plot_g07_training_curves.py)及[输入文件哈希、记录数、平滑规则和图像哈希](../../outputs/experiments/europe_adsb_20260928/curves/plot_manifest.json)可用于复核。脚本核对训练/验证/考核记录数、40万步终点及评价汇总一致后生成图片，没有重新训练或评价模型。
+[高清矢量图](../../../outputs/experiments/europe_adsb_20260928/curves/test_scene_distribution.svg)。图来自[训练/验证指标原始日志](../../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37/metrics.jsonl)与[逐场景评价原始日志](../../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37/evaluations.jsonl)；[绘图脚本](../../../examples/plot_g07_training_curves.py)及[输入文件哈希、记录数、平滑规则和图像哈希](../../../outputs/experiments/europe_adsb_20260928/curves/plot_manifest.json)可用于复核。脚本核对训练/验证/考核记录数、40万步终点及评价汇总一致后生成图片，没有重新训练或评价模型。
 
 ## 结论与限制
 
@@ -62,8 +62,8 @@
 
 ## 原始证据与模型
 
-- [工作台任务目录](../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37/)、[状态](../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37/status.json)、[考核明细](../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37/results.json)。
-- [最终权重](../../models/runs/workbench/train_sac_20260928_142100_38559f37/final/policy.pt)、[模型元数据](../../models/runs/workbench/train_sac_20260928_142100_38559f37/final/model.json)。
-- [数据来源与校验](../../outputs/experiments/europe_adsb_20260928/source_manifest.json)、[实际场景统计](../../outputs/experiments/europe_adsb_20260928/preflight/actual_data_summary.json)。
+- [工作台任务目录](../../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37)、[状态](../../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37/status.json)、[考核明细](../../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37/results.json)。
+- [最终权重](../../../models/runs/workbench/train_sac_20260928_142100_38559f37/final/policy.pt)、[模型元数据](../../../models/runs/workbench/train_sac_20260928_142100_38559f37/final/model.json)。
+- [数据来源与校验](../../../outputs/experiments/europe_adsb_20260928/source_manifest.json)、[实际场景统计](../../../outputs/experiments/europe_adsb_20260928/preflight/actual_data_summary.json)。
 - 最终权重SHA-256：`78fa2418b59200c5bc31ad545afc598753e932ab5e47cfba233cfa46cc7c195f`。
 - 考核明细SHA-256：`c50f0c9a4a4e6fa36c85710d2416bf8f4185e7df0111fbd3318f49614154f365`。

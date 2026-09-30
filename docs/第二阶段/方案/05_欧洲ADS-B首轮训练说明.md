@@ -68,9 +68,9 @@ flowchart LR
 
 下面用第一训练日00:02 UTC的实际快照说明：左图有293架有效航空器，右图生成100个波束中心并汇总需求。此单一夜间样本的全部293架都落入覆盖内，合成需求合计约6.181 Gbit/s；不能据此推断全天覆盖率或模型效果。
 
-![从ADS-B快照到波束输入](../../outputs/experiments/europe_adsb_20260928/explanation/adsb_to_beams_example.png)
+![从ADS-B快照到波束输入](../../../outputs/experiments/europe_adsb_20260928/explanation/adsb_to_beams_example.png)
 
-图的[来源与参数](../../outputs/experiments/europe_adsb_20260928/explanation/figure_source.json)、[生成脚本](../../outputs/experiments/europe_adsb_20260928/explanation/plot_scene_example.py)均已保存，图来自真实位置及明确的需求模型，没有模型评价分数。
+图的[来源与参数](../../../outputs/experiments/europe_adsb_20260928/explanation/figure_source.json)、[生成脚本](../../../outputs/experiments/europe_adsb_20260928/explanation/plot_scene_example.py)均已保存，图来自真实位置及明确的需求模型，没有模型评价分数。
 
 ## 4. 欧洲环境是什么样的
 
@@ -118,7 +118,7 @@ flowchart LR
 
 ## 7. 实际数据与运行记录
 
-**实际数据与工作台场景已准备；正式训练已提交。** 原始四日包、逐帧CSV、标准场景数组与逐机明细各有SHA-256；完整校验见[来源清单](../../outputs/experiments/europe_adsb_20260928/source_manifest.json)和[场景核验](../../outputs/experiments/europe_adsb_20260928/preflight/actual_data_summary.json)。
+**实际数据与工作台场景已准备；正式训练已提交。** 原始四日包、逐帧CSV、标准场景数组与逐机明细各有SHA-256；完整校验见[来源清单](../../../outputs/experiments/europe_adsb_20260928/source_manifest.json)和[场景核验](../../../outputs/experiments/europe_adsb_20260928/preflight/actual_data_summary.json)。
 
 | 用途 | UTC日期 | 实际场景 | 每场有效飞机范围 | 平均总需求 | 飞机覆盖比例 | 需求覆盖比例 | 工作台场景ID |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
@@ -128,7 +128,7 @@ flowchart LR
 
 需求仍是预先声明的合成业务假设，不是实测机上流量。原始航空位置、被过滤记录与未覆盖需求留在实验目录；训练、验证、考核的航空来源日期和快照日期互不交叉。
 
-从576个训练场景按预定等距序号固定取8个，做原规则的短可行性检查；序号为`[0, 82, 164, 246, 328, 410, 492, 575]`。这是资源账与场景难度检查，没有训练模型，也没有查看考核成绩。[逐场景原始检查](../../outputs/experiments/europe_adsb_20260928/preflight/baseline_feasibility.json)。
+从576个训练场景按预定等距序号固定取8个，做原规则的短可行性检查；序号为`[0, 82, 164, 246, 328, 410, 492, 575]`。这是资源账与场景难度检查，没有训练模型，也没有查看考核成绩。[逐场景原始检查](../../../outputs/experiments/europe_adsb_20260928/preflight/baseline_feasibility.json)。
 
 | 规则 | 最终需求满足率范围/均值 | 达10%基本服务束数范围/均值 | 功率范围/均值 |
 | --- | ---: | ---: | ---: |
@@ -137,8 +137,8 @@ flowchart LR
 
 8个训练场景的两种规则结果均为有限数值，100束处理完成、未超3000 W，发射功率与环境记账一致；它们不能当成欧洲模型的学习成绩。
 
-冻结候选：[配置](../../outputs/experiments/europe_adsb_20260928/preflight/candidate_config.json)。三个场景已由工作台导入，训练576、验证20、考核100。
+冻结候选：[配置](../../../outputs/experiments/europe_adsb_20260928/preflight/candidate_config.json)。三个场景已由工作台导入，训练576、验证20、考核100。
 
-<!-- G07_RUN_RECORD -->2026-09-28晚间补记：工作台任务 train_sac_20260928_142100_38559f37 已于北京时间20:45完成；冻结源码提交 01457f245bf0ab0e23873616e44975693014e3d0，交互400000步、实际参数更新398001次。固定终点权重的100场景×3次随机考核已完成，最终需求满足率88.93%，平均99.24束达到10%基本服务；泛化改善仍需同场景对照。[结果报告](../实验报告/03_欧洲ADS-B首轮训练结果.md) · [任务记录](../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37/)。<!-- /G07_RUN_RECORD -->
+<!-- G07_RUN_RECORD -->2026-09-28晚间补记：工作台任务 train_sac_20260928_142100_38559f37 已于北京时间20:45完成；冻结源码提交 01457f245bf0ab0e23873616e44975693014e3d0，交互400000步、实际参数更新398001次。固定终点权重的100场景×3次随机考核已完成，最终需求满足率88.93%，平均99.24束达到10%基本服务；泛化改善仍需同场景对照。[结果报告](../实验报告/03_欧洲ADS-B首轮训练结果.md) · [任务记录](../../../outputs/workbench/jobs/train_sac_20260928_142100_38559f37)。<!-- /G07_RUN_RECORD -->
 
-本轮不改变算法、奖励或前端选项。真实文件的gzip识别及侧车数组SHA校验修复见[核验记录](../../outputs/experiments/europe_adsb_20260928/import_fix_verification/README.md)。
+本轮不改变算法、奖励或前端选项。真实文件的gzip识别及侧车数组SHA校验修复见[核验记录](../../../outputs/experiments/europe_adsb_20260928/import_fix_verification/README.md)。
