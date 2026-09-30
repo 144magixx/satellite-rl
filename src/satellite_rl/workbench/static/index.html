@@ -24,13 +24,13 @@
     </nav>
     <main>
       <section class="page" id="page-coverage" hidden>
-        <div class="page-heading"><div><p class="eyebrow">FIRST STAGE</p><h1>波束覆盖规划</h1><p>从航空业务生成基础布局，再以PPO微调中心；覆盖与负载独立于第二阶段资源分配评价。</p></div><button type="button" id="coverage-refresh">刷新任务与数据</button></div>
+        <div class="page-heading"><div><p class="eyebrow">FIRST STAGE</p><h1>波束覆盖规划</h1><p>比较规则或聚类基础布局的微调，以及从空布局由PPO逐束构建；覆盖与负载独立于第二阶段资源分配评价。</p></div><button type="button" id="coverage-refresh">刷新任务与数据</button></div>
         <div class="layout-two"><div class="stack">
           <div class="panel"><h2>覆盖方案</h2><div class="field-grid">
             <label class="field">方案名称<input id="coverage-name" value="第一阶段 · 规则布局＋PPO"></label>
             <label class="field">环境<select id="coverage-profile" disabled><option value="europe_v1">欧洲版（航空业务）</option></select></label>
             <label class="field">基础布局<select id="coverage-initialization"><option value="rule">现有需求加权覆盖规则</option><option value="cluster">需求加权聚类</option><option value="empty">无基础布局（纯PPO逐束构建）</option></select></label>
-            <label class="field">微调方法<select id="coverage-method"><option value="ppo">PPO微调</option><option value="none">不微调（评价基线）</option><option value="local_search">普通局部搜索（评价基线）</option></select></label>
+            <label class="field">布局决策<select id="coverage-method"><option value="ppo">PPO</option><option value="none">不微调（评价基线）</option><option value="local_search">普通局部搜索（评价基线）</option></select></label>
             <label class="field">每束轮询次数<input type="number" id="coverage-sweeps" min="1" max="20" value="2"></label>
             <label class="field">经纬度格步长（度）<input type="number" id="coverage-coordinate-step" step="0.01" min="0.001" value="0.1"></label>
             <label class="field">最大累计移动（卫星视角度）<input type="number" id="coverage-max-movement" step="0.01" min="0.001" value="0.25"></label>
@@ -41,7 +41,7 @@
           <div class="panel"><h2>航空业务数据</h2><div class="field-grid">
             <label class="field">远端逐机目录或已准备NPZ<input id="coverage-data-path" placeholder="/home/.../data_inputs/train"></label>
             <label class="field">数据用途<select id="coverage-data-role"><option value="train">训练</option><option value="validation">验证</option><option value="test">独立考核</option></select></label>
-          </div><button id="coverage-import-data" type="button">准备并登记数据</button><p class="small muted">按当前基础布局和聚类配置准备数据，保留原始飞机需求、UTC日期与来源校验。规则/聚类需要各自的数据记录。</p>
+          </div><button id="coverage-import-data" type="button">准备并登记数据</button><p class="small muted">按当前布局模式准备数据，保留原始飞机需求、UTC日期与来源校验。规则、聚类和空布局各自登记训练、验证与考核数据。</p>
           <div class="field-grid"><label class="field">训练数据<select id="coverage-data-train"></select></label><label class="field">验证数据<select id="coverage-data-validation"></select></label><label class="field">独立考核数据<select id="coverage-data-test"></select></label></div></div>
           <div class="panel"><h2>PPO训练与评价</h2><div class="field-grid">
             <label class="field">任务用途<select id="coverage-purpose"><option value="formal">正式实验</option><option value="verification">工程短验证（不计训练成果）</option></select></label>
