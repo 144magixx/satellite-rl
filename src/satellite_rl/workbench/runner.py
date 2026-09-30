@@ -382,6 +382,27 @@ def _summarize_scenes(results):
             for key in keys if all(isinstance(row["metrics"][key], (int, float)) for row in results)}
 
 
+def _validation_due(evaluation, progress, env_step):
+    """Keep legacy cadence; explicit early nodes do not shift the periodic grid.
+
+    Evaluation happens at episode boundaries. A requested off-boundary node is
+    evaluated at the first following boundary and logged at that actual step.
+    The last completed node is part of the full checkpoint, avoiding duplicate
+    evaluation at a restored boundary.
+    """
+    last = progress.get("last_validation_step", -1)
+    if env_step <= last:
+        return False
+    interval = evaluation["interval_steps"]
+    extra = evaluation.get("extra_steps", [])
+    if not extra:
+        return env_step > 0 and interval > 0 and env_step - last >= interval
+    extra_due = any(last < step <= env_step for step in extra)
+    periodic_due = (interval > 0 and env_step > 0
+                    and env_step // interval > max(last, 0) // interval)
+    return extra_due or periodic_due
+
+
 def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step, ledger, scene_set=None):
     from satellite_rl.workbench.environment import WorkbenchEnv
     files = None
@@ -528,6 +549,22 @@ def _training(directory, job, config, ledger, resume):
                 "source_recovery_records": recovery_records,
                 "description": "SAC网络参数及最多64条终止、64条非终止转移；用于离线学习诊断，不可用于恢复训练"}
 
+    def run_validation():
+        save_progress("validating")
+        ledger.flush()
+        _, validation = _fixed_evaluate(config, agent, directory, "validation",
+                                         config["evaluation"]["validation_count"],
+                                         config["evaluation"]["validation_seed"], env_step, ledger,
+                                         scene_set=scene_sets.get("validation"))
+        progress["last_validation_step"] = env_step
+        selection = validation.get("final_si_mean")
+        if selection is not None and (progress["best_validation"] is None or selection > progress["best_validation"]):
+            progress["best_validation"] = selection
+            export_policy(model_dir / "best_validation", agent, config,
+                          {**provenance,
+                           "env_step": env_step, "selection": "validation_si_mean"})
+        save_progress()
+
     if resume:
         snapshot_record = snapshot_artifact(env_step)
         _restore_logging(ledger, directory, env_step)
@@ -538,6 +575,8 @@ def _training(directory, job, config, ledger, resume):
                  config_hash=config_hash(config), training_scene_order=order_provenance)
     last_saved_step = progress.get("last_checkpoint_step", env_step)
     if not resume:
+        if _validation_due(config["evaluation"], progress, env_step):
+            run_validation()
         save_checkpoint(checkpoint, agent, progress, config,
                         {**provenance, "boundary": "next_episode",
                          "scene_order": scene_order.checkpoint_state(episode)})
@@ -640,22 +679,8 @@ def _training(directory, job, config, ledger, resume):
         ledger.record("reward", env_step, episode_terms)
         episode += 1
         save_progress(scene_order=scene_order.checkpoint_state(episode))
-        interval = config["evaluation"]["interval_steps"]
-        if interval > 0 and env_step - progress["last_validation_step"] >= interval:
-            save_progress("validating")
-            ledger.flush()
-            _, validation = _fixed_evaluate(config, agent, directory, "validation",
-                                             config["evaluation"]["validation_count"],
-                                             config["evaluation"]["validation_seed"], env_step, ledger,
-                                             scene_set=scene_sets.get("validation"))
-            progress["last_validation_step"] = env_step
-            selection = validation.get("final_si_mean")
-            if selection is not None and (progress["best_validation"] is None or selection > progress["best_validation"]):
-                progress["best_validation"] = selection
-                export_policy(model_dir / "best_validation", agent, config,
-                              {**provenance,
-                               "env_step": env_step, "selection": "validation_si_mean"})
-            save_progress()
+        if _validation_due(config["evaluation"], progress, env_step):
+            run_validation()
         stopped = (Path(directory) / "stop.request").exists()
         if stopped or env_step - last_saved_step >= training["checkpoint_interval"] or env_step >= training["total_steps"]:
             _ensure_finite_agent(agent)
