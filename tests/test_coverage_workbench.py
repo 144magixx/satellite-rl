@@ -43,6 +43,7 @@ class CoverageWorkbenchTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 freeze_dataset(reference, root / "corrupt")
 
+    @unittest.skipUnless(os.name == "posix", "远端提交门槛使用POSIX绝对路径；在Linux验收")
     def test_baseline_is_evaluation_and_datasets_are_isolated(self):
         with tempfile.TemporaryDirectory() as temporary:
             app = Application(temporary)
