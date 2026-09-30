@@ -21,6 +21,12 @@ def _canonical(config):
     return json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _sac_structures(config):
+    network = config.get("network", {})
+    return (network.get("sac_policy_structure", "factorized"),
+            network.get("sac_critic_structure", "additive"))
+
+
 def config_hash(config):
     """Hash all semantics, including state order, action mapping and normalization."""
     # Only run budget/log cadence may change without changing an inference policy.
@@ -42,8 +48,15 @@ def config_hash(config):
     if semantic["environment"].get("action_mask", "none") == "none":
         semantic["environment"].pop("action_mask", None)
     semantic["network"] = dict(config["network"])
+    if semantic["network"].get("sac_policy_structure", "factorized") == "factorized":
+        semantic["network"].pop("sac_policy_structure", None)
+    if semantic["network"].get("sac_critic_structure", "additive") == "additive":
+        semantic["network"].pop("sac_critic_structure", None)
     if semantic["network"].get("transformer_layout", "scalar_tokens") == "scalar_tokens":
         semantic["network"].pop("transformer_layout", None)
+    semantic["evaluation"] = dict(config["evaluation"])
+    if semantic["evaluation"].get("extra_steps", []) == []:
+        semantic["evaluation"].pop("extra_steps", None)
     semantic["state"] = dict(config["state"])
     if semantic["state"].get("context_level", "none") == "none":
         semantic["state"].pop("context_level", None)
@@ -110,6 +123,9 @@ def export_policy(directory, agent, config, provenance):
                 "state_layout": summary["state_layout"], "state_dim": summary["state_dim"],
                 "network_token_count": summary["network_token_count"],
                 "parameter_count": description["parameter_count"],
+                "sac_policy_structure": _sac_structures(config)[0],
+                "sac_critic_structure": _sac_structures(config)[1],
+                "evaluation_extra_steps": config["evaluation"].get("extra_steps", []),
                 "action_dims": _dimensions(config)[1]}
     _atomic_json(directory / "model.json", metadata)
     return str(directory)
@@ -147,6 +163,11 @@ def load_policy(path, config=None, device="cpu"):
         raise ValueError("Model config differs in state, actions, normalization or other semantics")
     if config_hash(saved) != metadata["config_hash"]:
         raise ValueError("Model metadata config hash mismatch")
+    if (metadata.get("sac_policy_structure", "factorized"),
+            metadata.get("sac_critic_structure", "additive")) != _sac_structures(saved):
+        raise ValueError("Model SAC action structures do not match its saved configuration")
+    if metadata.get("evaluation_extra_steps", []) != saved.get("evaluation", {}).get("extra_steps", []):
+        raise ValueError("Model evaluation steps do not match its saved configuration")
     if metadata.get("variant") != describe_model(saved)["variant"]:
         raise ValueError("Model variant does not match its configured network layout")
     weight_path = directory / "policy.pt"
@@ -173,6 +194,9 @@ def save_checkpoint(path, agent, progress, config, environment_state):
            "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None}
     from satellite_rl.envs.regions import profile_metadata
     _atomic_torch(path, {"format": "satellite_rl_workbench_checkpoint_v1", "config_hash": config_hash(config),
+                         "sac_policy_structure": _sac_structures(config)[0],
+                         "sac_critic_structure": _sac_structures(config)[1],
+                         "evaluation_extra_steps": config["evaluation"].get("extra_steps", []),
                          "environment_profile": profile_metadata(config["environment"].get("profile", "china_legacy")),
                          "agent": agent.state_dict(), "progress": progress,
                          "environment_state": environment_state, "rng": rng})
@@ -187,6 +211,11 @@ def load_checkpoint(path, agent, config):
     payload = torch.load(path, map_location="cpu", weights_only=False)
     if payload.get("format") != "satellite_rl_workbench_checkpoint_v1" or payload.get("config_hash") != config_hash(config):
         raise ValueError("Checkpoint format/config mismatch")
+    if (payload.get("sac_policy_structure", "factorized"),
+            payload.get("sac_critic_structure", "additive")) != _sac_structures(config):
+        raise ValueError("Checkpoint SAC action structures mismatch")
+    if payload.get("evaluation_extra_steps", []) != config["evaluation"].get("extra_steps", []):
+        raise ValueError("Checkpoint evaluation steps mismatch")
     from satellite_rl.envs.regions import profile_metadata
     expected_profile = profile_metadata(config["environment"].get("profile", "china_legacy"))
     if expected_profile["id"] != "china_legacy" and "environment_profile" not in payload:

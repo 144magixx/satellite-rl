@@ -110,7 +110,8 @@ def default_config():
         network=dict(kind="mlp", transformer_layout="scalar_tokens",
                      hidden_sizes=[256, 256], activation="relu", dropout=0,
                      cnn_channels=[16, 32], kernel_size=3, embedding_dim=64,
-                     num_heads=4, num_layers=2, feedforward_dim=128),
+                     num_heads=4, num_layers=2, feedforward_dim=128,
+                     sac_policy_structure="factorized", sac_critic_structure="additive"),
         state=dict(features=["beam", "power", "interference", "occupancy"], demand_visibility="known", context_level="none"),
         reward=dict(preset="legacy_repaired", terms=[dict(id="si_delta", weight=1, scale=1, timing="step")]),
         environment=dict(profile="china_legacy", power_budget_w=3000, basic_fraction=0.1, action_mode="legacy_clip",
@@ -128,7 +129,7 @@ def default_config():
                       log_interval=50, device="cuda"),
         evaluation=dict(validation_count=3, test_count=5, validation_seed=94000,
                         test_seed=95000, interval_steps=1000,
-                        action_mode="deterministic", repeats=1),
+                        action_mode="deterministic", repeats=1, extra_steps=[]),
         telemetry=dict(mode="sync", flush_interval_seconds=2.0, queue_capacity=2048),
     ))
 
@@ -192,7 +193,13 @@ def _network_size(config):
         output = embed
     actor = encoder + (output + 1) * heads
     if config["algorithm"] == "sac":
-        total = 5 * actor + 1
+        # The joint heads are bounded here before actual modules are built.
+        # model_description supplies the exact per-network parameter counts.
+        policy_outputs = (100 * 10 * (1 + len(config["environment"]["power_levels_w"]))
+                          if n["sac_policy_structure"] == "conditional" else heads)
+        critic_outputs = (100 * 10 * len(config["environment"]["power_levels_w"])
+                          if n["sac_critic_structure"] == "joint" else heads)
+        total = 5 * encoder + (output + 1) * (policy_outputs + 4 * critic_outputs) + 1
     elif config["algorithm"] == "dqn":
         total = 2 * actor
     else:
@@ -213,6 +220,13 @@ def validate_config(raw):
     n = c["network"]
     if n["kind"] not in ("mlp", "cnn", "transformer") or n["activation"] not in ("relu", "gelu", "tanh"):
         raise ValueError("不支持的网络或激活函数")
+    if n["sac_policy_structure"] not in ("factorized", "conditional"):
+        raise ValueError("SAC 策略结构须为 factorized 或 conditional")
+    if n["sac_critic_structure"] not in ("additive", "joint"):
+        raise ValueError("SAC 价值结构须为 additive 或 joint")
+    if (n["sac_policy_structure"] != "factorized" or n["sac_critic_structure"] != "additive") and (
+            c["algorithm"] != "sac" or c["environment"]["action_mask"] != "joint_feasible"):
+        raise ValueError("条件策略和联合价值结构仅支持 SAC＋联合可行动作掩码")
     if n["transformer_layout"] not in ("scalar_tokens", "tsac_13_tokens", "tsac_14_context", "tsac_32_context", "tsac_natural_context"):
         raise ValueError("不支持的 Transformer 输入布局")
     if n["transformer_layout"] == "tsac_13_tokens":
@@ -338,6 +352,10 @@ def validate_config(raw):
     ev = c["evaluation"]
     for key in ("validation_count", "test_count", "validation_seed", "test_seed", "interval_steps", "repeats"):
         _number(ev[key], key, 0 if key != "repeats" else 1, integer=True)
+    steps = ev["extra_steps"]
+    if (not isinstance(steps, list) or any(type(step) is not int or step < 0 or
+            step > t["total_steps"] for step in steps) or steps != sorted(set(steps))):
+        raise ValueError("额外验证步数必须是不重复、升序的非负整数，且不超过交互步预算")
     for key in ("validation_count", "test_count"):
         if ev[key] > 1000:
             raise ValueError(f"{key} 不得超过1000")
@@ -365,6 +383,10 @@ def catalog():
                 environment_profiles=profile_catalog(),
                 algorithms=[dict(id=i, label=i.upper(), description="新工作台可训练实现") for i in ("sac", "ppo", "dqn")],
                 networks=[dict(id=i, label=i.upper(), description="可配置骨干网络") for i in ("mlp", "cnn", "transformer")],
+                sac_policy_structures=[dict(id="factorized", label="原分头策略", description="频率起点、槽数与功率分头打分"),
+                                       dict(id="conditional", label="条件策略", description="先选合法起点与槽数，再按已选频率槽选择功率")],
+                sac_critic_structures=[dict(id="additive", label="原加性价值", description="三动作分量的价值相加"),
+                                       dict(id="joint", label="联合动作价值", description="对完整频率槽与功率组合打分")],
                 scene_orders=[dict(id="sequential", label="原顺序循环", description="按固定场景集记录顺序循环", implemented=True),
                               dict(id="shuffle_each_cycle", label="每轮打乱", description="每轮将所有固定训练场景无放回排列；不改变场景内波束顺序", implemented=True)],
                 presets=deepcopy(PRESETS),
@@ -483,4 +505,7 @@ def config_summary(config):
                 telemetry=c["telemetry"],
                 action_dims=[100, 10, len(c["environment"]["power_levels_w"])],
                 action_mask=c["environment"]["action_mask"],
+                sac_policy_structure=c["network"]["sac_policy_structure"],
+                sac_critic_structure=c["network"]["sac_critic_structure"],
+                evaluation_extra_steps=c["evaluation"]["extra_steps"],
                 reward_formula=formula, warnings=warnings)
