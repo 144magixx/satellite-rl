@@ -46,7 +46,8 @@
     if (!runId || loading) return; loading = true;
     try {
       const [detail,logs,results,metrics] = await Promise.all([request("runs/"+encodeURIComponent(runId)),request("runs/"+encodeURIComponent(runId)+"/logs"),request("runs/"+encodeURIComponent(runId)+"/results"),request("runs/"+encodeURIComponent(runId)+"/metrics?limit=300")]);
-      el("status").innerHTML = `<p>状态：${escape(detail.status.stage)} · ${detail.status.env_step||0}/${detail.status.budget_env_steps||0}交互步 · ${detail.status.update_step||0}次更新</p><p>考核：${detail.status.evaluated_scenes||0}/${detail.status.evaluation_total||0}场景</p><p>源码：${escape(detail.job.git_commit)}<br>GPU：${escape(detail.status.preflight?.gpu||detail.status.gpu||"")}<br>冻结配置与来源保留于任务记录。</p><details><summary>任务配置与状态</summary><pre>${escape(JSON.stringify(detail,null,2))}</pre></details>`;
+      const evaluationLabel = detail.job.kind === "train" ? "开发验证" : "独立考核";
+      el("status").innerHTML = `<p>状态：${escape(detail.status.stage)} · ${detail.status.env_step||0}/${detail.status.budget_env_steps||0}交互步 · ${detail.status.update_step||0}次更新</p><p>${evaluationLabel}：${detail.status.evaluated_scenes||0}/${detail.status.evaluation_total||0}场景</p><p>源码：${escape(detail.job.git_commit)}<br>GPU：${escape(detail.status.preflight?.gpu||detail.status.gpu||"")}<br>冻结配置与来源保留于任务记录。</p><details><summary>任务配置与状态</summary><pre>${escape(JSON.stringify(detail,null,2))}</pre></details>`;
       el("logs").textContent = (logs.lines||[]).join("\n");
       el("results").textContent = JSON.stringify(results.summary||results,null,2);
       const list = (metrics.series||metrics.tags||[]); el("curves").innerHTML = list.slice(0,10).map((s) => `<div><p>${escape(s.tag||s.name)}</p>${curve(s)}</div>`).join("") || "暂无原始曲线";
