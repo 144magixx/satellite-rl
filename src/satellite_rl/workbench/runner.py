@@ -125,14 +125,18 @@ def strict_cuda_preflight(job):
     package = Path(satellite_rl.__file__).resolve()
     if not package.is_relative_to(root / "src"):
         raise RuntimeError(f"satellite_rl import is {package}; expected frozen {root / 'src'}")
-    interpreter = Path(sys.executable).resolve()
-    parts = [part.lower() for part in interpreter.parts]
+    # Linux virtual environments may symlink their interpreter outside the
+    # prefix. Verify the active environment, retaining both paths as evidence.
+    interpreter = Path(sys.executable).absolute()
+    environment_prefix = Path(sys.prefix).resolve()
+    parts = [part.lower() for part in environment_prefix.parts]
     if "envs" not in parts or "dqn" not in parts:
-        raise RuntimeError(f"Training/evaluation requires DQN Conda Python, got {interpreter}")
+        raise RuntimeError(f"Training/evaluation requires DQN Python, got {interpreter} ({environment_prefix})")
     if torch.version.cuda is None or not torch.cuda.is_available():
         raise RuntimeError(f"DQN CUDA unavailable: torch={torch.__version__}, cuda={torch.version.cuda}")
     torch.set_num_threads(1)
-    return {"python": str(interpreter), "torch": torch.__version__, "torch_cuda": torch.version.cuda,
+    return {"python": str(interpreter), "python_resolved": str(interpreter.resolve()),
+            "environment_prefix": str(environment_prefix), "torch": torch.__version__, "torch_cuda": torch.version.cuda,
             "gpu": torch.cuda.get_device_name(0), "numpy": np.__version__,
             "source_root": str(root), "package_file": str(package), "git_commit": job["git_commit"],
             "manifest_sha256": _sha256(manifest_path)}
@@ -827,12 +831,16 @@ def run_job(job_dir, *, resume=False):
     from satellite_rl.workbench.config import validate_config
 
     directory = Path(job_dir).resolve()
+    if _read_json(directory / "config.json", {}).get("research_stage") == "coverage":
+        from satellite_rl.coverage.runner import run_coverage_job
+        return run_coverage_job(directory, resume=resume)
     job = {}
     config = None
     ledger = None
     try:
         job = json.loads((directory / "job.json").read_text(encoding="utf-8"))
-        config = validate_config(json.loads((directory / "config.json").read_text(encoding="utf-8")))
+        raw_config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
+        config = validate_config(raw_config)
         if config["training"]["device"] != "cuda":
             raise ValueError("Persistent workbench jobs require training.device=cuda")
         preflight = strict_cuda_preflight(job)
