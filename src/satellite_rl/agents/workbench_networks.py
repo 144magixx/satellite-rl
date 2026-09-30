@@ -163,6 +163,38 @@ class MultiHeadNetwork(nn.Module):
         return tuple(head(x) for head in self.heads)
 
 
+class ConditionalPolicyNetwork(nn.Module):
+    """Full frequency/length logits and power logits for every pair."""
+
+    def __init__(self, config, state_dim, action_dims):
+        super().__init__()
+        self.action_dims = tuple(action_dims)
+        self.encoder = Encoder(config, state_dim)
+        self.frequency_slots = nn.Linear(self.encoder.output_dim, action_dims[0] * action_dims[1])
+        self.conditional_power = nn.Linear(self.encoder.output_dim,
+                                           action_dims[0] * action_dims[1] * action_dims[2])
+
+    def forward(self, states):
+        encoded = self.encoder(states)
+        batch = states.shape[0]
+        return (self.frequency_slots(encoded).reshape(batch, *self.action_dims[:2]),
+                self.conditional_power(encoded).reshape(batch, *self.action_dims))
+
+
+class JointQNetwork(nn.Module):
+    """One learned value per complete frequency/length/power action."""
+
+    def __init__(self, config, state_dim, action_dims):
+        super().__init__()
+        self.action_dims = tuple(action_dims)
+        self.encoder = Encoder(config, state_dim)
+        self.joint_q = nn.Linear(self.encoder.output_dim,
+                                 action_dims[0] * action_dims[1] * action_dims[2])
+
+    def forward(self, states):
+        return self.joint_q(self.encoder(states)).reshape(states.shape[0], *self.action_dims)
+
+
 class ScalarNetwork(nn.Module):
     def __init__(self, config, state_dim):
         super().__init__()
@@ -175,15 +207,24 @@ class ScalarNetwork(nn.Module):
 
 def _model_description(config, state_dim, action_dims):
     """Trace the actual constructed layers and tensor shapes for the UI."""
-    policy = MultiHeadNetwork(config, state_dim, action_dims)
     algorithm = config["algorithm"]
+    policy_structure = config["network"].get("sac_policy_structure", "factorized")
+    critic_structure = config["network"].get("sac_critic_structure", "additive")
+    policy = (ConditionalPolicyNetwork(config, state_dim, action_dims)
+              if algorithm == "sac" and policy_structure == "conditional"
+              else MultiHeadNetwork(config, state_dim, action_dims))
     actor_count = sum(p.numel() for p in policy.parameters())
     count = actor_count
     policy_layers = _trace_layers(policy, state_dim)
     if algorithm == "sac":
-        count = actor_count * 5 + 1  # actor, twin critics/targets, log_alpha
-        specifications = [(name, policy_layers, actor_count) for name in
-                          ("策略", "价值网络1", "价值网络2", "目标价值网络1", "目标价值网络2")]
+        critic = (JointQNetwork(config, state_dim, action_dims)
+                  if critic_structure == "joint" else MultiHeadNetwork(config, state_dim, action_dims))
+        critic_count = sum(p.numel() for p in critic.parameters())
+        critic_layers = _trace_layers(critic, state_dim)
+        count = actor_count + 4 * critic_count + 1
+        specifications = [("策略", policy_layers, actor_count)] + [
+            (name, critic_layers, critic_count) for name in
+            ("价值网络1", "价值网络2", "目标价值网络1", "目标价值网络2")]
     elif algorithm == "ppo":
         value = ScalarNetwork(config, state_dim)
         value_count = sum(p.numel() for p in value.parameters())
@@ -231,6 +272,8 @@ def _model_description(config, state_dim, action_dims):
         variant = f"workbench_{algorithm}_transformer_tsac_32_context_v1"
     elif config["network"]["kind"] == "transformer" and layout == "tsac_natural_context":
         variant = f"workbench_{algorithm}_transformer_tsac_natural_context_{config['state']['context_level']}_v1"
+    if algorithm == "sac" and (policy_structure != "factorized" or critic_structure != "additive"):
+        variant += f"_{policy_structure}_{critic_structure}"
     return {"graph": nodes, "nodes": nodes, "edges": edges, "branches": branches,
             "parameter_count": count,
             "variant": variant}

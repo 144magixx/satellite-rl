@@ -12,10 +12,11 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from satellite_rl.agents.action_masking import (copy_action_mask, entropy_ratio,
+from satellite_rl.agents.action_masking import (conditional_masked_policy, copy_action_mask, entropy_ratio,
                                                 feasible_target_entropy, mask_batch,
                                                 masked_policy)
-from satellite_rl.agents.workbench_networks import MultiHeadNetwork, ScalarNetwork
+from satellite_rl.agents.workbench_networks import (ConditionalPolicyNetwork, JointQNetwork,
+                                                    MultiHeadNetwork, ScalarNetwork)
 
 
 HEADS = ("frequency", "slots", "power")
@@ -178,15 +179,29 @@ class WorkbenchAgent:
         if self.algorithm == "ppo" and config["network"]["dropout"]:
             raise ValueError("PPO does not support dropout: action and update probabilities must match")
         self.action_dims = tuple(action_dims)
+        self.sac_policy_structure = config["network"].get("sac_policy_structure", "factorized")
+        self.sac_critic_structure = config["network"].get("sac_critic_structure", "additive")
+        if self.sac_policy_structure not in ("factorized", "conditional"):
+            raise ValueError("Unsupported SAC policy structure")
+        if self.sac_critic_structure not in ("additive", "joint"):
+            raise ValueError("Unsupported SAC critic structure")
+        if (self.sac_policy_structure != "factorized" or self.sac_critic_structure != "additive"):
+            if self.algorithm != "sac" or self.action_mask_mode != "joint_feasible":
+                raise ValueError("New SAC structures require SAC with joint_feasible action masking")
+            if self.action_dims != (100, 10, 10):
+                raise ValueError("New SAC structures require action dimensions (100, 10, 10)")
         self.target_entropy_ratio = (entropy_ratio(self.train["target_entropy"], self.action_dims)
                                      if self.action_mask_mode == "joint_feasible" else None)
         self.rng = random.Random(self.train["seed"] + 31)
         self.update_step = 0
         self.last_action_info = {}
         if self.algorithm == "sac":
-            self.actor = MultiHeadNetwork(config, state_dim, action_dims).to(self.device)
-            self.critic1 = MultiHeadNetwork(config, state_dim, action_dims).to(self.device)
-            self.critic2 = MultiHeadNetwork(config, state_dim, action_dims).to(self.device)
+            actor_class = (ConditionalPolicyNetwork if self.sac_policy_structure == "conditional"
+                           else MultiHeadNetwork)
+            critic_class = JointQNetwork if self.sac_critic_structure == "joint" else MultiHeadNetwork
+            self.actor = actor_class(config, state_dim, action_dims).to(self.device)
+            self.critic1 = critic_class(config, state_dim, action_dims).to(self.device)
+            self.critic2 = critic_class(config, state_dim, action_dims).to(self.device)
             self.target1 = copy.deepcopy(self.critic1).to(self.device).eval()
             self.target2 = copy.deepcopy(self.critic2).to(self.device).eval()
             self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.train["actor_lr"])
@@ -246,26 +261,54 @@ class WorkbenchAgent:
                     heads, torch.tensor([action], device=self.device)).item())}
             elif self.action_mask_mode == "joint_feasible":
                 frequency_slots, power = mask_batch([action_mask], self.action_dims, self.device)
-                (fl, p, log_fl, log_p, entropy_fl, entropy_p,
-                 entropy_f, entropy_slots) = masked_policy(heads, frequency_slots, power)
-                flat_fl = fl.flatten(1)
-                fl_index = (flat_fl.argmax(1) if deterministic else
-                            torch.distributions.Categorical(probs=flat_fl).sample())
-                power_index = (p.argmax(1) if deterministic else
-                               torch.distributions.Categorical(probs=p).sample())
-                frequency = fl_index // self.action_dims[1]
-                slots = fl_index % self.action_dims[1]
-                action = (int(frequency.item()), int(slots.item()), int(power_index.item()))
-                self.last_action_info = {
-                    "log_prob": float((log_fl[0, action[0], action[1]] +
-                                       log_p[0, action[2]]).item()),
-                    "entropy": float((entropy_fl + entropy_p).item()),
-                    "entropy_frequency": float(entropy_f.item()),
-                    "entropy_slots": float(entropy_slots.item()),
-                    "entropy_power": float(entropy_p.item()),
-                    "target_entropy": float(feasible_target_entropy(
-                        frequency_slots, power, self.target_entropy_ratio).item()),
-                }
+                if self.sac_policy_structure == "conditional":
+                    (fl, conditional_power, log_fl, log_p, entropy_fl, entropy_p,
+                     entropy_f, entropy_slots) = conditional_masked_policy(
+                        heads, frequency_slots, power)
+                    joint = fl.unsqueeze(-1) * conditional_power
+                    if deterministic:
+                        index = joint.flatten(1).argmax(1)
+                        frequency = index // (self.action_dims[1] * self.action_dims[2])
+                        slots = index // self.action_dims[2] % self.action_dims[1]
+                        power_index = index % self.action_dims[2]
+                    else:
+                        fl_index = torch.distributions.Categorical(probs=fl.flatten(1)).sample()
+                        frequency = fl_index // self.action_dims[1]
+                        slots = fl_index % self.action_dims[1]
+                        power_index = torch.distributions.Categorical(
+                            probs=conditional_power[0, frequency.item(), slots.item()].reshape(1, -1)).sample()
+                    action = (int(frequency.item()), int(slots.item()), int(power_index.item()))
+                    self.last_action_info = {
+                        "log_prob": float((log_fl[0, action[0], action[1]] +
+                                           log_p[0, action[0], action[1], action[2]]).item()),
+                        "entropy": float((entropy_fl + entropy_p).item()),
+                        "entropy_frequency": float(entropy_f.item()),
+                        "entropy_slots": float(entropy_slots.item()),
+                        "entropy_power": float(entropy_p.item()),
+                        "target_entropy": float(feasible_target_entropy(
+                            frequency_slots, power, self.target_entropy_ratio).item()),
+                    }
+                else:
+                    (fl, p, log_fl, log_p, entropy_fl, entropy_p,
+                     entropy_f, entropy_slots) = masked_policy(heads, frequency_slots, power)
+                    flat_fl = fl.flatten(1)
+                    fl_index = (flat_fl.argmax(1) if deterministic else
+                                torch.distributions.Categorical(probs=flat_fl).sample())
+                    power_index = (p.argmax(1) if deterministic else
+                                   torch.distributions.Categorical(probs=p).sample())
+                    frequency = fl_index // self.action_dims[1]
+                    slots = fl_index % self.action_dims[1]
+                    action = (int(frequency.item()), int(slots.item()), int(power_index.item()))
+                    self.last_action_info = {
+                        "log_prob": float((log_fl[0, action[0], action[1]] +
+                                           log_p[0, action[2]]).item()),
+                        "entropy": float((entropy_fl + entropy_p).item()),
+                        "entropy_frequency": float(entropy_f.item()),
+                        "entropy_slots": float(entropy_slots.item()),
+                        "entropy_power": float(entropy_p.item()),
+                        "target_entropy": float(feasible_target_entropy(
+                            frequency_slots, power, self.target_entropy_ratio).item()),
+                    }
             else:
                 dists = [torch.distributions.Categorical(logits=logits) for logits in heads]
                 action_t = [torch.argmax(logits, 1) if deterministic else dist.sample()
@@ -392,6 +435,8 @@ class WorkbenchAgent:
                              "critic_2_grad_norm": grad2})
 
     def _update_masked_sac(self):
+        if self.sac_policy_structure != "factorized" or self.sac_critic_structure != "additive":
+            return self._update_joint_action_sac()
         s, a, r, ns, d, current_masks, next_masks = self.replay.sample(
             self.train["batch_size"], self.device, self.action_dims)
         current_fl, current_power = current_masks
@@ -451,6 +496,93 @@ class WorkbenchAgent:
         return _diagnostics({"actor_loss": actor_loss, "critic_1_loss": loss1,
                              "critic_2_loss": loss2, "alpha_loss": alpha_loss,
                              "alpha": self.log_alpha.exp(), "entropy": entropy_actor.mean(),
+                             "entropy_frequency": entropy_frequency.mean(),
+                             "entropy_slots": entropy_slots.mean(),
+                             "entropy_power": entropy_power.mean(),
+                             "target_entropy": target_entropy.mean(),
+                             "legal_frequency_slot_count": current_fl.sum((1, 2)).float().mean(),
+                             "legal_power_count": current_power.sum(1).float().mean(),
+                             "q_mean": (q1.mean() + q2.mean()) / 2,
+                             "q_min": torch.minimum(q1, q2).min(),
+                             "q_max": torch.maximum(q1, q2).max(), "target_mean": target.mean(),
+                             "target_std": target.std(unbiased=False),
+                             "td_abs_mean": ((q1 - target).abs().mean() + (q2 - target).abs().mean()) / 2,
+                             "actor_grad_norm": actor_grad, "critic_1_grad_norm": grad1,
+                             "critic_2_grad_norm": grad2})
+
+    def _masked_joint_distribution(self, states, frequency_slots, power):
+        logits = self._sac_actor_logits(states)
+        if self.sac_policy_structure == "conditional":
+            parts = conditional_masked_policy(logits, frequency_slots, power)
+            fl, conditional_power = parts[:2]
+            joint = fl.unsqueeze(-1) * conditional_power
+        else:
+            parts = masked_policy(logits, frequency_slots, power)
+            fl, power_probability = parts[:2]
+            joint = fl.unsqueeze(-1) * power_probability[:, None, None, :]
+        return joint, parts[4] + parts[5], parts[4], parts[5], parts[6], parts[7]
+
+    def _critic_table(self, critic, states):
+        values = critic(states)
+        return values if self.sac_critic_structure == "joint" else _joint_q(values)
+
+    def _update_joint_action_sac(self):
+        s, a, r, ns, d, current_masks, next_masks = self.replay.sample(
+            self.train["batch_size"], self.device, self.action_dims)
+        current_fl, current_power = current_masks
+        next_fl, next_power = next_masks
+        alpha = self.log_alpha.exp().detach()
+        with torch.no_grad():
+            target = r.clone()
+            active = d < 0.5
+            if active.any():
+                next_prob, next_entropy, *_ = self._masked_joint_distribution(
+                    ns[active], next_fl[active], next_power[active])
+                next_min_q = torch.minimum(self._critic_table(self.target1, ns[active]),
+                                           self._critic_table(self.target2, ns[active]))
+                target[active] += self.train["gamma"] * (
+                    (next_prob * next_min_q).sum((1, 2, 3)) + alpha * next_entropy)
+        q1_table = self._critic_table(self.critic1, s)
+        q2_table = self._critic_table(self.critic2, s)
+        batch_index = torch.arange(s.shape[0], device=self.device)
+        q1 = q1_table[batch_index, a[:, 0], a[:, 1], a[:, 2]]
+        q2 = q2_table[batch_index, a[:, 0], a[:, 1], a[:, 2]]
+        loss1, loss2 = F.mse_loss(q1, target), F.mse_loss(q2, target)
+        _finite_loss(loss1 + loss2)
+        self.critic1_opt.zero_grad(set_to_none=True)
+        loss1.backward()
+        grad1 = _grad_norm(self.critic1, self.train["gradient_clip"])
+        self.critic1_opt.step()
+        self.critic2_opt.zero_grad(set_to_none=True)
+        loss2.backward()
+        grad2 = _grad_norm(self.critic2, self.train["gradient_clip"])
+        self.critic2_opt.step()
+        probability, entropy, entropy_fl, entropy_power, entropy_frequency, entropy_slots = (
+            self._masked_joint_distribution(s, current_fl, current_power))
+        with torch.no_grad():
+            min_q = torch.minimum(self._critic_table(self.critic1, s),
+                                  self._critic_table(self.critic2, s))
+        actor_loss = -((probability * min_q).sum((1, 2, 3)) + alpha * entropy).mean()
+        _finite_loss(actor_loss)
+        self.actor_opt.zero_grad(set_to_none=True)
+        actor_loss.backward()
+        actor_grad = _grad_norm(self.actor, self.train["gradient_clip"])
+        self.actor_opt.step()
+        target_entropy = feasible_target_entropy(current_fl, current_power,
+                                                  self.target_entropy_ratio)
+        alpha_loss = self.log_alpha * (entropy.detach() - target_entropy).mean()
+        _finite_loss(alpha_loss)
+        self.alpha_opt.zero_grad(set_to_none=True)
+        alpha_loss.backward()
+        self.alpha_opt.step()
+        self.update_step += 1
+        with torch.no_grad():
+            for target_net, source_net in ((self.target1, self.critic1), (self.target2, self.critic2)):
+                for target_p, source_p in zip(target_net.parameters(), source_net.parameters()):
+                    target_p.lerp_(source_p, self.train["tau"])
+        return _diagnostics({"actor_loss": actor_loss, "critic_1_loss": loss1,
+                             "critic_2_loss": loss2, "alpha_loss": alpha_loss,
+                             "alpha": self.log_alpha.exp(), "entropy": entropy.mean(),
                              "entropy_frequency": entropy_frequency.mean(),
                              "entropy_slots": entropy_slots.mean(),
                              "entropy_power": entropy_power.mean(),
@@ -547,10 +679,15 @@ class WorkbenchAgent:
                   "update_step": self.update_step}
         if self.algorithm == "sac":
             result["policy_probability_mode"] = "eval_v1"
+            result["sac_policy_structure"] = self.sac_policy_structure
+            result["sac_critic_structure"] = self.sac_critic_structure
         return result
 
     def load_state_dict(self, data):
         if self.algorithm == "sac":
+            if data.get("sac_policy_structure", "factorized") != self.sac_policy_structure or \
+                    data.get("sac_critic_structure", "additive") != self.sac_critic_structure:
+                raise ValueError("SAC checkpoint action structures differ from configured structures")
             mode = data.get("policy_probability_mode")
             if mode is None:
                 if self.action_mask_mode == "joint_feasible":

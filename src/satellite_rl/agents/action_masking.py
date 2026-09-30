@@ -64,6 +64,40 @@ def masked_policy(logits, frequency_slots, power):
             entropy_fl, entropy_power, entropy_frequency, entropy_slots_conditional)
 
 
+def conditional_masked_policy(logits, frequency_slots, power):
+    """Exact joint distribution for π(f,l)π(p|f,l) on the feasible product set."""
+    fl_logits, conditional_power_logits = logits
+    if (fl_logits.ndim != 3 or conditional_power_logits.ndim != 4 or
+            frequency_slots.shape != fl_logits.shape or
+            conditional_power_logits.shape[:3] != fl_logits.shape or
+            power.shape != (fl_logits.shape[0], conditional_power_logits.shape[-1])):
+        raise ValueError("batched mask shape does not match conditional policy logits")
+    if not torch.isfinite(fl_logits).all() or not torch.isfinite(conditional_power_logits).all():
+        raise FloatingPointError("Nonfinite conditional policy logits")
+    if not frequency_slots.any(dim=(1, 2)).all() or not power.any(dim=1).all():
+        raise ValueError("active action_mask has no feasible action")
+    log_fl = fl_logits.masked_fill(~frequency_slots, -torch.inf).flatten(1).log_softmax(-1)
+    log_fl = log_fl.reshape_as(fl_logits)
+    log_p = conditional_power_logits.masked_fill(~power[:, None, None, :], -torch.inf).log_softmax(-1)
+    if not torch.isfinite(log_fl[frequency_slots]).all() or not torch.isfinite(log_p[power[:, None, None, :].expand_as(log_p)]).all():
+        raise FloatingPointError("Nonfinite conditional masked policy normalization")
+    fl = log_fl.exp()
+    conditional_power = log_p.exp()
+    safe_log_fl = torch.where(frequency_slots, log_fl, torch.zeros_like(log_fl))
+    safe_log_p = torch.where(power[:, None, None, :], log_p, torch.zeros_like(log_p))
+    entropy_fl = -(fl * safe_log_fl).sum((1, 2))
+    entropy_power_by_fl = -(conditional_power * safe_log_p).sum(-1)
+    entropy_power = (fl * entropy_power_by_fl).sum((1, 2))
+    frequency_probability = fl.sum(2)
+    safe_log_frequency = torch.where(frequency_probability > 0,
+                                     frequency_probability.clamp_min(torch.finfo(fl.dtype).tiny).log(),
+                                     torch.zeros_like(frequency_probability))
+    entropy_frequency = -(frequency_probability * safe_log_frequency).sum(1)
+    entropy_slots = entropy_fl - entropy_frequency
+    return (fl, conditional_power, safe_log_fl, safe_log_p,
+            entropy_fl, entropy_power, entropy_frequency, entropy_slots)
+
+
 def entropy_ratio(target_entropy, action_dims):
     maximum = math.log(math.prod(action_dims))
     if maximum <= 0 or not math.isfinite(target_entropy) or not 0 <= target_entropy <= maximum:
