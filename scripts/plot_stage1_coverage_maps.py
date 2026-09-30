@@ -397,7 +397,7 @@ def _legend_note(ax):
             transform=ax.transAxes, fontsize=10)
 
 
-def render(results, output, basemap, maximum_load, extents):
+def render(results, output, basemap, maximum_load, extents, *, single_maps=True):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -410,41 +410,42 @@ def render(results, output, basemap, maximum_load, extents):
     for group in GROUPS:
         group_dir = output / group
         group_dir.mkdir(parents=True, exist_ok=True)
-        for index in SCENE_INDICES:
-            row = results[group]["scenes"][index]
-            fig, ax = plt.subplots(figsize=(13, 10), dpi=170)
-            _draw_map(ax, row, norm=norm, cmap=cmap, basemap=basemap,
-                      extent=extents[index])
-            ax.set_title(_title(group, row), fontsize=13)
-            bar = fig.colorbar(scalar, ax=ax, fraction=.028, pad=.025)
-            bar.set_label("Assigned demand per beam (Mbps)")
-            fig.text(.5, .018,
-                     "Geometric footprint only · 13°E GEO · 0.5° full width · clipped at Earth limb / Europe ROI / 10° elevation",
-                     ha="center", fontsize=9, color="#52606d")
-            fig.tight_layout(rect=(0, .025, 1, 1))
-            file = group_dir / f"scene_{index:03d}.png"
-            fig.savefig(file, dpi=170)
-            plt.close(fig)
-            qa = [footprint_data["qa"] for footprint_data in row["_plot"]["footprints"]]
-            records.append({"group": group, "scene_index": index, "scene_id": row["scene_id"],
-                            "source_sha256": row["scene_sha256"],
-                            "business_input_sha256": row["_plot"]["business_input_sha256"],
-                            "selected_time_utc": row["_plot"]["selected_time_utc"],
-                            "terminal_layout_sha256": row.get("final_layout_hash"),
-                            "active_beams": int(row["_plot"]["active"].sum()),
-                            "covered_aircraft": int((row["_plot"]["associations"] >= 0).sum()),
-                            "uncovered_aircraft": int((row["_plot"]["associations"] < 0).sum()),
-                            "demand_coverage": float(row["metrics"]["coverage_demand"]),
-                            "load_cv": float(row["metrics"]["load_cv"]),
-                            "feasible": bool(row["metrics"]["feasible"]),
-                            "clipped_beams": sum(value["clipped_to_region_or_visibility"] for value in qa),
-                            "max_off_axis_error_deg": max(value["max_off_axis_error_deg"] for value in qa),
-                            "max_sphere_radius_error_km": max(value["max_sphere_radius_error_km"] for value in qa),
-                            "boundary_qa_by_beam": qa,
-                            "image": str(file.relative_to(output)).replace("\\", "/"),
-                            "shared_scene_extent_lonlat": list(extents[index]),
-                            "image_sha256": sha256(file),
-                            "image_pixels": [int(round(13*170)), int(round(10*170))]})
+        if single_maps:
+            for index in SCENE_INDICES:
+                row = results[group]["scenes"][index]
+                fig, ax = plt.subplots(figsize=(13, 10), dpi=170)
+                _draw_map(ax, row, norm=norm, cmap=cmap, basemap=basemap,
+                          extent=extents[index])
+                ax.set_title(_title(group, row), fontsize=13)
+                bar = fig.colorbar(scalar, ax=ax, fraction=.028, pad=.025)
+                bar.set_label("Assigned demand per beam (Mbps)")
+                fig.text(.5, .018,
+                         "Geometric footprint only · 13°E GEO · 0.5° full width · clipped at Earth limb / Europe ROI / 10° elevation",
+                         ha="center", fontsize=9, color="#52606d")
+                fig.tight_layout(rect=(0, .025, 1, 1))
+                file = group_dir / f"scene_{index:03d}.png"
+                fig.savefig(file, dpi=170)
+                plt.close(fig)
+                qa = [footprint_data["qa"] for footprint_data in row["_plot"]["footprints"]]
+                records.append({"group": group, "scene_index": index, "scene_id": row["scene_id"],
+                                "source_sha256": row["scene_sha256"],
+                                "business_input_sha256": row["_plot"]["business_input_sha256"],
+                                "selected_time_utc": row["_plot"]["selected_time_utc"],
+                                "terminal_layout_sha256": row.get("final_layout_hash"),
+                                "active_beams": int(row["_plot"]["active"].sum()),
+                                "covered_aircraft": int((row["_plot"]["associations"] >= 0).sum()),
+                                "uncovered_aircraft": int((row["_plot"]["associations"] < 0).sum()),
+                                "demand_coverage": float(row["metrics"]["coverage_demand"]),
+                                "load_cv": float(row["metrics"]["load_cv"]),
+                                "feasible": bool(row["metrics"]["feasible"]),
+                                "clipped_beams": sum(value["clipped_to_region_or_visibility"] for value in qa),
+                                "max_off_axis_error_deg": max(value["max_off_axis_error_deg"] for value in qa),
+                                "max_sphere_radius_error_km": max(value["max_sphere_radius_error_km"] for value in qa),
+                                "boundary_qa_by_beam": qa,
+                                "image": str(file.relative_to(output)).replace("\\", "/"),
+                                "shared_scene_extent_lonlat": list(extents[index]),
+                                "image_sha256": sha256(file),
+                                "image_pixels": [int(round(13*170)), int(round(10*170))]})
         fig, axes = plt.subplots(2, 5, figsize=(25, 11), dpi=130)
         for ax, index in zip(axes.flat, SCENE_INDICES):
             row = results[group]["scenes"][index]
@@ -452,11 +453,11 @@ def render(results, output, basemap, maximum_load, extents):
                       extent=extents[index], compact=True)
             ax.set_title(_title(group, row, compact=True), fontsize=10)
         fig.suptitle(f"{group}: ten fixed test scenes (every 10th temporal stratum midpoint)", fontsize=15)
-        fig.subplots_adjust(bottom=.08, top=.92, hspace=.28, wspace=.16)
-        colorbar = fig.add_axes([.32, .035, .36, .015])
+        fig.subplots_adjust(bottom=.12, top=.92, hspace=.28, wspace=.16)
+        colorbar = fig.add_axes([.32, .062, .36, .018])
         fig.colorbar(scalar, cax=colorbar, orientation="horizontal").set_label("Beam demand (Mbps)")
         file = output / f"overview_{group}.png"
-        fig.savefig(file, dpi=130)
+        fig.savefig(file, dpi=130, bbox_inches="tight", pad_inches=.15)
         plt.close(fig)
     for index in SCENE_INDICES:
         fig, axes = plt.subplots(2, 4, figsize=(22, 11), dpi=130)
@@ -467,11 +468,11 @@ def render(results, output, basemap, maximum_load, extents):
             ax.set_title(_title(group, row, compact=True), fontsize=10)
         _legend_note(axes.flat[7])
         fig.suptitle(f"Scene {index:03d}: paired seven-group geometric coverage", fontsize=15)
-        fig.subplots_adjust(bottom=.08, top=.92, hspace=.28, wspace=.16)
-        colorbar = fig.add_axes([.32, .035, .36, .015])
+        fig.subplots_adjust(bottom=.12, top=.92, hspace=.28, wspace=.16)
+        colorbar = fig.add_axes([.32, .062, .36, .018])
         fig.colorbar(scalar, cax=colorbar, orientation="horizontal").set_label("Beam demand (Mbps)")
         file = output / f"compare_scene_{index:03d}.png"
-        fig.savefig(file, dpi=130)
+        fig.savefig(file, dpi=130, bbox_inches="tight", pad_inches=.15)
         plt.close(fig)
     return records
 
@@ -525,9 +526,19 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--basemap", type=Path,
                         help="Optional local GeoJSON land polygons; no online dependency")
+    parser.add_argument("--refresh-overviews", action="store_true",
+                        help="Refresh only 17 overview images and layout provenance after a completed atlas")
     args = parser.parse_args()
     output = args.output.resolve()
-    if output.exists() and any(path.name != "assets" for path in output.iterdir()):
+    prior = None
+    if args.refresh_overviews:
+        prior = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+        if prior["file_count"]["single_maps"] != 70:
+            raise ValueError("refresh requires a completed 70-map atlas")
+        for record in prior["single_maps"]:
+            if sha256(output / record["image"]) != record["image_sha256"]:
+                raise ValueError("single-map evidence changed before overview refresh")
+    if not args.refresh_overviews and output.exists() and any(path.name != "assets" for path in output.iterdir()):
         raise ValueError(f"output directory must be new or contain only an assets/ folder: {output}")
     if args.basemap is not None and not args.basemap.is_file():
         raise FileNotFoundError(args.basemap)
@@ -536,6 +547,34 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     _, maximum_load = build_footprints(results)
     extents = common_scene_extents(results)
+    if args.refresh_overviews:
+        if result_hashes != prior["results_sha256"]:
+            raise ValueError("overview refresh inputs differ from the original atlas")
+        if abs(maximum_load - prior["color_scale"]["maximum"]) > 1e-8:
+            raise ValueError("overview refresh color scale changed")
+        current_extents = {str(index): list(extents[index]) for index in SCENE_INDICES}
+        if current_extents != prior["shared_extent_by_scene_lonlat"]:
+            raise ValueError("overview refresh viewports changed")
+        if args.basemap is not None and sha256(args.basemap) != prior["basemap"]["sha256"]:
+            raise ValueError("overview refresh basemap changed")
+        render(results, output, basemap, maximum_load, extents, single_maps=False)
+        history_path = output / "overview_refresh_history.json"
+        history = json.loads(history_path.read_text()) if history_path.exists() else []
+        history.append({"at": datetime.now(timezone.utc).isoformat(),
+                        "reason": "reserve lower margin and prevent colorbar text clipping",
+                        "previous_overview_sha256": prior["overviews"],
+                        "previous_renderer_sha256": prior.get("overview_renderer_sha256", prior["script_sha256"])})
+        history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+        prior.setdefault("single_map_renderer_sha256", prior["script_sha256"])
+        prior["overview_renderer_sha256"] = sha256(Path(__file__))
+        prior["overview_refreshed_at"] = datetime.now(timezone.utc).isoformat()
+        for record in prior["overviews"]:
+            record["sha256"] = sha256(output / record["path"])
+        (output / "manifest.json").write_text(json.dumps(prior, ensure_ascii=False, indent=2,
+                                                        allow_nan=False) + "\n", encoding="utf-8")
+        print(json.dumps({"status": "overviews_refreshed", "single_maps_unchanged": 70,
+                          "overviews_updated": len(prior["overviews"])}))
+        return
     records = render(results, output, basemap, maximum_load, extents)
     index = write_index(output, records)
     assets = [output / f"overview_{group}.png" for group in GROUPS]
