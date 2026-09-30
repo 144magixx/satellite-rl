@@ -727,6 +727,20 @@ def _training(directory, job, config, ledger, resume):
     save_progress("completed", metrics=test_summary)
 
 
+def _baseline_environment_config(config):
+    """Original rule baselines share physics, not a learned SAC action head.
+
+    Removing the model's feasible-action mask is intentional for the historical
+    rule baseline. Its environment must also drop SAC-only structure selectors,
+    which require that mask but are never used to build a baseline policy.
+    """
+    baseline = deepcopy(config)
+    baseline["environment"]["action_mask"] = "none"
+    baseline["network"]["sac_policy_structure"] = "factorized"
+    baseline["network"]["sac_critic_structure"] = "additive"
+    return baseline
+
+
 def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
     from satellite_rl.workbench.environment import WorkbenchEnv
     for reference in job.get("model_files", []):
@@ -801,8 +815,7 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
     if baseline_names:
         from satellite_rl.workbench.baselines import BaselinePolicy
         # Baseline names denote the original rules, not silently masked variants.
-        baseline_config = deepcopy(environment_config)
-        baseline_config["environment"]["action_mask"] = "none"
+        baseline_config = _baseline_environment_config(environment_config)
         for name in baseline_names:
             baseline_scenes = []
             mappings = {}
