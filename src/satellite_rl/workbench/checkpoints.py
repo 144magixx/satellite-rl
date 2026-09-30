@@ -99,12 +99,17 @@ def export_policy(directory, agent, config, provenance):
     weight_path = directory / "policy.pt"
     _atomic_torch(weight_path, weights)
     from satellite_rl.envs.regions import profile_metadata
+    from satellite_rl.workbench.config import config_summary
+    summary = config_summary(config)
+    description = describe_model(config)
     metadata = {"format": "satellite_rl_workbench_policy_v1", "algorithm": config["algorithm"],
                 "environment_profile": profile_metadata(config["environment"].get("profile", "china_legacy")),
-                "variant": describe_model(config)["variant"], "config": config,
+                "variant": description["variant"], "config": config,
                 "config_hash": config_hash(config), "provenance": provenance,
                 "weights_sha256": hashlib.sha256(weight_path.read_bytes()).hexdigest(),
-                "state_layout": __import__("satellite_rl.workbench.config", fromlist=["config_summary"]).config_summary(config)["state_layout"],
+                "state_layout": summary["state_layout"], "state_dim": summary["state_dim"],
+                "network_token_count": summary["network_token_count"],
+                "parameter_count": description["parameter_count"],
                 "action_dims": _dimensions(config)[1]}
     _atomic_json(directory / "model.json", metadata)
     return str(directory)
