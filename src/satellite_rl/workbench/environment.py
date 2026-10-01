@@ -123,6 +123,7 @@ class WorkbenchEnv:
         self._prior = None
         self._overload_seen = False
         self._mask_used_power = Decimal(0)
+        self._previous_actual_action = np.zeros(4, dtype=np.float32)
 
     def reset(self, seed=None, scene=None):
         if scene is None:
@@ -137,6 +138,22 @@ class WorkbenchEnv:
         else:
             arrays = validate_scene(scene, self.region_profile)
             scene_metadata = dict(kind="imported_scene", measured_traffic=None)
+        if self.config["network"].get("graph_mode", "none") == "interference_bias":
+            from satellite_rl.agents.graph_encoder import validate_physical_contract
+            validate_physical_contract(arrays, self.config, {
+                "beam_width_deg": legacy.bw,
+                "carrier_start_hz": legacy.f_min,
+                # The raw PHY uses this literal for every slot bandwidth term.
+                "slot_bandwidth_hz": 2.5e7,
+                "light_speed_m_s": legacy.c,
+                "transmit_gain_dbi": float(arrays["beam_G_Tx_max"][0, 0]),
+                "receive_gain_dbi": float(arrays["UE_G_Rx_max"][0, 0]),
+                "latitude_bounds_deg": self.region_profile.latitude_bounds_deg,
+                "longitude_bounds_deg": self.region_profile.longitude_bounds_deg,
+                "satellite_longitude_deg": self.region_profile.satellite_longitude_deg,
+                "earth_radius_km": self.region_profile.earth_radius_km,
+                "orbit_radius_km": self.region_profile.orbit_radius_km,
+            })
         self._scene = arrays
         self.scene_metadata = scene_metadata
         beam = SimpleNamespace(beam_info={key: np.array(arrays[key], copy=True) for key in SCENE_KEYS})
@@ -151,6 +168,7 @@ class WorkbenchEnv:
                                       profile=self.region_profile)
             self._last_legacy_state = self.raw_env.reset(beam)
         self._trace = []
+        self._previous_actual_action = np.zeros(4, dtype=np.float32)
         self._overload_seen = False
         self._mask_used_power = Decimal(0)
         self._prior = self._snapshot()
@@ -201,6 +219,7 @@ class WorkbenchEnv:
             "served_min": [float(ratios.min()) if len(ratios) else 0],
             "other_occupancy": occupancy[[g for g in range(8) if g != group]].reshape(-1),
             "longest_free": [longest / 100],
+            "previous_actual_action": self._previous_actual_action,
         }
         if self.config["state"]["demand_visibility"] == "known":
             demands = self._scene["rate"].reshape(-1)
@@ -428,6 +447,9 @@ class WorkbenchEnv:
         actual = dict(group=int(action[0]), freq=int(action[1]), slots=int(action[2]),
                       power_w=float(raw_info["actual_power"]), charged_power_w=float(raw_info["power"]),
                       selected_power_w=float(power_w), indices=[p_freq, (p_slots - 1) if p_slots else None, p_power_idx])
+        self._previous_actual_action = np.asarray(
+            [actual["freq"] / 99, actual["slots"] / 10, actual["power_w"] / 50, 1],
+            dtype=np.float32)
         result = self._reward(before, after, raw_info, legacy_reward, request, actual, done)
         state = self._state()
         info = _json(raw_info)

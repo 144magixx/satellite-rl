@@ -27,6 +27,16 @@ def _sac_structures(config):
             network.get("sac_critic_structure", "additive"))
 
 
+def _experiment_modes(config):
+    network = config.get("network", {})
+    training = config.get("training", {})
+    return {"alpha_mode": training.get("alpha_mode", "adaptive"),
+            "fixed_alpha": training.get("fixed_alpha", 0.01),
+            "temporal_mode": network.get("temporal_mode", "none"),
+            "temporal_window": network.get("temporal_window", 16),
+            "graph_mode": network.get("graph_mode", "none")}
+
+
 def config_hash(config):
     """Hash all semantics, including state order, action mapping and normalization."""
     # Only run budget/log cadence may change without changing an inference policy.
@@ -52,6 +62,13 @@ def config_hash(config):
         semantic["network"].pop("sac_policy_structure", None)
     if semantic["network"].get("sac_critic_structure", "additive") == "additive":
         semantic["network"].pop("sac_critic_structure", None)
+    temporal_mode = semantic["network"].get("temporal_mode", "none")
+    if temporal_mode == "none":
+        semantic["network"].pop("temporal_mode", None)
+    if temporal_mode in ("none", "previous_action"):
+        semantic["network"].pop("temporal_window", None)
+    if semantic["network"].get("graph_mode", "none") == "none":
+        semantic["network"].pop("graph_mode", None)
     if semantic["network"].get("transformer_layout", "scalar_tokens") == "scalar_tokens":
         semantic["network"].pop("transformer_layout", None)
     semantic["evaluation"] = dict(config["evaluation"])
@@ -61,6 +78,9 @@ def config_hash(config):
     if semantic["state"].get("context_level", "none") == "none":
         semantic["state"].pop("context_level", None)
     semantic["training"] = dict(config["training"])
+    if semantic["training"].get("alpha_mode", "adaptive") == "adaptive":
+        semantic["training"].pop("alpha_mode", None)
+        semantic["training"].pop("fixed_alpha", None)
     # Old tasks predate scene-order options; the explicit defaults preserve
     # their exact ordering and therefore retain their original semantic hash.
     if semantic["training"].get("scene_order", "sequential") == "sequential":
@@ -125,6 +145,7 @@ def export_policy(directory, agent, config, provenance):
                 "parameter_count": description["parameter_count"],
                 "sac_policy_structure": _sac_structures(config)[0],
                 "sac_critic_structure": _sac_structures(config)[1],
+                "experiment_modes": _experiment_modes(config),
                 "evaluation_extra_steps": config["evaluation"].get("extra_steps", []),
                 "action_dims": _dimensions(config)[1]}
     _atomic_json(directory / "model.json", metadata)
@@ -143,6 +164,9 @@ class Policy:
 
     def act(self, state, deterministic=True, action_mask=None):
         return self.agent.act(state, deterministic=deterministic, action_mask=action_mask)
+
+    def reset_episode(self):
+        self.agent.reset_episode()
 
 
 def load_policy(path, config=None, device="cpu"):
@@ -166,6 +190,8 @@ def load_policy(path, config=None, device="cpu"):
     if (metadata.get("sac_policy_structure", "factorized"),
             metadata.get("sac_critic_structure", "additive")) != _sac_structures(saved):
         raise ValueError("Model SAC action structures do not match its saved configuration")
+    if metadata.get("experiment_modes", _experiment_modes(saved)) != _experiment_modes(saved):
+        raise ValueError("Model temperature, temporal or graph mode metadata differs")
     if metadata.get("evaluation_extra_steps", []) != saved.get("evaluation", {}).get("extra_steps", []):
         raise ValueError("Model evaluation steps do not match its saved configuration")
     if metadata.get("variant") != describe_model(saved)["variant"]:
@@ -196,6 +222,7 @@ def save_checkpoint(path, agent, progress, config, environment_state):
     _atomic_torch(path, {"format": "satellite_rl_workbench_checkpoint_v1", "config_hash": config_hash(config),
                          "sac_policy_structure": _sac_structures(config)[0],
                          "sac_critic_structure": _sac_structures(config)[1],
+                         "experiment_modes": _experiment_modes(config),
                          "evaluation_extra_steps": config["evaluation"].get("extra_steps", []),
                          "environment_profile": profile_metadata(config["environment"].get("profile", "china_legacy")),
                          "agent": agent.state_dict(), "progress": progress,
@@ -214,6 +241,8 @@ def load_checkpoint(path, agent, config):
     if (payload.get("sac_policy_structure", "factorized"),
             payload.get("sac_critic_structure", "additive")) != _sac_structures(config):
         raise ValueError("Checkpoint SAC action structures mismatch")
+    if payload.get("experiment_modes", _experiment_modes(config)) != _experiment_modes(config):
+        raise ValueError("Checkpoint temperature, temporal or graph modes mismatch")
     if payload.get("evaluation_extra_steps", []) != config["evaluation"].get("extra_steps", []):
         raise ValueError("Checkpoint evaluation steps mismatch")
     from satellite_rl.envs.regions import profile_metadata

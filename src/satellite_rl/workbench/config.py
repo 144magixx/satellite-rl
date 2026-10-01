@@ -30,6 +30,7 @@ FEATURES = [
     dict(id="natural_global_context", label="自然全局信息", description="仅包含本档实际开放的全局信息", shape=[10], unit="归一化", timing="动作前", source="全场景与当前分配", visibility="known"),
     dict(id="natural_beam_context", label="自然波束信息", description="仅包含本档实际开放的波束字段", shape=[10, 10, 11], unit="归一化", timing="动作前", source="全场景与已执行动作", visibility="known"),
     dict(id="natural_resource_context", label="自然频率组信息", description="仅包含本档实际开放的资源字段", shape=[8, 204], unit="归一化", timing="动作前", source="真实资源账与历史波束", visibility="known"),
+    dict(id="previous_actual_action", label="上一束实际分配", description="上一束实际起始槽/99、槽数/10、功率/50W与历史有效位；首步无历史", shape=[4], unit="归一化", timing="动作前", source="上一束实际执行动作", visibility="both"),
 ]
 
 
@@ -111,7 +112,8 @@ def default_config():
                      hidden_sizes=[256, 256], activation="relu", dropout=0,
                      cnn_channels=[16, 32], kernel_size=3, embedding_dim=64,
                      num_heads=4, num_layers=2, feedforward_dim=128,
-                     sac_policy_structure="factorized", sac_critic_structure="additive"),
+                     sac_policy_structure="factorized", sac_critic_structure="additive",
+                     temporal_mode="none", temporal_window=16, graph_mode="none"),
         state=dict(features=["beam", "power", "interference", "occupancy"], demand_visibility="known", context_level="none"),
         reward=dict(preset="legacy_repaired", terms=[dict(id="si_delta", weight=1, scale=1, timing="step")]),
         environment=dict(profile="china_legacy", power_budget_w=3000, basic_fraction=0.1, action_mode="legacy_clip",
@@ -122,6 +124,7 @@ def default_config():
                       critic_lr=0.0001, alpha_lr=0.0001, gamma=0.99, tau=0.005,
                       replay_capacity=20000, warmup_steps=2000, update_every=1,
                       gradient_steps=1, initial_alpha=0.1, target_entropy=6.9,
+                      alpha_mode="adaptive", fixed_alpha=0.01,
                       gradient_clip=10, rollout_steps=256, ppo_epochs=4, gae_lambda=0.95,
                       clip_ratio=0.2, entropy_coef=0.01, value_coef=0.5,
                       eps_start=1, eps_end=0.05, eps_decay_steps=5000,
@@ -175,6 +178,10 @@ def _network_size(config):
         token_count = (natural_token_count(config["state"]["context_level"])
                        if n["transformer_layout"] == "tsac_natural_context" else
                        {"tsac_13_tokens": 13, "tsac_14_context": 14, "tsac_32_context": 32}.get(n["transformer_layout"], state_dim))
+        if n["graph_mode"] != "none":
+            token_count = 122
+        elif n["temporal_mode"] != "none":
+            token_count += 1
         if token_count ** 2 * n["num_heads"] * n["num_layers"] > 20_000_000:
             raise ValueError("Transformer 状态长度、注意力头数与层数的组合过大")
         projection = {"tsac_13_tokens": 42 * embed, "tsac_14_context": 47 * embed, "tsac_32_context": 388 * embed}.get(
@@ -190,6 +197,16 @@ def _network_size(config):
                 projection += (shapes["natural_resource_context"][-1] + 1 + 8) * embed
         encoder = projection + n["num_layers"] * (
             4 * embed * embed + 2 * embed * ff + 9 * embed + ff)
+        # Conservative admission bound; preview counts actual constructed modules.
+        if n["graph_mode"] != "none":
+            encoder += 122 * embed + 8 * embed * embed
+        if n["temporal_mode"] != "none":
+            encoder += 6 * embed
+        if n["temporal_mode"] == "gru":
+            encoder += n["num_layers"] * (6 * embed * embed + 6 * embed)
+        elif n["temporal_mode"] == "causal_transformer":
+            encoder += n["temporal_window"] * embed + n["num_layers"] * (
+                4 * embed * embed + 2 * embed * ff + 9 * embed + ff)
         output = embed
     actor = encoder + (output + 1) * heads
     if config["algorithm"] == "sac":
@@ -224,6 +241,27 @@ def validate_config(raw):
         raise ValueError("SAC 策略结构须为 factorized 或 conditional")
     if n["sac_critic_structure"] not in ("additive", "joint"):
         raise ValueError("SAC 价值结构须为 additive 或 joint")
+    if n["temporal_mode"] not in ("none", "previous_action", "gru", "causal_transformer"):
+        raise ValueError("不支持的跨波束历史模式")
+    if n["graph_mode"] not in ("none", "beam_tokens", "interference_bias"):
+        raise ValueError("不支持的波束图编码")
+    _number(n["temporal_window"], "历史窗口", 1, 16, integer=True)
+    temporal = n["temporal_mode"] != "none"
+    graph = n["graph_mode"] != "none"
+    if temporal and graph:
+        raise ValueError("当前记忆与图编码分别对照，不能同时开启")
+    if temporal or graph:
+        if (c["algorithm"] != "sac" or n["kind"] != "transformer" or
+                n["transformer_layout"] != "tsac_natural_context" or
+                c["environment"]["action_mask"] != "joint_feasible" or
+                n["sac_policy_structure"] != "factorized" or n["sac_critic_structure"] != "additive"):
+            raise ValueError("记忆/图首版仅支持自然布局 Transformer SAC、联合掩码、原策略及加性Q")
+        if temporal and c["state"]["context_level"] != "compact":
+            raise ValueError("记忆首版要求compact的207维后追加上一实际动作，共211维")
+        if graph and c["state"]["context_level"] != "full":
+            raise ValueError("波束图编码要求full的2946维原始字段")
+    if "previous_actual_action" in c["state"]["features"] and not temporal:
+        raise ValueError("上一实际动作字段仅用于显式记忆模式")
     if (n["sac_policy_structure"] != "factorized" or n["sac_critic_structure"] != "additive") and (
             c["algorithm"] != "sac" or c["environment"]["action_mask"] != "joint_feasible"):
         raise ValueError("条件策略和联合价值结构仅支持 SAC＋联合可行动作掩码")
@@ -252,7 +290,8 @@ def validate_config(raw):
         level = c["state"]["context_level"]
         if c["algorithm"] != "sac" or n["kind"] != "transformer" or level not in NATURAL_CONTEXT_LEVELS:
             raise ValueError("自然状态布局仅支持需求已知的SAC Transformer与有效档位")
-        if c["state"]["demand_visibility"] != "known" or c["state"]["features"] != list(natural_shapes(level)):
+        expected_features = list(natural_shapes(level)) + (["previous_actual_action"] if temporal else [])
+        if c["state"]["demand_visibility"] != "known" or c["state"]["features"] != expected_features:
             raise ValueError("自然状态布局要求本档实际开放的状态特征及规范顺序")
         if n["dropout"] != 0 or c["reward"]["preset"] != "legacy_repaired" or c["training"]["scene_order"] != "shuffle_each_cycle":
             raise ValueError("自然状态对照固定旧奖励、dropout=0与每轮打乱场景")
@@ -324,6 +363,11 @@ def validate_config(raw):
         if term["timing"] != definitions[term["id"]][3]:
             raise ValueError(f"奖励结算时点错误: {term['id']}")
     t = c["training"]
+    if t["alpha_mode"] not in ("adaptive", "fixed"):
+        raise ValueError("温度模式须为adaptive或fixed")
+    _number(t["fixed_alpha"], "固定温度", 0, strictly=True)
+    if t["alpha_mode"] == "fixed" and c["algorithm"] != "sac":
+        raise ValueError("固定温度仅支持SAC")
     ints = {"seed": (0, 2 ** 32 - 1), "scene_order_seed": (0, 2 ** 32 - 1),
             "total_steps": (1, None), "batch_size": (1, None), "replay_capacity": (1, None),
             "warmup_steps": (0, None), "update_every": (1, None), "gradient_steps": (1, None),
@@ -387,6 +431,14 @@ def catalog():
                                        dict(id="conditional", label="条件策略", description="先选合法起点与槽数，再按已选频率槽选择功率")],
                 sac_critic_structures=[dict(id="additive", label="原加性价值", description="三动作分量的价值相加"),
                                        dict(id="joint", label="联合动作价值", description="对完整频率槽与功率组合打分")],
+                alpha_modes=[dict(id="adaptive", label="自动调节温度"), dict(id="fixed", label="固定温度")],
+                temporal_modes=[dict(id="none", label="无跨步历史"),
+                                dict(id="previous_action", label="只加上一束实际动作"),
+                                dict(id="gru", label="同场景窗口GRU记忆"),
+                                dict(id="causal_transformer", label="同场景窗口因果Transformer")],
+                graph_modes=[dict(id="none", label="原状态令牌"),
+                             dict(id="beam_tokens", label="逐束令牌（122）"),
+                             dict(id="interference_bias", label="逐束令牌＋物理干扰关系")],
                 scene_orders=[dict(id="sequential", label="原顺序循环", description="按固定场景集记录顺序循环", implemented=True),
                               dict(id="shuffle_each_cycle", label="每轮打乱", description="每轮将所有固定训练场景无放回排列；不改变场景内波束顺序", implemented=True)],
                 presets=deepcopy(PRESETS),
@@ -492,15 +544,33 @@ def config_summary(config):
                            "tsac_32_context": "四档同2946维封装：原13令牌＋全局1＋每10束一段共10＋8个资源组；未开放信息置零，共32令牌",
                            "tsac_natural_context": "状态与令牌仅包含本档实际开放的信息；无未开放字段占位"}
                           .get(transformer_layout))
+    temporal_mode = c["network"]["temporal_mode"]
+    graph_mode = c["network"]["graph_mode"]
+    token_count = (natural_token_count(c["state"]["context_level"])
+                   if transformer_layout == "tsac_natural_context" else
+                   {"tsac_13_tokens": 13, "tsac_14_context": 14, "tsac_32_context": 32}.get(transformer_layout, offset)
+                   if transformer_layout else None)
+    if graph_mode != "none":
+        token_count = 122
+        layout_description = "2946维原始字段：原13令牌＋全局1＋逐束100＋资源组8，共122令牌"
+        if graph_mode == "interference_bias":
+            layout_description += "；由动作前可见字段和固定物理模型计算有向干扰关系"
+    elif temporal_mode != "none":
+        token_count += 1
+        layout_description = "211维：207维当前观测＋上一束实际动作与有效位；每步15个资源令牌"
+        if temporal_mode in ("gru", "causal_transformer"):
+            layout_description += f"；每个目标决策附最多{c['network']['temporal_window']}步同场景历史，仅目标位置计一个学习损失"
     return dict(state_dim=offset, state_layout=layout,
                 environment_profile=c["environment"]["profile"],
                 environment_metadata=environment_metadata,
                 transformer_layout=transformer_layout,
                 network_layout_description=layout_description,
-                network_token_count=(natural_token_count(c["state"]["context_level"])
-                                     if transformer_layout == "tsac_natural_context" else
-                                     {"tsac_13_tokens": 13, "tsac_14_context": 14, "tsac_32_context": 32}.get(transformer_layout, offset)
-                                     if transformer_layout else None),
+                network_token_count=token_count,
+                temporal_mode=temporal_mode,
+                temporal_window=(c["network"]["temporal_window"] if temporal_mode in ("gru", "causal_transformer") else 1),
+                graph_mode=graph_mode,
+                alpha_mode=c["training"]["alpha_mode"],
+                fixed_alpha=c["training"]["fixed_alpha"] if c["training"]["alpha_mode"] == "fixed" else None,
                 context_level=c["state"]["context_level"],
                 telemetry=c["telemetry"],
                 action_dims=[100, 10, len(c["environment"]["power_levels_w"])],

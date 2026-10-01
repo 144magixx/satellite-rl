@@ -347,6 +347,9 @@ def _ensure_finite_agent(agent):
 def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_path=None,
                         env_step=0, policy_name="model"):
     state = env.reset(seed=seed, scene=scene)
+    reset_history = getattr(policy, "reset_episode", None)
+    if reset_history is not None:
+        reset_history()
     reward_total = 0.0
     trace = []
     done = False
@@ -595,6 +598,9 @@ def _training(directory, job, config, ledger, resume):
         with isolated_rng(scene_seed):
             state = env.reset(seed=scene_seed, scene=_load_scene(source_scene) if source_scene else None)
             scene = env.scene()
+        reset_history = getattr(agent, "reset_episode", None)
+        if reset_history is not None:
+            reset_history()
         scene_ref = _save_scene(Path(directory) / "scenes" / "train" / f"scene_{episode:07d}.npz", scene)
         done = False
         episode_return = 0.0
@@ -611,6 +617,8 @@ def _training(directory, job, config, ledger, resume):
             replay_options = ({"action_mask": mask,
                                "next_action_mask": None if done else env.action_mask()}
                               if mask is not None else {})
+            if getattr(agent, "temporal_enabled", False):
+                replay_options["actual_action"] = info["actual_action"]
             agent.observe(state, action, reward, next_state, done, **replay_options)
             env_step += 1
             length += 1
@@ -635,7 +643,7 @@ def _training(directory, job, config, ledger, resume):
                 ledger.record("runtime", env_step, {"env_steps_per_second": (env_step - session_base_steps) / elapsed,
                                                      "updates_per_second": (agent.update_step - session_base_updates) / elapsed,
                                                      "wall_seconds": base_wall_seconds + elapsed,
-                                                     "replay_size": len(agent.replay.rows) if hasattr(agent, "replay") else len(agent.rollout),
+                                                     "replay_size": len(agent.replay) if hasattr(agent, "replay") else len(agent.rollout),
                                                      "cuda_allocated_mb": torch.cuda.memory_allocated() / 1048576,
                                                      "cuda_reserved_mb": torch.cuda.memory_reserved() / 1048576,
                                                      **{k: v for k, v in agent.last_action_info.items() if isinstance(v, (int, float))}})

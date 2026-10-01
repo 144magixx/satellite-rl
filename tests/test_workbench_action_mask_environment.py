@@ -140,10 +140,16 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         historical["network"].pop("transformer_layout", None)
         historical["network"].pop("sac_policy_structure", None)
         historical["network"].pop("sac_critic_structure", None)
+        # Newly optional inactive experiment defaults retain the old hash.
+        historical["network"].pop("temporal_mode", None)
+        historical["network"].pop("temporal_window", None)
+        historical["network"].pop("graph_mode", None)
         historical["state"].pop("context_level", None)
         historical["evaluation"].pop("extra_steps", None)
         historical["training"].pop("scene_order", None)
         historical["training"].pop("scene_order_seed", None)
+        historical["training"].pop("alpha_mode", None)
+        historical["training"].pop("fixed_alpha", None)
         historical.pop("telemetry", None)
         expected = hashlib.sha256(json.dumps(historical, ensure_ascii=False, sort_keys=True,
                                             separators=(",", ":")).encode("utf-8")).hexdigest()

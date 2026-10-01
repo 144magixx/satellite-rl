@@ -19,6 +19,14 @@ class Encoder(nn.Module):
         self.kind = kind
         self.state_dim = state_dim
         self.transformer_layout = spec.get("transformer_layout", "scalar_tokens")
+        self.previous_actual_action = "previous_actual_action" in config.get("state", {}).get("features", [])
+        self.graph_mode = spec.get("graph_mode", "none")
+        if self.graph_mode != "none":
+            from satellite_rl.agents.graph_encoder import GraphEncoder
+            self.graph = GraphEncoder(config, state_dim, self.graph_mode)
+            self.output_dim = self.graph.output_dim
+            self.transformer_layout = "graph_" + self.graph_mode
+            return
         activation = _activation(spec["activation"])
         dropout = float(spec["dropout"])
         if kind == "mlp":
@@ -55,7 +63,7 @@ class Encoder(nn.Module):
                 if self.transformer_layout == "tsac_natural_context":
                     self.natural_level = config["state"]["context_level"]
                     self.natural_shapes = natural_shapes(self.natural_level)
-                    expected_dim = natural_dim(self.natural_level)
+                    expected_dim = natural_dim(self.natural_level) + (4 if self.previous_actual_action else 0)
                 if state_dim != expected_dim:
                     raise ValueError(f"T-SAC {self.transformer_layout} layout requires the ordered {expected_dim}-dimensional state")
                 self.geo_embed = nn.Linear(2, embed)
@@ -98,6 +106,10 @@ class Encoder(nn.Module):
                 extra = natural_token_count(self.natural_level) - 13
                 if extra:
                     self.extra_pos_embed = nn.Parameter(torch.zeros(1, extra, embed))
+                if self.previous_actual_action:
+                    with torch.random.fork_rng(devices=[]):
+                        self.previous_action_embed = nn.Linear(4, embed)
+                    self.previous_action_pos = nn.Parameter(torch.zeros(1, 1, embed))
             self.output_dim = embed
         else:
             raise ValueError(f"Unsupported network: {kind}")
@@ -105,6 +117,8 @@ class Encoder(nn.Module):
     def forward(self, states):
         if states.ndim != 2 or states.shape[1] != self.state_dim:
             raise ValueError(f"State shape must be [batch,{self.state_dim}], got {tuple(states.shape)}")
+        if self.graph_mode != "none":
+            return self.graph(states)
         if self.kind == "mlp":
             return self.net(states)
         if self.kind == "cnn":
@@ -148,6 +162,10 @@ class Encoder(nn.Module):
                 offset += width
             if parts:
                 tokens = torch.cat((tokens, torch.cat(parts, dim=1) + self.extra_pos_embed), dim=1)
+            if self.previous_actual_action:
+                previous = (self.previous_action_embed(states[:, -4:]).unsqueeze(1) +
+                            self.previous_action_pos)
+                tokens = torch.cat((tokens, previous), dim=1)
         encoded = self.net(tokens.permute(1, 0, 2)).permute(1, 0, 2)
         return encoded[:, 0]
 
@@ -161,6 +179,65 @@ class MultiHeadNetwork(nn.Module):
     def forward(self, states):
         x = self.encoder(states)
         return tuple(head(x) for head in self.heads)
+
+
+class TemporalEncoder(nn.Module):
+    """Encode each visible resource state, then only its finite causal history."""
+
+    def __init__(self, config, state_dim):
+        super().__init__()
+        spec = config["network"]
+        self.mode = spec["temporal_mode"]
+        self.window = int(spec["temporal_window"])
+        self.spatial = Encoder(config, state_dim)
+        width = self.spatial.output_dim
+        with torch.random.fork_rng(devices=[]):
+            if self.mode == "gru":
+                self.memory = nn.GRU(width, width, num_layers=int(spec["num_layers"]),
+                                     batch_first=True)
+            elif self.mode == "causal_transformer":
+                layer = nn.TransformerEncoderLayer(
+                    width, spec["num_heads"], spec["feedforward_dim"],
+                    float(spec["dropout"]), batch_first=True,
+                    activation=torch.tanh if spec["activation"] == "tanh" else spec["activation"])
+                self.memory = nn.TransformerEncoder(
+                    layer, spec["num_layers"], enable_nested_tensor=False)
+                self.time_position = nn.Parameter(torch.zeros(1, self.window, width))
+            else:
+                raise ValueError("TemporalEncoder requires gru or causal_transformer")
+        self.output_dim = width
+
+    def forward(self, sequence, lengths):
+        if (sequence.ndim != 3 or sequence.shape[1] > self.window or
+                lengths.shape != (sequence.shape[0],) or
+                not bool(((lengths >= 1) & (lengths <= sequence.shape[1])).all())):
+            raise ValueError("Temporal input must have valid [batch,window,state] and lengths")
+        batch, steps, width = sequence.shape
+        encoded = self.spatial(sequence.reshape(batch * steps, width)).reshape(batch, steps, -1)
+        if self.mode == "gru":
+            packed = nn.utils.rnn.pack_padded_sequence(
+                encoded, lengths.detach().cpu(), batch_first=True, enforce_sorted=False)
+            _, hidden = self.memory(packed)
+            return hidden[-1]
+        positions = self.time_position[:, :steps]
+        causal = torch.ones((steps, steps), device=sequence.device, dtype=torch.bool).triu(1)
+        padding = torch.arange(steps, device=sequence.device)[None, :] >= lengths[:, None]
+        contextual = self.memory(encoded + positions, mask=causal,
+                                 src_key_padding_mask=padding)
+        return contextual[torch.arange(batch, device=sequence.device), lengths - 1]
+
+
+class TemporalMultiHeadNetwork(nn.Module):
+    def __init__(self, config, state_dim, action_dims):
+        super().__init__()
+        self.encoder = TemporalEncoder(config, state_dim)
+        self.heads = nn.ModuleList([nn.Linear(self.encoder.output_dim, int(dim))
+                                    for dim in action_dims])
+
+    def forward(self, input_with_lengths):
+        states, lengths = input_with_lengths
+        encoded = self.encoder(states, lengths)
+        return tuple(head(encoded) for head in self.heads)
 
 
 class ConditionalPolicyNetwork(nn.Module):
@@ -210,14 +287,19 @@ def _model_description(config, state_dim, action_dims):
     algorithm = config["algorithm"]
     policy_structure = config["network"].get("sac_policy_structure", "factorized")
     critic_structure = config["network"].get("sac_critic_structure", "additive")
-    policy = (ConditionalPolicyNetwork(config, state_dim, action_dims)
+    temporal_mode = config["network"].get("temporal_mode", "none")
+    policy = (TemporalMultiHeadNetwork(config, state_dim, action_dims)
+              if algorithm == "sac" and temporal_mode in ("gru", "causal_transformer")
+              else ConditionalPolicyNetwork(config, state_dim, action_dims)
               if algorithm == "sac" and policy_structure == "conditional"
               else MultiHeadNetwork(config, state_dim, action_dims))
     actor_count = sum(p.numel() for p in policy.parameters())
     count = actor_count
     policy_layers = _trace_layers(policy, state_dim)
     if algorithm == "sac":
-        critic = (JointQNetwork(config, state_dim, action_dims)
+        critic = (TemporalMultiHeadNetwork(config, state_dim, action_dims)
+                  if temporal_mode in ("gru", "causal_transformer") else
+                  JointQNetwork(config, state_dim, action_dims)
                   if critic_structure == "joint" else MultiHeadNetwork(config, state_dim, action_dims))
         critic_count = sum(p.numel() for p in critic.parameters())
         critic_layers = _trace_layers(critic, state_dim)
@@ -274,6 +356,11 @@ def _model_description(config, state_dim, action_dims):
         variant = f"workbench_{algorithm}_transformer_tsac_natural_context_{config['state']['context_level']}_v1"
     if algorithm == "sac" and (policy_structure != "factorized" or critic_structure != "additive"):
         variant += f"_{policy_structure}_{critic_structure}"
+    if temporal_mode != "none":
+        variant += f"_temporal_{temporal_mode}_w{config['network'].get('temporal_window', 16)}"
+    graph_mode = config["network"].get("graph_mode", "none")
+    if graph_mode != "none":
+        variant += f"_graph_{graph_mode}"
     return {"graph": nodes, "nodes": nodes, "edges": edges, "branches": branches,
             "parameter_count": count,
             "variant": variant}
@@ -292,14 +379,19 @@ def _trace_layers(model, state_dim):
     layers = []
     hooks = []
 
-    layout = getattr(model.encoder, "transformer_layout", None)
+    spatial = (model.encoder.spatial if isinstance(model, TemporalMultiHeadNetwork)
+               else model.encoder)
+    spatial_prefix = "encoder.spatial." if isinstance(model, TemporalMultiHeadNetwork) else "encoder."
+    layout = getattr(spatial, "transformer_layout", None)
     tsac_layout = layout in ("tsac_13_tokens", "tsac_14_context", "tsac_32_context", "tsac_natural_context")
-    token_count = (natural_token_count(model.encoder.natural_level) if layout == "tsac_natural_context"
+    token_count = (natural_token_count(spatial.natural_level) +
+                   (1 if spatial.previous_actual_action else 0)
+                   if layout == "tsac_natural_context"
                    else {"tsac_14_context": 14, "tsac_32_context": 32}.get(layout, 13))
 
     def shape(value, layer_name):
         if isinstance(value, torch.Tensor):
-            if tsac_layout and layer_name.startswith("encoder.net.") and value.ndim == 3:
+            if tsac_layout and layer_name.startswith(spatial_prefix + "net.") and value.ndim == 3:
                 # T-SAC's encoder is sequence first: [tokens, batch, channels].
                 return [value.shape[0], value.shape[2]]
             return list(value.shape[1:])
@@ -320,41 +412,86 @@ def _trace_layers(model, state_dim):
         # from bypassing attention/feedforward module hooks in the diagram.
         model.train()
         with torch.no_grad():
-            model(torch.zeros(1, state_dim))
+            if isinstance(model, TemporalMultiHeadNetwork):
+                model((torch.zeros(1, model.encoder.window, state_dim),
+                       torch.as_tensor([model.encoder.window], dtype=torch.long)))
+            else:
+                model(torch.zeros(1, state_dim))
     finally:
         for hook in hooks:
             hook.remove()
-    if hasattr(model.encoder, "position"):
-        position = model.encoder.position
+    if hasattr(spatial, "position"):
+        position = spatial.position
         insert_at = next((i + 1 for i, layer in enumerate(layers)
-                          if layer["name"] == "encoder.input_projection"), 0)
-        layers.insert(insert_at, {"name": "encoder.position", "type": "PositionalParameter",
+                          if layer["name"] == spatial_prefix + "input_projection"), 0)
+        layers.insert(insert_at, {"name": spatial_prefix + "position", "type": "PositionalParameter",
                                   "input_shape": list(position.shape[1:]),
                                   "output_shape": list(position.shape[1:]),
                                   "parameters": position.numel()})
-    if hasattr(model.encoder, "pos_embed"):
-        embed = model.encoder.pos_embed.shape[-1]
+    if hasattr(spatial, "pos_embed"):
+        embed = spatial.pos_embed.shape[-1]
         before_net = next((i for i, layer in enumerate(layers)
-                           if layer["name"].startswith("encoder.net.")), len(layers))
-        layers.insert(before_net, {"name": "encoder.pos_embed", "type": "PositionalParameter",
+                           if layer["name"].startswith(spatial_prefix + "net.")), len(layers))
+        layers.insert(before_net, {"name": spatial_prefix + "pos_embed", "type": "PositionalParameter",
                                    "input_shape": [13, embed], "output_shape": [13, embed],
-                                   "parameters": model.encoder.pos_embed.numel()})
+                                   "parameters": spatial.pos_embed.numel()})
         if layout == "tsac_14_context":
-            layers.insert(before_net + 1, {"name": "encoder.context_pos_embed", "type": "PositionalParameter",
+            layers.insert(before_net + 1, {"name": spatial_prefix + "context_pos_embed", "type": "PositionalParameter",
                                            "input_shape": [1, embed], "output_shape": [1, embed],
-                                           "parameters": model.encoder.context_pos_embed.numel()})
+                                           "parameters": spatial.context_pos_embed.numel()})
             before_net += 1
-        elif hasattr(model.encoder, "extra_pos_embed"):
-            layers.insert(before_net + 1, {"name": "encoder.extra_pos_embed", "type": "PositionalParameter",
-                                           "input_shape": [token_count - 13, embed], "output_shape": [token_count - 13, embed],
-                                           "parameters": model.encoder.extra_pos_embed.numel()})
+        elif hasattr(spatial, "extra_pos_embed"):
+            layers.insert(before_net + 1, {"name": spatial_prefix + "extra_pos_embed", "type": "PositionalParameter",
+                                           "input_shape": list(spatial.extra_pos_embed.shape[1:]),
+                                           "output_shape": list(spatial.extra_pos_embed.shape[1:]),
+                                           "parameters": spatial.extra_pos_embed.numel()})
             before_net += 1
-        layers.insert(before_net + 1, {"name": "encoder.tokens", "type": "TokenAssembly",
+        if hasattr(spatial, "previous_action_pos"):
+            layers.insert(before_net + 1, {"name": spatial_prefix + "previous_action_pos", "type": "PositionalParameter",
+                                           "input_shape": [1, embed], "output_shape": [1, embed],
+                                           "parameters": spatial.previous_action_pos.numel()})
+            before_net += 1
+        layers.insert(before_net + 1, {"name": spatial_prefix + "tokens", "type": "TokenAssembly",
                                        "input_shape": [state_dim], "output_shape": [token_count, embed],
                                        "parameters": 0})
         after_net = next((i + 1 for i, layer in reversed(list(enumerate(layers)))
-                          if layer["name"].startswith("encoder.net.")), before_net + 2)
-        layers.insert(after_net, {"name": "encoder.first_token", "type": "FirstTokenPool",
+                          if layer["name"].startswith(spatial_prefix + "net.")), before_net + 2)
+        layers.insert(after_net, {"name": spatial_prefix + "first_token", "type": "FirstTokenPool",
                                   "input_shape": [token_count, embed], "output_shape": [embed],
                                   "parameters": 0})
+    if getattr(spatial, "graph_mode", "none") != "none":
+        graph = spatial.graph
+        embed = graph.output_dim
+        before_attention = next((i for i, layer in enumerate(layers)
+                                 if layer["name"].startswith("encoder.graph.layers.")), len(layers))
+        extras = []
+        for name in ("base_position", "global_position", "resource_position", "edge_weight"):
+            if hasattr(graph, name):
+                parameter = getattr(graph, name)
+                extras.append({"name": "encoder.graph." + name, "type": "PositionalParameter"
+                               if name != "edge_weight" else "PhysicalEdgeParameter",
+                               "input_shape": list(parameter.shape),
+                               "output_shape": list(parameter.shape),
+                               "parameters": parameter.numel()})
+        extras.append({"name": "encoder.graph.tokens", "type": "BeamTokenAssembly",
+                       "input_shape": [state_dim], "output_shape": [122, embed],
+                       "parameters": 0})
+        layers[before_attention:before_attention] = extras
+    if isinstance(model, TemporalMultiHeadNetwork):
+        width = model.encoder.output_dim
+        position = next((index for index, layer in enumerate(layers)
+                         if layer["name"].startswith("heads.")), len(layers))
+        if model.encoder.mode == "gru":
+            layers.insert(position, {"name": "encoder.temporal_gru", "type": "GRU",
+                                     "input_shape": [model.encoder.window, width],
+                                     "output_shape": [width],
+                                     "parameters": sum(p.numel() for p in model.encoder.memory.parameters())})
+        else:
+            layers.insert(position, {"name": "encoder.time_position", "type": "PositionalParameter",
+                                     "input_shape": [model.encoder.window, width],
+                                     "output_shape": [model.encoder.window, width],
+                                     "parameters": model.encoder.time_position.numel()})
+            layers.insert(position + 1, {"name": "encoder.temporal_causal_mask", "type": "CausalWindow",
+                                         "input_shape": [model.encoder.window, width],
+                                         "output_shape": [width], "parameters": 0})
     return layers

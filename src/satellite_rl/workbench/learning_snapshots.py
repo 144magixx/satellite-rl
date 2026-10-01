@@ -20,6 +20,7 @@ from satellite_rl.workbench.checkpoints import config_hash
 
 
 FORMAT = "satellite_rl_sac_learning_snapshot_v1"
+TEMPORAL_FORMAT = "satellite_rl_sac_learning_snapshot_temporal_v1"
 SAMPLE_SEED = 51001
 SAMPLE_PER_STRATUM = 64
 NETWORKS = ("actor", "critic1", "critic2", "target1", "target2")
@@ -38,7 +39,7 @@ def _cpu_mask(mask):
 
 
 def _sample_replay(replay):
-    rows = replay.rows
+    rows = replay.eligible_rows() if hasattr(replay, "eligible_rows") else replay.rows
     rng = np.random.default_rng(SAMPLE_SEED)
     samples = []
     index_groups = {}
@@ -50,16 +51,33 @@ def _sample_replay(replay):
         index_groups[label] = selected
         for index in selected:
             row = rows[index]
-            if len(row) not in (5, 7):
+            if len(row) not in (5, 7, 10):
                 raise ValueError("Unsupported SAC replay transition shape")
-            samples.append({"replay_index": index,
+            sample = {"replay_index": index,
                             "state": torch.as_tensor(np.asarray(row[0], dtype=np.float32)).clone(),
                             "action": torch.as_tensor(row[1], dtype=torch.int64).clone(),
                             "reward": float(row[2]),
                             "next_state": torch.as_tensor(np.asarray(row[3], dtype=np.float32)).clone(),
                             "done": bool(row[4]),
-                            "action_mask": _cpu_mask(row[5]) if len(row) == 7 else None,
-                            "next_action_mask": _cpu_mask(row[6]) if len(row) == 7 else None})
+                            "action_mask": _cpu_mask(row[5]) if len(row) >= 7 else None,
+                            "next_action_mask": _cpu_mask(row[6]) if len(row) >= 7 else None}
+            if len(row) == 10:
+                sample.update(episode_id=row[7], episode_step=row[8],
+                              actual_action=deepcopy(row[9]))
+                logical_index = len(replay.rows) - len(replay) + index
+                context = replay._context(logical_index)
+                sample["context_states"] = torch.as_tensor(
+                    np.stack(context), dtype=torch.float32).clone()
+                sample["context_length"] = len(context)
+                if row[4]:
+                    sample["next_context_states"] = None
+                    sample["next_context_length"] = 0
+                else:
+                    following = (context + [row[3]])[-replay.window:]
+                    sample["next_context_states"] = torch.as_tensor(
+                        np.stack(following), dtype=torch.float32).clone()
+                    sample["next_context_length"] = len(following)
+            samples.append(sample)
     return {"seed": SAMPLE_SEED, "method": "independent_numpy_rng_stratified_without_replacement",
             "replay_size": len(rows), "terminal_indices": index_groups["terminal"],
             "nonterminal_indices": index_groups["nonterminal"], "transitions": samples}
@@ -156,6 +174,9 @@ def save_learning_snapshot(directory, agent, config, provenance, env_step, sourc
                "log_alpha": agent.log_alpha.detach().cpu().clone(),
                "alpha": float(agent.log_alpha.detach().exp().cpu().item()),
                "replay_sample": _sample_replay(agent.replay)}
+    if getattr(agent, "temporal_enabled", False):
+        payload.update(format=TEMPORAL_FORMAT, temporal_mode=agent.temporal_mode,
+                       temporal_window=agent.temporal_window)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         saved = torch.load(path, map_location="cpu", weights_only=True)

@@ -16,7 +16,9 @@ from satellite_rl.agents.action_masking import (conditional_masked_policy, copy_
                                                 feasible_target_entropy, mask_batch,
                                                 masked_policy)
 from satellite_rl.agents.workbench_networks import (ConditionalPolicyNetwork, JointQNetwork,
-                                                    MultiHeadNetwork, ScalarNetwork)
+                                                    MultiHeadNetwork, ScalarNetwork,
+                                                    TemporalMultiHeadNetwork)
+from satellite_rl.agents.sequence_replay import SequenceReplay
 
 
 HEADS = ("frequency", "slots", "power")
@@ -136,6 +138,9 @@ class Replay:
         self.rows = deque(maxlen=capacity)
         self.rng = random.Random(seed)
 
+    def __len__(self):
+        return len(self.rows)
+
     def add(self, state, action, reward, next_state, done, action_mask=None, next_action_mask=None):
         row = (np.asarray(state, dtype=np.float32).copy(),
                tuple(int(x) for x in action), float(reward),
@@ -179,6 +184,21 @@ class WorkbenchAgent:
         if self.algorithm == "ppo" and config["network"]["dropout"]:
             raise ValueError("PPO does not support dropout: action and update probabilities must match")
         self.action_dims = tuple(action_dims)
+        self.temporal_mode = config["network"].get("temporal_mode", "none")
+        self.temporal_window = int(config["network"].get("temporal_window", 16))
+        self.temporal_enabled = self.temporal_mode in ("gru", "causal_transformer")
+        if self.temporal_mode not in ("none", "previous_action", "gru", "causal_transformer"):
+            raise ValueError("Unsupported temporal mode")
+        if self.temporal_enabled and (self.algorithm != "sac" or
+                                      self.action_mask_mode != "joint_feasible" or
+                                      not 1 <= self.temporal_window <= 16 or state_dim != 211):
+            raise ValueError("Temporal SAC requires joint_feasible, 211 fields and a 1–16 step window")
+        self.online_history = deque(maxlen=self.temporal_window) if self.temporal_enabled else None
+        self.alpha_mode = self.train.get("alpha_mode", "adaptive")
+        if self.alpha_mode not in ("adaptive", "fixed"):
+            raise ValueError("Unsupported SAC alpha mode")
+        if self.alpha_mode == "fixed" and self.algorithm != "sac":
+            raise ValueError("Fixed alpha requires SAC")
         self.sac_policy_structure = config["network"].get("sac_policy_structure", "factorized")
         self.sac_critic_structure = config["network"].get("sac_critic_structure", "additive")
         if self.sac_policy_structure not in ("factorized", "conditional"):
@@ -196,9 +216,11 @@ class WorkbenchAgent:
         self.update_step = 0
         self.last_action_info = {}
         if self.algorithm == "sac":
-            actor_class = (ConditionalPolicyNetwork if self.sac_policy_structure == "conditional"
+            actor_class = (TemporalMultiHeadNetwork if self.temporal_enabled else
+                           ConditionalPolicyNetwork if self.sac_policy_structure == "conditional"
                            else MultiHeadNetwork)
-            critic_class = JointQNetwork if self.sac_critic_structure == "joint" else MultiHeadNetwork
+            critic_class = (TemporalMultiHeadNetwork if self.temporal_enabled else
+                            JointQNetwork if self.sac_critic_structure == "joint" else MultiHeadNetwork)
             self.actor = actor_class(config, state_dim, action_dims).to(self.device)
             self.critic1 = critic_class(config, state_dim, action_dims).to(self.device)
             self.critic2 = critic_class(config, state_dim, action_dims).to(self.device)
@@ -207,10 +229,15 @@ class WorkbenchAgent:
             self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.train["actor_lr"])
             self.critic1_opt = torch.optim.Adam(self.critic1.parameters(), lr=self.train["critic_lr"])
             self.critic2_opt = torch.optim.Adam(self.critic2.parameters(), lr=self.train["critic_lr"])
-            self.log_alpha = nn.Parameter(torch.tensor(np.log(self.train["initial_alpha"]),
-                                                       dtype=torch.float32, device=self.device))
+            alpha_value = (self.train["fixed_alpha"] if self.alpha_mode == "fixed"
+                           else self.train["initial_alpha"])
+            self.log_alpha = nn.Parameter(torch.tensor(np.log(alpha_value),
+                                                       dtype=torch.float32, device=self.device),
+                                          requires_grad=self.alpha_mode == "adaptive")
             self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=self.train["alpha_lr"])
-            self.replay = Replay(self.train["replay_capacity"], self.train["seed"] + 41)
+            self.replay = (SequenceReplay(self.train["replay_capacity"], self.train["seed"] + 41,
+                                          self.temporal_window) if self.temporal_enabled else
+                           Replay(self.train["replay_capacity"], self.train["seed"] + 41))
         elif self.algorithm == "ppo":
             self.actor = MultiHeadNetwork(config, state_dim, action_dims).to(self.device)
             self.value = ScalarNetwork(config, state_dim).to(self.device)
@@ -228,8 +255,16 @@ class WorkbenchAgent:
     def policy_network(self):
         return self.online if self.algorithm == "dqn" else self.actor
 
+    def reset_episode(self):
+        if self.temporal_enabled:
+            self.online_history.clear()
+
     def _sac_actor_logits(self, states):
         """Match action-time probabilities even when the actor has dropout."""
+        if self.temporal_enabled:
+            # Temporal modes require dropout=0. cuDNN GRU backward cannot run
+            # after eval-mode forward; train/eval probabilities are identical.
+            return self.actor(states)
         was_training = self.actor.training
         self.actor.eval()
         try:
@@ -247,6 +282,10 @@ class WorkbenchAgent:
         net.eval()
         with torch.no_grad():
             x = _state_tensor(state, self.device).reshape(1, -1)
+            if self.temporal_enabled:
+                self.online_history.append(np.asarray(state, dtype=np.float32).copy())
+                sequence = _state_tensor(list(self.online_history), self.device).unsqueeze(0)
+                x = (sequence, torch.as_tensor([len(self.online_history)], device=self.device))
             heads = net(x)
             if self.algorithm == "dqn":
                 epsilon = 0.0 if deterministic else self.train["eps_end"]
@@ -329,7 +368,7 @@ class WorkbenchAgent:
         return action
 
     def observe(self, state, action, reward, next_state, done,
-                action_mask=None, next_action_mask=None):
+                action_mask=None, next_action_mask=None, actual_action=None):
         if self.action_mask_mode == "joint_feasible":
             action_mask = copy_action_mask(action_mask, self.action_dims)
             if next_action_mask is None:
@@ -344,7 +383,11 @@ class WorkbenchAgent:
                     not action_mask["frequency_slots"][chosen[0], chosen[1]] or
                     not action_mask["power"][chosen[2]]):
                 raise ValueError("observed action is forbidden by action_mask")
-            self.replay.add(state, chosen, reward, next_state, done, action_mask, next_action_mask)
+            if self.temporal_enabled:
+                self.replay.add(state, chosen, reward, next_state, done,
+                                action_mask, next_action_mask, actual_action)
+            else:
+                self.replay.add(state, chosen, reward, next_state, done, action_mask, next_action_mask)
             return
         if action_mask is not None or next_action_mask is not None:
             raise ValueError("action_mask supplied while masking is disabled")
@@ -361,7 +404,7 @@ class WorkbenchAgent:
         if self.algorithm == "ppo":
             return len(self.rollout) >= self.train["rollout_steps"] or (done and bool(self.rollout))
         return (env_step >= self.train["warmup_steps"] and
-                len(self.replay.rows) >= self.train["batch_size"] and
+                len(self.replay) >= self.train["batch_size"] and
                 env_step % self.train["update_every"] == 0)
 
     def update(self):
@@ -411,11 +454,14 @@ class WorkbenchAgent:
         actor_loss.backward()
         actor_grad = _grad_norm(self.actor, self.train["gradient_clip"])
         self.actor_opt.step()
-        alpha_loss = (self.log_alpha * (entropy_actor.detach().mean() - self.train["target_entropy"]))
-        _finite_loss(alpha_loss)
-        self.alpha_opt.zero_grad(set_to_none=True)
-        alpha_loss.backward()
-        self.alpha_opt.step()
+        if self.alpha_mode == "adaptive":
+            alpha_loss = (self.log_alpha * (entropy_actor.detach().mean() - self.train["target_entropy"]))
+            _finite_loss(alpha_loss)
+            self.alpha_opt.zero_grad(set_to_none=True)
+            alpha_loss.backward()
+            self.alpha_opt.step()
+        else:
+            alpha_loss = torch.zeros_like(self.log_alpha.detach())
         self.update_step += 1
         tau = self.train["tau"]
         with torch.no_grad():
@@ -432,9 +478,12 @@ class WorkbenchAgent:
                              "target_std": target.std(unbiased=False),
                              "td_abs_mean": ((q1 - target).abs().mean() + (q2 - target).abs().mean()) / 2,
                              "actor_grad_norm": actor_grad, "critic_1_grad_norm": grad1,
-                             "critic_2_grad_norm": grad2})
+                             "critic_2_grad_norm": grad2,
+                             **({"alpha_update_applied": 0} if self.alpha_mode == "fixed" else {})})
 
     def _update_masked_sac(self):
+        if self.temporal_enabled:
+            return self._update_temporal_sac()
         if self.sac_policy_structure != "factorized" or self.sac_critic_structure != "additive":
             return self._update_joint_action_sac()
         s, a, r, ns, d, current_masks, next_masks = self.replay.sample(
@@ -482,11 +531,14 @@ class WorkbenchAgent:
         self.actor_opt.step()
         target_entropy = feasible_target_entropy(current_fl, current_power,
                                                   self.target_entropy_ratio)
-        alpha_loss = self.log_alpha * (entropy_actor.detach() - target_entropy).mean()
-        _finite_loss(alpha_loss)
-        self.alpha_opt.zero_grad(set_to_none=True)
-        alpha_loss.backward()
-        self.alpha_opt.step()
+        if self.alpha_mode == "adaptive":
+            alpha_loss = self.log_alpha * (entropy_actor.detach() - target_entropy).mean()
+            _finite_loss(alpha_loss)
+            self.alpha_opt.zero_grad(set_to_none=True)
+            alpha_loss.backward()
+            self.alpha_opt.step()
+        else:
+            alpha_loss = torch.zeros_like(self.log_alpha.detach())
         self.update_step += 1
         tau = self.train["tau"]
         with torch.no_grad():
@@ -508,7 +560,8 @@ class WorkbenchAgent:
                              "target_std": target.std(unbiased=False),
                              "td_abs_mean": ((q1 - target).abs().mean() + (q2 - target).abs().mean()) / 2,
                              "actor_grad_norm": actor_grad, "critic_1_grad_norm": grad1,
-                             "critic_2_grad_norm": grad2})
+                             "critic_2_grad_norm": grad2,
+                             **({"alpha_update_applied": 0} if self.alpha_mode == "fixed" else {})})
 
     def _masked_joint_distribution(self, states, frequency_slots, power):
         logits = self._sac_actor_logits(states)
@@ -526,6 +579,9 @@ class WorkbenchAgent:
         values = critic(states)
         return values if self.sac_critic_structure == "joint" else _joint_q(values)
 
+    def _update_temporal_sac(self):
+        return self._update_joint_action_sac()
+
     def _update_joint_action_sac(self):
         s, a, r, ns, d, current_masks, next_masks = self.replay.sample(
             self.train["batch_size"], self.device, self.action_dims)
@@ -536,15 +592,17 @@ class WorkbenchAgent:
             target = r.clone()
             active = d < 0.5
             if active.any():
+                active_next = ((ns[0][active], ns[1][active]) if self.temporal_enabled
+                               else ns[active])
                 next_prob, next_entropy, *_ = self._masked_joint_distribution(
-                    ns[active], next_fl[active], next_power[active])
-                next_min_q = torch.minimum(self._critic_table(self.target1, ns[active]),
-                                           self._critic_table(self.target2, ns[active]))
+                    active_next, next_fl[active], next_power[active])
+                next_min_q = torch.minimum(self._critic_table(self.target1, active_next),
+                                           self._critic_table(self.target2, active_next))
                 target[active] += self.train["gamma"] * (
                     (next_prob * next_min_q).sum((1, 2, 3)) + alpha * next_entropy)
         q1_table = self._critic_table(self.critic1, s)
         q2_table = self._critic_table(self.critic2, s)
-        batch_index = torch.arange(s.shape[0], device=self.device)
+        batch_index = torch.arange(a.shape[0], device=self.device)
         q1 = q1_table[batch_index, a[:, 0], a[:, 1], a[:, 2]]
         q2 = q2_table[batch_index, a[:, 0], a[:, 1], a[:, 2]]
         loss1, loss2 = F.mse_loss(q1, target), F.mse_loss(q2, target)
@@ -570,16 +628,22 @@ class WorkbenchAgent:
         self.actor_opt.step()
         target_entropy = feasible_target_entropy(current_fl, current_power,
                                                   self.target_entropy_ratio)
-        alpha_loss = self.log_alpha * (entropy.detach() - target_entropy).mean()
-        _finite_loss(alpha_loss)
-        self.alpha_opt.zero_grad(set_to_none=True)
-        alpha_loss.backward()
-        self.alpha_opt.step()
+        if self.alpha_mode == "adaptive":
+            alpha_loss = self.log_alpha * (entropy.detach() - target_entropy).mean()
+            _finite_loss(alpha_loss)
+            self.alpha_opt.zero_grad(set_to_none=True)
+            alpha_loss.backward()
+            self.alpha_opt.step()
+        else:
+            alpha_loss = torch.zeros_like(self.log_alpha.detach())
         self.update_step += 1
         with torch.no_grad():
             for target_net, source_net in ((self.target1, self.critic1), (self.target2, self.critic2)):
                 for target_p, source_p in zip(target_net.parameters(), source_net.parameters()):
                     target_p.lerp_(source_p, self.train["tau"])
+        temporal_diagnostics = ({"effective_td_targets": a.shape[0],
+                                 "context_steps_mean": s[1].float().mean()}
+                                if self.temporal_enabled else {})
         return _diagnostics({"actor_loss": actor_loss, "critic_1_loss": loss1,
                              "critic_2_loss": loss2, "alpha_loss": alpha_loss,
                              "alpha": self.log_alpha.exp(), "entropy": entropy.mean(),
@@ -595,7 +659,9 @@ class WorkbenchAgent:
                              "target_std": target.std(unbiased=False),
                              "td_abs_mean": ((q1 - target).abs().mean() + (q2 - target).abs().mean()) / 2,
                              "actor_grad_norm": actor_grad, "critic_1_grad_norm": grad1,
-                             "critic_2_grad_norm": grad2})
+                             "critic_2_grad_norm": grad2,
+                             **temporal_diagnostics,
+                             **({"alpha_update_applied": 0} if self.alpha_mode == "fixed" else {})})
 
     def _update_dqn(self):
         s, a, r, ns, d = self.replay.sample(self.train["batch_size"], self.device)
@@ -679,12 +745,24 @@ class WorkbenchAgent:
                   "update_step": self.update_step}
         if self.algorithm == "sac":
             result["policy_probability_mode"] = "eval_v1"
+            result["alpha_mode"] = self.alpha_mode
             result["sac_policy_structure"] = self.sac_policy_structure
             result["sac_critic_structure"] = self.sac_critic_structure
+            if self.temporal_mode != "none":
+                result["temporal_mode"] = self.temporal_mode
+                result["temporal_window"] = self.temporal_window
+            if self.temporal_enabled:
+                result["online_history"] = [np.asarray(row, dtype=np.float32).copy()
+                                            for row in self.online_history]
         return result
 
     def load_state_dict(self, data):
         if self.algorithm == "sac":
+            if data.get("alpha_mode", "adaptive") != self.alpha_mode:
+                raise ValueError("SAC checkpoint alpha mode differs from configured mode")
+            if (data.get("temporal_mode", "none") != self.temporal_mode or
+                    (self.temporal_enabled and data.get("temporal_window") != self.temporal_window)):
+                raise ValueError("SAC checkpoint temporal mode/window differs")
             if data.get("sac_policy_structure", "factorized") != self.sac_policy_structure or \
                     data.get("sac_critic_structure", "additive") != self.sac_critic_structure:
                 raise ValueError("SAC checkpoint action structures differ from configured structures")
@@ -702,9 +780,13 @@ class WorkbenchAgent:
                 if not isinstance(replay, dict) or not isinstance(replay.get("rows"), list):
                     raise ValueError("Masked SAC checkpoint lacks replay with action masks")
                 for row in replay["rows"]:
-                    if (len(row) != 7 or row[5] is None or
+                    if (len(row) != (10 if self.temporal_enabled else 7) or row[5] is None or
                             (row[6] is None) != bool(row[4])):
                         raise ValueError("Masked SAC checkpoint replay row lacks current/next action masks")
+            if self.alpha_mode == "fixed" and not math.isclose(
+                    float(data["log_alpha"].exp()), float(self.train["fixed_alpha"]),
+                    rel_tol=1e-6, abs_tol=1e-8):
+                raise ValueError("Fixed alpha checkpoint differs from configured value")
         for name, state in data["networks"].items():
             getattr(self, name).load_state_dict(state, strict=True)
         for name, state in data["optimizers"].items():
@@ -717,6 +799,12 @@ class WorkbenchAgent:
             self.rollout = data["rollout"]
         self.rng.setstate(data["rng"])
         self.update_step = data["update_step"]
+        if self.temporal_enabled:
+            history = data.get("online_history")
+            if not isinstance(history, list) or len(history) > self.temporal_window:
+                raise ValueError("Temporal checkpoint online history missing or too long")
+            self.online_history = deque((np.asarray(row, dtype=np.float32).copy()
+                                         for row in history), maxlen=self.temporal_window)
 
 
 def build_agent(config, state_dim, action_dims, device="cpu"):
