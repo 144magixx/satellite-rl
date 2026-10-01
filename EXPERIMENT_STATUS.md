@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**G11 G0完整完成（2026-10-02，北京时间06:45观测、06:46终点复核）：**G0已`completed`，400000交互/398001更新，原worker正常退出。final的policy.pt/model.json、results.json和evaluations.jsonl SHA已核，元数据为seed51001/冻结85f/固定40万步终点，Jan12验证2580条、Jan15内部测试300条齐全，两controller完成回执匹配。现在T0/T1/G0共3/9完成，其余M0–M3、G1/G2六组持续训练；观测累计2311650/3100000步（74.57%，不含验证和测试）。Jan24共同独立考核尚未提交，科学配置和预算未变。证据：[本轮更正后的完整核验摘要](outputs/experiments/europe_tmg_20261001/preflight/g11_hourly_readonly_20261001T224905_248625Z.json) · [根复核](outputs/experiments/europe_tmg_20261001/preflight/root_hourly_review_20261001T224953_401020Z.json)。原首份摘要继承的G0旧阶段与controller旧别名字段已保留并明确更正，实际API/SSH及终点证据未改写。
+
 **G11首个40万步节点（2026-10-02，北京时间05:44核验）：**G0已达到400000交互/398001更新，当前为`evaluating`，正在执行既定Jan15内部终点测试；真实worker仍为PID6448/出生ticks743734948，尚未计为completed。T0/T1保持完成，其余M0–M3、G1/G2六组继续训练，九组累计2185000/3100000步（70.48%，不含验证与测试）。DQN/CUDA、冻结85f源码与原任务身份核对一致。Jan24共同独立考核仍须等待全部九组完整终点；当前2/9任务完成，不依据达到训练预算提前宣告评价或模型效果完成。证据：[实际API](outputs/experiments/europe_tmg_20261001/preflight/hourly-20261002-0543_20261001T214437_357289Z.json) · [SSH及进程核验](outputs/verification/g11_remote_launch_20261001/live_snapshot_20261001T214449_771059Z.json)。
 
 **2026-10-02用户进度简报偏好更改：要求改为每小时必报，自动化实际保存结果以本次操作凭据为准。** G11 自动化更新回执确认任务仍为 `ACTIVE`、原频率与九组范围不变，并已改为每次运行后在对话中发送简短中文进度简报（包括正常无变化）；见[更新与精确回读回执](outputs/verification/g11_reporting_preference_20261002/change_receipt.json)。本条记录的是汇报偏好和自动化提示，不更改下方实验训练事实。
