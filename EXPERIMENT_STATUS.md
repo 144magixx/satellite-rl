@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**G10全部完成并通过最终核验（2026-10-01 14:43）：**J0–J3各40万步/398001更新，四固定终点同Jan23的100场景×3动作及两基线各100，共1400分配/140000逐束轨迹，全部completed。报告v2、独立审计和根标准库逐束重算一致；20618文件/7.183GB双端SHA归档、四规范模型、6个中文补图/统计文件以及Jan23原包1.504GB双端SHA均完成。科学冻结cc27不变；仅修报告把final test行误当validation的分类错误，原失败和运维史保留，无重训/重评。J0/J1/J2/J3独立SI=93.11/83.54/93.41/87.41%，SGM=.5518/.4237/.5643/.3530；J2平均SI比J0高0.295个百分点、SGM高.01251，但全100束基本服务88%→85.33%，仅小幅取舍。完整联合Q的J1/J3后段价值误差与温度持续增大、回报退步，不支持替代J0；单seed/单日期/参数量差异限制保留。正式报告11含训练原始及100回合均值、43节点原生验证回报、对数学习曲线、共同考核和资源账。g10已通过应用工具暂停并回读PAUSED，中文提示无乱码；最后额度9%、1张重置卡未用，不关机或归档本对话。入口：[正式报告11](docs/第二阶段/实验报告/11_联合动作四组独立场景对照.md) · [最终资产交接](outputs/verification/g10_completion_20261001/final_archive_handover.json) · [根最终核验](outputs/verification/g10_completion_20261001/root_final_delivery_verification.json) · [规范模型](models/runs/europe_joint_action_20261001/) · [运行清单](outputs/experiments/europe_joint_action_20261001/run_manifest.json)。
+
 **G10训练与共同评价已完成，报告统计修复中（2026-10-01 14:16）：**根实时API及远端逐文件核对，J0–J3各400000步/398001更新、4000回合完成，四worker正常退出；四个已登记Jan23评价也全部completed，J0为500分配（含两基线）、其余各300，共1400/140000逐束轨迹，终点policy与metadata SHA一致。controller因报告器把训练`evaluations.jsonl`中的正常final test300行也要求为validation而退出，错误为`J0: unexpected validation row`；实际验证为43×20×3=2580行，另final test300，共2880行。原失败现场、脚本、不可变输入与SHA已保留；仅修报告/运维接续，禁止重训或重复评价，科学冻结cc27不变。逐项报告审计与本地归档尚待完成，暂不发布模型优劣结论。入口：[根八任务完成核验](outputs/verification/g10_completion_20261001/root_api_completion_milestone.json) · [原报告失败](outputs/verification/g10_completion_20261001/failure_preserved/report_failure.json) · [终点及原始数量核验](outputs/verification/g10_completion_20261001/completion_probe_initial.json)。
 
 **G10跟进提示编码已修复（2026-10-01 10:15）：**上次更新自动化时，经Windows子进程读取非ASCII JSON的中文发生有损转换，导致本次提示主体及名称乱码；原任务约束在已保存的Unicode提示中完整保留。本轮恢复原中文并保留09:12监控修复条款，ASCII JSON/显式UTF8回读与期望逐字符相同，替换字符为0，g10仍ACTIVE、每小时/正常静默及严格剩余<3%用卡规则不变。新只读脚本按已核SHA真实执行，唯一快照确认J0/J1/J2/J3为230900/232900/228100/232750步，总924650/1600000，四组持续更新，controller/mirror正常，无训练操作。本轮额度16%，未用卡。入口：[有效快照](outputs/experiments/europe_joint_action_20261001/preflight/heartbeat_live_hourly-20261001-1012_20261001T021344_832598Z.json) · [根回读核验](outputs/experiments/europe_joint_action_20261001/preflight/root_review_20261001_1012.json)；乱码原配置已留在运维证据目录，未掩盖历史。
@@ -123,7 +125,7 @@ G07基线曲线补充：**2026-09-29。** 用户后续授权的欧洲模型/固�
 | 组号 | 实验与目录 | 实际范围 | 当前状态 |
 | --- | --- | --- | --- |
 | G09 | `europe_natural_state_20260930`：自然维状态输入 | 204/207/246/746/2946维；旧奖励/dropout0/shuffle，seed51001各40万步 | 五训练、八项01-19共同考核及两基线共2600分配、逐束复核与报告10/曲线/归档均完成；N1综合服务较好、N2 SI微高、N0后段退步 |
-| G10 | `europe_joint_action_20261001`：联合动作表示 | J0–J3：原/条件策略×加性/联合Q；207维旧奖励/dropout0/shuffle，seed51001各40万步 | 四训练及Jan23共1400分配均completed；仅报告验证/终点测试行分类错误在修复，正式审计结论和归档待完成；不重训/重评 |
+| G10 | `europe_joint_action_20261001`：联合动作表示 | J0–J3：原/条件策略×加性/联合Q；207维旧奖励/dropout0/shuffle，seed51001各40万步 | 四训练、1400共同分配、审计/报告11/曲线/双端归档全部完成，g10跟进暂停；J2小幅指标取舍，完整联合Q两组后期失稳 |
 | G08 | `europe_ablation_20260929`：欧洲训练机制与状态空间 | 用户由3组扩为6组：dropout=0、每轮场景打乱、compact/summary/layout/full四档状态；均保留旧奖励，seed51001各40万步 | 六训练及七项01-18共同考核全部完成，逐束/资源账复算与带曲线报告07已通过；本轮无待运行任务 |
 | G01 | `workbench_mask_20260925`：前端T-SAC掩码对照 | 旧奖励，掩码关闭/开启2次训练＋原规则贪心/固定基线 | 已完成并核验；最新参照 |
 | G02 | `coverage_reward_20260924`：奖励对照 | 无掩码的旧奖励/融合奖励2次正式v2训练＋重评/基线 | 已完成；融合奖励未达到目标 |
