@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-02用户进度简报偏好更改：要求改为每小时必报，自动化实际保存结果以本次操作凭据为准。** G11 自动化更新回执确认任务仍为 `ACTIVE`、原频率与九组范围不变，并已改为每次运行后在对话中发送简短中文进度简报（包括正常无变化）；见[更新与精确回读回执](outputs/verification/g11_reporting_preference_20261002/change_receipt.json)。本条记录的是汇报偏好和自动化提示，不更改下方实验训练事实。
+
 **G11 T两组完整结束、G1已接入（2026-10-01，北京时间21:29观测、21:33终点复核）：**T0/T1均为`completed`，各150000交互/148001更新，原worker正常退出；final目录的policy.pt/model.json与results/evaluations SHA、元数据seed51001/冻结85f/固定终点、Jan15内部测试各300条及Jan12验证各1080条均已核验。G1已按原任务ID从队列启动，PID27640/出生ticks745261874，DQN/CUDA及冻结包路径一致，21:29为24100步/22101更新。当前2/9完成、其余7组运行，无排队或新故障；九组共967950/3100000步（31.22%，不含验证/测试）。两controller均已登记T0/T1完成并等待剩余七组，Jan24共同考核尚未提交。未修改科学源、任务、种子或预算，尚未形成正式模型效果排名。入口：[本轮实时与终点SHA证据](outputs/experiments/europe_tmg_20261001/preflight/g11_hourly_readonly_20261001T133632_381538Z.json) · [真实API快照](outputs/experiments/europe_tmg_20261001/preflight/hourly-20261001-2128_20261001T132906_063676Z.json)。
 
 **G11首个训练预算节点（2026-10-01，北京时间20:31根核验）：**T1已达150000交互/148001更新，当前仍为`evaluating`，正在进行预先安排的Jan15内部终点测试；尚未核齐最终metadata/results，不计作completed。T0为145600/150000步，其余六个已运行长组持续推进，G1仍排队。九组本次共821950/3100000步，completed仍为0/9。这不是Jan24共同独立考核开始；两个controller仍等待九组完整终点，未新增独立评价任务。worker/辅助进程身份、冻结85f源码和guard均保持，未停止、恢复、改源或增加预算，尚无正式模型效果结论。入口：[根实时API](outputs/experiments/europe_tmg_20261001/preflight/root-t1-budget-milestone_20261001T123118_343660Z.json) · [本轮SSH/进程核验](outputs/experiments/europe_tmg_20261001/preflight/g11_hourly_readonly_20261001T123012_238990Z.json)。
