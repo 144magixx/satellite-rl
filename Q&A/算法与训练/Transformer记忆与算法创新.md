@@ -221,3 +221,11 @@ M0/M1均已完成400000交互/398001更新并正常退出。11:51独立核验各
 每小时自动跟进也已暂停，避免重启期间自动接续。用户告知重启完成后，先核新主机/进程身份、原归档和冻结源码、DQN/CUDA、完整断点SHA，再经工作台恢复两个原ID：M2还剩150400步，M3还剩147600步，原总预算各40万不变。之后继续既定Jan24共同评价与报告。controller遇手动stopped会进入needs_diagnosis并退出而不会自动恢复；恢复训练后需按原guard/请求ID检查并接续controller和collector，避免重复评价。
 
 [暂停状态与本地备份入口](../../outputs/experiments/europe_tmg_20261001/pause_20261002T060300_404442Z/pause_state.json) · [暂停和恢复交接](../../outputs/experiments/europe_tmg_20261001/pause_20261002T060300_404442Z/pause_final_receipt.json) · [根校验](../../outputs/experiments/europe_tmg_20261001/pause_20261002T060300_404442Z/root_pause_verification.json)。本次使用现有前端/API停止与恢复流程，无需新增前端功能；代理没有重启服务器，等待用户确认重启完成。
+
+### 重启后追问“开始吧”：已从原进度接着训练
+
+用户恢复指令后，先核两实例的真实身份、DQN/CUDA、冻结源码、场景和两份完整断点SHA，再经原工作台对两个原任务ID各提交一次恢复。M2从249600步、M3从252400步接续，模型、优化器、经验池、全部随机状态与场景顺序一起加载；日志明确记录training_resumed，配置哈希与原训练一致。14:35根核验两组已到251150/254550步，参数更新也同步增长，证明已实际运行，预算仍各40万。
+
+两张卡重启后都仍是4090D，但分配的GPU UUID变了；该变化已保存在恢复来源记录中，原科学提交85f和global_guard字节保持不变。工作台、评价控制器、报告器及本地监控辅助进程按新身份恢复，旧launch/state/log留存。镜像曾因任务记录新增resume:true而重试，已保留旧字节并只接纳这一字段，14:36九任务SHA镜像核验成功。原每小时简报恢复，七个已完成组保留，M2/M3完成后接续Jan24共同评价。
+
+[恢复交接](../../outputs/experiments/europe_tmg_20261001/resume_20261002T062332_824457Z/resume_final_receipt.json) · [根验收](../../outputs/experiments/europe_tmg_20261001/resume_20261002T062332_824457Z/root_resume_verification.json) · [有效运行快照](../../outputs/experiments/europe_tmg_20261001/resume_20261002T062332_824457Z/root_resume_verified_snapshot.json)。前端沿用原任务记录和现有恢复流程，M组入口为http://127.0.0.1:8767/#monitor；本次无需改变页面或学习配置。
