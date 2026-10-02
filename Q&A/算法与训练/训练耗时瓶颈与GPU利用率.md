@@ -645,3 +645,7 @@ NVIDIA 将该 GPU 利用率定义为采样期间有内核运行的时间比例�
 回迁与评价已配置持久后台接续：M2达到固定40万终点、权重/结果校验及worker退出后，把已完成记录回到原20424归属，再恢复原controller/collector、本地镜像与归档。这样原global_guard及Jan24十一模型、两基线的3500次分配计划不变；回迁和共同评价目前尚未实际完成。迁移期间原helper受控暂停，新returner/双端sidecar/本地watcher已核出生身份和脚本SHA。两端不共享loopback，使用各端自己的API和带唯一请求校验的共享文件回执；不上传密码。
 
 前端无需改代码，已实际查看[20418的M2监控](http://127.0.0.1:8766/#monitor)与[20424的M3监控](http://127.0.0.1:8767/#monitor)。小时跟进已更新并精确回读，按迁移阶段读取正确API，继续每次简报。运维正确性、短窗吞吐和模型效果分别记录。[完整交接](../../outputs/experiments/europe_tmg_20261001/migration_m2_20261002T070813_436244Z/migration_live_handoff.json) · [根验收](../../outputs/experiments/europe_tmg_20261001/migration_m2_20261002T070813_436244Z/root_migration_verified_snapshot.json) · [自动化回读](../../outputs/experiments/europe_tmg_20261001/migration_m2_20261002T070813_436244Z/automation_migration_final_receipt.json)。
+
+### 2026-10-02晚：分卡训练与自动回迁已经完成
+
+M2、M3均已完成各400000步/398001更新，M2于21:42按原ID回迁20424归属；完整学习状态路径转换与终点权重SHA复核通过。原Jan24十一模型和两基线评价已完成，报告与逐束审计通过。此前短窗口约1.68倍仍只是工程观察，不等于整轮净耗时同倍率下降或模型效果提高。模型结论见[报告12](../../docs/第二阶段/实验报告/12_温度记忆与干扰图独立场景对照.md)；仅剩全部断点、历史日志等大资产的本地逐SHA同步，原训练和评价不会重复启动。
