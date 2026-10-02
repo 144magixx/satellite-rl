@@ -21,6 +21,18 @@ class BeamLoggingTests(unittest.TestCase):
         self.assertEqual(value["capacity_demand_ratio"], 2.5)
         self.assertEqual(value["si"], 1.0)
 
+    def test_nonfinite_source_values_and_invalid_sgm_are_rejected(self):
+        for invalid in (float("nan"), float("inf"), -float("inf")):
+            for position in range(3):
+                values = [50.0, 100.0, 0.4]
+                values[position] = invalid
+                with self.subTest(position=position, invalid=invalid), self.assertRaises(ValueError):
+                    beam_service_fields(*values)
+        for invalid_sgm in (-0.01, 1.01):
+            with self.subTest(sgm=invalid_sgm), self.assertRaises(ValueError):
+                beam_service_fields(50.0, 100.0, invalid_sgm)
+        self.assertEqual(beam_service_fields(-2.0, 100.0, 0.0)["capacity_bps"], 0.0)
+
     def test_later_real_interference_changes_first_beam_final_value(self):
         config = default_config()
         env = WorkbenchEnv(config)

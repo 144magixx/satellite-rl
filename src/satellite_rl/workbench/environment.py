@@ -113,16 +113,19 @@ def beam_service_fields(rate_bps, required_bps, sgm):
     ``rate_bps`` is the raw environment's allocated capacity after the current
     interference update. SI is capped; the capacity/demand ratio is not.
     """
-    capacity = max(0.0, float(rate_bps))
+    raw_capacity = float(rate_bps)
     demand = float(required_bps)
-    if not math.isfinite(capacity) or not math.isfinite(demand) or demand <= 0:
-        raise ValueError("Beam capacity or demand is invalid")
+    matching = float(sgm)
+    if (not math.isfinite(raw_capacity) or not math.isfinite(demand)
+            or not math.isfinite(matching) or demand <= 0 or not 0 <= matching <= 1):
+        raise ValueError("Beam capacity, demand, or SGM is invalid")
+    capacity = max(0.0, raw_capacity)
     ratio = capacity / demand
     return {"required_bps": demand, "capacity_bps": capacity,
             "rate_bps": capacity,  # Existing result consumers use this name.
             "effective_served_bps": min(capacity, demand),
             "capacity_demand_ratio": ratio, "si": min(ratio, 1.0),
-            "sgm": float(sgm)}
+            "sgm": matching}
 
 
 class WorkbenchEnv:
