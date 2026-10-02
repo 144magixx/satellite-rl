@@ -27,6 +27,13 @@ ARCHIVE = Path("D:/paper/outputs/experiments/stage3_power_20261003/remote_archiv
 PORTS = (20418, 20424)
 MAX_FILES_PER_PORT = 10000
 MAX_BYTES_PER_PORT = 5 * 1024**3
+RESULT_GATE_SOURCE = '''
+def completed_result_ok(status, result):
+    return (status.get('stage') == 'completed'
+            and result.get('research_stage') == 'power_refinement'
+            and result.get('summary') is not None
+            and len(result.get('scenes') or []) == 900)
+'''
 
 
 def sha(path: Path) -> str:
@@ -68,7 +75,10 @@ if (job.get('kind')!='refine' or job.get('git_commit')!=commit
 request=urllib.request.Request('http://127.0.0.1:{8772 if port==20418 else 8773}/api/runs/'+run_id+'/results',
  headers={{'Cache-Control':'no-cache'}})
 with urllib.request.urlopen(request,timeout=15) as response:api_result=json.load(response)
-if api_result.get('stage')!='completed' or api_result.get('summary') is None:
+# Completed workbench results.json carries research_stage/summary/scenes,
+# while the completed stage is recorded in status.json and /runs/<id>.
+{RESULT_GATE_SOURCE}
+if not completed_result_ok(status,api_result):
  raise RuntimeError('Workbench API has no completed result')
 model=pathlib.Path({model['model_path']!r})
 scene=archive/'outputs/workbench/scenes'/{scene['scene_id']!r}
