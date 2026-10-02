@@ -61,7 +61,7 @@
       `模型：${escape(model.config?.name || model.name)} · ${escape(model.model_files?.[0]?.sha256 || "")}` +
       `<br>考核场景：${escape(scene.name)} · ${escape(scene.count)}景 · ` +
       `${escape((scene.source?.source_dates || scene.source?.snapshot_dates || []).join(", "))}` :
-      "请选择G11 M1模型与欧洲test场景；场景、权重和日期在提交时再次校验。";
+      "请选择G11 T0模型与欧洲test场景；场景、权重和日期在提交时再次校验。";
   }
   function selectedRun() { return runs.find(row => row.run_id === runId); }
   function downloadLink(id, file) {
@@ -104,7 +104,7 @@
       request("power-refinement/runs")
     ]);
     models = modelData.models || []; scenes = sceneData.scenes || []; runs = runData.runs || [];
-    options(el("model"), models, row => `${row.config?.name || row.name} · ${row.id}`, "请选择已导入的G11 M1模型");
+    options(el("model"), models, row => `${row.config?.name || row.name} · ${row.id}`, "请选择已导入的G11 T0模型");
     options(el("scene"), scenes, row => `${row.name} · ${row.count}景 · test`, "请选择欧洲test场景");
     options(el("run"), runs, row => `${row.name || row.run_id} · ${row.stage}`, "请选择第三阶段任务");
     if (runs.some(row => row.run_id === runId)) el("run").value = runId;
@@ -135,7 +135,7 @@
     try {
       const config = await validate();
       const model_id = el("model").value, scene_id = el("scene").value;
-      if (!model_id || !scene_id) throw new Error("请选择G11 M1模型及欧洲test场景");
+      if (!model_id || !scene_id) throw new Error("请选择G11 T0模型及欧洲test场景");
       const payload = {config, model_id, scene_id};
       const pending = stablePending(payload);
       const created = await request("power-refinement/runs", {...payload, request_id:pending.request_id});
@@ -149,8 +149,8 @@
   }
   async function importModel() {
     const path = el("import-path").value.trim();
-    if (!path) throw new Error("请填写M1终点模型目录");
-    const created = await request("models/import", {path, name:"G11 M1冻结终点"});
+    if (!path) throw new Error("请填写T0终点模型目录");
+    const created = await request("models/import", {path, name:"G11 T0冻结终点"});
     await refresh();
     if (models.some(row => row.id === created.id)) el("model").value = created.id;
     sourceDetail();

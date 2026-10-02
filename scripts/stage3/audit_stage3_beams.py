@@ -103,7 +103,7 @@ def audit_one(port: int, physics_class) -> dict:
     for reference in job["model_files"]:
         local = archived_file(manifest, "job", "model_input/" + Path(reference["path"]).name)
         if sha(local) != reference["sha256"]:
-            raise RuntimeError("Frozen M1 model input SHA differs from job record")
+            raise RuntimeError("Frozen T0 model input SHA differs from job record")
     options = config["power_refinement"]
     expected_mode = "total" if port == 20418 else "initial"
     if (options["power_budget_mode"] != expected_mode or options["repeats"] != 3

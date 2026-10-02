@@ -1,4 +1,4 @@
-"""Third-stage workbench API for frozen G11 M1 power-refinement jobs."""
+"""Third-stage workbench API for frozen G11 T0 power-refinement jobs."""
 
 from __future__ import annotations
 
@@ -8,25 +8,30 @@ from satellite_rl.power_refinement.config import default_config, validate_config
 from .storage import model_input_files, validate_id
 
 
-G11_M1_RUN_ID = "train_sac_20261001_162205_4ba52a9b"
-G11_SOURCE_COMMIT = "85f667cd5731e284c19b2590b5dcf5308a58f234"
+G11_T0_RUN_ID = "train_sac_20261001_162126_33e89e95"
+G11_T0_SOURCE_COMMIT = "85f667cd5731e284c19b2590b5dcf5308a58f234"
+G11_T0_ENV_STEP = 150000
 
 
-def _is_m1(model):
+def _is_t0(model):
     config = model.get("config") or {}
     network = config.get("network") or {}
     environment = config.get("environment") or {}
     training = config.get("training") or {}
     provenance = model.get("provenance") or {}
-    return (not model.get("legacy_type") and config.get("name") == "G11 M1"
+    return (not model.get("legacy_type") and config.get("name") == "G11 T0"
             and config.get("algorithm") == "sac" and environment.get("profile") == "europe_v1"
             and environment.get("power_budget_w") == 3000
-            and network.get("temporal_mode") == "previous_action"
-            and training.get("seed") == 51001 and training.get("total_steps") == 400000
+            and network.get("kind") == "transformer"
+            and network.get("transformer_layout") == "tsac_natural_context"
+            and network.get("temporal_mode") == "none"
+            and network.get("graph_mode") == "none"
+            and training.get("seed") == 51001 and training.get("total_steps") == G11_T0_ENV_STEP
             and training.get("device") == "cuda"
-            and provenance.get("run_id") == G11_M1_RUN_ID
-            and provenance.get("git_commit") == G11_SOURCE_COMMIT
-            and provenance.get("env_step") == 400000)
+            and training.get("alpha_mode") == "fixed" and training.get("fixed_alpha") == 0.01
+            and provenance.get("run_id") == G11_T0_RUN_ID
+            and provenance.get("git_commit") == G11_T0_SOURCE_COMMIT
+            and provenance.get("env_step") == G11_T0_ENV_STEP)
 
 
 class PowerRefinementApplication:
@@ -37,7 +42,7 @@ class PowerRefinementApplication:
     def models(self):
         rows = []
         for model in self.app.models()["models"]:
-            if not _is_m1(model):
+            if not _is_t0(model):
                 continue
             try:
                 files = model_input_files(model["path"])
@@ -86,7 +91,7 @@ class PowerRefinementApplication:
                 return existing
         model = next((row for row in self.models() if row["id"] == body.get("model_id")), None)
         if model is None:
-            raise ValueError("请选择已导入工作台且来源可校验的G11 M1冻结模型")
+            raise ValueError("请选择已导入工作台且来源可校验的G11 T0冻结模型")
         scene = self.store.get_record("scenes", body["scene_id"])
         assert_scene_profile(scene, "europe_v1")
         if (scene.get("source") or {}).get("partition_role") != "test":
@@ -98,21 +103,23 @@ class PowerRefinementApplication:
 
         policy = load_policy(model["path"], config=model["config"], device="cpu")
         provenance = policy.metadata.get("provenance") or {}
-        if (provenance.get("run_id") != G11_M1_RUN_ID or
-                provenance.get("git_commit") != G11_SOURCE_COMMIT or
-                provenance.get("env_step") != 400000):
-            raise ValueError("模型权重元数据不是G11 M1固定预算终点")
+        if (provenance.get("run_id") != G11_T0_RUN_ID or
+                provenance.get("git_commit") != G11_T0_SOURCE_COMMIT or
+                provenance.get("env_step") != G11_T0_ENV_STEP or
+                policy.metadata.get("experiment_modes", {}).get("alpha_mode") != "fixed" or
+                policy.metadata.get("experiment_modes", {}).get("fixed_alpha") != 0.01):
+            raise ValueError("模型权重元数据不是G11 T0固定预算终点")
         trained_sets = provenance.get("scene_sets") or {}
         for role in ("train", "validation"):
             trained = trained_sets.get(role)
             if not trained:
-                raise ValueError("M1模型缺少" + role + "来源场景，无法核对日期隔离")
+                raise ValueError("T0模型缺少" + role + "来源场景，无法核对日期隔离")
             hashes = {item.get("sha256") for item in trained.get("files", []) if item.get("sha256")}
             if hashes & test_hashes:
                 raise ValueError("考核场景与模型训练/验证实际数组重复")
             dates = self.app.scene_dates(trained)
             if not dates:
-                raise ValueError("M1模型缺少" + role + "航空来源日期")
+                raise ValueError("T0模型缺少" + role + "航空来源日期")
             if dates & test_dates:
                 raise ValueError("考核航空来源日期与模型训练/验证日期重叠")
 
@@ -120,7 +127,7 @@ class PowerRefinementApplication:
         config = deepcopy(model_config)
         config["research_stage"] = "power_refinement"
         config["power_refinement"] = controls
-        config["name"] = "第三阶段 · G11 M1固定模型功率细调"
+        config["name"] = "第三阶段 · G11 T0固定模型功率细调"
         # Workbench status uses this field as a progress denominator. These are
         # evaluation units, never reinforcement-learning interactions.
         config["training"] = deepcopy(config["training"])

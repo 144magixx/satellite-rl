@@ -10,7 +10,8 @@ from unittest.mock import patch
 from satellite_rl.power_refinement.config import default_config, validate_config
 from satellite_rl.workbench.config import default_config as model_default_config
 from satellite_rl.workbench.service import Application
-from satellite_rl.workbench.power_refinement import G11_M1_RUN_ID, G11_SOURCE_COMMIT
+from satellite_rl.workbench.power_refinement import (G11_T0_RUN_ID, G11_T0_SOURCE_COMMIT,
+                                                     G11_T0_ENV_STEP)
 from satellite_rl.workbench.storage import Store, digest, read_json
 
 
@@ -26,28 +27,38 @@ class PowerRefinementWorkbenchTests(unittest.TestCase):
         frozen_source.start()
         self.addCleanup(frozen_source.stop)
         self.model_config = model_default_config()
-        self.model_config["name"] = "G11 M1"
+        self.model_config["name"] = "G11 T0"
         self.model_config["environment"].update(profile="europe_v1", power_budget_w=3000)
-        self.model_config["network"]["temporal_mode"] = "previous_action"
-        self.model_config["training"].update(seed=51001, total_steps=400000, device="cuda")
+        self.model_config["network"].update(kind="transformer", transformer_layout="tsac_natural_context",
+                                            temporal_mode="none", graph_mode="none", dropout=0.0)
+        self.model_config["state"].update(
+            features=["beam", "power", "interference", "occupancy", "natural_global_context"],
+            demand_visibility="known", context_level="compact")
+        self.model_config["reward"]["preset"] = "legacy_repaired"
+        self.model_config["training"].update(seed=51001, total_steps=G11_T0_ENV_STEP,
+                                             device="cuda", alpha_mode="fixed", fixed_alpha=0.01,
+                                             scene_order="shuffle_each_cycle")
         model_path = self.root / "original_model"
         model_path.mkdir()
-        (model_path / "policy.pt").write_bytes(b"fixed M1 fixture weights")
+        (model_path / "policy.pt").write_bytes(b"fixed T0 fixture weights")
         (model_path / "model.json").write_text("{}", encoding="utf-8")
-        self.model = {"id": "M1_fixture", "name": "G11 M1", "path": str(model_path),
+        self.model = {"id": "T0_fixture", "name": "G11 T0", "path": str(model_path),
                       "config": self.model_config, "sha256": digest(model_path / "policy.pt")}
         listed = patch.object(self.app, "models", return_value={"models": [self.model]})
         listed.start()
         self.addCleanup(listed.stop)
-        self.provenance = {"run_id": G11_M1_RUN_ID, "git_commit": G11_SOURCE_COMMIT,
-                           "env_step": 400000, "scene_sets": {
+        self.provenance = {"run_id": G11_T0_RUN_ID, "git_commit": G11_T0_SOURCE_COMMIT,
+                           "env_step": G11_T0_ENV_STEP, "scene_sets": {
             "train": {"source": {"source_dates": ["2024-01-08"]},
                       "files": [{"sha256": "a" * 64}]},
             "validation": {"source": {"source_dates": ["2024-01-15"]},
                            "files": [{"sha256": "b" * 64}]},
         }}
         self.model["provenance"] = self.provenance
-        policy = SimpleNamespace(config=deepcopy(self.model_config), metadata={"provenance": self.provenance})
+        policy = SimpleNamespace(config=deepcopy(self.model_config), metadata={
+            "provenance": self.provenance,
+            "experiment_modes": {"alpha_mode": "fixed", "fixed_alpha": 0.01,
+                                 "temporal_mode": "none", "graph_mode": "none"}})
         loader = patch("satellite_rl.workbench.checkpoints.load_policy", return_value=policy)
         loader.start()
         self.addCleanup(loader.stop)
@@ -72,13 +83,13 @@ class PowerRefinementWorkbenchTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 validate_config({**default_config(), **change})
 
-    def test_catalog_only_offers_m1_and_dated_europe_test(self):
+    def test_catalog_only_offers_t0_and_dated_europe_test(self):
         catalog = self.app.api("GET", ["power-refinement", "defaults"], {}, {})
         self.assertEqual(catalog["defaults"]["methods"], ["none", "discrete", "slsqp"])
         self.assertEqual(len(self.app.api("GET", ["power-refinement", "models"], {}, {})["models"]), 1)
         self.assertEqual([s["id"] for s in self.app.api("GET", ["power-refinement", "scenes"], {}, {})["scenes"]],
                          [self.scene["id"]])
-        self.model_config["name"] = "G11 M0"
+        self.model_config["name"] = "G11 M1"
         self.assertEqual(self.app.api("GET", ["power-refinement", "models"], {}, {})["models"], [])
 
     def test_submission_is_idempotent_and_freezes_actual_inputs(self):
@@ -118,17 +129,19 @@ class PowerRefinementWorkbenchTests(unittest.TestCase):
 
     def test_rechecks_loaded_policy_provenance_not_only_catalog(self):
         switched = deepcopy(self.provenance)
-        switched["env_step"] = 399999
-        policy = SimpleNamespace(config=deepcopy(self.model_config), metadata={"provenance": switched})
+        switched["env_step"] = G11_T0_ENV_STEP - 1
+        policy = SimpleNamespace(config=deepcopy(self.model_config), metadata={
+            "provenance": switched,
+            "experiment_modes": {"alpha_mode": "fixed", "fixed_alpha": 0.01}})
         with patch("satellite_rl.workbench.checkpoints.load_policy", return_value=policy):
             with self.assertRaisesRegex(ValueError, "固定预算终点"):
                 self.submit()
         self.assertEqual(self.app.store.jobs(), [])
 
-    def test_catalog_rejects_model_before_fixed_400000_step_endpoint(self):
-        self.model["provenance"] = {**self.provenance, "env_step": 399999}
+    def test_catalog_rejects_model_before_fixed_150000_step_endpoint(self):
+        self.model["provenance"] = {**self.provenance, "env_step": G11_T0_ENV_STEP - 1}
         self.assertEqual(self.app.api("GET", ["power-refinement", "models"], {}, {})["models"], [])
-        with self.assertRaisesRegex(ValueError, "G11 M1"):
+        with self.assertRaisesRegex(ValueError, "G11 T0"):
             self.submit()
 
 

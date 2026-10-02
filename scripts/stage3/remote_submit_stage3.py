@@ -24,7 +24,7 @@ PREFLIGHT = Path("D:/paper/outputs/experiments/stage3_power_20261003/preflight")
 PORTS = {20418: (8772, "total"), 20424: (8773, "initial")}
 REQUESTS = {20418: "s3-20261003-jan25-total", 20424: "s3-20261003-jan25-initial"}
 SCENE_RECORD_SHA = "674a8e4f9a6aa09ecbaa0a7c39a25cfff56ef746e9abf6a7e98b7c989a1be3dc"
-POLICY_SHA = "8b6cbe622f2e058ec8c6f563852eb7fac3f0c80b561cc0a7bbf96076fb8f971f"
+POLICY_SHA = "ae095e8246d22b2716ba154315cee18584917d215580821cb53f9aeba78eb824"
 
 
 def run_remote(port: int, code: str, timeout: int = 120) -> dict:
@@ -42,10 +42,10 @@ def run_remote(port: int, code: str, timeout: int = 120) -> dict:
 
 def code(port: int, commit: str, submit: bool) -> str:
     wb_port, mode = PORTS[port]
-    m1 = json.loads((PREFLIGHT / f"m1_import_{port}.json").read_text(encoding="utf-8"))
+    t0 = json.loads((PREFLIGHT / f"t0_import_{port}.json").read_text(encoding="utf-8"))
     scenes = json.loads((PREFLIGHT / f"scene_import_{port}.json").read_text(encoding="utf-8"))
-    if (m1.get("commit") != commit or scenes.get("commit") != commit
-            or m1.get("policy_sha256") != POLICY_SHA
+    if (t0.get("commit") != commit or scenes.get("commit") != commit
+            or t0.get("policy_sha256") != POLICY_SHA
             or scenes.get("original_record_sha256") != SCENE_RECORD_SHA):
         raise RuntimeError(f"Frozen source/model/scene import receipt differs on {port}")
     return f'''
@@ -62,11 +62,11 @@ def api(method,path,body=None,timeout=120):
 system=api('GET','/system')
 if system.get('source_root')!=str(repo) or system.get('archive_root')!=str(archive) or system.get('cuda') is not True:
  raise RuntimeError('Stage3 live workbench differs')
-model_id={m1['model_id']!r};scene_id={scenes['scene_id']!r};mode={mode!r}
+model_id={t0['model_id']!r};scene_id={scenes['scene_id']!r};mode={mode!r}
 models=api('GET','/power-refinement/models')['models']
 scenes=api('GET','/power-refinement/scenes')['scenes']
 if model_id not in [m['id'] for m in models] or scene_id not in [s['id'] for s in scenes]:
- raise RuntimeError('Imported M1/Jan25 missing from stage3 eligible lists')
+ raise RuntimeError('Imported T0/Jan25 missing from stage3 eligible lists')
 defaults=api('GET','/power-refinement/defaults')['defaults']
 if (defaults.get('methods')!=['none','discrete','slsqp'] or defaults.get('repeats')!=3
  or defaults.get('action_mode')!='stochastic' or defaults.get('action_seed')!=53001

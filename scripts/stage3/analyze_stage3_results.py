@@ -156,7 +156,7 @@ def main() -> None:
               "initial_allocation_count": len(allocation_sha),
               "none_metrics_equal_across_modes": True,
               "summaries": summaries, "total_minus_initial_by_scene": cross,
-              "limitations": "One frozen M1 training seed and one Jan25 date; repeated actions averaged within each scene."}
+              "limitations": "One frozen T0 training seed, 150k training steps, and one Jan25 date; repeated actions averaged within each scene."}
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "paired_summary.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     with (OUT / "paired_scene_differences.csv").open("w", encoding="utf-8-sig", newline="") as stream:
