@@ -14,7 +14,8 @@ import numpy as np
 from satellite_rl.power_refinement.config import default_config as refinement_defaults
 from satellite_rl.power_refinement.runner import evaluate_refinement
 from satellite_rl.workbench.config import default_config as model_defaults
-from satellite_rl.workbench.power_refinement import G11_M1_RUN_ID, G11_SOURCE_COMMIT
+from satellite_rl.workbench.power_refinement import (G11_T0_RUN_ID, G11_T0_SOURCE_COMMIT,
+                                                     G11_T0_ENV_STEP)
 from satellite_rl.workbench.service import Application
 from satellite_rl.workbench.storage import Store, digest, read_json
 
@@ -22,7 +23,9 @@ from satellite_rl.workbench.storage import Store, digest, read_json
 class FixedPolicy:
     def __init__(self, config, provenance):
         self.config = config
-        self.metadata = {"provenance": provenance}
+        self.metadata = {"provenance": provenance,
+                         "experiment_modes": {"alpha_mode": "fixed", "fixed_alpha": 0.01,
+                                              "temporal_mode": "none", "graph_mode": "none"}}
         self.agent = type("Agent", (), {"rng": random.Random(51001)})()
 
     def reset_episode(self):
@@ -48,30 +51,31 @@ class RefinementRunnerTests(unittest.TestCase):
         frozen.start()
         self.addCleanup(frozen.stop)
         model_config = model_defaults()
-        model_config["name"] = "G11 M1"
+        model_config["name"] = "G11 T0"
         model_config["network"].update(kind="transformer", transformer_layout="tsac_natural_context",
-                                       temporal_mode="previous_action", dropout=0.0)
+                                       temporal_mode="none", graph_mode="none", dropout=0.0)
         model_config["state"].update(
             features=["beam", "power", "interference", "occupancy",
-                      "natural_global_context", "previous_actual_action"],
+                      "natural_global_context"],
             demand_visibility="known", context_level="compact")
         model_config["reward"]["preset"] = "legacy_repaired"
         model_config["environment"].update(profile="europe_v1", power_budget_w=3000,
                                             action_mask="joint_feasible")
-        model_config["training"].update(seed=51001, total_steps=400000, device="cuda",
-                                        scene_order="shuffle_each_cycle")
+        model_config["training"].update(seed=51001, total_steps=G11_T0_ENV_STEP, device="cuda",
+                                        scene_order="shuffle_each_cycle", alpha_mode="fixed",
+                                        fixed_alpha=0.01)
         model_dir = self.root / "source_model"
         model_dir.mkdir()
         (model_dir / "policy.pt").write_bytes(b"frozen short-test policy")
         (model_dir / "model.json").write_text("{}", encoding="utf-8")
-        provenance = {"run_id": G11_M1_RUN_ID, "git_commit": G11_SOURCE_COMMIT,
-                      "env_step": 400000, "scene_sets": {
+        provenance = {"run_id": G11_T0_RUN_ID, "git_commit": G11_T0_SOURCE_COMMIT,
+                      "env_step": G11_T0_ENV_STEP, "scene_sets": {
             "train": {"source": {"source_dates": ["2024-01-08"]},
                       "files": [{"sha256": "a" * 64}]},
             "validation": {"source": {"source_dates": ["2024-01-15"]},
                            "files": [{"sha256": "b" * 64}]},
         }}
-        self.model = {"id": "M1", "name": "G11 M1", "path": str(model_dir),
+        self.model = {"id": "T0", "name": "G11 T0", "path": str(model_dir),
                       "config": model_config, "provenance": provenance,
                       "sha256": digest(model_dir / "policy.pt")}
         self.policy = FixedPolicy(model_config, provenance)
@@ -89,7 +93,7 @@ class RefinementRunnerTests(unittest.TestCase):
         controls = refinement_defaults()
         controls.update(repeats=1, maxiter=2, maxeval=4, max_time_seconds=1.0)
         self.job = self.app.api("POST", ["power-refinement", "runs"], {},
-                                {"model_id": "M1", "scene_id": scene["id"],
+                                {"model_id": "T0", "scene_id": scene["id"],
                                  "config": controls, "request_id": "runner_short_fixture"})
         self.directory = self.app.store.job_dir(self.job["run_id"])
         self.config = read_json(self.directory / "config.json")

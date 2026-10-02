@@ -52,6 +52,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-repo", type=Path, required=True)
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--replace-clean-unstarted", action="store_true",
+                        help="Advance a clean unused stage3 checkout to a descendant frozen commit")
     args = parser.parse_args()
     commit = args.commit.lower()
     if not re.fullmatch("[0-9a-f]{40}", commit):
@@ -90,7 +92,7 @@ print(json.dumps({{'path':str(target),'sha256':h.hexdigest()}}))
     installed = {}
     for port in (20418, 20424):
         code = f'''
-import datetime,json,os,pathlib,subprocess
+import datetime,json,os,pathlib,socket,subprocess
 root=pathlib.Path({BASE!r})/{str(port)!r}
 bare=root/'receive.git';repo=root/'repo';bundle=pathlib.Path({remote_bundle!r})
 commit={commit!r};ref={REF!r};dqn={DQN!r}
@@ -101,7 +103,24 @@ if not (bare/'HEAD').is_file() or not repo.is_dir():raise RuntimeError('Stage3 i
 if (repo/'.git').exists():
  head=run(['git','-C',str(repo),'rev-parse','HEAD'])
  dirty=run(['git','-C',str(repo),'status','--porcelain'])
- if head!=commit or dirty:raise RuntimeError('Existing stage3 checkout differs or is dirty')
+ if dirty:raise RuntimeError('Existing stage3 checkout is dirty')
+ if head!=commit:
+  if not {args.replace_clean_unstarted!r}:raise RuntimeError('Existing stage3 checkout differs; explicit unused replacement flag required')
+  wb_port={8772 if port==20418 else 8773}
+  with socket.socket() as probe:
+   probe.settimeout(1)
+   if probe.connect_ex(('127.0.0.1',wb_port))==0:raise RuntimeError('Stage3 workbench is already listening')
+  if list((root/'archive/outputs/workbench/jobs').glob('*/job.json')):
+   raise RuntimeError('Stage3 formal job already exists; frozen checkout cannot be replaced')
+  if list((root/'ops').glob('workbench_*_launch.json')):
+   raise RuntimeError('Stage3 workbench launch receipt exists; inspect before replacement')
+  incoming='refs/stage3/incoming_'+commit[:12]
+  run(['git','-C',str(bare),'fetch',str(bundle),'HEAD:'+incoming])
+  if subprocess.run(['git','-C',str(bare),'merge-base','--is-ancestor',head,commit]).returncode!=0:
+   raise RuntimeError('Replacement commit does not descend from unused stage3 checkout')
+  run(['git','-C',str(bare),'update-ref',ref,commit])
+  run(['git','-C',str(repo),'fetch',str(bare),ref])
+  run(['git','-C',str(repo),'checkout','--detach',commit])
 else:
  run(['git','-C',str(bare),'fetch',str(bundle),'HEAD:'+ref])
  run(['git','-C',str(bare),'symbolic-ref','HEAD',ref])

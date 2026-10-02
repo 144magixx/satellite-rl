@@ -48,7 +48,7 @@ def remote_json(transport, code: str, timeout: int = 600) -> dict:
 
 def get_plan(transport, port: int, commit: str) -> dict:
     submitted = json.loads((PREFLIGHT / f"jan25_submission_{port}.json").read_text(encoding="utf-8"))
-    model = json.loads((PREFLIGHT / f"m1_import_{port}.json").read_text(encoding="utf-8"))
+    model = json.loads((PREFLIGHT / f"t0_import_{port}.json").read_text(encoding="utf-8"))
     scene = json.loads((PREFLIGHT / f"scene_import_{port}.json").read_text(encoding="utf-8"))
     run_id = submitted["job"]["run_id"]
     if (submitted.get("commit") != commit or model.get("commit") != commit
@@ -91,7 +91,7 @@ for label,base in roots.items():
                 'bytes':size,'sha256':h.hexdigest()}})
 ops=root/'ops'
 for name in ('workbench_{8772 if port==20418 else 8773}_launch.json',
-             'm1_import_receipt.json','jan25_scene_import_receipt.json',
+             't0_import_receipt.json','jan25_scene_import_receipt.json',
              'jan25_{"total" if port==20418 else "initial"}_submission.json'):
  path=ops/name
  if path.is_file():
