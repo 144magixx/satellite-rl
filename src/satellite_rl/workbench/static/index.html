@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
   <script src="/coverage.js" defer></script>
+  <script src="/power_refinement.js" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -17,12 +18,37 @@
     </header>
     <nav class="main-nav" aria-label="工作台页面">
       <button type="button" data-page="coverage"><span>Ⅰ</span> 第一阶段覆盖规划</button>
+      <button type="button" data-page="power-refinement"><span>Ⅲ</span> 第三阶段功率细调</button>
       <button type="button" data-page="config" aria-current="page"><span>01</span> 配置实验</button>
       <button type="button" data-page="monitor"><span>02</span> 训练监控</button>
       <button type="button" data-page="test"><span>03</span> 模型测试</button>
       <button type="button" data-page="compare"><span>04</span> 结果对比</button>
     </nav>
     <main>
+      <section class="page" id="page-power-refinement" aria-labelledby="power-refinement-title" hidden>
+        <div class="page-heading"><div><p class="eyebrow">THIRD STAGE</p><h1 id="power-refinement-title">冻结模型与功率细调</h1><p>G11 M1给出频率槽及原始功率；固定实际频率槽，让原档位、离散细调和连续功率优化共用同一初始动作。</p></div><button id="power-refinement-refresh" type="button">刷新模型、场景与任务</button></div>
+        <div class="layout-two"><div class="stack">
+          <div class="panel"><h2>冻结来源</h2><label class="field">G11 M1终点模型<select id="power-refinement-model"></select></label><label class="field">欧洲test场景集<select id="power-refinement-scene"></select></label><div id="power-refinement-source" class="notice muted">请选择模型和考核场景。</div><label class="field">将G11 M1终点模型导入本工作台的目录<input id="power-refinement-import-path" type="text" placeholder="/home/.../models/runs/workbench/.../final"></label><button id="power-refinement-import" type="button">校验并导入模型</button><p class="small muted">场景请先在“模型测试”页导入欧洲航空test数据；提交时复核模型权重SHA、场景SHA和训练/验证/考核日期隔离。</p></div>
+          <div class="panel"><h2>同初始解对照</h2><p class="small muted">每次动作采样只生成一次原始分配，并依次评价三种方法。原档位基线为5–50 W、5 W间隔；连续方法采用SLSQP与需求匹配初始化，使用每束p≥0、总和不超过所选预算，不设原档位的逐束上下限。</p><div class="field-grid">
+            <label class="field">初始动作<select id="power-refinement-action-mode"><option value="stochastic">随机采样</option><option value="deterministic">确定性</option></select></label>
+            <label class="field">动作种子<input id="power-refinement-action-seed" type="number" min="0" step="1"></label>
+            <label class="field">每场景动作次数<input id="power-refinement-repeats" type="number" min="1" max="30" step="1"></label>
+            <label class="field">功率上限口径<select id="power-refinement-budget-mode"><option value="total">原总预算3000 W</option><option value="initial">该初始解实际总功率</option></select></label>
+            <label class="field">总预算 / W<input id="power-refinement-total-power" type="number" value="3000" readonly></label>
+            <label class="field">基本服务保护<select id="power-refinement-protect" disabled><option value="true">固定开启</option></select></label>
+          </div><p class="small muted">SI和SGM均按全部目标波束终态计算；初始解、两种细调及回退均逐场景记录。</p></div>
+        <div class="stack">
+          <div class="panel"><h2>求解预算与验收容差</h2><div class="field-grid">
+            <label class="field">SI数值容差<input id="power-refinement-si-tolerance" type="number" min="0" max="0.001" step="any"></label>
+            <label class="field">SGM数值容差<input id="power-refinement-sgm-tolerance" type="number" min="0" max="0.001" step="any"></label>
+            <label class="field">最大迭代次数<input id="power-refinement-maxiter" type="number" min="1" max="10000" step="1"></label>
+            <label class="field">最大容量计算次数<input id="power-refinement-maxeval" type="number" min="1" max="1000000" step="1"></label>
+            <label class="field">单次优化时限 / 秒<input id="power-refinement-max-time" type="number" min="0.01" max="3600" step="any"></label>
+            <label class="field">原档位步长 / W<input id="power-refinement-discrete-step" type="number" value="5" readonly></label>
+          </div><p class="small muted">固定方法：原始不调整、原5 W档位离散细调、连续SLSQP（含需求匹配初始化）。此任务只评价冻结模型，训练交互为0。</p><div class="actions"><button id="power-refinement-validate" type="button">校验配置</button><button id="power-refinement-submit" class="primary" type="button">提交后台功率细调</button></div><div id="power-refinement-message" class="notice muted">等待配置。</div></div>
+          <div class="panel"><h2>任务与结果</h2><label class="field">第三阶段任务<select id="power-refinement-run"></select></label><div class="actions"><button id="power-refinement-stop" type="button">停止</button><button id="power-refinement-resume" type="button">恢复</button></div><div id="power-refinement-status" class="notice muted">尚未选择任务。</div><details><summary>冻结配置与来源</summary><pre id="power-refinement-config" class="trace-raw"></pre></details><h3>日志</h3><pre id="power-refinement-logs" class="trace-raw"></pre><h3>结果摘要</h3><pre id="power-refinement-results" class="trace-raw"></pre><div class="actions"><a id="power-refinement-download-report" href="#">中文报告</a><a id="power-refinement-download-results" href="#">场景结果CSV</a><a id="power-refinement-download-beams" href="#">逐束CSV</a><a id="power-refinement-download-cases" href="#">完整场景JSONL</a><a id="power-refinement-download-iterations" href="#">迭代JSONL</a></div></div>
+        </div></div>
+      </section>
       <section class="page" id="page-coverage" hidden>
         <div class="page-heading"><div><p class="eyebrow">FIRST STAGE</p><h1>波束覆盖规划</h1><p>比较规则或聚类基础布局的微调，以及从空布局由PPO逐束构建；覆盖与负载独立于第二阶段资源分配评价。</p></div><button type="button" id="coverage-refresh">刷新任务与数据</button></div>
         <div class="layout-two"><div class="stack">
