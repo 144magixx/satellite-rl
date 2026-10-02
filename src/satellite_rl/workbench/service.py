@@ -74,7 +74,10 @@ class Application:
             status.setdefault("preflight", runtime)
             status.setdefault("gpu", runtime.get("cuda_device"))
         artifacts = read_json(directory / "artifacts.json", {})
-        for filename in ("manifest.json", "status.json", "config.json", "metrics.jsonl", "updates.csv", "episodes.csv", "evaluations.csv", "events.jsonl", "failure.json", "worker.log", "results.json"):
+        for filename in ("manifest.json", "status.json", "config.json", "metrics.jsonl",
+                         "traces.jsonl", "episodes.jsonl", "evaluations.jsonl", "updates.csv",
+                         "episodes.csv", "evaluations.csv", "events.jsonl", "failure.json",
+                         "worker.log", "results.json"):
             if (directory / filename).is_file():
                 artifacts.setdefault(filename, str(directory / filename))
         launch = read_json(directory / "launch.json", {})

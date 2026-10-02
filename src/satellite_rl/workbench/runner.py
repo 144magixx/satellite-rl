@@ -299,7 +299,7 @@ def _scene_files(path):
     return files
 
 
-def _reconcile(directory, checkpoint_step):
+def _reconcile(directory, checkpoint_step, last_validation_step=None):
     """Discard log rows after the last complete checkpoint on resume."""
     for name in ("metrics", "episodes", "updates", "evaluations", "traces"):
         path = Path(directory) / f"{name}.jsonl"
@@ -319,16 +319,22 @@ def _reconcile(directory, checkpoint_step):
                         if not line.endswith("\n"):
                             break
                         raise
-                    if int(row.get("env_step", row.get("step", 0))) <= checkpoint_step:
+                    row_step = int(row.get("env_step", row.get("step", 0)))
+                    group = row.get("group")
+                    uncommitted_evaluation = (last_validation_step is not None and
+                        name in ("traces", "evaluations") and
+                        ((group == "validation" and row_step > last_validation_step) or
+                         (group not in (None, "training", "validation"))))
+                    if row_step <= checkpoint_step and not uncommitted_evaluation:
                         stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
             replace_with_retry(temp, path)
         finally:
             temp.unlink(missing_ok=True)
 
 
-def _restore_logging(ledger, directory, checkpoint_step):
+def _restore_logging(ledger, directory, checkpoint_step, last_validation_step=None):
     ledger.flush()
-    _reconcile(directory, checkpoint_step)
+    _reconcile(directory, checkpoint_step, last_validation_step)
     # Metrics at the checkpoint's own step were written before it and are
     # canonical; only later steps belong to the rolled-back tail.
     ledger.open_tensorboard(purge_step=checkpoint_step + 1)
@@ -345,7 +351,7 @@ def _ensure_finite_agent(agent):
 
 
 def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_path=None,
-                        env_step=0, policy_name="model"):
+                        env_step=0, policy_name="model", scene_sha256=None, group="test"):
     state = env.reset(seed=seed, scene=scene)
     reset_history = getattr(policy, "reset_episode", None)
     if reset_history is not None:
@@ -360,11 +366,14 @@ def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_p
         action = policy.act(state, deterministic=action_mode == "deterministic", **policy_options)
         next_state, reward, done, info = env.step(action)
         reward_total += float(reward)
-        row = {"scene_id": scene_id, "step": step, "env_step": env_step, "policy": policy_name,
+        row = {"scene_id": scene_id, "scene_sha256": scene_sha256, "group": group,
+               "step": step, "env_step": env_step, "policy": policy_name,
                "requested_action": info.get("requested_action", list(action)),
                "actual_action": info.get("actual_action"), "reward": reward,
                "reward_terms": info.get("reward_terms"), "done": done,
                "beam_id": info.get("beam_id"),
+               "beam_service_step": info.get("beam_service_step"),
+               "service_timing": "after_action_before_later_interference",
                "action_mask": info.get("action_mask", "none"),
                "legal_action_count": info.get("legal_action_count"),
                "policy_action_info": getattr(policy, "last_action_info", {})}
@@ -375,8 +384,11 @@ def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_p
         step += 1
         if step > 1000:
             raise RuntimeError("Evaluation environment did not terminate")
-    return {"scene_id": scene_id, "metrics": {**env.metrics(), "return": reward_total},
-            "beams": env.beam_results(), "trace": trace}
+    final_beams = env.beam_results()
+    return {"scene_id": scene_id, "metrics": {**env.metrics(beams=final_beams), "return": reward_total},
+            "beams": final_beams,
+            "service_timing": "after_last_recorded_action_including_later_interference",
+            "trace": trace}
 
 
 def _summarize_scenes(results):
@@ -437,8 +449,8 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
                     env = WorkbenchEnv(config)
                     result = _evaluation_episode(env, agent, scene, f"{group}_{seed}_r{repeat}",
                                                  action_seed, config["evaluation"]["action_mode"],
-                                                 Path(directory) / "traces.jsonl" if group == "test" else None,
-                                                 env_step)
+                                                 Path(directory) / "traces.jsonl",
+                                                 env_step, scene_sha256=scene_ref["sha256"], group=group)
                 finally:
                     agent.rng.setstate(agent_rng)
             result["scene"] = scene_ref
@@ -447,6 +459,8 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
                                                             "scene_id": result["scene_id"],
                                                             "action_seed": action_seed,
                                                             "metrics": result["metrics"],
+                                                            "beams_final": result["beams"],
+                                                            "service_timing": result["service_timing"],
                                                             "scene_sha256": scene_ref["sha256"]})
             results.append(result)
     summary = _summarize_scenes(results)
@@ -570,7 +584,7 @@ def _training(directory, job, config, ledger, resume):
 
     if resume:
         snapshot_record = snapshot_artifact(env_step)
-        _restore_logging(ledger, directory, env_step)
+        _restore_logging(ledger, directory, env_step, progress.get("last_validation_step", -1))
         if snapshot_record:
             _artifacts(directory, job, learning_snapshots=snapshot_record)
     save_progress(scene_order=scene_order.checkpoint_state(episode))
@@ -655,13 +669,16 @@ def _training(directory, job, config, ledger, resume):
                     "clipped_slots": (requested.get("slots", 0) - actual.get("slots", 0)),
                 })
                 save_progress()
-            if length <= 5 or env_step % max(1, training["log_interval"]) == 0 or done:
-                _jsonl(Path(directory) / "traces.jsonl", {"env_step": env_step, "episode": episode,
-                                                              "step": length - 1, "scene_sha256": scene_ref["sha256"],
-                                                              "requested_action": info.get("requested_action", list(action)),
-                                                              "actual_action": info.get("actual_action"),
-                                                              "reward": reward, "reward_terms": info.get("reward_terms"),
-                                                              "done": done})
+            _jsonl(Path(directory) / "traces.jsonl", {"env_step": env_step, "group": "training",
+                                                          "episode": episode,
+                                                          "step": length - 1, "scene_sha256": scene_ref["sha256"],
+                                                          "beam_id": info.get("beam_id"),
+                                                          "beam_service_step": info.get("beam_service_step"),
+                                                          "service_timing": "after_action_before_later_interference",
+                                                          "requested_action": info.get("requested_action", list(action)),
+                                                          "actual_action": info.get("actual_action"),
+                                                          "reward": reward, "reward_terms": info.get("reward_terms"),
+                                                          "done": done})
             state = next_state
         if config["algorithm"] == "ppo" and agent.rollout:
             diagnostics = agent.update()
@@ -669,7 +686,8 @@ def _training(directory, job, config, ledger, resume):
             _jsonl(Path(directory) / "updates.jsonl", {"env_step": env_step,
                                                         "update_step": agent.update_step, "values": diagnostics})
             ledger.record("learning", env_step, diagnostics)
-        terminal_metrics = env.metrics()
+        final_beams = env.beam_results() if hasattr(env, "beam_results") else []
+        terminal_metrics = env.metrics(beams=final_beams) if final_beams else env.metrics()
         episode_row = {"env_step": env_step, "episode": episode, "length": length,
                        "return": episode_return, "duration_seconds": time.monotonic() - episode_start,
                        "scene_seed": scene_seed, "scene": scene_ref, "terminal": bool(done),
@@ -680,7 +698,10 @@ def _training(directory, job, config, ledger, resume):
                                          "set_id": scene_sets["train"]["id"] if "train" in scene_sets else None}
                                         if source_scene else None),
                        "scene_order": selection,
-                       "metrics": terminal_metrics, "reward_terms": episode_terms}
+                       "metrics": terminal_metrics,
+                       "beams_final": final_beams,
+                       "service_timing": "after_last_recorded_action_including_later_interference",
+                       "reward_terms": episode_terms}
         _jsonl(Path(directory) / "episodes.jsonl", episode_row)
         ledger.record("training", env_step, {"return": episode_return, "episode_length": length,
                                              **{k: v for k, v in terminal_metrics.items() if isinstance(v, (int, float))}})
@@ -808,12 +829,16 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
                     policy.agent.rng.seed(seed + 7321)
                 env = WorkbenchEnv(environment_config)
                 result = _evaluation_episode(env, policy, scene, f"{file.stem}_r{repeat}", seed,
-                                             action_mode, Path(directory) / "traces.jsonl", len(results))
+                                             action_mode, Path(directory) / "traces.jsonl", len(results),
+                                             scene_sha256=scene_ref["sha256"])
             result["scene"] = {**scene_ref, "source_path": str(file), "source_sha256": _sha256(file)}
             results.append(result)
             _jsonl(Path(directory) / "evaluations.jsonl", {"env_step": len(results),
+                                                            "group": "test",
                                                             "scene_id": result["scene_id"],
                                                             "metrics": result["metrics"],
+                                                            "beams_final": result["beams"],
+                                                            "service_timing": result["service_timing"],
                                                             "scene_sha256": result["scene"]["sha256"]})
             eval_progress(len(results))
     summary = _summarize_scenes(results)
@@ -840,7 +865,8 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
                     baseline = _evaluation_episode(env, baseline_policy, _load_scene(scene_ref["path"]),
                                                    f"{file.stem}_{name}", seed, "deterministic",
                                                    Path(directory) / "traces.jsonl", completed_evaluations,
-                                                   policy_name=name)
+                                                   policy_name=name, scene_sha256=scene_ref["sha256"],
+                                                   group=f"baseline_{name}")
                 baseline["scene"] = {**scene_ref, "source_path": str(file), "source_sha256": _sha256(file)}
                 baseline_scenes.append(baseline)
                 completed_evaluations += 1
@@ -851,6 +877,8 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
                                                                 "group": f"baseline_{name}",
                                                                 "scene_id": baseline["scene_id"],
                                                                 "metrics": baseline["metrics"],
+                                                                "beams_final": baseline["beams"],
+                                                                "service_timing": baseline["service_timing"],
                                                                 "scene_sha256": scene_ref["sha256"]})
                 eval_progress(completed_evaluations)
             baseline_summary = _summarize_scenes(baseline_scenes)

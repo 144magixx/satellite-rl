@@ -107,6 +107,24 @@ def _sgm(rates, demands, beta):
     return result
 
 
+def beam_service_fields(rate_bps, required_bps, sgm):
+    """One beam's physical service, retaining supply above demand.
+
+    ``rate_bps`` is the raw environment's allocated capacity after the current
+    interference update. SI is capped; the capacity/demand ratio is not.
+    """
+    capacity = max(0.0, float(rate_bps))
+    demand = float(required_bps)
+    if not math.isfinite(capacity) or not math.isfinite(demand) or demand <= 0:
+        raise ValueError("Beam capacity or demand is invalid")
+    ratio = capacity / demand
+    return {"required_bps": demand, "capacity_bps": capacity,
+            "rate_bps": capacity,  # Existing result consumers use this name.
+            "effective_served_bps": min(capacity, demand),
+            "capacity_demand_ratio": ratio, "si": min(ratio, 1.0),
+            "sgm": float(sgm)}
+
+
 class WorkbenchEnv:
     """Strict wrapper. The raw environment remains the source of physical outcomes."""
 
@@ -453,6 +471,13 @@ class WorkbenchEnv:
         result = self._reward(before, after, raw_info, legacy_reward, request, actual, done)
         state = self._state()
         info = _json(raw_info)
+        # raw_info.current_satisfaction is capped and raw_info.sgm_rate is a
+        # reward term. Neither can reconstruct physical capacity or service SGM.
+        current_rate = self.raw_env.beam_bps[-1]
+        current_demand = self._scene["rate"].reshape(-1)[int(raw_info["beam_id"])]
+        current_sgm = _sgm([current_rate], [current_demand],
+                           float(self._scene["rate"].mean()))[0]
+        info["beam_service_step"] = beam_service_fields(current_rate, current_demand, current_sgm)
         info.update(reward_terms=result[1], reward_preset=self.config["reward"]["preset"],
                     requested_action=request, actual_action=actual, legacy_reward=legacy_reward,
                     projection_applied=mode == "feasible_projection" and projected != (freq_idx, slot_idx + 1, power_idx),
@@ -562,8 +587,7 @@ class WorkbenchEnv:
             result.append(dict(beam_id=i, original_index=int(self._scene["original_indices"][i]),
                                lat=float(self._scene["beam_location"][i, 0]),
                                lon=float(self._scene["beam_location"][i, 1]),
-                               required_bps=float(demands[i]), rate_bps=float(rates[i]),
-                               si=float(min(rates[i] / demands[i], 1)), sgm=float(sgm[i]),
+                               **beam_service_fields(rates[i], demands[i], sgm[i]),
                                group=int(row[1]) if row else i % 8,
                                freq=int(row[2]) if row else None,
                                slots=int(row[3]) if row else 0,
@@ -571,10 +595,10 @@ class WorkbenchEnv:
                                basic_met=bool(rates[i] >= env.basic_fraction * demands[i])))
         return result
 
-    def metrics(self):
+    def metrics(self, beams=None):
         self._require_reset()
         env = self.raw_env
-        beams = self.beam_results()
+        beams = self.beam_results() if beams is None else beams
         rates = np.array([b["rate_bps"] for b in beams])
         ratios = np.array([b["si"] for b in beams])
         sgm = np.array([b["sgm"] for b in beams])

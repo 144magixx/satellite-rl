@@ -230,7 +230,8 @@ class RegionDatasetTests(unittest.TestCase):
         observed = []
         def evaluate(env, policy, scene, *args, **kwargs):
             observed.append(deepcopy(scene))
-            return {"scene_id": args[0], "metrics": {"final_si_mean": 0.5}}
+            return {"scene_id": args[0], "metrics": {"final_si_mean": 0.5},
+                    "beams": [], "service_timing": "after_last_recorded_action_including_later_interference"}
         ledger = Mock()
         with patch("satellite_rl.workbench.runner._evaluation_episode", side_effect=evaluate):
             rows, _ = _fixed_evaluate(self.config, agent, directory, "test", 1, 9000, 0, ledger,
