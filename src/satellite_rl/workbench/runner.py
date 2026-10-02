@@ -905,6 +905,9 @@ def run_job(job_dir, *, resume=False):
     from satellite_rl.workbench.config import validate_config
 
     directory = Path(job_dir).resolve()
+    if _read_json(directory / "config.json", {}).get("research_stage") == "power_refinement":
+        from satellite_rl.power_refinement.runner import run_refinement_job
+        return run_refinement_job(directory, resume=resume)
     if _read_json(directory / "config.json", {}).get("research_stage") == "coverage":
         from satellite_rl.coverage.runner import run_coverage_job
         return run_coverage_job(directory, resume=resume)

@@ -160,7 +160,7 @@ class Store:
             return destination, commit
 
     def create_job(self, config, *, kind="train", request_id=None, extra=None):
-        if kind not in ("train", "evaluate"):
+        if kind not in ("train", "evaluate", "refine"):
             raise ValueError("未知任务类型")
         if request_id is not None:
             validate_id(request_id)
@@ -193,7 +193,7 @@ class Store:
                                for role, record in frozen_extra["scene_sets"].items()}
                 frozen_extra["scene_sets"] = frozen_sets
                 for role, record in frozen_sets.items():
-                    path_key = ("scene_path" if kind == "evaluate" and role == "test" else
+                    path_key = ("scene_path" if kind in ("evaluate", "refine") and role == "test" else
                                 "training_scene_path" if role == "train" else role + "_scene_path")
                     frozen_extra[path_key] = record["path"]
             if is_coverage:
@@ -203,7 +203,7 @@ class Store:
                                       for role, record in config["datasets"].items()}
                 frozen_extra["research_stage"] = "coverage"
                 frozen_extra["dataset_provenance"] = config["datasets"]
-            if kind == "evaluate" and (not is_coverage or config["coverage"]["method"] == "ppo"):
+            if kind in ("evaluate", "refine") and (not is_coverage or config["coverage"]["method"] == "ppo"):
                 model_target = directory / "model_input"
                 model_target.mkdir()
                 references = frozen_extra.get("model_files") or model_input_files(

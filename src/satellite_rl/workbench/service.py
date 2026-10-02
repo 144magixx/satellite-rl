@@ -76,7 +76,8 @@ class Application:
         artifacts = read_json(directory / "artifacts.json", {})
         for filename in ("manifest.json", "status.json", "config.json", "metrics.jsonl",
                          "traces.jsonl", "episodes.jsonl", "evaluations.jsonl", "updates.csv",
-                         "episodes.csv", "evaluations.csv", "events.jsonl", "failure.json",
+                         "episodes.csv", "evaluations.csv", "power_results.csv", "power_beams.csv",
+                         "power_iterations.jsonl", "power_cases.jsonl", "power_report.md", "events.jsonl", "failure.json",
                          "worker.log", "results.json"):
             if (directory / filename).is_file():
                 artifacts.setdefault(filename, str(directory / filename))
@@ -408,6 +409,9 @@ class Application:
         return output
 
     def api(self, method, parts, query, body):
+        if parts and parts[0] == "power-refinement":
+            from .power_refinement import PowerRefinementApplication
+            return PowerRefinementApplication(self).api(method, parts[1:], query, body)
         if parts and parts[0] == "coverage":
             from .coverage import CoverageApplication
             return CoverageApplication(self).api(method, parts[1:], query, body)
@@ -500,7 +504,9 @@ class Application:
         directory, _ = self.resolve_run(identifier)
         allow = {"metrics.jsonl", "updates.jsonl", "episodes.jsonl", "evaluations.jsonl", "traces.jsonl",
                  "updates.csv", "episodes.csv", "evaluations.csv", "events.jsonl", "worker.log", "config.json",
-                 "job.json", "manifest.json", "status.json", "results.json", "failure.json", "artifacts.json"}
+                 "job.json", "manifest.json", "status.json", "results.json", "failure.json", "artifacts.json",
+                 "power_results.csv", "power_beams.csv", "power_iterations.jsonl", "power_cases.jsonl",
+                 "power_report.md"}
         if filename == "report.md":
             detail, result = self.run_detail(identifier), self.results(identifier)
             lines = ["# 卫星资源分配实验报告", "", "运行：" + identifier,
