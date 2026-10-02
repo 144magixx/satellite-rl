@@ -197,3 +197,9 @@ G0已转为`completed`，原worker正常退出。06:46复核了最终权重、�
 G2已完成400000交互/398001更新及既定内部终点测试，原worker正常退出。08:54独立SSH核对了policy.pt、model.json、results.json和evaluations.jsonl的SHA，与两controller登记值一致；元数据仍为seed51001、冻结85f、固定终点，验证2580条、测试300条齐全。当前T0/T1/G0/G2共4/9完成，M0–M3和G1五组继续运行，08:45累计2556450/3100000步；Jan24共同考核仍待全部完成，尚无正式组间效果结论。
 
 本轮首次本地汇总误带旧的原始文件路径、helper观测时间和完成计数，已保留并拒用。真实API/SSH运行数据没有改变；另用独立原始记录核验后台进程与G2产物，再从当前数据构造了[有效快照](../../outputs/experiments/europe_tmg_20261001/preflight/root_verified_snapshot_20261002T005730_267586Z.json)。后续以运行清单的`latest_verified_snapshot`接手，摘要必须核对源路径、实际观测时间与组计数；无法读取就明确缺项。自动跟进的校验要求已保存回读，每小时简报不变。见[独立取证](../../outputs/verification/g11_remote_launch_20261001/helper_live_raw_20261002T005446_074844Z.json)及[监控修正回执](../../outputs/verification/g11_remote_launch_20261001/monitoring_provenance_repair_20261002.json)。此次更正没有停止、重启训练或修改前端与学习设置。
+
+### 09:47更新：G1完成，剩余四个M组
+
+G1已完成400000次训练交互和398001次更新，原worker退出。09:48独立核验了最终权重、元数据、结果与验证/测试日志SHA，两controller回执相符；配置仍为seed51001、冻结85f、2946维/122令牌的逐束编码。固定验证2580条、终点测试300条（100场景各3次）完整。
+
+T0/T1/G0/G1/G2共5/9完成，M0–M3四组继续训练，09:47累计2654550/3100000步。Jan24共同评价仍须等待全部完成，不能将T/G先跑完视为效果优于记忆组。[当前有效快照](../../outputs/experiments/europe_tmg_20261001/preflight/root_verified_snapshot_20261002T015022_338815Z.json) · [G1独立核验及原始文件入口](../../outputs/verification/g11_remote_launch_20261001/g1_terminal_compact_20261002T014854_564684Z.json)。本地helper取证脚本缺psutil时改用原有运维解释器，未改训练环境；本次无需前端修改。
