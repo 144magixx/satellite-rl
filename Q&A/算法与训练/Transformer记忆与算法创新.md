@@ -191,3 +191,9 @@ G11 自动化更新后仍为 ACTIVE，频率和九组范围未变；每次运行
 G0已转为`completed`，原worker正常退出。06:46复核了最终权重、模型元数据、结果及验证/测试日志SHA；400000交互/398001更新、seed51001、冻结85f源码与固定终点选择一致，Jan12验证2580条、Jan15内部测试300条齐全，两controller已登记其完成。现在T0/T1/G0共3组完成，其余6组继续训练；累计2311650/3100000交互。Jan24共同独立考核仍等待九组全部完成，当前尚不发布G组效果结论。
 
 证据：[本轮摘要](../../outputs/experiments/europe_tmg_20261001/preflight/g11_hourly_readonly_20261001T224905_248625Z.json) · [根复核](../../outputs/experiments/europe_tmg_20261001/preflight/root_hourly_review_20261001T224953_401020Z.json)。首份本地摘要中遗留的上一轮G0阶段和controller别名字段已在新文件更正，旧文件保留，原始观测与终点文件未变；后续接手使用这里的更正摘要。本次仍为进度文档更新，无需前端或训练代码变更。
+
+### 08:45更新：G2完成，监控汇总重新核验
+
+G2已完成400000交互/398001更新及既定内部终点测试，原worker正常退出。08:54独立SSH核对了policy.pt、model.json、results.json和evaluations.jsonl的SHA，与两controller登记值一致；元数据仍为seed51001、冻结85f、固定终点，验证2580条、测试300条齐全。当前T0/T1/G0/G2共4/9完成，M0–M3和G1五组继续运行，08:45累计2556450/3100000步；Jan24共同考核仍待全部完成，尚无正式组间效果结论。
+
+本轮首次本地汇总误带旧的原始文件路径、helper观测时间和完成计数，已保留并拒用。真实API/SSH运行数据没有改变；另用独立原始记录核验后台进程与G2产物，再从当前数据构造了[有效快照](../../outputs/experiments/europe_tmg_20261001/preflight/root_verified_snapshot_20261002T005730_267586Z.json)。后续以运行清单的`latest_verified_snapshot`接手，摘要必须核对源路径、实际观测时间与组计数；无法读取就明确缺项。自动跟进的校验要求已保存回读，每小时简报不变。见[独立取证](../../outputs/verification/g11_remote_launch_20261001/helper_live_raw_20261002T005446_074844Z.json)及[监控修正回执](../../outputs/verification/g11_remote_launch_20261001/monitoring_provenance_repair_20261002.json)。此次更正没有停止、重启训练或修改前端与学习设置。
