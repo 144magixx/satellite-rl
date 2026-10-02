@@ -257,6 +257,9 @@ def main() -> None:
         print("stage3_beam_audit_self_check_passed")
         return
     source_root = ARCHIVE / "20418/source/src"
+    # Import frozen scientific source without rewriting archived .pyc files.
+    # Their original bytes are included in the transfer SHA manifest.
+    sys.dont_write_bytecode = True
     sys.path.insert(0, str(source_root))
     import satellite_rl  # noqa: E402
     from satellite_rl.power_refinement.physics import FixedAllocationPhysics  # noqa: E402
