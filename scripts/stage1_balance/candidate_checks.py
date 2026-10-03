@@ -107,7 +107,7 @@ def main() -> None:
         cmap = FT2Font(str(font)).get_charmap()
         if not all(ord(character) in cmap for character in "波束覆盖需求"):
             raise RuntimeError("CJK font lacks required plot glyphs")
-        plt = _matplotlib()
+        plt, font_metadata = _matplotlib()
         figure, axis = plt.subplots(figsize=(4, 2))
         axis.set_title("波束覆盖与业务需求")
         axis.plot([0, 1], [0, 1])
