@@ -21,6 +21,7 @@ import numpy as np
 ROOT = Path("D:/paper/outputs/experiments/stage3_si_priority_20261003")
 ARCHIVE = ROOT / "remote_archive"
 OUT = ROOT / "completion"
+DIAGNOSTICS = ROOT / "diagnostics"
 PORTS = (20418, 20424)
 METHODS = ("sca", "sca_si_lp", "sca_si_lb")
 TIMING_KEYS = ("initialization_seconds", "physics_setup_seconds", "optimizer_wall_seconds",
@@ -84,6 +85,12 @@ def check_priority_floors(capacity, demand, original, reference) -> None:
         raise RuntimeError("B/C lowered a beam already short in A beyond tolerance")
 
 
+def check_highest_capacity_recomputation(saved, recomputed) -> None:
+    """Keep the original cross-platform numerical consistency tolerance."""
+    if not np.allclose(saved, recomputed, rtol=1e-8, atol=1e-3):
+        raise RuntimeError("Saved highest-SI beam capacities differ from physical recomputation")
+
+
 def self_check() -> None:
     assert beam_sgm(0.0, 100.0, 100.0) == 0.0
     assert_close(beam_sgm(100.0, 100.0, 100.0), 1.0, "exact-demand SGM")
@@ -113,6 +120,25 @@ def self_check() -> None:
         pass
     else:
         raise AssertionError("T0 tolerance was incorrectly added to A tolerance")
+    # The strict decision uses the SHA-archived capacity.  A tiny local BLAS
+    # difference must not turn a saved, exactly passing beam into a failure.
+    saved = np.array([10_000_000.0])
+    local = saved - 3.7e-5
+    check_priority_floors(saved, np.array([100_000_000.0]), saved, saved)
+    check_highest_capacity_recomputation(saved, local)
+    try:
+        check_priority_floors(saved - 1e-6, np.array([100_000_000.0]),
+                              saved, saved)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("Even a slightly sub-threshold saved capacity must fail")
+    try:
+        check_highest_capacity_recomputation(saved, saved - 0.2)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("Physical recomputation beyond original tolerance was accepted")
 
 
 def archived_file(manifest: dict, label: str, relative: str) -> Path:
@@ -155,8 +181,6 @@ def check_priority_record(case: dict, a_case: dict, a_file_sha: str) -> None:
         assert_close(row["reference_metrics"][name], a_row["metrics"][name],
                      "B/C reference " + name)
     check_priority_floors(capacity, demand, original, reference)
-    reference_ratio = reference / demand
-    t0_floor = np.minimum(original, 0.1 * demand)
     solver = row["solver"]
     phase1 = float(solver["phase1_best_si_mean"])
     best = float(solver["best_feasible_si_mean"])
@@ -190,20 +214,17 @@ def check_priority_record(case: dict, a_case: dict, a_file_sha: str) -> None:
             np.any(highest < 0) or np.any(highest[~problem.active] != 0) or
             highest.sum() > float(case["row"]["metrics"]["power_budget_w"]) + 1e-7):
         raise RuntimeError("B/C highest-SI candidate violates power or empty-slot rules")
+    highest_saved = np.asarray(solver["highest_si_metrics"]["capacity_bps"], dtype=float)
+    if highest_saved.shape != demand.shape or not np.isfinite(highest_saved).all():
+        raise RuntimeError("B/C saved highest-SI capacities are missing or nonfinite")
+    check_priority_floors(highest_saved, demand, original, reference)
     highest_ev = problem.evaluate(highest)
-    highest_ratio = highest_ev.capacity_bps / demand
-    if (np.any(highest_ratio < t0_floor / demand - 1e-8) or
-            np.any((reference_ratio >= 0.1) & (highest_ratio < 0.1)) or
-            np.any((reference_ratio < 0.1) & (highest_ratio < reference_ratio - 1e-8))):
-        raise RuntimeError("B/C highest-SI candidate violates basic-service protection")
     assert_close(highest_ev.si, best, "recomputed best feasible SI", rtol=0, atol=1e-10)
     assert_close(solver["highest_si_metrics"]["final_si_mean"], highest_ev.si,
                  "saved highest-SI metric", rtol=0, atol=1e-10)
     assert_close(solver["highest_si_metrics"]["final_sgm_mean"], highest_ev.sgm,
                  "saved highest-SI SGM", rtol=0, atol=1e-10)
-    if not np.allclose(solver["highest_si_metrics"]["capacity_bps"],
-                       highest_ev.capacity_bps, rtol=1e-8, atol=1e-3):
-        raise RuntimeError("Saved highest-SI beam capacities differ from physical recomputation")
+    check_highest_capacity_recomputation(highest_saved, highest_ev.capacity_bps)
     own_calls = int(solver["evaluations"])
     a_calls = int(a_row["solver"]["evaluations"])
     if (own_calls > 2000 or a_calls > 2000 or a_calls + own_calls > 4000 or
@@ -490,6 +511,7 @@ def audit_one(port: int, physics_class) -> dict:
     return {"port": port, "mode": expected_mode, "cases_checked": cases,
             "beams_checked": beams_checked, "physical_capacity_recomputed": capacity_checks,
             "highest_si_candidate_beams_recomputed": highest_checks,
+            "strict_guard_source": "SHA-archived worker capacity for A and highest-SI candidate",
             "independent_initial_allocations": len(initial_hashes),
             "case_jsonl_sha256": sha(case_path), "case_csv_sha256": sha(csv_path),
             "scene_timing_csv_sha256": sha(timing_path), "timed_scene_method_rows": len(timing_rows),
@@ -525,10 +547,17 @@ def main() -> None:
     ports = {str(port): audit_one(port, FixedAllocationPhysics) for port in PORTS}
     if len({item["frozen_source_commit"] for item in ports.values()}) != 1:
         raise RuntimeError("Two archived budgets used different frozen source commits")
+    diagnostic_names = ("highest_si_guard_diagnosis.json",
+                        "remote_frozen_recompute_20418.json",
+                        "remote_frozen_recompute_20424.json", "conclusion.md")
+    diagnostics = [{"path": str(DIAGNOSTICS / name), "sha256": sha(DIAGNOSTICS / name)}
+                   for name in diagnostic_names if (DIAGNOSTICS / name).is_file()]
     result = {"status": "independent_all_1800_cases_180000_beams_and_timing_verified",
               "checked_utc": datetime.now(timezone.utc).isoformat(),
               "source_root": str(source_root),
               "scope": "saved cases only; no policy inference or new evaluation",
+              "strict_guard_source": "SHA-archived worker capacity; local physics checks unchanged numerical agreement",
+              "cross_blas_diagnostic_receipts": diagnostics,
               "ports": ports, "total_cases": sum(x["cases_checked"] for x in ports.values()),
               "total_beams": sum(x["beams_checked"] for x in ports.values())}
     OUT.mkdir(parents=True, exist_ok=True)
