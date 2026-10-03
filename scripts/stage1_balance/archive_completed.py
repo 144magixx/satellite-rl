@@ -1,0 +1,194 @@
+"""Incrementally mirror completed S1-02 jobs, weights, reports and source SHA.
+
+Run with --watch as a persistent local background process after formal launch.
+Only completed workbench jobs and passed report directories are copied.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+from datetime import datetime, timezone
+import hashlib
+import json
+from pathlib import Path
+import time
+
+from remote_sources import LOCAL, REMOTE, connect
+import remote_stage1
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def sha(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def save(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temp.replace(path)
+
+
+def remote_json(sftp, path: str, default=None):
+    try:
+        with sftp.open(path, "rb") as stream:
+            return json.loads(stream.read())
+    except FileNotFoundError:
+        return default
+
+
+def remote_inventory(client, relative_roots: list[str]) -> list[dict]:
+    code = f'''
+import hashlib,json,pathlib
+root=pathlib.Path({REMOTE!r}).resolve();selected={relative_roots!r};entries=[]
+for rel in selected:
+ folder=(root/rel).resolve()
+ if not folder.is_relative_to(root):raise RuntimeError('Archive root escaped S1-02')
+ if not folder.is_dir():continue
+ for path in sorted(folder.rglob('*')):
+  if path.is_symlink():raise RuntimeError('Unexpected symlink in frozen completed artifact: '+str(path))
+  if not path.is_file():continue
+  h=hashlib.sha256()
+  with path.open('rb') as stream:
+   for block in iter(lambda:stream.read(8*1024*1024),b''):h.update(block)
+  entries.append({{'relative':str(path.relative_to(root)),'sha256':h.hexdigest(),
+                  'bytes':path.stat().st_size}})
+print(json.dumps(entries))
+'''
+    encoded = base64.b64encode(code.encode()).decode()
+    command = "python3 -B -c 'exec(__import__(\"base64\").b64decode(\"" + encoded + "\"))'"
+    return json.loads(remote_stage1.execute(client, command))
+
+
+def target(relative: str) -> Path:
+    path = Path(relative)
+    parts = path.parts
+    if ".." in parts or path.is_absolute():
+        raise ValueError("Archive path escaped S1-02")
+    if parts[:3] == ("models", "runs", "workbench"):
+        return Path("D:/paper/models/runs/first_stage_s1_02_20261004") / Path(*parts[3:])
+    if parts[:4] == ("outputs", "experiments", "first_stage_s1_02_20261004", "analysis"):
+        return LOCAL / "analysis" / Path(*parts[4:])
+    if parts[:3] == ("outputs", "workbench", "jobs"):
+        return LOCAL / "jobs" / Path(*parts[3:])
+    if parts[:3] == ("outputs", "workbench", "source_snapshots"):
+        return LOCAL / "source_snapshots" / Path(*parts[3:])
+    return LOCAL / "remote_archive" / path
+
+
+def copy_file(sftp, item: dict) -> dict:
+    rel = item["relative"]
+    source = REMOTE + "/" + rel.replace("\\", "/")
+    destination = target(rel)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        if destination.stat().st_size != item["bytes"] or sha(destination) != item["sha256"]:
+            raise RuntimeError("Local archived artifact changed: " + str(destination))
+        action = "verified_existing"
+    else:
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        sftp.get(source, str(temporary))
+        if temporary.stat().st_size != item["bytes"] or sha(temporary) != item["sha256"]:
+            raise RuntimeError("Completed remote artifact transfer SHA differs: " + source)
+        temporary.replace(destination)
+        action = "copied_verified"
+    return {"relative": rel, "local_path": str(destination), "sha256": item["sha256"],
+            "bytes": item["bytes"], "action": action}
+
+
+def archive_once() -> dict:
+    client = connect()
+    try:
+        with client.open_sftp() as sftp:
+            state = remote_json(sftp, REMOTE + "/ops/controller_state.json", {})
+            plan = remote_json(sftp, REMOTE + "/ops/controller_plan.json", {})
+            if not state or not plan:
+                return {"status": "awaiting_controller", "checked_utc": now(), "files": []}
+            jobs = state.get("jobs", {})
+            completed = {}
+            roots = []
+            for label, job in sorted(jobs.items()):
+                run_id = job["run_id"]
+                remote_dir = f"outputs/workbench/jobs/{run_id}"
+                progress = remote_json(sftp, REMOTE + "/" + remote_dir + "/status.json", {})
+                if progress.get("stage") == "completed":
+                    completed[label] = run_id
+                    roots.append(remote_dir)
+                    if job.get("kind") == "train":
+                        roots.append(f"models/runs/workbench/{run_id}")
+            if completed:
+                roots.append("outputs/workbench/source_snapshots/" + plan["source_commit"])
+            analysis = "outputs/experiments/first_stage_s1_02_20261004/analysis"
+            for phase in ("A_development", "A_report", "B_menu_selection", "B_report"):
+                gate = remote_json(sftp, REMOTE + "/" + analysis + "/" + phase + "/gate.json")
+                if phase == "A_development":
+                    if all("A_dev_" + method in completed for method in ("A0", "A1", "A2", "A3")):
+                        roots.append(analysis + "/" + phase)
+                elif gate and gate.get("status") == "passed":
+                    roots.append(analysis + "/" + phase)
+            inventory = remote_inventory(client, roots)
+            files = [copy_file(sftp, item) for item in inventory]
+            receipt = {"experiment_id": "S1-02", "status": "completed_artifacts_sha_mirrored",
+                       "checked_utc": now(), "controller_phase": state.get("phase"),
+                       "source_commit": plan["source_commit"], "completed_jobs": completed,
+                       "pending_jobs": sorted(set(jobs) - set(completed)),
+                       "files": files, "file_count": len(files),
+                       "copied_bytes": sum(item["bytes"] for item in files
+                                           if item["action"] == "copied_verified")}
+            save(LOCAL / "preflight/archive_ledger.json", receipt)
+            snapshot = LOCAL / "preflight/controller_state.latest.json"
+            save(snapshot, state)
+            return {key: receipt[key] for key in ("status", "checked_utc", "controller_phase",
+                                                    "completed_jobs", "pending_jobs",
+                                                    "file_count", "copied_bytes")}
+    finally:
+        client.close()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--watch", action="store_true")
+    parser.add_argument("--interval-seconds", type=int, default=180)
+    args = parser.parse_args()
+    if args.interval_seconds < 30 or args.interval_seconds > 3600:
+        raise ValueError("Watcher interval must be 30–3600 seconds")
+    status_file = LOCAL / "preflight/archive_watch_status.json"
+    failures = 0
+    while True:
+        try:
+            result = archive_once()
+            failures = 0
+            save(status_file, {"status": "running" if args.watch else "single_check_done",
+                               "checked_utc": now(), "result": result})
+            print(json.dumps(result, ensure_ascii=False), flush=True)
+            if not args.watch:
+                return
+            if result.get("controller_phase") == "needs_attention":
+                save(status_file, {"status": "needs_attention", "checked_utc": now(),
+                                   "reason": "remote_controller_needs_attention", "result": result})
+                return
+            if (result.get("controller_phase") == "awaiting_final_delivery"
+                    and not result.get("pending_jobs")):
+                save(status_file, {"status": "mirror_complete_pending_final_delivery",
+                                   "checked_utc": now(), "result": result})
+                return
+        except BaseException as error:
+            failures += 1
+            save(status_file, {"status": "retrying" if failures < 3 else "needs_attention",
+                               "checked_utc": now(), "consecutive_failures": failures,
+                               "error": type(error).__name__ + ": " + str(error)})
+            if failures >= 3 or not args.watch:
+                raise
+        time.sleep(args.interval_seconds)
+
+
+if __name__ == "__main__":
+    main()

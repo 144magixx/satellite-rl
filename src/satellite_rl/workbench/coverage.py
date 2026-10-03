@@ -8,7 +8,8 @@ from pathlib import Path
 import shutil
 import sys
 
-from satellite_rl.coverage.config import default_config, summary, validate_config
+from satellite_rl.coverage.config import (balance_default_config, default_config,
+                                          summary, validate_config)
 from satellite_rl.workbench.storage import digest, new_id, now, read_json
 
 
@@ -29,6 +30,30 @@ def freeze_dataset(record, destination):
     shutil.copyfile(provenance, destination / "record.json")
     return {**deepcopy(record), "path": str(target), "source_path": str(source),
             "provenance_sha256": digest(destination / "record.json")}
+
+
+def freeze_balance_start(record, destination):
+    source = Path(record["path"]).resolve()
+    if not source.is_file() or digest(source) != record["sha256"]:
+        raise ValueError("A2起点来源文件或SHA不一致")
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    target = destination / "starts.jsonl"
+    shutil.copyfile(source, target)
+    if digest(target) != record["sha256"]:
+        raise ValueError("冻结A2起点SHA不一致")
+    return {**deepcopy(record), "path": str(target), "source_path": str(source)}
+
+
+def _same_balance_preparation(left, right):
+    """A2 preparation is reusable across routes/menus, not across physics or budgets."""
+    def canonical(coverage):
+        value = deepcopy(coverage)
+        value["method"] = "none"
+        value["balance"]["route"] = "prepare"
+        value["balance"]["action_menu"] = "X0"
+        return value
+    return canonical(left) == canonical(right)
 
 
 class CoverageApplication:
@@ -57,7 +82,7 @@ class CoverageApplication:
         role = body.get("partition_role")
         if role not in ("train", "validation", "test"):
             raise ValueError("请明确数据用途：训练/验证/考核")
-        config = default_config()
+        config = balance_default_config() if "balance" in body.get("coverage", {}) else default_config()
         config["coverage"].update(body.get("coverage", {}))
         config = validate_config(config)
         source = Path(body["path"]).expanduser().resolve()
@@ -84,6 +109,8 @@ class CoverageApplication:
 
     def submit(self, body):
         config = validate_config(body["config"])
+        balanced = config["schema_version"] == 3
+        route = config["coverage"].get("balance", {}).get("route") if balanced else None
         kind = body.get("kind", "train")
         if kind not in ("train", "evaluate"):
             raise ValueError("未知第一阶段任务类型")
@@ -96,13 +123,24 @@ class CoverageApplication:
             raise ValueError("第一阶段请连接u2024110224@10.160.17.102:20418的4090D工作台；本机仅保留开发源码")
         if kind == "train" and config["coverage"]["method"] != "ppo":
             raise ValueError("规则与局部搜索是评价基线，不是训练任务")
-        required = {"train", "validation"} if kind == "train" else {"test"}
+        if balanced and kind == "train" and route != "ppo":
+            raise ValueError("平衡PPO训练须选PPO路线")
+        dataset_role = body.get("dataset_role", "test") if balanced else "test"
+        if dataset_role not in ("train", "validation", "test"):
+            raise ValueError("数据用途未知")
+        purpose = body.get("experiment_role", "formal")
+        if purpose not in ("formal", "verification"):
+            raise ValueError("任务用途须为正式实验或工程验证")
+        if (kind == "evaluate" and route != "prepare" and dataset_role != "test" and
+                not (balanced and purpose == "verification" and dataset_role == "validation")):
+            raise ValueError("正式评价必须使用独立考核场景；开发筛选须标工程验证")
+        required = {"train", "validation"} if kind == "train" else {dataset_role}
         supplied = body.get("dataset_ids", {})
         if not required <= set(supplied):
             raise ValueError("第一阶段任务缺少所需用途数据集")
         datasets = {}
         for role, identifier in supplied.items():
-            if role not in ("train", "validation", "test") or not identifier:
+            if role not in (required if balanced else ("train", "validation", "test")) or not identifier:
                 continue
             record = self.store.get_record("scenes", identifier)
             if record.get("research_stage") != "coverage" or record.get("partition_role") != role:
@@ -118,23 +156,54 @@ class CoverageApplication:
                 if left < right and set(a["dates"]) & set(b["dates"]):
                     raise ValueError("训练/验证/考核航空日期必须隔离")
         config["datasets"] = datasets
-        purpose = body.get("experiment_role", "formal")
-        if purpose not in ("formal", "verification"):
-            raise ValueError("任务用途须为正式实验或工程验证")
-        variant = ("P0" if config["coverage"]["initialization"] == "empty" else
+        if balanced and route != "prepare":
+            start_ids = body.get("start_run_ids") or {}
+            missing = required - set(start_ids)
+            if missing:
+                raise ValueError(f"缺少{sorted(missing)}对应的工作台A2预处理任务")
+            starts = {}
+            for role in required:
+                identifier = start_ids[role]
+                source_job = read_json(self.store.job_dir(identifier) / "job.json", {})
+                source_status = read_json(self.store.job_dir(identifier) / "status.json", {})
+                source_config = read_json(self.store.job_dir(identifier) / "config.json", {})
+                source_artifacts = read_json(self.store.job_dir(identifier) / "artifacts.json", {})
+                if (source_job.get("research_stage") != "coverage" or
+                        source_status.get("stage") != "completed" or
+                        source_config.get("schema_version") != 3 or
+                        source_config.get("coverage", {}).get("balance", {}).get("route") != "prepare" or
+                        not _same_balance_preparation(source_config.get("coverage", {}),
+                                                      config["coverage"]) or
+                        source_config.get("datasets", {}).get(role, {}).get("sha256") != datasets[role]["sha256"]):
+                    raise ValueError(f"{role}的A2预处理任务未完成或场景不匹配")
+                path = Path(source_artifacts.get("balance_starts", ""))
+                sha = source_artifacts.get("balance_starts_sha256")
+                if not path.is_file() or digest(path) != sha:
+                    raise ValueError(f"{role}的A2起点文件/SHA未通过核验")
+                starts[role] = {"path": str(path), "sha256": sha,
+                                "dataset_sha256": datasets[role]["sha256"],
+                                "source_run_id": identifier}
+            config["balance_starts"] = starts
+        variant = ((route + ":" + config["coverage"]["balance"]["action_menu"]) if balanced else
+                   ("P0" if config["coverage"]["initialization"] == "empty" else
                    ("R" if config["coverage"]["initialization"] == "rule" else "C") +
-                   {"none":"0", "local_search":"1", "ppo":"2"}[config["coverage"]["method"]])
+                   {"none":"0", "local_search":"1", "ppo":"2"}[config["coverage"]["method"]]))
         extra = {"research_stage": "coverage", "experiment_role": purpose, "variant": variant,
                  "execution_target": "u2024110224@10.160.17.102:20418"}
+        if balanced:
+            extra.update(balance_route=route, balance_action_menu=config["coverage"]["balance"]["action_menu"],
+                         dataset_role=dataset_role if kind == "evaluate" else None,
+                         balance_dataset_sha256={role: record["sha256"] for role, record in datasets.items()},
+                         balance_start_run_ids=body.get("start_run_ids") or {})
         if kind == "evaluate" and config["coverage"]["method"] == "ppo":
             model = next((m for m in self.models() if m["id"] == body.get("model_id")), None)
             if not model:
                 raise ValueError("PPO评价须选择已有第一阶段模型")
             for role in ("train", "validation"):
                 prior = model["config"].get("datasets", {}).get(role, {})
-                if set(prior.get("dates", [])) & set(datasets["test"]["dates"]):
+                if role != dataset_role and set(prior.get("dates", [])) & set(datasets[dataset_role]["dates"]):
                     raise ValueError("考核与模型训练/验证日期重叠")
-            if model["config"].get("coverage") != config["coverage"]:
+            if model["config"].get("schema_version") != config["schema_version"] or model["config"].get("coverage") != config["coverage"]:
                 raise ValueError("评价物理、初始化和微调配置须与模型一致")
             extra.update(model_path=model["path"],
                          model_files=[{"path": str(Path(model["path"]) / name),
@@ -145,6 +214,9 @@ class CoverageApplication:
     def api(self, method, parts, query, body):
         if parts == ["catalog"] and method == "GET":
             return {"defaults": default_config(), "summary": summary(default_config()),
+                    "balance_defaults": balance_default_config(),
+                    "balance_routes": ["prepare", "A0", "A1", "A2", "A3", "X0", "X1", "X2", "X3", "X4", "ppo"],
+                    "action_menus": ["X0", "X1", "X2", "X3", "X4"],
                     "initializations": [{"id": "rule", "label": "现有需求加权覆盖规则"},
                                         {"id": "cluster", "label": "需求加权聚类"},
                                         {"id": "empty", "label": "无基础布局（纯PPO逐束构建）"}],
