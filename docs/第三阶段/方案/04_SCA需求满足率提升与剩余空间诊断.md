@@ -119,3 +119,8 @@ Jan27原包1529651200字节，SHA256 `bc54d85de5ef4342d51bee1a523f9e38ee51a03c80
 当前完成0/2，263/1800（14.61%），训练0；来源、worker出生及冻结代码一致。首景两端各9条记录通过T0/A来源、SI门槛、严格基本服务与完整路线调用/计时验证；不能将首景的微小收益或SGM下降外推为全部场景结果。最终18万束、完整配对表、曲线和报告仍待完成。工作台本地/远端同为8776/8777，后台watcher38592负责观察归档，本对话每小时`s3-p03-si`负责简报及报告交付。
 
 [运行清单](../../../outputs/experiments/stage3_si_priority_20261003/run_manifest.json)、[根观察](../../../outputs/experiments/stage3_si_priority_20261003/preflight/root_launch_acceptance.json)、[首景来源](../../../outputs/experiments/stage3_si_priority_20261003/preflight/first_scene_verified.json)、[首景逐束守护](../../../outputs/experiments/stage3_si_priority_20261003/preflight/first_scene_guard_verified.json)、[跟进配置](../../../outputs/experiments/stage3_si_priority_20261003/followup/verified_readback.json)。计划总报告名称统一为`03_SI优先功率细调与容量近似对照.md`，尚未生成。
+
+
+## 完整交付（2026-10-04）
+
+两原任务各900结果、1800总结果已完成；3696文件逐SHA归档、18万终态束及12万最高SI候选束、SI门槛/基本服务/完整计时通过审计。只读后处理修复了跨BLAS精确门槛附近的审计误报，冻结e85科学源码、正式结果及容差保持不变，未重评。中文[报告03](../实验报告/03_SI优先功率细调与容量近似对照.md)和15图已经交付，SI仅有微小提高，SGM与时间取舍如实保留。本方案不再表示待启动或运行中任务；下一轮回到讨论，不授权更多评价。
