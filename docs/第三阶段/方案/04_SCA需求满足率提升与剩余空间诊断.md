@@ -105,3 +105,17 @@ B/C的总时间必须计入T0、物理准备、A求解及核验、自身追加�
 Jan27原包1529651200字节，SHA256 `bc54d85de5ef4342d51bee1a523f9e38ee51a03c80cbc2d4923f0f8ea66d02fe`；100景record SHA256 `2d9084d4dce7af91aed96a33d5d51c82bed85dd2a4bb727417fe8a1312347d30`。源为[adsb.lol官方Jan27发布](https://github.com/adsblol/globe_history_2024/releases/tag/v2024.01.27-planes-readsb-staging-0)，筛选条件在下载前冻结。单流续传曾出现大小不符，失败现场保留且未用于场景；改用官方CDN的206/Content-Range逐段核验后重组、全SHA核对。只有通过100时刻/100束门槛的输入进入正式工作台。
 
 证据：[Jan27输入](../../../outputs/experiments/stage3_si_priority_20261003/preflight/remote_jan27_data_receipt.json)、[497项测试](../../../outputs/verification/stage3_si_priority_20261003/remote_dev/dev_test_20418_test_all_aaf613a1c2857ea9.json)、[Jan12开发检查](../../../outputs/verification/stage3_si_priority_20261003/jan12_dev/collection_receipt.json)、[两端worker入口](../../../outputs/verification/stage3_si_priority_20261003/remote_dev/worker_preflight_both_ports.json)、[同源连接修正](../../../outputs/verification/stage3_si_priority_20261003/remote_dev/same_origin_post_verified.json)。正式ID/实际启动状态由后续运行清单填写，以上开发检查不表示Jan27效果已验证。
+
+
+## 正式启动（2026-10-03）
+
+科学源码已冻结为`e85a9429461a358ba2e11614a3cce4671d12b68e`，本地已合并main，双端部署干净源码并各通过44项最终专项检查；后续文档提交不改变worker冻结代码。工作台API于北京时间22:23:53/22:23:56唯一提交：
+
+| 端口与预算 | run_id | request_id | 22:30:25–26核验进度 |
+| --- | --- | --- | ---: |
+| 20418 / 3000W | refine_sac_20261003_222353_313e994d | s3p03-20261003-jan27-total | 119/900 |
+| 20424 / 初始功率上限 | refine_sac_20261003_222356_db93000c | s3p03-20261003-jan27-initial | 144/900 |
+
+当前完成0/2，263/1800（14.61%），训练0；来源、worker出生及冻结代码一致。首景两端各9条记录通过T0/A来源、SI门槛、严格基本服务与完整路线调用/计时验证；不能将首景的微小收益或SGM下降外推为全部场景结果。最终18万束、完整配对表、曲线和报告仍待完成。工作台本地/远端同为8776/8777，后台watcher38592负责观察归档，本对话每小时`s3-p03-si`负责简报及报告交付。
+
+[运行清单](../../../outputs/experiments/stage3_si_priority_20261003/run_manifest.json)、[根观察](../../../outputs/experiments/stage3_si_priority_20261003/preflight/root_launch_acceptance.json)、[首景来源](../../../outputs/experiments/stage3_si_priority_20261003/preflight/first_scene_verified.json)、[首景逐束守护](../../../outputs/experiments/stage3_si_priority_20261003/preflight/first_scene_guard_verified.json)、[跟进配置](../../../outputs/experiments/stage3_si_priority_20261003/followup/verified_readback.json)。计划总报告名称统一为`03_SI优先功率细调与容量近似对照.md`，尚未生成。
