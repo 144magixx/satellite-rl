@@ -878,6 +878,8 @@ def _evaluation(directory, job, config, resume):
 def run_balance_job(directory, job, config, *, resume, preflight):
     directory = Path(directory)
     route = config["coverage"]["balance"]["route"]
+    _status(directory, job, stage="initializing", preflight=preflight)
+    _event(directory, job, "balance_preflight_verified", preflight=preflight)
     if job["kind"] == "train":
         if route != "ppo":
             raise ValueError("S1-02 training requires PPO route")
