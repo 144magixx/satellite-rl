@@ -56,6 +56,15 @@ def _same_balance_preparation(left, right):
     return canonical(left) == canonical(right)
 
 
+def _require_remote_dqn():
+    import torch
+
+    expected_prefix = Path("/home/u2024110224/first_stage_satellite_rl/envs/DQN")
+    if (Path(sys.prefix).resolve() != expected_prefix or getpass.getuser() != "u2024110224" or
+            not torch.cuda.is_available() or "4090 D" not in torch.cuda.get_device_name(0)):
+        raise ValueError("第一阶段请连接u2024110224@10.160.17.102:20418的4090D工作台；本机仅保留开发源码")
+
+
 class CoverageApplication:
     def __init__(self, application):
         self.app = application
@@ -116,11 +125,7 @@ class CoverageApplication:
             raise ValueError("未知第一阶段任务类型")
         if config["training"]["device"] != "cuda":
             raise ValueError("正式第一阶段任务必须在指定远端DQN/CUDA执行")
-        import torch
-        expected_prefix = Path("/home/u2024110224/first_stage_satellite_rl/envs/DQN")
-        if (Path(sys.prefix).resolve() != expected_prefix or getpass.getuser() != "u2024110224" or
-                not torch.cuda.is_available() or "4090 D" not in torch.cuda.get_device_name(0)):
-            raise ValueError("第一阶段请连接u2024110224@10.160.17.102:20418的4090D工作台；本机仅保留开发源码")
+        _require_remote_dqn()
         if kind == "train" and config["coverage"]["method"] != "ppo":
             raise ValueError("规则与局部搜索是评价基线，不是训练任务")
         if balanced and kind == "train" and route != "ppo":

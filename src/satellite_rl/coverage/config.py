@@ -89,7 +89,7 @@ def _merge(default, supplied, path=""):
         raise ValueError(f"{path}存在未实现的配置项: {sorted(unknown)}")
     result = deepcopy(default)
     for key, value in supplied.items():
-        if isinstance(default[key], dict) and key != "datasets":
+        if isinstance(default[key], dict) and key not in ("datasets", "balance_starts"):
             result[key] = _merge(default[key], value, f"{path}{key}.")
         else:
             result[key] = deepcopy(value)
@@ -176,8 +176,10 @@ def validate_config(config):
         for role, record in starts.items():
             if (role not in c["datasets"] or not isinstance(record, dict) or
                     not isinstance(record.get("path"), str) or
+                    not record["path"].strip() or
                     not isinstance(record.get("sha256"), str) or
                     len(record["sha256"]) != 64 or
+                    any(character not in "0123456789abcdef" for character in record["sha256"].lower()) or
                     record.get("dataset_sha256") != c["datasets"][role].get("sha256")):
                 raise ValueError(f"{role}的A2起点必须匹配场景来源与SHA")
     return c

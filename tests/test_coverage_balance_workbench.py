@@ -27,6 +27,90 @@ from satellite_rl.workbench.storage import digest
 
 
 class BalanceWorkbenchContractTests(unittest.TestCase):
+    def test_api_submit_freezes_all_dynamic_start_roles_and_revalidates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            application = Application(root / "archive")
+            coverage = CoverageApplication(application)
+            dataset_ids, start_ids, source_shas = {}, {}, {}
+            for role, date in (("train", "2024-01-08"),
+                               ("validation", "2024-01-12"),
+                               ("test", "2024-01-28")):
+                source = root / role
+                source.mkdir()
+                data = source / "inputs.npz"
+                data.write_bytes(f"frozen {role} scenes".encode())
+                (source / "record.json").write_text(json.dumps({"source_dates": [date]}))
+                scene_id = f"scene_{role}"
+                scene_sha = digest(data)
+                dataset_ids[role] = scene_id
+                source_shas[role] = scene_sha
+                application.store.save_record("scenes", {
+                    "id": scene_id, "research_stage": "coverage",
+                    "partition_role": role, "dates": [date],
+                    "initialization": "cluster", "cluster_iterations": 12,
+                    "path": str(data), "sha256": scene_sha})
+                prepare_id = f"prepare_{role}"
+                start_ids[role] = prepare_id
+                prepare_dir = application.store.job_dir(prepare_id)
+                prepare_dir.mkdir()
+                starts_file = prepare_dir / "starts.jsonl"
+                starts_file.write_text(json.dumps({"scene_id": scene_id}) + "\n")
+                prepared = balance_default_config()
+                prepared["coverage"]["balance"]["route"] = "prepare"
+                prepared["coverage"]["method"] = "none"
+                prepared["datasets"] = {role: {"path": str(data),
+                                                  "sha256": scene_sha}}
+                (prepare_dir / "job.json").write_text(json.dumps({
+                    "research_stage": "coverage"}))
+                (prepare_dir / "status.json").write_text(json.dumps({
+                    "stage": "completed"}))
+                (prepare_dir / "config.json").write_text(json.dumps(prepared))
+                (prepare_dir / "artifacts.json").write_text(json.dumps({
+                    "balance_starts": str(starts_file),
+                    "balance_starts_sha256": digest(starts_file)}))
+            baseline = balance_default_config()
+            training = balance_default_config()
+            training["coverage"]["balance"]["route"] = "ppo"
+            training["coverage"]["method"] = "ppo"
+            with mock.patch("satellite_rl.workbench.coverage._require_remote_dqn"), \
+                 mock.patch.object(application.store, "freeze_source",
+                                   return_value=(root, "fixture-commit")):
+                jobs = [coverage.submit({"config": baseline, "kind": "evaluate",
+                    "dataset_role": role, "experiment_role": "verification" if role == "validation" else "formal",
+                    "dataset_ids": {role: dataset_ids[role]},
+                    "start_run_ids": {role: start_ids[role]},
+                    "request_id": f"balance_eval_{role}"})
+                    for role in ("validation", "test")]
+                jobs.append(coverage.submit({"config": training, "kind": "train",
+                    "dataset_ids": {role: dataset_ids[role]
+                                    for role in ("train", "validation")},
+                    "start_run_ids": {role: start_ids[role]
+                                      for role in ("train", "validation")},
+                    "request_id": "balance_train_fixture"}))
+            expected_roles = ({"validation"}, {"test"}, {"train", "validation"})
+            for job, roles in zip(jobs, expected_roles):
+                frozen = json.loads((application.store.job_dir(job["run_id"]) /
+                                     "config.json").read_text(encoding="utf-8"))
+                normalized = validate_config(frozen)
+                self.assertEqual(config_hash(frozen), config_hash(normalized))
+                self.assertEqual(set(frozen["balance_starts"]), roles)
+                for role in roles:
+                    record = frozen["balance_starts"][role]
+                    self.assertEqual(record["dataset_sha256"], source_shas[role])
+                    self.assertEqual(record["source_run_id"], start_ids[role])
+                    self.assertEqual(record["sha256"], digest(record["path"]))
+                    self.assertEqual(frozen["datasets"][role]["sha256"], source_shas[role])
+                for mutation in (lambda c: c["balance_starts"].update(other={}),
+                                 lambda c: c["balance_starts"][next(iter(roles))].update(path=""),
+                                 lambda c: c["balance_starts"][next(iter(roles))].update(sha256="bad"),
+                                 lambda c: c["balance_starts"][next(iter(roles))].update(
+                                     dataset_sha256="0" * 64)):
+                    bad = deepcopy(frozen)
+                    mutation(bad)
+                    with self.assertRaises(ValueError):
+                        validate_config(bad)
+
     def test_validation_node_recovery_rebuilds_complete_rows_once(self):
         scene = CoverageScene("val-0", np.array([[45., 5.]]), np.array([1.]),
                               np.zeros((100, 2)), ["ac"], {}, "val-sha")
