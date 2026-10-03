@@ -104,6 +104,30 @@ class AuditChecks(unittest.TestCase):
         self.assertEqual(summary_result["valid_layout_scenes"], 1)
         self.assertEqual(summary_result["full_coverage_legal_scenes"], 1)
 
+    def test_cumulative_movement_uses_the_frozen_science_tolerance(self):
+        def row_at_angle(target):
+            row = equal_scene()
+            original = audit.rays(np.array([[45., 13.]]))[0]
+            low, high = 45., 60.
+            for _ in range(70):
+                middle = (low + high) / 2
+                ray = audit.rays(np.array([[middle, 13.]]))[0]
+                angle = np.rad2deg(2*np.arcsin(np.linalg.norm(ray-original)/2))
+                if angle < target:
+                    low = middle
+                else:
+                    high = middle
+            center = [(low+high)/2, 13.]
+            actual = float(np.rad2deg(2*np.arcsin(np.linalg.norm(audit.rays(np.array([center]))[0]-original)/2)))
+            row["input"]["positions"] = [center[:] for _ in range(100)]
+            row["final_positions"] = [center[:] for _ in range(100)]
+            row["metrics"].update(movement_mean_deg=actual, movement_max_deg=actual)
+            return row
+        within = audit.audit_row(row_at_angle(.25 + 3.2e-10))
+        self.assertTrue(within["passed"], within["issues"])
+        outside = audit.audit_row(row_at_angle(.25 + 2e-9))
+        self.assertIn("Cumulative displacement exceeds the initial-center limit", outside["issues"])
+
 
 def summary(cv=.5, time=2., full=20, near=20, target=0, in_band=70):
     return {"full_coverage_legal_scenes": full, "near_coverage_legal_scenes": near,

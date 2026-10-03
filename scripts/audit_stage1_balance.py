@@ -16,6 +16,9 @@ import numpy as np
 EARTH_KM, ORBIT_KM, SAT_LON = 6371.0, 42164.0, 13.0
 BEAMS = 100
 BPS_ATOL, OTHER_ATOL, RTOL = 1e-5, 1e-7, 1e-9
+# Frozen CPU and CUDA action legality both use a 1e-9 degree allowance.
+# This is one fixed allowance relative to the original centers, not per step.
+MOVEMENT_ATOL_DEG = 1e-9
 
 
 def sha(path):
@@ -227,7 +230,7 @@ def audit_row(row, config=None, *, require_timing=True):
     if not np.array_equal(reference, initial):
         issues.append("Movement reference was reset after common preparation")
     movement = np.rad2deg(2 * np.arcsin(np.clip(np.linalg.norm(beams-rays(initial), axis=1)/2, 0, 1)))
-    movement_ok = bool(np.all(movement <= float(coverage.get("max_movement_deg", .25)) + 1e-10))
+    movement_ok = bool(np.all(movement <= float(coverage.get("max_movement_deg", .25)) + MOVEMENT_ATOL_DEG))
     if not movement_ok:
         issues.append("Cumulative displacement exceeds the initial-center limit")
     geometry_ok = bool(visible(centers).all() and np.all(loads > 0) and movement_ok)
@@ -287,7 +290,10 @@ def audit_row(row, config=None, *, require_timing=True):
 
 def audit_results(results, expected_scenes):
     report = {"checked_at": datetime.now(timezone.utc).isoformat(), "expected_scenes": expected_scenes,
-              "independent_implementation": "NumPy only; no planning/environment imports", "sources": {}, "methods": {}, "issues": []}
+              "independent_implementation": "NumPy only; no planning/environment imports",
+              "tolerances": {"bps_absolute": BPS_ATOL, "other_metric_absolute": OTHER_ATOL,
+                             "relative": RTOL, "movement_legality_allowance_deg": MOVEMENT_ATOL_DEG},
+              "sources": {}, "methods": {}, "issues": []}
     reference = None
     for label, path in results.items():
         rows, config = read_bundle(path)
