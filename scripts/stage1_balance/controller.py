@@ -81,9 +81,14 @@ class Controller:
                                                   "created_utc": utc_now(),
                                                   "plan_sha256": self.plan_sha,
                                                   "phase": "preflight",
-                                                  "datasets": {}, "jobs": {}, "events": []})
+                                                  "datasets": {}, "dataset_records": {},
+                                                  "jobs": {}, "events": []})
         if self.state["plan_sha256"] != self.plan_sha:
             raise RuntimeError("Controller plan changed after first use")
+        replacements = self.plan.get("recovery_context", {}).get("previous_failed_jobs", {})
+        if "replaces_run_ids" in self.state and self.state["replaces_run_ids"] != replacements:
+            raise RuntimeError("Controller replacement-task contract changed")
+        self.state["replaces_run_ids"] = replacements
         self.base = f"http://127.0.0.1:{self.plan['api_port']}"
         self.request_prefix = "S1_02_" + self.plan_sha[:12]
         self.validate_plan()
@@ -138,6 +143,96 @@ class Controller:
             raise ValueError("Remote source is dirty")
         if not str(repo.resolve()).startswith(str(REMOTE)):
             raise ValueError("S1-02 repo escaped its isolated 20418 root")
+        recovery = plan.get("recovery_context")
+        if recovery:
+            expected_labels = {"A_dev_A0", "A_dev_A1", "A_dev_A2", "A_dev_A3"}
+            if (recovery.get("version") != "zero_scene_startup_recovery_v1" or
+                    set(recovery.get("allowed_completed_prepare", {})) != {"validation"} or
+                    set(recovery.get("previous_failed_jobs", {})) != expected_labels or
+                    recovery.get("previous_plan_sha256") !=
+                    "5895e5d2712eb8db84942bbdfd1719af2d75ccfd32e390ca72282f15d46ef8f4"):
+                raise ValueError("S1-02 recovery scope differs from four zero-scene A jobs")
+
+    def verify_completed_prepare(self) -> str:
+        recovery = self.plan.get("recovery_context", {})
+        allowed = recovery.get("allowed_completed_prepare", {}).get("validation")
+        if not allowed:
+            raise RuntimeError("Recovery plan lacks the sole allowed validation prepare")
+        old_plan = REMOTE / "ops/controller_plan.json"
+        old_state = REMOTE / "ops/controller_state.json"
+        if (digest(old_plan) != recovery["previous_plan_sha256"] or
+                digest(old_state) != recovery["previous_state_sha256"]):
+            raise RuntimeError("Original frozen plan/controller failure state changed")
+        prior_state = read_json(old_state)
+        if (prior_state.get("phase") != "needs_attention" or
+                prior_state["jobs"]["prepare_validation"]["run_id"] != allowed["run_id"]):
+            raise RuntimeError("Original successful prepare identity changed")
+        for label, expected_run in recovery["previous_failed_jobs"].items():
+            if prior_state["jobs"][label]["run_id"] != expected_run:
+                raise RuntimeError("A development failed run identity changed")
+            old_dir = REMOTE / "outputs/workbench/jobs" / expected_run
+            failed = read_json(old_dir / "status.json", {})
+            if (failed.get("stage") != "failed" or
+                    failed.get("evaluated_scenes", 0) not in (0, None) or
+                    (old_dir / "results.partial.jsonl").exists() or
+                    (old_dir / "results.json").exists()):
+                raise RuntimeError("Old A method generated results or changed status")
+        old_dir = REMOTE / "outputs/workbench/jobs" / allowed["run_id"]
+        job_file, config_file = old_dir / "job.json", old_dir / "config.json"
+        status_file, artifacts_file = old_dir / "status.json", old_dir / "artifacts.json"
+        for file, key in ((job_file, "job_sha256"), (config_file, "config_sha256"),
+                          (status_file, "status_sha256"),
+                          (artifacts_file, "artifacts_sha256")):
+            if digest(file) != allowed[key]:
+                raise RuntimeError("Whitelisted prepare provenance file changed: " + file.name)
+        job, config, status, artifacts = (read_json(item) for item in
+                                           (job_file, config_file, status_file, artifacts_file))
+        old_source = REMOTE / "outputs/workbench/source_snapshots" / allowed["source_commit"]
+        if (job.get("run_id") != allowed["run_id"] or
+                job.get("request_id") != allowed["request_id"] or
+                job.get("git_commit") != allowed["source_commit"] or
+                Path(job.get("source_root", "")).resolve() != old_source or
+                status.get("stage") != "completed" or status.get("evaluated_scenes") != 20 or
+                config.get("schema_version") != 3 or
+                config.get("coverage", {}).get("balance", {}).get("route") != "prepare" or
+                config.get("coverage") != self.config("prepare")["coverage"] or
+                set(config.get("datasets", {})) != {"validation"}):
+            raise RuntimeError("Whitelisted completed prepare status/config differs")
+        dataset = config["datasets"]["validation"]
+        if (dataset.get("id") != allowed["dataset_id"] or
+                dataset.get("sha256") != allowed["dataset_sha256"] or
+                dataset.get("sha256") != self.state["dataset_records"]["validation"]["sha256"] or
+                self.state["datasets"]["validation"] != allowed["dataset_id"]):
+            raise RuntimeError("Whitelisted prepare uses different validation data")
+        starts = Path(artifacts.get("balance_starts", ""))
+        if (starts.resolve() != old_dir / "starts.jsonl" or
+                digest(starts) != allowed["starts_sha256"] or
+                artifacts.get("balance_starts_sha256") != allowed["starts_sha256"]):
+            raise RuntimeError("Whitelisted A2 starts path/SHA differs")
+        lines = [json.loads(line) for line in starts.read_text(encoding="utf-8").splitlines() if line]
+        scenes = self.state["dataset_records"]["validation"]["scenes"]
+        if (len(lines) != 20 or len(scenes) != 20 or
+                any(start.get("scene_id") != scene.get("scene_id") or
+                    start.get("scene_sha256") != scene.get("source_hash")
+                    for start, scene in zip(lines, scenes))):
+            raise RuntimeError("Whitelisted A2 starts do not cover the same 20 scenes")
+        manifest = old_source / "source_manifest.json"
+        if (digest(manifest) != allowed["source_manifest_sha256"] or
+                read_json(manifest).get("git_commit") != allowed["source_commit"]):
+            raise RuntimeError("Old completed prepare source manifest differs")
+        previous = self.state["jobs"].get("prepare_validation")
+        if previous and previous["run_id"] != allowed["run_id"]:
+            raise RuntimeError("Recovery prepare dependency changed")
+        self.state["jobs"]["prepare_validation"] = {
+            "run_id": allowed["run_id"], "request_id": allowed["request_id"],
+            "kind": "evaluate", "route": "prepare", "menu": "X0",
+            "roles": ["validation"], "purpose": "verification",
+            "reuse_only_completed_prepare_from_commit": allowed["source_commit"],
+            "starts_sha256": allowed["starts_sha256"]}
+        self.log("completed_prepare_reused_by_whitelist", run_id=allowed["run_id"],
+                 prior_commit=allowed["source_commit"],
+                 starts_sha256=allowed["starts_sha256"])
+        return allowed["run_id"]
 
     def check_runtime(self) -> None:
         python = S101 / "envs/DQN/bin/python"
@@ -163,10 +258,11 @@ class Controller:
         source = Path(record["path"])
         if not source.is_file() or digest(source) != record["record_sha256"]:
             raise RuntimeError(f"Staged {role} record is missing or changed")
+        source_dir = source.parent
         expected_dates = self.plan["data_dates"][role]
         actual_role = "test" if role.endswith("_test") else role
         catalog = api(self.base, "coverage/datasets")["datasets"]
-        matching = [item for item in catalog if item.get("source_path") == record["path"]
+        matching = [item for item in catalog if item.get("source_path") == str(source_dir)
                     and item.get("partition_role") == actual_role
                     and item.get("dates") == expected_dates
                     and item.get("initialization") == "cluster"]
@@ -177,7 +273,7 @@ class Controller:
         else:
             self.phase("import_" + role)
             selected = api(self.base, "coverage/datasets/import", {
-                "path": record["path"], "partition_role": actual_role,
+                "path": str(source_dir), "partition_role": actual_role,
                 "coverage": self.config("prepare")["coverage"],
                 "name": f"S1-02 {role} {','.join(expected_dates)}"}, timeout=7200)
         if (selected.get("count") != (576 if role == "train" else 20 if role == "validation" else 100)
@@ -191,7 +287,15 @@ class Controller:
         prior = self.state["datasets"].get(role)
         if prior and prior != selected["id"]:
             raise RuntimeError(f"Dataset ID changed for {role}")
+        slim_record = {"sha256": selected["sha256"], "count": selected["count"],
+                       "scenes": [{"scene_id": row["scene_id"],
+                                   "source_hash": row["source_hash"]}
+                                  for row in scene_rows]}
+        prior_record = self.state["dataset_records"].get(role)
+        if prior_record and prior_record != slim_record:
+            raise RuntimeError(f"Imported {role} scene identity changed")
         self.state["datasets"][role] = selected["id"]
+        self.state["dataset_records"][role] = slim_record
         self.log("dataset_verified", role=role, dataset_id=selected["id"],
                  sha256=selected["sha256"], count=selected["count"],
                  failed_initializations=selected.get("failed_initializations", 0))
@@ -234,9 +338,11 @@ class Controller:
                                      "request_id": request_id, "kind": kind,
                                      "route": route, "menu": menu,
                                      "roles": roles, "purpose": purpose,
+                                     "replaces_run_id": self.state["replaces_run_ids"].get(label),
                                      "submitted_utc": utc_now()}
         self.log("job_submitted", label=label, run_id=response["run_id"],
-                 request_id=request_id)
+                 request_id=request_id,
+                 replaces_run_id=self.state["replaces_run_ids"].get(label))
         return detail
 
     def await_jobs(self, labels: list[str]) -> None:
@@ -292,9 +398,12 @@ class Controller:
         self.check_runtime()
         prep = {}
         self.ensure_dataset("validation")
-        self.ensure_job("prepare_validation", route="prepare", roles=("validation",),
-                        purpose="verification")
-        prep["validation"] = self.state["jobs"]["prepare_validation"]["run_id"]
+        if self.plan.get("recovery_context"):
+            prep["validation"] = self.verify_completed_prepare()
+        else:
+            self.ensure_job("prepare_validation", route="prepare", roles=("validation",),
+                            purpose="verification")
+            prep["validation"] = self.state["jobs"]["prepare_validation"]["run_id"]
         self.phase("A_validation_prepare")
         self.await_jobs(["prepare_validation"])
         for route in ("A0", "A1", "A2", "A3"):

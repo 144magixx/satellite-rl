@@ -36,6 +36,9 @@ def main() -> None:
     parser.add_argument("--repository", type=Path,
                         default=Path("C:/Users/Admin/.codex/worktrees/stage1-balance-actions/paper"))
     parser.add_argument("--max-workers", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--receipt-name", choices=("workbench_launch.json",
+                                                   "workbench_recovery_launch.json"),
+                        default="workbench_launch.json")
     parser.add_argument("--sync-only", action="store_true",
                         help="Deploy frozen Git source for short checks without starting the workbench")
     args = parser.parse_args()
@@ -112,13 +115,13 @@ receipt={{'status':'workbench_running_no_experiment_jobs',
  'port':port,'pid':process.pid,'start_ticks':ticks,'repo':str(repo),'commit':commit,
  'archive_root':str(root),'log':str(log),'max_workers':{args.max_workers},
  'gpu_uuid':gpu,'runtime':runtime,'system':system}}
-(ops/'workbench_launch.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\\n')
+(ops/{args.receipt_name!r}).write_text(json.dumps(receipt,ensure_ascii=False,indent=2)+'\\n')
 print(json.dumps(receipt,ensure_ascii=False))
 '''
         result = remote(client, code)
     finally:
         client.close()
-    output = LOCAL / "preflight" / "workbench_launch.json"
+    output = LOCAL / "preflight" / args.receipt_name
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"receipt": str(output), "port": PORT, "pid": result["pid"],

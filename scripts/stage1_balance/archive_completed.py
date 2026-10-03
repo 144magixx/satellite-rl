@@ -51,7 +51,7 @@ import hashlib,json,pathlib
 root=pathlib.Path({REMOTE!r}).resolve();selected={relative_roots!r};entries=[]
 for rel in selected:
  folder=(root/rel).resolve()
- if not folder.is_relative_to(root):raise RuntimeError('Archive root escaped S1-02')
+ if folder!=root and root not in folder.parents:raise RuntimeError('Archive root escaped S1-02')
  if not folder.is_dir():continue
  for path in sorted(folder.rglob('*')):
   if path.is_symlink():raise RuntimeError('Unexpected symlink in frozen completed artifact: '+str(path))
@@ -108,10 +108,28 @@ def archive_once() -> dict:
     client = connect()
     try:
         with client.open_sftp() as sftp:
-            state = remote_json(sftp, REMOTE + "/ops/controller_state.json", {})
-            plan = remote_json(sftp, REMOTE + "/ops/controller_plan.json", {})
+            route = remote_json(sftp, REMOTE + "/ops/current_controller_route.json")
+            if route:
+                if (route.get("experiment_id") != "S1-02" or
+                        route.get("plan_relative") != "ops/controller_plan_recovery.json" or
+                        route.get("state_relative") != "ops/controller_state_recovery.json"):
+                    raise RuntimeError("Recovery route escaped its isolated S1-02 contract")
+                plan_path = REMOTE + "/ops/controller_plan_recovery.json"
+                state_path = REMOTE + "/ops/controller_state_recovery.json"
+            else:
+                plan_path = REMOTE + "/ops/controller_plan.json"
+                state_path = REMOTE + "/ops/controller_state.json"
+            state = remote_json(sftp, state_path, {})
+            plan = remote_json(sftp, plan_path, {})
             if not state or not plan:
                 return {"status": "awaiting_controller", "checked_utc": now(), "files": []}
+            if route:
+                with sftp.open(plan_path, "rb") as stream:
+                    actual_plan_sha = hashlib.sha256(stream.read()).hexdigest()
+                if (actual_plan_sha != route.get("plan_sha256") or
+                        plan.get("source_commit") != route.get("source_commit") or
+                        state.get("plan_sha256") != actual_plan_sha):
+                    raise RuntimeError("Recovery route plan SHA/source/state binding differs")
             jobs = state.get("jobs", {})
             completed = {}
             roots = []
@@ -126,6 +144,10 @@ def archive_once() -> dict:
                         roots.append(f"models/runs/workbench/{run_id}")
             if completed:
                 roots.append("outputs/workbench/source_snapshots/" + plan["source_commit"])
+                reuse = (plan.get("recovery_context", {}).get("allowed_completed_prepare", {})
+                         .get("validation"))
+                if reuse and completed.get("prepare_validation") == reuse.get("run_id"):
+                    roots.append("outputs/workbench/source_snapshots/" + reuse["source_commit"])
             analysis = "outputs/experiments/first_stage_s1_02_20261004/analysis"
             for phase in ("A_development", "A_report", "B_menu_selection", "B_report"):
                 gate = remote_json(sftp, REMOTE + "/" + analysis + "/" + phase + "/gate.json")
@@ -138,6 +160,7 @@ def archive_once() -> dict:
             files = [copy_file(sftp, item) for item in inventory]
             receipt = {"experiment_id": "S1-02", "status": "completed_artifacts_sha_mirrored",
                        "checked_utc": now(), "controller_phase": state.get("phase"),
+                       "controller_route": route,
                        "source_commit": plan["source_commit"], "completed_jobs": completed,
                        "pending_jobs": sorted(set(jobs) - set(completed)),
                        "files": files, "file_count": len(files),
@@ -172,9 +195,13 @@ def main() -> None:
             if not args.watch:
                 return
             if result.get("controller_phase") == "needs_attention":
-                save(status_file, {"status": "needs_attention", "checked_utc": now(),
-                                   "reason": "remote_controller_needs_attention", "result": result})
-                return
+                if result.get("controller_route") is None:
+                    save(status_file, {"status": "awaiting_recovery", "checked_utc": now(),
+                                       "reason": "original_zero_scene_failure_preserved", "result": result})
+                else:
+                    save(status_file, {"status": "needs_attention", "checked_utc": now(),
+                                       "reason": "recovery_controller_needs_attention", "result": result})
+                    return
             if (result.get("controller_phase") == "awaiting_final_delivery"
                     and not result.get("pending_jobs")):
                 save(status_file, {"status": "mirror_complete_pending_final_delivery",
