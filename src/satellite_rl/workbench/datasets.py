@@ -13,11 +13,12 @@ import numpy as np
 from .storage import digest, inside, new_id, now
 
 
-def _environment(profile="china_legacy"):
+def _environment(profile="china_legacy", max_beams=100):
     from .config import default_config
     from .environment import WorkbenchEnv
     config = default_config()
     config["environment"]["profile"] = profile
+    config["environment"]["beam_count_max"] = max_beams
     return WorkbenchEnv(config)
 
 
@@ -30,7 +31,7 @@ def _store_scenes(store, name, arrays, source, profile="china_legacy", scene_met
     references = []
     if scene_metadata is not None and len(scene_metadata) != len(arrays):
         raise ValueError("逐场景元数据数量与数组不一致")
-    environment = _environment(profile)
+    environment = _environment(profile, max_beams=200 if profile == "europe_v1" else 100)
     for index, data in enumerate(arrays):
         environment.reset(scene=data)
         path = directory / f"scene_{index:05d}.npz"

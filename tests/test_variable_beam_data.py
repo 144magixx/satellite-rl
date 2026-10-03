@@ -78,6 +78,26 @@ class VariableBeamDataTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "中国旧版"):
             csv_scene(path, profile="china_legacy")
 
+    def test_workbench_import_registers_and_freezes_mixed_counts(self):
+        from satellite_rl.workbench.service import Application
+        from satellite_rl.workbench.datasets import freeze_scene_set
+        directory = self.path.parent / "mixed"
+        directory.mkdir()
+        original = []
+        for n in (50, 200):
+            arrays, _ = self.build(n)
+            original.append(arrays[0])
+            np.savez_compressed(directory / f"n{n:03d}.npz", **arrays[0])
+        app = Application(self.path.parent / "archive", source_root=self.path.parent)
+        record = app.api("POST", ["scenes", "import"], {}, {
+            "path": str(directory), "name": "mixed-count import fixture", "profile": "europe_v1"})
+        self.assertEqual(record["count"], 2)
+        self.assertEqual([ref["beam_count"] for ref in record["files"]], [50, 200])
+        frozen = freeze_scene_set(record, self.path.parent / "frozen", "europe_v1")
+        for expected, ref in zip(original, frozen["files"]):
+            with np.load(ref["path"], allow_pickle=False) as actual:
+                np.testing.assert_array_equal(actual["rate"], expected["rate"])
+
 
 if __name__ == "__main__":
     unittest.main()
