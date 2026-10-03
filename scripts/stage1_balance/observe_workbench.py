@@ -21,13 +21,31 @@ def main() -> None:
     if args.api_port != 8892:
         raise ValueError("S1-02 observes only its isolated 8892 workbench")
     code = r'''
-import datetime,json,os,pathlib,subprocess,time,urllib.request
+import datetime,hashlib,json,os,pathlib,subprocess,time,urllib.request
 root=pathlib.Path(__REMOTE__);ops=root/'ops';port=__PORT__
-plan_file=ops/'controller_plan.json';state_file=ops/'controller_state.json'
+route_file=ops/'current_controller_route.json'
+route=json.loads(route_file.read_text()) if route_file.is_file() else None
+route_issue=None
+if route:
+ if (route.get('experiment_id')!='S1-02' or
+     route.get('plan_relative')!='ops/controller_plan_recovery.json' or
+     route.get('state_relative')!='ops/controller_state_recovery.json'):
+  route_issue='Recovery route path/identity differs from isolated S1-02 contract'
+ plan_file=root/'ops/controller_plan_recovery.json'
+ state_file=root/'ops/controller_state_recovery.json'
+else:
+ plan_file=ops/'controller_plan.json';state_file=ops/'controller_state.json'
 observed=datetime.datetime.now(datetime.timezone.utc).isoformat()
 plan=json.loads(plan_file.read_text()) if plan_file.is_file() else None
 state=json.loads(state_file.read_text()) if state_file.is_file() else None
 issues=[];tasks=[]
+if route_issue:issues.append(route_issue)
+if route and plan_file.is_file():
+ actual=hashlib.sha256(plan_file.read_bytes()).hexdigest()
+ if (actual!=route.get('plan_sha256') or
+     plan.get('source_commit')!=route.get('source_commit') or
+     not state or state.get('plan_sha256')!=actual):
+  issues.append('Recovery route plan SHA/source/state binding differs')
 def api(path):
  with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/'+path,timeout=12) as response:
   return json.load(response)
@@ -56,16 +74,24 @@ if state and system:
     git_commit=job.get('git_commit'),source_root=job.get('source_root'),
     request_id=job.get('request_id'),kind=job.get('kind'))
    expected_source=root/'outputs/workbench/source_snapshots'/plan['source_commit'] if plan else None
+   allow=(plan.get('recovery_context',{}).get('allowed_completed_prepare',{})
+          .get('validation') if plan and label=='prepare_validation' else None)
+   reused=bool(allow and run_id==allow.get('run_id') and
+               status.get('stage')=='completed')
+   if reused:expected_source=root/'outputs/workbench/source_snapshots'/allow['source_commit']
+   expected_commit=allow['source_commit'] if reused else plan['source_commit'] if plan else None
+   item['reused_completed_prepare']=reused
    if (not plan or job.get('request_id')!=record['request_id'] or
-       job.get('git_commit')!=plan['source_commit'] or
-       pathlib.Path(job.get('source_root','')).resolve()!=expected_source):
+       job.get('git_commit')!=expected_commit or
+       pathlib.Path(job.get('source_root','')).resolve()!=expected_source or
+       (reused and job.get('request_id')!=allow['request_id'])):
     issues.append(label+': task ID/source/commit mismatch')
    preflight=status.get('preflight') or {}
    item['worker_preflight']={key:preflight.get(key) for key in
      ('python','python_resolved','torch','torch_cuda','gpu','package_file','git_commit','source_root')} if preflight else None
    if preflight and (pathlib.Path(preflight.get('package_file','')).resolve()!=
                      expected_source/'src/satellite_rl/__init__.py' or
-                     preflight.get('git_commit')!=plan['source_commit']):
+                     preflight.get('git_commit')!=expected_commit):
     issues.append(label+': worker frozen package/commit mismatch')
    pid=status.get('pid')
    active=status.get('stage') in ('running','training','evaluating','validating',
@@ -106,6 +132,7 @@ result={'experiment_id':'S1-02','observed_utc':observed,
  'target':'u2024110224@10.160.17.102:20418','status':'attention' if issues else
    'awaiting_workbench' if not plan else 'awaiting_controller' if not state else 'observed',
  'controller_phase':state.get('phase') if state else None,
+ 'controller_route':route,
  'source_commit':plan.get('source_commit') if plan else None,
  'api_port':port,'api_system':{key:system.get(key) for key in
    ('python','torch','cuda_build','cuda','package_file','source_root','archive_root')} if system else None,
