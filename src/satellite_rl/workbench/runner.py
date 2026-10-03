@@ -830,6 +830,8 @@ def _training(directory, job, config, ledger, resume):
         episode_row = {"env_step": env_step, "episode": episode, "length": length,
                        "return": episode_return, "duration_seconds": time.monotonic() - episode_start,
                        "scene_seed": scene_seed, "scene": scene_ref, "terminal": bool(done),
+                       "episode_end_reason": (terminal_metrics.get("termination_reason", "complete")
+                                              if done else "training_budget_exhausted"),
                        "source_scene": ({"path": str(source_scene), "sha256": supplied_scenes[source_index][1],
                                          "index": source_index,
                                          "scene_id": scene_sets["train"]["files"][source_index].get("scene_id")
