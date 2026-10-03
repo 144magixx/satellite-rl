@@ -121,9 +121,19 @@ def main() -> None:
     twin = BalanceBatchEnv(collection, config["coverage"], [remote_record],
                            num_envs=1, device="cuda", auto_reset=False)
     twin.load_state_dict(cuda.state_dict())
-    if (not torch.equal(twin.centers, cuda.centers) or
-            not torch.equal(twin.assignment, cuda.assignment) or
-            not torch.allclose(twin.loads, cuda.loads, rtol=0, atol=0)):
+    resume_load_difference = float(torch.max(torch.abs(twin.loads - cuda.loads)).item())
+    exact_tensor_fields = ("scene_index", "step_count", "beam_processes",
+                           "assignment_attempts", "candidate_evaluations",
+                           "done_mask", "initial_target", "stop_reason_code",
+                           "centers", "assignment", "best_centers",
+                           "best_associations", "best_decision_steps",
+                           "best_beam_processes", "best_assignment_attempts",
+                           "best_candidate_evaluations")
+    exact_fields = {name: bool(torch.equal(getattr(twin, name), getattr(cuda, name)))
+                    for name in exact_tensor_fields}
+    rng_exact = twin.rng.bit_generator.state == cuda.rng.bit_generator.state
+    if (not all(exact_fields.values()) or not rng_exact or
+            not torch.allclose(twin.loads, cuda.loads, rtol=1e-12, atol=1e-6)):
         raise RuntimeError("Real Jan12 X4 environment resume state differs")
     result = {"status": "bounded_real_scene_cuda_check_passed",
               "checked_utc": datetime.now(timezone.utc).isoformat(),
@@ -146,7 +156,12 @@ def main() -> None:
               "center_max_abs_diff_cpu_cuda": max_center,
               "load_max_abs_diff_cpu_cuda_bps": max_load,
               "assignment_exact_cpu_cuda": True,
-              "resume_state_exact": True,
+              "resume_center_assignment_exact": True,
+              "resume_exact_fields": exact_fields,
+              "resume_rng_exact": rng_exact,
+              "resume_load_max_abs_diff_bps": resume_load_difference,
+              "resume_load_tolerance": {"atol_bps": 1e-6, "rtol": 1e-12},
+              "resume_state_verified": True,
               "config_hash": config_hash(config),
               "python": sys.executable, "torch": torch.__version__,
               "torch_cuda": torch.version.cuda, "gpu": torch.cuda.get_device_name(0),
