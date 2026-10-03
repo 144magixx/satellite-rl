@@ -60,7 +60,28 @@ def _beam_rows(initial, evaluation, power):
     return rows
 
 
-def verify_solution(initial, beams, power_cap, options):
+def _priority_solver_contract(solved, reference, options):
+    """Check the saved SI anchor and budget independently of the optimizer."""
+    phase1 = solved.get("phase1_best_si_mean")
+    best = solved.get("best_feasible_si_mean")
+    floor = solved.get("phase2_si_floor")
+    if phase1 is None or best is None or not np.isfinite([phase1, best]).all():
+        raise ValueError("SI优先求解器缺少有效的阶段最佳SI")
+    if phase1 < reference["metrics"]["final_si_mean"] - options["si_tolerance"]:
+        raise ValueError("SI阶段最佳值低于公共SCA参照")
+    if best < phase1 - 1e-12:
+        raise ValueError("SI最佳值随阶段推进下降")
+    if floor is not None and (not np.isfinite(floor) or
+                              abs(floor - (best - options["si_tolerance"])) > 1e-12):
+        raise ValueError("SGM阶段锁定SI门槛与最佳可行SI不一致")
+    if (solved["evaluations"] > options["maxeval"] or
+            reference["solver"]["evaluations"] + solved["evaluations"] > 2 * options["maxeval"]):
+        raise ValueError("SI优先完整路线超过冻结容量调用预算")
+    return phase1, floor
+
+
+def verify_solution(initial, beams, power_cap, options, *, reference=None,
+                    phase1_best_si=None, locked_si_floor=None):
     """Independent metric acceptance, including zero power and all target beams."""
     initial_beams = initial["beams"]
     if len(beams) != len(initial_beams):
@@ -86,10 +107,32 @@ def verify_solution(initial, beams, power_cap, options):
     si = float(np.minimum(capacities / demands, 1).mean())
     from satellite_rl.workbench.environment import _sgm
     sgm = float(_sgm(capacities, demands, float(demands.mean())).mean())
-    if si < float(initial["metrics"]["final_si_mean"]) - options["si_tolerance"] - 1e-10:
+    initial_allowance = options["si_tolerance"] + (1e-10 if reference is None else 0.0)
+    if si < float(initial["metrics"]["final_si_mean"]) - initial_allowance:
         raise ValueError("最终SI低于初始分配")
-    if sgm < float(initial["metrics"]["final_sgm_mean"]) - options["sgm_tolerance"] - 1e-10:
+    if reference is None and sgm < float(initial["metrics"]["final_sgm_mean"]) - options["sgm_tolerance"] - 1e-10:
         raise ValueError("最终SGM低于初始分配")
+    if reference is not None:
+        reference_beams = reference["beams"]
+        if len(reference_beams) != len(beams):
+            raise ValueError("公共SCA参照缺失目标波束")
+        reference_c = np.asarray([b["rate_bps"] for b in reference_beams], dtype=float)
+        reference_si = float(reference["metrics"]["final_si_mean"])
+        if si < reference_si - options["si_tolerance"]:
+            raise ValueError("SI优先结果低于公共SCA参照")
+        if phase1_best_si is not None and si < float(phase1_best_si) - options["si_tolerance"]:
+            raise ValueError("最终SI低于第一阶段最佳可行SI")
+        if locked_si_floor is not None and si < float(locked_si_floor):
+            raise ValueError("最终SI低于SGM阶段最终锁定门槛")
+        basic_threshold = 0.1 * demands
+        # A beam already below the threshold must retain its reference capacity;
+        # a beam above it must not become a new strict basic-service failure.
+        reference_floor = np.where(reference_c >= basic_threshold,
+                                   basic_threshold, reference_c)
+        if np.any((reference_c >= basic_threshold) & (capacities < basic_threshold)):
+            raise ValueError("SI优先结果新增严格基本服务跨下波束")
+        if np.any(capacities < reference_floor - np.maximum(1e-3, demands * 1e-8)):
+            raise ValueError("SI优先结果新增基本服务跨下或损害原不足波束")
     return {"final_si_mean": si, "final_sgm_mean": sgm,
             "basic_met_count": int(np.sum(capacities >= 0.1 * demands)),
             "all_basic_met": bool(np.all(capacities >= 0.1 * demands)),
@@ -131,7 +174,7 @@ def _summaries(rows):
                        fallback_count=sum(bool(r["solver"].get("fallback_used")) for r in selected),
                        nonconverged_count=sum(not r["solver"].get("converged", False)
                                               for r in selected),
-                       convergence_scope=("not_certified_for_original_objective" if method in ("sca", "wmmse")
+                       convergence_scope=("not_certified_for_original_objective" if method in ("sca", "sca_si_lp", "sca_si_lb", "wmmse")
                                           else "method_specific_stopping_rule"))
         from satellite_rl.power_refinement.timing import aggregate_scene_timing
         summary.update(aggregate_scene_timing(selected))
@@ -146,11 +189,24 @@ def finalize_results(directory, job, config, rows):
         common = {key: row[key] for key in ("run_id", "git_commit", "source_model_sha256",
                                            "scene_id", "source_scene_sha256", "repeat", "method",
                                            "initial_allocation_sha256", "power_budget_mode")}
+        if "reference_allocation_sha256" in row:
+            common["reference_allocation_sha256"] = row["reference_allocation_sha256"]
+        if "reference_case_sha256" in row:
+            common["reference_case_sha256"] = row["reference_case_sha256"]
         common["optimizer_seed"] = row.get("optimizer_seed")
         table.append({**common, **row["metrics"],
                       **row.get("timing", {}),
                       "solver_seconds": row["solver"]["elapsed_seconds"],
                       "solver_evaluations": row["solver"]["evaluations"],
+                      "reference_solver_evaluations": row.get("reference_solver_evaluations"),
+                      "complete_route_solver_evaluations": row.get("complete_route_solver_evaluations"),
+                      "phase1_best_si_mean": row["solver"].get("phase1_best_si_mean"),
+                      "best_feasible_si_mean": row["solver"].get("best_feasible_si_mean"),
+                      "locked_si_floor": row["solver"].get("phase2_si_floor"),
+                      "reference_si_mean": (row.get("reference_metrics") or {}).get("final_si_mean"),
+                      "reference_sgm_mean": (row.get("reference_metrics") or {}).get("final_sgm_mean"),
+                      "complete_route_capacity_budget": row.get("complete_route_capacity_budget"),
+                      "complete_route_optimizer_time_budget_seconds": row.get("complete_route_optimizer_time_budget_seconds"),
                       "termination_reason": row["solver"]["termination_reason"],
                       "fallback_used": row["solver"].get("fallback_used", False)})
         beams.extend({**common, **beam} for beam in row["beams"])
@@ -166,9 +222,13 @@ def finalize_results(directory, job, config, rows):
                      "final_sgm_mean": float(np.mean([r["metrics"]["final_sgm_mean"] for r in group])),
                      "power_w": float(np.mean([r["metrics"]["power_w"] for r in group]))}
             if all("timing" in r for r in group):
-                for key in ("initialization_seconds", "physics_setup_seconds", "optimizer_wall_seconds",
+                timing_keys = ["initialization_seconds", "physics_setup_seconds", "optimizer_wall_seconds",
                             "optimizer_callback_io_seconds", "optimizer_excluding_callback_seconds",
-                            "verification_seconds", "total_pipeline_seconds"):
+                            "verification_seconds", "total_pipeline_seconds"]
+                if all("reference_total_seconds" in r["timing"] for r in group):
+                    timing_keys += ["reference_optimizer_wall_seconds",
+                                    "reference_verification_seconds", "reference_total_seconds"]
+                for key in timing_keys:
                     entry[key + "_sum"] = sum(r["timing"][key] for r in group)
                     entry[key + "_mean_per_action"] = entry[key + "_sum"] / len(group)
             scene_table.append(entry)
@@ -217,6 +277,7 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
     from satellite_rl.workbench.environment import WorkbenchEnv
     from satellite_rl.power_refinement.physics import FixedAllocationPhysics
     from satellite_rl.power_refinement.optimizer import optimize_power
+    from satellite_rl.power_refinement.config import SI_PRIORITY_METHODS
 
     directory = Path(directory)
     options = config["power_refinement"]
@@ -229,9 +290,12 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
     files = scene_set_files(dataset)
     budget = len(files) * options["repeats"] * len(options["methods"])
     # Scheduler resume flags are operational state, not scientific identity.
-    identity = _fingerprint({"job": {k: job.get(k) for k in
-        ("run_id", "git_commit", "source_root", "model_files", "model_config", "scene_sets")},
-        "config": config})
+    job_identity = {k: job.get(k) for k in
+        ("run_id", "git_commit", "source_root", "model_files", "model_config", "scene_sets")}
+    if options["methods"] == list(SI_PRIORITY_METHODS):
+        job_identity.update(priority_solver_deps_path=job.get("priority_solver_deps_path"),
+                            priority_solver_dependency_files=job.get("priority_solver_dependency_files"))
+    identity = _fingerprint({"job": job_identity, "config": config})
     manifest_path = directory / "refinement_manifest.json"
     prior = _read_json(manifest_path)
     if prior and prior["identity"] != identity:
@@ -307,18 +371,44 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
             allocation_sha = _fingerprint(initial["beams"])
             for method in options["methods"]:
                 case_path = cases_dir / f"scene_{index:05d}_r{repeat}_{method}.json"
-                case_identity = _fingerprint([initial_identity, allocation_sha, method, options])
+                reference = None
+                reference_sha = None
+                reference_case_sha = None
+                if method in SI_PRIORITY_METHODS[1:]:
+                    reference_path = cases_dir / f"scene_{index:05d}_r{repeat}_sca.json"
+                    reference = _read_json(reference_path)
+                    if reference is None:
+                        raise ValueError("SI优先追加求解必须先完成并保存公共SCA参照")
+                    expected_reference_identity = _fingerprint([initial_identity, allocation_sha,
+                                                                "sca", options])
+                    if reference.get("identity") != expected_reference_identity:
+                        raise ValueError("公共SCA参照来源与冻结初始分配不一致")
+                    reference_sha = _fingerprint(reference["beams"])
+                    reference_case_sha = _sha256(reference_path)
+                case_identity = _fingerprint([initial_identity, allocation_sha, method, options]
+                                             + ([reference_sha, reference_case_sha] if reference else []))
                 row = _read_json(case_path)
                 if row is None and case_path.exists():
                     raise ValueError("已保存优化记录损坏，原文件保留")
                 if row is not None:
                     if row.get("identity") != case_identity:
                         raise ValueError("已保存优化结果来源不一致")
+                    if (method == "sca" and options["methods"] == list(SI_PRIORITY_METHODS)
+                            and row.get("reference_allocation_sha256") != _fingerprint(row["beams"])):
+                        raise ValueError("已保存公共SCA参照最终分配SHA不一致")
+                    if reference is not None and (row.get("reference_allocation_sha256") != reference_sha
+                                                  or row.get("reference_case_sha256") != reference_case_sha):
+                        raise ValueError("已保存SI优先结果的公共SCA来源不一致")
+                    if reference is not None:
+                        _priority_solver_contract(row["solver"], reference, options)
                     restored = problem.evaluate([beam["power_w"] for beam in row["beams"]])
                     if not np.allclose(restored.capacity_bps, [b["rate_bps"] for b in row["beams"]],
                                        rtol=1e-8, atol=1e-3):
                         raise ValueError("已保存优化结果容量与物理复算不一致")
-                    restored_metrics = verify_solution(initial, row["beams"], cap, options)
+                    restored_metrics = verify_solution(initial, row["beams"], cap, options,
+                        reference=reference,
+                        phase1_best_si=row["solver"].get("phase1_best_si_mean") if reference else None,
+                        locked_si_floor=row["solver"].get("phase2_si_floor") if reference else None)
                     for key, value in restored_metrics.items():
                         if key not in row["metrics"] or not np.isclose(row["metrics"][key], value,
                                                                        rtol=1e-10, atol=1e-9):
@@ -353,9 +443,23 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                     solve_options.update(optimizer_seed=optimizer_seed,
                         **{key: options[key] for key in ("population_size", "de_mutation", "de_crossover",
                                                         "pso_inertia", "pso_cognitive", "pso_social")})
+                if reference is not None:
+                    from satellite_rl.power_refinement.priority import optimize_priority
+                    solve_options.update({key: options[key] for key in
+                        ("si_stall_window", "si_stall_tolerance", "si_min_evaluations",
+                         "si_max_fraction", "service_margin_ratio")})
+                    solve_options["baseline_service_floor_bps"] = np.minimum(
+                        np.asarray([beam["rate_bps"] for beam in initial["beams"]], dtype=float),
+                        0.1 * problem.demand_bps)
                 solver_started = time.perf_counter()
-                solved = optimize_power(problem, p0, method=method, options=solve_options,
-                                        callback=callback, stop_requested=stop_requested)
+                if reference is None:
+                    solved = optimize_power(problem, p0, method=method, options=solve_options,
+                                            callback=callback, stop_requested=stop_requested)
+                else:
+                    solved = optimize_priority(problem,
+                        np.asarray([beam["power_w"] for beam in reference["beams"]], dtype=float),
+                        method=method, options=solve_options, callback=callback,
+                        stop_requested=stop_requested)
                 solver_wall = time.perf_counter() - solver_started
                 if stop_requested():
                     _status(directory, job, stage="stopped", env_step=len(rows), budget_env_steps=budget)
@@ -364,10 +468,17 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                 power = np.asarray(solved["power_w"], dtype=float)
                 evaluated = problem.evaluate(power)
                 beams = _beam_rows(initial, evaluated, power)
-                metrics = verify_solution(initial, beams, cap, options)
+                phase1_best_si = (_priority_solver_contract(solved, reference, options)[0]
+                                  if reference is not None else None)
+                metrics = verify_solution(initial, beams, cap, options,
+                                          reference=reference, phase1_best_si=phase1_best_si,
+                                          locked_si_floor=solved.get("phase2_si_floor") if reference else None)
                 from satellite_rl.power_refinement.timing import build_timing
                 timing = build_timing(initial["inference_seconds"], initial["physics_setup_seconds"],
-                                      solver_wall, callback_seconds, time.perf_counter() - verify_started)
+                                      solver_wall, callback_seconds, time.perf_counter() - verify_started,
+                                      **({"reference_optimizer": reference["timing"]["optimizer_wall_seconds"],
+                                          "reference_verification": reference["timing"]["verification_seconds"]}
+                                         if reference is not None else {}))
                 row = {"identity": case_identity, "run_id": job["run_id"],
                        "git_commit": job["git_commit"],
                        "source_model_sha256": next(ref["sha256"] for ref in job["model_files"]
@@ -381,6 +492,25 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                        "beams": beams, "solver": clean_json(solved),
                        "inference_seconds": initial["inference_seconds"],
                        "service_timing": "after_power_refinement_all_interference"}
+                if reference is not None:
+                    row.update(reference_allocation_sha256=reference_sha,
+                               reference_case_sha256=reference_case_sha,
+                               reference_method="sca",
+                               reference_case_path=str(reference_path),
+                               reference_metrics=reference["metrics"],
+                               phase1_best_si_mean=phase1_best_si,
+                               best_feasible_si_mean=solved.get("best_feasible_si_mean"),
+                               locked_si_floor=solved.get("phase2_si_floor"),
+                               reference_solver_evaluations=reference["solver"]["evaluations"],
+                               complete_route_solver_evaluations=(
+                                   reference["solver"]["evaluations"] + solved["evaluations"]),
+                               complete_route_capacity_budget=2 * options["maxeval"],
+                               complete_route_optimizer_time_budget_seconds=2 * options["max_time_seconds"],
+                               reference_sgm_rule="legacy_sca_protection",
+                               priority_sgm_rule="si_first_sgm_may_decline")
+                elif method == "sca" and options["methods"] == list(SI_PRIORITY_METHODS):
+                    row.update(reference_allocation_sha256=_fingerprint(beams),
+                               reference_method="sca", reference_sgm_rule="legacy_sca_protection")
                 _atomic_json(case_path, row)
                 rows.append(row)
                 _jsonl(directory / "evaluations.jsonl", {"env_step": len(rows), "group": method,
@@ -406,10 +536,48 @@ def run_refinement_job(job_dir, *, resume=False):
         config = _read_json(directory / "config.json", {})
         if config.get("research_stage") != "power_refinement" or job.get("kind") != "refine":
             raise ValueError("第三阶段任务阶段或类型无效")
-        config["power_refinement"] = validate_config(config["power_refinement"])
+        raw_controls = config["power_refinement"]
+        config["power_refinement"] = validate_config(raw_controls)
+        # Preserve the original identity of jobs frozen before the SI-priority
+        # fields existed. Their existing manifest must still be resumable.
+        if "si_stall_window" not in raw_controls:
+            for key in ("si_stall_window", "si_stall_tolerance", "si_min_evaluations",
+                        "si_max_fraction", "service_margin_ratio"):
+                config["power_refinement"].pop(key)
         preflight = strict_cuda_preflight(job)
         import scipy
         preflight.update(scipy=scipy.__version__, optimizer_device="cpu", policy_device="cuda")
+        from satellite_rl.power_refinement.config import SI_PRIORITY_METHODS
+        if config["power_refinement"]["methods"] == list(SI_PRIORITY_METHODS):
+            import cvxpy
+            import clarabel
+            dependency_root = Path(job.get("priority_solver_deps_path", ""))
+            if not dependency_root.is_absolute() or not dependency_root.is_dir():
+                raise ValueError("冻结的SI优先求解依赖目录无效")
+            dependency_root = dependency_root.resolve(strict=True)
+            dependency_files = job.get("priority_solver_dependency_files") or []
+            expected_files = {str(dependency_root / f"{package}-{version}.dist-info" / name)
+                              for package, version in (("cvxpy", "1.6.5"), ("clarabel", "0.11.1"))
+                              for name in ("METADATA", "RECORD")}
+            if {item.get("path") for item in dependency_files} != expected_files:
+                raise ValueError("冻结求解依赖清单不完整")
+            for item in dependency_files:
+                file = Path(item["path"])
+                if not file.is_file() or _sha256(file) != item["sha256"]:
+                    raise ValueError("冻结求解依赖清单SHA不一致")
+            if (not Path(cvxpy.__file__).resolve().is_relative_to(dependency_root) or
+                    not Path(clarabel.__file__).resolve().is_relative_to(dependency_root)):
+                raise ValueError("SI优先依赖未从冻结隔离目录导入")
+            if cvxpy.__version__ != "1.6.5" or clarabel.__version__ != "0.11.1":
+                raise ValueError("SI优先求解依赖版本与冻结配置不一致")
+            if "CLARABEL" not in cvxpy.installed_solvers():
+                raise ValueError("SI优先求解缺少CLARABEL求解器")
+            preflight["priority_solver"] = {
+                "dependency_root": str(dependency_root),
+                "distribution_manifest_sha256": _fingerprint(dependency_files),
+                "cvxpy_version": cvxpy.__version__, "cvxpy_file": cvxpy.__file__,
+                "clarabel_version": clarabel.__version__, "clarabel_file": clarabel.__file__,
+                "solver": "CLARABEL", "optimizer_device": "cpu"}
         import platform
         preflight.update(cpu_description=platform.processor(), cpu_logical_count=os.cpu_count(),
             cpu_affinity_count=len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,

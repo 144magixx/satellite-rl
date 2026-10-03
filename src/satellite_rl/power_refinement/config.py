@@ -8,11 +8,14 @@ import math
 
 LEGACY_METHODS = ("none", "discrete", "slsqp")
 METHODS = (*LEGACY_METHODS, "sca", "de", "pso", "wmmse")
+SI_PRIORITY_METHODS = ("sca", "sca_si_lp", "sca_si_lb")
 METHOD_LABELS = {
     "none": "T0原分配", "discrete": "原5 W档位调整",
     "slsqp": "SLSQP含需求匹配初始化", "sca": "SCA信赖域凸近似",
     "de": "差分进化DE", "pso": "粒子群PSO",
     "wmmse": "WMMSE速率提议与双指标验收",
+    "sca_si_lp": "B：从A继续优先提高SI",
+    "sca_si_lb": "C：改进功率估计并优先提高SI",
 }
 TOTAL_POWER_W = 3000.0
 DEFAULTS = {
@@ -36,6 +39,11 @@ DEFAULTS = {
     "pso_inertia": 0.7,
     "pso_cognitive": 1.4,
     "pso_social": 1.4,
+    "si_stall_window": 200,
+    "si_stall_tolerance": 1e-6,
+    "si_min_evaluations": 200,
+    "si_max_fraction": 0.85,
+    "service_margin_ratio": 5e-9,
 }
 
 
@@ -64,8 +72,8 @@ def validate_config(raw):
         raise ValueError("未知功率细调参数：" + ", ".join(sorted(unknown)))
     result = default_config()
     result.update(deepcopy(raw))
-    if result["methods"] not in (list(LEGACY_METHODS), list(METHODS)):
-        raise ValueError("请选择原三方法或完整七路线共同对照，方法顺序须一致")
+    if result["methods"] not in (list(LEGACY_METHODS), list(METHODS), list(SI_PRIORITY_METHODS)):
+        raise ValueError("请选择原三方法、完整七路线或SI优先三组，方法顺序须一致")
     if result["action_mode"] not in ("deterministic", "stochastic"):
         raise ValueError("动作方式须为确定性或随机采样")
     result["action_seed"] = _integer(result["action_seed"], "动作种子", 0, 2**32 - 1)
@@ -88,4 +96,17 @@ def validate_config(raw):
     result["pso_inertia"] = _number(result["pso_inertia"], "PSO惯性", 0, 0.999999)
     result["pso_cognitive"] = _number(result["pso_cognitive"], "PSO个体系数", 0, 4)
     result["pso_social"] = _number(result["pso_social"], "PSO群体系数", 0, 4)
+    result["si_stall_window"] = _integer(result["si_stall_window"], "SI停滞窗口", 1, 10000)
+    result["si_stall_tolerance"] = _number(result["si_stall_tolerance"], "SI停滞阈值", 0, 1)
+    result["si_min_evaluations"] = _integer(result["si_min_evaluations"], "SI最低容量调用", 1, 1000000)
+    result["si_max_fraction"] = _number(result["si_max_fraction"], "SI阶段最大占比", 0.01, 0.99)
+    result["service_margin_ratio"] = _number(result["service_margin_ratio"], "基本服务安全裕量", 0, 1e-3)
+    if result["methods"] == list(SI_PRIORITY_METHODS):
+        fixed = {"si_tolerance": 1e-8, "sgm_tolerance": 1e-8,
+                 "maxiter": 300, "maxeval": 2000,
+                 "max_time_seconds": 30.0, "si_stall_window": 200,
+                 "si_stall_tolerance": 1e-6, "si_min_evaluations": 200,
+                 "si_max_fraction": 0.85, "service_margin_ratio": 5e-9}
+        if any(result[key] != value for key, value in fixed.items()):
+            raise ValueError("SI优先三组须使用方案04冻结的共同容差、阶段规则与追加预算")
     return result

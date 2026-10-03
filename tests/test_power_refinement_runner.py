@@ -12,7 +12,7 @@ from unittest.mock import patch
 import numpy as np
 
 from satellite_rl.power_refinement.config import default_config as refinement_defaults
-from satellite_rl.power_refinement.runner import evaluate_refinement
+from satellite_rl.power_refinement.runner import evaluate_refinement, verify_solution
 from satellite_rl.workbench.config import default_config as model_defaults
 from satellite_rl.workbench.power_refinement import (G11_T0_RUN_ID, G11_T0_SOURCE_COMMIT,
                                                      G11_T0_ENV_STEP)
@@ -239,6 +239,129 @@ class RefinementRunnerTests(unittest.TestCase):
         case.write_text(json.dumps(row, ensure_ascii=False), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "指标|逐束重算"):
             self.run_short()
+
+    def priority_job(self):
+        controls = refinement_defaults()
+        controls.update(methods=["sca", "sca_si_lp", "sca_si_lb"], repeats=1)
+        for package, version in (("cvxpy", "1.6.5"), ("clarabel", "0.11.1")):
+            distribution = self.root / f"{package}-{version}.dist-info"
+            distribution.mkdir(exist_ok=True)
+            for name in ("METADATA", "RECORD"):
+                (distribution / name).write_text(f"{package} {version} {name}", encoding="utf-8")
+        with patch.dict("os.environ", {"SATELLITE_RL_PRIORITY_DEPS": str(self.root)}):
+            self.job = self.app.api("POST", ["power-refinement", "runs"], {}, {
+                "model_id": self.job["model_id"], "scene_id": self.job["scene_id"],
+                "config": controls, "request_id": "runner_si_priority_fixture"})
+        self.directory = self.app.store.job_dir(self.job["run_id"])
+        self.config = read_json(self.directory / "config.json")
+
+    def test_priority_routes_share_one_reference_and_resume_without_recomputation(self):
+        self.priority_job()
+        observed = []
+        def priority(problem, reference_power, method, options, **kwargs):
+            observed.append((method, np.asarray(reference_power).copy(), deepcopy(options)))
+            solved = self.unchanged_solver(problem, reference_power, method, options, **kwargs)
+            solved["phase1_best_si_mean"] = problem.evaluate(reference_power).si
+            solved["best_feasible_si_mean"] = solved["phase1_best_si_mean"]
+            solved["phase2_si_floor"] = solved["phase1_best_si_mean"] - 1e-8
+            return solved
+        with patch("satellite_rl.power_refinement.optimizer.optimize_power",
+                   side_effect=self.unchanged_solver) as old, \
+             patch("satellite_rl.power_refinement.priority.optimize_priority",
+                   side_effect=priority) as new:
+            evaluate_refinement(self.directory, self.job, self.config, device="cpu")
+            self.assertEqual(old.call_count, 1)
+            self.assertEqual(new.call_count, 2)
+            changed_job = deepcopy(self.job)
+            changed_job["priority_solver_dependency_files"][0]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(ValueError, "恢复任务配置或来源"):
+                evaluate_refinement(self.directory, changed_job, self.config, device="cpu")
+            self.assertEqual([name for name, _, _ in observed], ["sca_si_lp", "sca_si_lb"])
+            np.testing.assert_array_equal(observed[0][1], observed[1][1])
+            self.assertNotIn("si_stall_window", old.call_args.kwargs["options"])
+            self.assertEqual(observed[0][2]["si_stall_window"], 200)
+            self.assertEqual(len(observed[0][2]["baseline_service_floor_bps"]), 100)
+            cases = read_json(self.directory / "results.json")["scenes"]
+            summary = read_json(self.directory / "results.json")["summary"]
+            self.assertEqual(summary["sca_si_lp"]["convergence_scope"],
+                             "not_certified_for_original_objective")
+            self.assertEqual(summary["sca_si_lb"]["convergence_scope"],
+                             "not_certified_for_original_objective")
+            self.assertEqual(len({r["initial_allocation_sha256"] for r in cases}), 1)
+            self.assertEqual(cases[1]["reference_case_sha256"], cases[2]["reference_case_sha256"])
+            for row in cases[1:]:
+                timing = row["timing"]
+                self.assertAlmostEqual(timing["reference_optimizer_wall_seconds"],
+                                       cases[0]["timing"]["optimizer_wall_seconds"])
+                self.assertAlmostEqual(timing["total_pipeline_seconds"],
+                    timing["initialization_seconds"] + timing["physics_setup_seconds"] +
+                    timing["reference_total_seconds"] + timing["optimizer_wall_seconds"] +
+                    timing["verification_seconds"])
+            evaluate_refinement(self.directory, self.job, self.config, device="cpu")
+            self.assertEqual(old.call_count, 1)
+            self.assertEqual(new.call_count, 2)
+
+    def test_priority_resume_rejects_changed_reference_record(self):
+        self.priority_job()
+        def priority(problem, reference_power, method, options, **kwargs):
+            solved = self.unchanged_solver(problem, reference_power, method, options, **kwargs)
+            solved["phase1_best_si_mean"] = problem.evaluate(reference_power).si
+            solved["best_feasible_si_mean"] = solved["phase1_best_si_mean"]
+            return solved
+        with patch("satellite_rl.power_refinement.optimizer.optimize_power",
+                   side_effect=self.unchanged_solver), \
+             patch("satellite_rl.power_refinement.priority.optimize_priority", side_effect=priority):
+            evaluate_refinement(self.directory, self.job, self.config, device="cpu")
+            reference = next((self.directory / "power_cases").glob("*_sca.json"))
+            row = json.loads(reference.read_text(encoding="utf-8"))
+            row["timing"]["optimizer_wall_seconds"] += 1
+            reference.write_text(json.dumps(row, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "来源"):
+                evaluate_refinement(self.directory, self.job, self.config, device="cpu")
+
+    def test_priority_independent_check_allows_sgm_decline_but_guards_locked_si(self):
+        self.priority_job()
+        with patch("satellite_rl.power_refinement.optimizer.optimize_power",
+                   side_effect=self.unchanged_solver), \
+             patch("satellite_rl.power_refinement.priority.optimize_priority") as priority:
+            # Only A is needed for a real frozen initial allocation and beam table.
+            from satellite_rl.power_refinement import runner as worker
+            old_status = worker._status
+            def stop_after_a(directory, job, **fields):
+                old_status(directory, job, **fields)
+                if fields.get("env_step") == 1 and fields.get("stage") == "evaluating":
+                    (directory / "stop.request").write_text("stop", encoding="utf-8")
+            with patch.object(worker, "_status", side_effect=stop_after_a):
+                self.assertIsNone(evaluate_refinement(self.directory, self.job, self.config, device="cpu"))
+            priority.assert_not_called()
+        reference = read_json(next((self.directory / "power_cases").glob("*_sca.json")))
+        initial = read_json(reference["initial_path"])
+        inflated = deepcopy(initial)
+        inflated["metrics"]["final_sgm_mean"] = 1.0
+        cap = reference["metrics"]["power_budget_w"]
+        with self.assertRaisesRegex(ValueError, "SGM"):
+            verify_solution(inflated, reference["beams"], cap, self.config["power_refinement"])
+        metrics = verify_solution(inflated, reference["beams"], cap,
+            self.config["power_refinement"], reference=reference,
+            phase1_best_si=reference["metrics"]["final_si_mean"])
+        self.assertLess(metrics["final_sgm_mean"], inflated["metrics"]["final_sgm_mean"])
+        with self.assertRaisesRegex(ValueError, "锁定门槛"):
+            verify_solution(inflated, reference["beams"], cap,
+                self.config["power_refinement"], reference=reference,
+                locked_si_floor=metrics["final_si_mean"] + 1e-5)
+        crossing = deepcopy(reference["beams"])
+        crossed_reference = deepcopy(reference)
+        candidate_index = next(i for i, beam in enumerate(crossing)
+                               if beam["rate_bps"] >= 0.1 * beam["required_bps"])
+        threshold = 0.1 * crossing[candidate_index]["required_bps"]
+        crossed_reference["beams"][candidate_index]["rate_bps"] = threshold
+        crossing[candidate_index]["rate_bps"] = threshold - 1e-4
+        loose_initial = deepcopy(initial)
+        loose_initial["metrics"]["final_si_mean"] = 0.0
+        crossed_reference["metrics"]["final_si_mean"] = 0.0
+        with self.assertRaisesRegex(ValueError, "严格基本服务跨下"):
+            verify_solution(loose_initial, crossing, cap, self.config["power_refinement"],
+                            reference=crossed_reference)
 
 
 if __name__ == "__main__":

@@ -228,6 +228,19 @@ class Scheduler:
             command.append("--resume")
         env = dict(os.environ)
         env["PYTHONPATH"] = str(Path(job["source_root"]) / "src")
+        # Only SI-priority refinement jobs may use their frozen, isolated
+        # solver dependencies. The frozen scientific source stays first and
+        # unrelated workers keep the original single-source PYTHONPATH.
+        from satellite_rl.power_refinement.config import SI_PRIORITY_METHODS
+        if (job.get("kind") == "refine" and
+                (job.get("power_refinement") or {}).get("methods") == list(SI_PRIORITY_METHODS)):
+            dependency_root = job.get("priority_solver_deps_path")
+            if (not dependency_root or not Path(dependency_root).is_absolute()
+                    or not Path(dependency_root).is_dir()):
+                self._status(directory, status, stage="failed",
+                             error="冻结的SI优先求解依赖目录缺失或无效")
+                return
+            env["PYTHONPATH"] += os.pathsep + str(Path(dependency_root).resolve())
         env["SATELLITE_RL_OUTPUT_ROOT"] = job["archive_root"]
         env["PYTHONUNBUFFERED"] = "1"
         flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
@@ -243,6 +256,7 @@ class Scheduler:
                 self._status(directory, latest, stage="starting", pid=child.pid, command=command, started_at=now())
             atomic_json(directory / "launch.json", {"pid": child.pid, "command": command,
                         "python": self.python, "source_root": job["source_root"], "at": now(),
+                        "priority_solver_deps_path": job.get("priority_solver_deps_path"),
                         "process_start_time": process_start_time(child.pid)})
         except Exception as error:
             self._status(directory, status, stage="failed", error=str(error))

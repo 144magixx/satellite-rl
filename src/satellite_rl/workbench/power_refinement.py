@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from satellite_rl.power_refinement.config import default_config, validate_config, METHOD_LABELS
+import os
+from pathlib import Path
+from satellite_rl.power_refinement.config import (default_config, validate_config,
+                                                  METHOD_LABELS, SI_PRIORITY_METHODS)
 
-from .storage import model_input_files, validate_id
+from .storage import digest, model_input_files, validate_id
 
 
 G11_T0_RUN_ID = "train_sac_20261001_162126_33e89e95"
@@ -86,9 +89,26 @@ class PowerRefinementApplication:
                 if (existing.get("kind") != "refine" or
                         existing.get("model_id") != body.get("model_id") or
                         existing.get("scene_id") != body.get("scene_id") or
-                        existing.get("power_refinement") != controls):
+                        validate_config(existing.get("power_refinement") or {}) != controls):
                     raise ValueError("同一请求编号已用于不同的配置")
                 return existing
+        priority_deps = None
+        priority_dependency_files = None
+        if controls["methods"] == list(SI_PRIORITY_METHODS):
+            configured = os.environ.get("SATELLITE_RL_PRIORITY_DEPS", "")
+            if not configured or not Path(configured).is_absolute() or not Path(configured).is_dir():
+                raise ValueError("SI优先任务需要工作台配置绝对且存在的隔离求解依赖目录")
+            priority_root = Path(configured).resolve(strict=True)
+            priority_deps = str(priority_root)
+            priority_dependency_files = []
+            for package, version in (("cvxpy", "1.6.5"), ("clarabel", "0.11.1")):
+                distribution = priority_root / f"{package}-{version}.dist-info"
+                for name in ("METADATA", "RECORD"):
+                    file = distribution / name
+                    if not file.is_file():
+                        raise ValueError(f"SI优先隔离依赖缺少{package} {version}的{name}")
+                    priority_dependency_files.append({"path": str(file),
+                                                      "sha256": digest(file)})
         model = next((row for row in self.models() if row["id"] == body.get("model_id")), None)
         if model is None:
             raise ValueError("请选择已导入工作台且来源可校验的G11 T0冻结模型")
@@ -143,6 +163,9 @@ class PowerRefinementApplication:
             "evaluation_units": config["training"]["total_steps"],
             "evaluation_units_label": "场景×动作采样×方法；非训练交互步",
         }
+        if priority_deps is not None:
+            extra["priority_solver_deps_path"] = priority_deps
+            extra["priority_solver_dependency_files"] = priority_dependency_files
         return self.store.create_job(config, kind="refine", request_id=body.get("request_id"), extra=extra)
 
     def api(self, method, parts, query, body):

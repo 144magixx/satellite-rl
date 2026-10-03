@@ -17,8 +17,10 @@ def write_report(directory, rows, summaries, config):
     plt.rcParams["axes.unicode_minus"] = False
     directory = Path(directory)
     methods = list(summaries)
-    colors = dict(zip(("none", "discrete", "slsqp", "sca", "de", "pso", "wmmse"),
-                      ("#666666", "#e69f00", "#0072b2", "#009e73", "#cc79a7", "#d55e00", "#56b4e9")))
+    colors = dict(zip(("none", "discrete", "slsqp", "sca", "de", "pso", "wmmse",
+                       "sca_si_lp", "sca_si_lb"),
+                      ("#666666", "#e69f00", "#0072b2", "#009e73", "#cc79a7", "#d55e00", "#56b4e9",
+                       "#d55e00", "#cc79a7")))
     scenes = sorted({r["source_scene_sha256"] for r in rows})
     fig, axes = plt.subplots(2, 1, figsize=(11, 7), constrained_layout=True)
     for method in methods:
@@ -73,8 +75,12 @@ def write_report(directory, rows, summaries, config):
     plt.close(fig)
 
     options = config["power_refinement"]
+    from satellite_rl.power_refinement.config import SI_PRIORITY_METHODS
+    priority_routes = options["methods"] == list(SI_PRIORITY_METHODS)
     lines = ["# 第三阶段固定频率槽功率细调结果", "",
-             "冻结T0生成初始分配，各方法共享相同实际频率槽、需求及初始功率。连续路线包括SLSQP含需求匹配初始化、SCA、DE、PSO及WMMSE适配；功率非负且仅受总预算约束；原档位参照仍为5–50 W、步长5 W。",
+             ("冻结T0生成初始分配，A为原SCA；B与C从同一A终值分别追加求解。B使用旧线性容量估计，C使用改进容量估计；两者先提高SI，随后在已找到的SI水平上提高SGM。SGM允许低于A，基本服务与总功率仍须守住。"
+              if priority_routes else
+              "冻结T0生成初始分配，各方法共享相同实际频率槽、需求及初始功率。连续路线包括SLSQP含需求匹配初始化、SCA、DE、PSO及WMMSE适配；功率非负且仅受总预算约束；原档位参照仍为5–50 W、步长5 W。"),
              "", f"预算口径：{options['power_budget_mode']}；场景{len(scenes)}个，每场景{options['repeats']}次动作；新增训练交互0。",
              "", "| 方法 | SI | SGM | 基本服务束 | 全束基本服务比例 | 功率W | 求解均时s | 求解95分位s | 回退数 |",
              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
@@ -86,11 +92,15 @@ def write_report(directory, rows, summaries, config):
               "", "![共同场景](power_paired.png)", "", "![优化过程](power_progress.png)", "",
               "过程图是保存的已接受可行候选，不是所有求解器试探点；未平滑，失败和无改善样本保留于原始表。",
               "", "![逐束分布](power_distributions.png)", "",
-              "单训练种子及单考核日期限制仍在。连续方案同时放宽了原功率粒度、最低和最高整束功率，各路线的algorithm_components及history.phase单独记录；SLSQP含需求匹配初始化，WMMSE使用速率代理提议，不能把代理目标等同于SI/SGM。局部解、停止或回退均不证明全局最优。",
+              ("单训练种子及单考核日期限制仍在。A保留旧SCA的SGM保护；B/C取消这一保护以优先提高SI，最终SGM可能下降。B对A包含目标规则与追加搜索，C对B主要比较容量估计。局部解、停止或回退均不证明全局最优。"
+               if priority_routes else
+               "单训练种子及单考核日期限制仍在。连续方案同时放宽了原功率粒度、最低和最高整束功率，各路线的algorithm_components及history.phase单独记录；SLSQP含需求匹配初始化，WMMSE使用速率代理提议，不能把代理目标等同于SI/SGM。局部解、停止或回退均不证明全局最优。"),
               "", "原始入口：power_cases.jsonl、power_results.csv、power_beams.csv、power_iterations.jsonl；每个case含初始化SHA、来源场景SHA、方法、预算、终止原因和约束误差。",
               "", "本报告由保存的完整case生成；模型/场景冻结证据见job.json、config.json、refinement_manifest.json与results.json。"]
     lines += ["", "## 每场景运行时间与终态结果", "",
-              "公共T0初始解在实验中只生成一次；为比较单独部署每种方法，将其同一次实测生成时间分别计入各方法。GPU生成初始解前后显式同步。总时间是初始解、物理准备、求解墙钟和最终核验的分段实测合计，包含求解日志回调；不包含一次性加载权重、最终文件导出、绘图与归档。求解回调时间另存，可查看扣除该部分的参考计算时间。",
+              ("公共T0初始解和A参照在实验中均只运行一次。B/C完整路线时间分别计入同一次实测T0、物理准备、A求解与核验，以及自身追加求解与核验；并未重复运行A。追加求解墙钟与回调时间单列。A与B/C的求解器容量调用上限分别为2000与4000；结果表记录实际调用，物理准备和最终核验另外计时。"
+               if priority_routes else
+               "公共T0初始解在实验中只生成一次；为比较单独部署每种方法，将其同一次实测生成时间分别计入各方法。GPU生成初始解前后显式同步。总时间是初始解、物理准备、求解墙钟和最终核验的分段实测合计，包含求解日志回调；不包含一次性加载权重、最终文件导出、绘图与归档。求解回调时间另存，可查看扣除该部分的参考计算时间。"),
               "", f"| 方法 | SI | SGM | 单次分配总耗时均值/中位/P95 秒 | 每景{options['repeats']}次合计均值/中位/P95 秒 |",
               "| --- | ---: | ---: | ---: | ---: |"]
     for method, item in summaries.items():

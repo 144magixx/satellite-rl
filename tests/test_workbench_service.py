@@ -200,6 +200,23 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["SATELLITE_RL_OUTPUT_ROOT"], str(self.root))
         self.assertEqual(read_json(self.application.store.job_dir(job["run_id"]) / "status.json")["pid"], 12345)
 
+    def test_priority_worker_receives_only_frozen_solver_dependencies(self):
+        import os
+        job = self.application.store.create_job(self.config)
+        job.update(kind="refine", power_refinement={
+            "methods": ["sca", "sca_si_lp", "sca_si_lb"]},
+            priority_solver_deps_path=str(self.root))
+        scheduler = Scheduler(self.application.store, python_executable=Path(__file__).resolve())
+        class FakeChild:
+            pid = 12346
+        status = read_json(self.application.store.job_dir(job["run_id"]) / "status.json")
+        with patch("satellite_rl.workbench.runtime.subprocess.Popen", return_value=FakeChild()) as popen:
+            scheduler._launch(job, status)
+        self.assertEqual(popen.call_args.kwargs["env"]["PYTHONPATH"],
+                         str(self.snapshot / "src") + os.pathsep + str(self.root.resolve()))
+        receipt = read_json(self.application.store.job_dir(job["run_id"]) / "launch.json")
+        self.assertEqual(receipt["priority_solver_deps_path"], str(self.root.resolve()))
+
     def test_native_exit_retains_exit_code_and_checkpoint_reference(self):
         job = self.application.store.create_job(self.config)
         directory = self.application.store.job_dir(job["run_id"])

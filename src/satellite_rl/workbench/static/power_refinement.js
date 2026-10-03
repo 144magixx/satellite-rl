@@ -18,8 +18,20 @@
     el("message").className = "notice " + (bad ? "bad" : "muted");
   }
   function input(name, value) { el(name).value = value; }
+  function freezePriorityControls() {
+    const selected = el("routes").value === "si-priority";
+    const fixed = {"si-tolerance":1e-8,"sgm-tolerance":1e-8,"maxiter":300,"maxeval":2000,"max-time":30,
+      "si-stall-window":200,"si-stall-tolerance":1e-6,"si-min-evaluations":200,
+      "si-max-fraction":0.85,"service-margin-ratio":5e-9};
+    for (const [key, value] of Object.entries(fixed)) {
+      if (selected) input(key, value);
+      el(key).readOnly = selected || key.startsWith("si-stall") ||
+        key === "si-min-evaluations" || key === "si-max-fraction" || key === "service-margin-ratio";
+    }
+  }
   function writeControls() {
-    input("routes", controls.methods.length > 3 ? "all" : "legacy");
+    input("routes", controls.methods.join(",") === "sca,sca_si_lp,sca_si_lb" ? "si-priority" :
+      controls.methods.length > 3 ? "all" : "legacy");
     for (const key of ["optimizer_seed","population_size","de_mutation","de_crossover","pso_inertia","pso_cognitive","pso_social"]) input(key.replaceAll("_","-"),controls[key]);
     input("action-mode", controls.action_mode);
     input("action-seed", controls.action_seed);
@@ -32,11 +44,15 @@
     input("maxiter", controls.maxiter);
     input("maxeval", controls.maxeval);
     input("max-time", controls.max_time_seconds);
+    for (const key of ["si_stall_window","si_stall_tolerance","si_min_evaluations",
+                       "si_max_fraction","service_margin_ratio"]) input(key.replaceAll("_","-"),controls[key]);
     input("discrete-step", controls.discrete_step_w);
+    freezePriorityControls();
   }
   function readControls() {
     return {...controls,
-      methods:el("routes").value === "all" ? ["none","discrete","slsqp","sca","de","pso","wmmse"] : ["none","discrete","slsqp"],
+      methods:el("routes").value === "si-priority" ? ["sca","sca_si_lp","sca_si_lb"] :
+        el("routes").value === "all" ? ["none","discrete","slsqp","sca","de","pso","wmmse"] : ["none","discrete","slsqp"],
       ...Object.fromEntries(["optimizer_seed","population_size","de_mutation","de_crossover","pso_inertia","pso_cognitive","pso_social"].map(key=>[key,Number(el(key.replaceAll("_","-")).value)])),
       action_mode:el("action-mode").value,
       action_seed:Number(el("action-seed").value),
@@ -49,6 +65,8 @@
       maxiter:Number(el("maxiter").value),
       maxeval:Number(el("maxeval").value),
       max_time_seconds:Number(el("max-time").value),
+      ...Object.fromEntries(["si_stall_window","si_stall_tolerance","si_min_evaluations",
+        "si_max_fraction","service_margin_ratio"].map(key=>[key,Number(el(key.replaceAll("_","-")).value)])),
       discrete_step_w:Number(el("discrete-step").value)
     };
   }
@@ -176,6 +194,7 @@
     el("model").addEventListener("change", sourceDetail);
     el("scene").addEventListener("change", sourceDetail);
     el("run").addEventListener("change", () => {runId = el("run").value; guarded(detail);});
+    el("routes").addEventListener("change", freezePriorityControls);
     try {
       controls = (await request("power-refinement/defaults")).defaults;
       writeControls();

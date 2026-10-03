@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from satellite_rl.power_refinement.config import default_config, validate_config
+from satellite_rl.power_refinement.config import default_config, validate_config, SI_PRIORITY_METHODS
 from satellite_rl.workbench.config import default_config as model_default_config
 from satellite_rl.workbench.service import Application
 from satellite_rl.workbench.power_refinement import (G11_T0_RUN_ID, G11_T0_SOURCE_COMMIT,
@@ -82,6 +82,29 @@ class PowerRefinementWorkbenchTests(unittest.TestCase):
                        {"si_tolerance": float("nan")}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 validate_config({**default_config(), **change})
+
+    def test_priority_three_routes_freeze_stage_rule_and_budget(self):
+        controls = {**default_config(), "methods": list(SI_PRIORITY_METHODS)}
+        self.assertEqual(validate_config(controls)["methods"], list(SI_PRIORITY_METHODS))
+        for key, value in (("si_tolerance", 1e-7), ("sgm_tolerance", 1e-7),
+                           ("maxeval", 2001), ("maxiter", 301), ("max_time_seconds", 31),
+                           ("si_stall_window", 201), ("si_stall_tolerance", 1e-5),
+                           ("si_min_evaluations", 201), ("si_max_fraction", 0.84),
+                           ("service_margin_ratio", 1e-8)):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "冻结"):
+                validate_config({**controls, key: value})
+        for package, version in (("cvxpy", "1.6.5"), ("clarabel", "0.11.1")):
+            distribution = self.root / f"{package}-{version}.dist-info"
+            distribution.mkdir()
+            for name in ("METADATA", "RECORD"):
+                (distribution / name).write_text(f"{package} {version} {name}", encoding="utf-8")
+        with patch.dict("os.environ", {"SATELLITE_RL_PRIORITY_DEPS": str(self.root)}):
+            created = self.submit(config=controls)
+        self.assertEqual(created["evaluation_units"], 9)
+        self.assertEqual(created["priority_solver_deps_path"], str(self.root.resolve()))
+        self.assertEqual(len(created["priority_solver_dependency_files"]), 4)
+        self.assertEqual(read_json(self.app.store.job_dir(created["run_id"]) /
+                                   "config.json")["power_refinement"], controls)
 
     def test_catalog_only_offers_t0_and_dated_europe_test(self):
         catalog = self.app.api("GET", ["power-refinement", "defaults"], {}, {})
