@@ -21,19 +21,28 @@ def _environment(profile="china_legacy"):
     return WorkbenchEnv(config)
 
 
-def _store_scenes(store, name, arrays, source, profile="china_legacy"):
+def _store_scenes(store, name, arrays, source, profile="china_legacy", scene_metadata=None):
     from satellite_rl.envs.regions import profile_metadata
     metadata = profile_metadata(profile)
     identifier = new_id("scenes")
     directory = store.record_dir("scenes", identifier)
     directory.mkdir()
     references = []
+    if scene_metadata is not None and len(scene_metadata) != len(arrays):
+        raise ValueError("逐场景元数据数量与数组不一致")
     environment = _environment(profile)
     for index, data in enumerate(arrays):
         environment.reset(scene=data)
         path = directory / f"scene_{index:05d}.npz"
         np.savez_compressed(path, **environment.scene())
-        references.append({"path": str(path), "sha256": digest(path), "scene_id": path.stem})
+        reference = {"path": str(path), "sha256": digest(path), "scene_id": path.stem,
+                     "beam_count": int(np.asarray(data["rate"]).shape[0])}
+        if scene_metadata is not None:
+            if ("beam_count" in scene_metadata[index]
+                    and scene_metadata[index]["beam_count"] != reference["beam_count"]):
+                raise ValueError("逐场景元数据束数与实际数组不一致")
+            reference.update(scene_metadata[index])
+        references.append(reference)
     if not references:
         raise ValueError("场景文件为空")
     return store.save_record("scenes", {"id": identifier, "name": name or identifier,
@@ -61,19 +70,20 @@ def csv_scene(path, profile="china_legacy"):
     with Path(path).open(encoding="utf-8-sig", newline="") as stream:
         rows = list(csv.DictReader(stream))
     required = {"beam_id", "lat", "lon", "demand_mbps"}
-    if len(rows) != 100 or not rows or not required.issubset(rows[0]):
-        raise ValueError("CSV须恰有100行，包含beam_id、lat、lon、demand_mbps；行顺序就是处理顺序")
+    count = len(rows)
+    if not 1 <= count <= (100 if profile == "china_legacy" else 200) or not required.issubset(rows[0]):
+        raise ValueError("CSV须有1–200行（中国旧版恰100行），包含beam_id、lat、lon、demand_mbps")
     identifiers = [int(row["beam_id"]) for row in rows]
-    if len(set(identifiers)) != 100 or set(identifiers) != set(range(100)):
-        raise ValueError("beam_id必须是0–99的唯一编号；保留行顺序")
+    if len(set(identifiers)) != count or set(identifiers) != set(range(count)):
+        raise ValueError("beam_id必须是0–N-1的唯一编号；保留行顺序")
     locations = np.array([[float(row["lat"]), float(row["lon"])] for row in rows])
-    demand = np.array([float(row["demand_mbps"]) * 1e6 for row in rows]).reshape(100, 1)
+    demand = np.array([float(row["demand_mbps"]) * 1e6 for row in rows]).reshape(count, 1)
     if any(row.get("group", "").strip() and int(row["group"]) != index % 8 for index, row in enumerate(rows)):
         raise ValueError("当前环境按处理序号%8分组；CSV group不匹配时不会静默改写")
     distances = geo_distances_km(locations, profile)
     return {"beam_location": locations, "rate": demand, "distances": distances,
-            "beam_G_Tx_max": np.full((100, 1), 50.0), "UE_G_Rx_max": np.full((100, 1), 40.0),
-            "noise_temperature": np.full((100, 1), 290.0), "original_indices": np.array(identifiers)}
+            "beam_G_Tx_max": np.full((count, 1), 50.0), "UE_G_Rx_max": np.full((count, 1), 40.0),
+            "noise_temperature": np.full((count, 1), 290.0), "original_indices": np.array(identifiers)}
 
 
 def _sidecar_hashes(record, files, profile):
@@ -108,8 +118,9 @@ def _sidecar_hashes(record, files, profile):
 def import_scenes(store, path, name=None, profile="china_legacy"):
     path = Path(path).expanduser().resolve()
     files = sorted(path.glob("*.npz")) if path.is_dir() else [path]
-    if not files or len(files) > 1000:
-        raise ValueError("请选择含1–1000个npz场景的目录或一个npz/CSV文件")
+    maximum = 1000 if profile == "china_legacy" else 10000
+    if not files or len(files) > maximum:
+        raise ValueError(f"请选择含1–{maximum}个npz场景的目录或一个npz/CSV文件")
     sidecar = path / "record.json" if path.is_dir() else path.parent / "record.json"
     record = None
     expected_hashes = None
@@ -117,7 +128,10 @@ def import_scenes(store, path, name=None, profile="china_legacy"):
         record = json.loads(sidecar.read_text(encoding="utf-8-sig"))
         assert_scene_profile(record, profile)
         expected_hashes = _sidecar_hashes(record, files, profile)
+        actual_by_name = {file.name: file for file in files}
+        files = [actual_by_name[Path(item["path"]).name] for item in record["files"]]
     arrays, refs = [], []
+    declared_by_name = {Path(item["path"]).name: item for item in record["files"]} if record else {}
     for file in files:
         if not file.is_file() or file.stat().st_size > 100 * 1024 * 1024:
             raise ValueError("场景文件不存在或超过100MB")
@@ -141,7 +155,9 @@ def import_scenes(store, path, name=None, profile="china_legacy"):
             source = dict(record["source"])
             source["reimport"] = {"record_id": record.get("id"), "files": refs,
                                   "previous": source.get("reimport")}
-    return _store_scenes(store, name or path.stem, arrays, source, profile)
+    metadata = [{k: v for k, v in declared_by_name.get(file.name, {}).items()
+                 if k not in ("path", "sha256", "scene_id")} for file in files] if record else None
+    return _store_scenes(store, name or path.stem, arrays, source, profile, scene_metadata=metadata)
 
 
 def assert_scene_profile(record, profile):
@@ -196,8 +212,12 @@ def freeze_scene_set(record, target, profile):
         shutil.copyfile(source, destination)
         if digest(destination) != expected:
             raise ValueError("冻结场景时文件发生变化")
-        references.append({"path": str(destination), "sha256": expected,
-                           "source_path": str(source), "scene_id": source.stem})
+        reference = {"path": str(destination), "sha256": expected,
+                     "source_path": str(source), "scene_id": source.stem}
+        original_metadata = record.get("files")
+        reference.update({k: v for k, v in (original_metadata[index] if original_metadata else {}).items()
+                          if k not in ("path", "sha256", "scene_id", "source_path")})
+        references.append(reference)
     frozen = {"id": record["id"], "name": record.get("name", record["id"]),
               "path": str(target), "count": len(references), "files": references,
               "profile": metadata["id"], "environment_version": metadata["environment_version"],

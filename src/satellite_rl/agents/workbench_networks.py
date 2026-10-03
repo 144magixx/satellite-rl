@@ -57,8 +57,9 @@ class Encoder(nn.Module):
             if self.transformer_layout == "scalar_tokens":
                 self.input_projection = nn.Linear(1, embed)
                 self.position = nn.Parameter(torch.zeros(1, state_dim, embed))
-            elif self.transformer_layout in ("tsac_13_tokens", "tsac_14_context", "tsac_32_context", "tsac_natural_context"):
+            elif self.transformer_layout in ("tsac_13_tokens", "tsac_14_context", "tsac_14_variable_context", "tsac_32_context", "tsac_natural_context"):
                 expected_dim = {"tsac_13_tokens": 204, "tsac_14_context": 207,
+                                "tsac_14_variable_context": 210,
                                 "tsac_32_context": 2946}.get(self.transformer_layout)
                 if self.transformer_layout == "tsac_natural_context":
                     self.natural_level = config["state"]["context_level"]
@@ -79,11 +80,11 @@ class Encoder(nn.Module):
                                                else spec["activation"],
                                                batch_first=self.transformer_layout == "scalar_tokens")
             self.net = nn.TransformerEncoder(layer, spec["num_layers"], enable_nested_tensor=False)
-            if self.transformer_layout == "tsac_14_context":
+            if self.transformer_layout in ("tsac_14_context", "tsac_14_variable_context"):
                 # Keep the 13 original token and encoder initializations in their
                 # original RNG order. The extra projection cannot shift the heads.
                 with torch.random.fork_rng(devices=[]):
-                    self.context_embed = nn.Linear(3, embed)
+                    self.context_embed = nn.Linear(6 if self.transformer_layout == "tsac_14_variable_context" else 3, embed)
                 self.context_pos_embed = nn.Parameter(torch.zeros(1, 1, embed))
             elif self.transformer_layout == "tsac_32_context":
                 # Four information levels share exactly the same parameters.
@@ -135,8 +136,9 @@ class Encoder(nn.Module):
             self.power_embed(states[:, 3:4]).unsqueeze(1),
             self.slot_embed(slot_features),
         ), dim=1) + self.pos_embed
-        if self.transformer_layout == "tsac_14_context":
-            context = self.context_embed(states[:, 204:207]).unsqueeze(1) + self.context_pos_embed
+        if self.transformer_layout in ("tsac_14_context", "tsac_14_variable_context"):
+            context_width = 6 if self.transformer_layout == "tsac_14_variable_context" else 3
+            context = self.context_embed(states[:, 204:204 + context_width]).unsqueeze(1) + self.context_pos_embed
             tokens = torch.cat((tokens, context), dim=1)
         elif self.transformer_layout == "tsac_32_context":
             context = torch.cat((
@@ -350,6 +352,8 @@ def _model_description(config, state_dim, action_dims):
         variant = f"workbench_{algorithm}_transformer_tsac_13_tokens_v1"
     elif config["network"]["kind"] == "transformer" and layout == "tsac_14_context":
         variant = f"workbench_{algorithm}_transformer_tsac_14_context_v1"
+    elif config["network"]["kind"] == "transformer" and layout == "tsac_14_variable_context":
+        variant = f"workbench_{algorithm}_transformer_tsac_14_variable_context_v1"
     elif config["network"]["kind"] == "transformer" and layout == "tsac_32_context":
         variant = f"workbench_{algorithm}_transformer_tsac_32_context_v1"
     elif config["network"]["kind"] == "transformer" and layout == "tsac_natural_context":
@@ -383,11 +387,11 @@ def _trace_layers(model, state_dim):
                else model.encoder)
     spatial_prefix = "encoder.spatial." if isinstance(model, TemporalMultiHeadNetwork) else "encoder."
     layout = getattr(spatial, "transformer_layout", None)
-    tsac_layout = layout in ("tsac_13_tokens", "tsac_14_context", "tsac_32_context", "tsac_natural_context")
+    tsac_layout = layout in ("tsac_13_tokens", "tsac_14_context", "tsac_14_variable_context", "tsac_32_context", "tsac_natural_context")
     token_count = (natural_token_count(spatial.natural_level) +
                    (1 if spatial.previous_actual_action else 0)
                    if layout == "tsac_natural_context"
-                   else {"tsac_14_context": 14, "tsac_32_context": 32}.get(layout, 13))
+                   else {"tsac_14_context": 14, "tsac_14_variable_context": 14, "tsac_32_context": 32}.get(layout, 13))
 
     def shape(value, layer_name):
         if isinstance(value, torch.Tensor):
@@ -435,7 +439,7 @@ def _trace_layers(model, state_dim):
         layers.insert(before_net, {"name": spatial_prefix + "pos_embed", "type": "PositionalParameter",
                                    "input_shape": [13, embed], "output_shape": [13, embed],
                                    "parameters": spatial.pos_embed.numel()})
-        if layout == "tsac_14_context":
+        if layout in ("tsac_14_context", "tsac_14_variable_context"):
             layers.insert(before_net + 1, {"name": spatial_prefix + "context_pos_embed", "type": "PositionalParameter",
                                            "input_shape": [1, embed], "output_shape": [1, embed],
                                            "parameters": spatial.context_pos_embed.numel()})

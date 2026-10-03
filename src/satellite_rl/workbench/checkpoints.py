@@ -30,11 +30,15 @@ def _sac_structures(config):
 def _experiment_modes(config):
     network = config.get("network", {})
     training = config.get("training", {})
-    return {"alpha_mode": training.get("alpha_mode", "adaptive"),
+    modes = {"alpha_mode": training.get("alpha_mode", "adaptive"),
             "fixed_alpha": training.get("fixed_alpha", 0.01),
             "temporal_mode": network.get("temporal_mode", "none"),
             "temporal_window": network.get("temporal_window", 16),
             "graph_mode": network.get("graph_mode", "none")}
+    if training.get("beam_count_mode", "none") != "none":
+        modes.update({key: training[key] for key in
+                      ("beam_count_mode", "beam_count_min", "beam_count_max", "held_out_beam_counts")})
+    return modes
 
 
 def config_hash(config):
@@ -47,6 +51,8 @@ def config_hash(config):
     # losses, RNG, actions or model compatibility. Full configs still retain it.
     semantic.pop("telemetry", None)
     semantic["environment"] = dict(config["environment"])
+    if semantic["environment"].get("beam_count_max", 100) == 100:
+        semantic["environment"].pop("beam_count_max", None)
     profile = semantic["environment"].get("profile", "china_legacy")
     if profile == "china_legacy":
         # Old China policies predate regional configuration; the absent default
@@ -78,6 +84,9 @@ def config_hash(config):
     if semantic["state"].get("context_level", "none") == "none":
         semantic["state"].pop("context_level", None)
     semantic["training"] = dict(config["training"])
+    if semantic["training"].get("beam_count_mode", "none") == "none":
+        for key in ("beam_count_mode", "beam_count_min", "beam_count_max", "held_out_beam_counts"):
+            semantic["training"].pop(key, None)
     if semantic["training"].get("alpha_mode", "adaptive") == "adaptive":
         semantic["training"].pop("alpha_mode", None)
         semantic["training"].pop("fixed_alpha", None)

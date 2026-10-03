@@ -24,7 +24,7 @@ from satellite_rl.training.run_monitor import replace_with_retry
 from satellite_rl.workbench.checkpoints import (config_hash, export_policy, load_checkpoint,
                                                  load_policy, save_checkpoint)
 from satellite_rl.workbench.learning_snapshots import FORMAT as LEARNING_SNAPSHOT_FORMAT, save_learning_snapshot
-from satellite_rl.workbench.scene_order import SceneOrder
+from satellite_rl.workbench.scene_order import SceneOrder, VariableBeamSceneOrder
 
 
 # Only asynchronous jobs register here. The historical synchronous path remains
@@ -301,7 +301,7 @@ def _scene_files(path):
 
 def _reconcile(directory, checkpoint_step, last_validation_step=None):
     """Discard log rows after the last complete checkpoint on resume."""
-    for name in ("metrics", "episodes", "updates", "evaluations", "traces"):
+    for name in ("metrics", "episodes", "updates", "evaluations", "traces", "count_metrics"):
         path = Path(directory) / f"{name}.jsonl"
         if not path.exists():
             continue
@@ -351,23 +351,42 @@ def _ensure_finite_agent(agent):
 
 
 def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_path=None,
-                        env_step=0, policy_name="model", scene_sha256=None, group="test"):
+                        env_step=0, policy_name="model", scene_sha256=None, group="test",
+                        scene_metadata=None):
+    policy_device = getattr(getattr(policy, "agent", policy), "device", None)
+    timed_cuda = (torch.cuda.is_available() and
+                  isinstance(policy_device, torch.device) and policy_device.type == "cuda")
+    if timed_cuda:
+        torch.cuda.synchronize()
+    episode_started = time.perf_counter()
     state = env.reset(seed=seed, scene=scene)
     reset_history = getattr(policy, "reset_episode", None)
     if reset_history is not None:
         reset_history()
+    preparation_seconds = time.perf_counter() - episode_started
     reward_total = 0.0
     trace = []
     done = False
     step = 0
+    inference_seconds = 0.0
     while not done:
         mask = env.action_mask()
         policy_options = {"action_mask": mask} if mask is not None else {}
+        if timed_cuda:
+            torch.cuda.synchronize()
+        action_started = time.perf_counter()
         action = policy.act(state, deterministic=action_mode == "deterministic", **policy_options)
+        if timed_cuda:
+            torch.cuda.synchronize()
+        action_seconds = time.perf_counter() - action_started
+        inference_seconds += action_seconds
         next_state, reward, done, info = env.step(action)
         reward_total += float(reward)
         row = {"scene_id": scene_id, "scene_sha256": scene_sha256, "group": group,
                "step": step, "env_step": env_step, "policy": policy_name,
+               "beam_count": len(scene["rate"]),
+               "mother_scene_id": (scene_metadata or {}).get("mother_scene_id"),
+               "load_multiplier": (scene_metadata or {}).get("load_multiplier"),
                "requested_action": info.get("requested_action", list(action)),
                "actual_action": info.get("actual_action"), "reward": reward,
                "reward_terms": info.get("reward_terms"), "done": done,
@@ -377,6 +396,7 @@ def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_p
                "action_mask": info.get("action_mask", "none"),
                "legal_action_count": info.get("legal_action_count"),
                "policy_action_info": getattr(policy, "last_action_info", {})}
+        row["inference_seconds"] = action_seconds
         trace.append(_jsonable(row))
         if trace_path:
             _jsonl(trace_path, row)
@@ -384,9 +404,18 @@ def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_p
         step += 1
         if step > 1000:
             raise RuntimeError("Evaluation environment did not terminate")
+    verification_started = time.perf_counter()
     final_beams = env.beam_results()
-    return {"scene_id": scene_id, "metrics": {**env.metrics(beams=final_beams), "return": reward_total},
+    metrics = {**env.metrics(beams=final_beams), "return": reward_total}
+    verification_seconds = time.perf_counter() - verification_started
+    total_seconds = time.perf_counter() - episode_started
+    return {"scene_id": scene_id, "metrics": metrics,
             "beams": final_beams,
+            "beam_count": len(final_beams), "scene_metadata": scene_metadata,
+            "inference_seconds": inference_seconds,
+            "initial_preparation_seconds": preparation_seconds,
+            "initial_verification_seconds": verification_seconds,
+            "initial_allocation_seconds": total_seconds,
             "service_timing": "after_last_recorded_action_including_later_interference",
             "trace": trace}
 
@@ -450,21 +479,44 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
                     result = _evaluation_episode(env, agent, scene, f"{group}_{seed}_r{repeat}",
                                                  action_seed, config["evaluation"]["action_mode"],
                                                  Path(directory) / "traces.jsonl",
-                                                 env_step, scene_sha256=scene_ref["sha256"], group=group)
+                                                 env_step, scene_sha256=scene_ref["sha256"], group=group,
+                                                 scene_metadata=(scene_set["files"][index] if files is not None else None))
                 finally:
                     agent.rng.setstate(agent_rng)
             result["scene"] = scene_ref
             result["action_seed"] = action_seed
+            result.setdefault("beam_count", len(scene["rate"]))
+            result.setdefault("scene_metadata", scene_set["files"][index] if files is not None else None)
+            result.setdefault("inference_seconds", None)
+            result.setdefault("initial_preparation_seconds", None)
+            result.setdefault("initial_verification_seconds", None)
+            result.setdefault("initial_allocation_seconds", None)
             _jsonl(Path(directory) / "evaluations.jsonl", {"env_step": env_step, "group": group,
                                                             "scene_id": result["scene_id"],
                                                             "action_seed": action_seed,
                                                             "metrics": result["metrics"],
+                                                            "beam_count": result["beam_count"],
+                                                            "scene_metadata": result["scene_metadata"],
+                                                            "inference_seconds": result["inference_seconds"],
+                                                            "initial_preparation_seconds": result["initial_preparation_seconds"],
+                                                            "initial_verification_seconds": result["initial_verification_seconds"],
+                                                            "initial_allocation_seconds": result["initial_allocation_seconds"],
                                                             "beams_final": result["beams"],
                                                             "service_timing": result["service_timing"],
                                                             "scene_sha256": scene_ref["sha256"]})
             results.append(result)
     summary = _summarize_scenes(results)
     ledger.record(group, env_step, summary)
+    if any(row.get("scene_metadata", {}).get("beam_count") for row in results if row.get("scene_metadata")):
+        by_count = {}
+        for row in results:
+            n = row["beam_count"]
+            by_count.setdefault(n, []).append(row)
+        _jsonl(Path(directory) / "count_metrics.jsonl", {
+            "group": group, "env_step": env_step,
+            "by_beam_count": {str(n): {"scene_actions": len(rows),
+                                       "metrics": _summarize_scenes(rows)}
+                              for n, rows in sorted(by_count.items())}})
     return results, summary
 
 
@@ -519,6 +571,14 @@ def _training(directory, job, config, ledger, resume):
         update_rate = max(0, agent.update_step - session_base_updates) / elapsed
         current_stage = stage or ("warmup" if config["algorithm"] != "ppo" and
                                   env_step < training["warmup_steps"] else "training")
+        if training.get("beam_count_mode", "none") != "none":
+            fields.setdefault("beam_count_steps", dict(count_steps))
+            fields.setdefault("beam_count_episodes", dict(count_episodes))
+            fields.setdefault("beam_bucket_steps", dict(bucket_steps))
+            fields.setdefault("beam_bucket_episodes", dict(bucket_episodes))
+            fields.setdefault("replay_bucket_sizes", {key: len(value) for key, value in
+                                                      agent.replay.bucket_indices.items()})
+            fields.setdefault("replay_sampled_by_bucket", dict(agent.replay.sampled_by_bucket))
         ledger.save_status(stage=current_stage, env_step=env_step, episode=episode,
                            update_step=agent.update_step, budget_env_steps=training["total_steps"],
                            steps_per_second=step_rate, updates_per_second=update_rate,
@@ -540,14 +600,31 @@ def _training(directory, job, config, ledger, resume):
     supplied_scenes = (scene_set_files(scene_sets["train"]) if "train" in scene_sets else
                        [(path, _sha256(path)) for path in _scene_files(job["training_scene_path"])]
                        if job.get("training_scene_path") else [])
-    scene_order = SceneOrder(training.get("scene_order", "sequential"),
-                             training.get("scene_order_seed", 51001),
-                             [digest for _, digest in supplied_scenes])
+    variable_mode = training.get("beam_count_mode", "none")
+    if variable_mode != "none":
+        if "train" not in scene_sets or training.get("scene_order") != "variable_beams":
+            raise ValueError("Variable beam training requires a frozen train set and variable_beams order")
+        scene_order = VariableBeamSceneOrder(
+            variable_mode, training.get("scene_order_seed", 51001),
+            [digest for _, digest in supplied_scenes], scene_sets["train"]["files"])
+    else:
+        scene_order = SceneOrder(training.get("scene_order", "sequential"),
+                                 training.get("scene_order_seed", 51001),
+                                 [digest for _, digest in supplied_scenes])
     if resume:
         scene_order.verify_checkpoint((restored_environment or {}).get("scene_order"), episode)
+    partial_episode = (restored_environment or {}).get("partial_episode") if resume else None
+    if partial_episode is not None and variable_mode == "none":
+        raise ValueError("Legacy training cannot resume a variable beam partial episode")
     order_provenance = {"mode": scene_order.mode, "seed": scene_order.seed,
                         "source_count": len(supplied_scenes),
                         "source_set_sha256": scene_order.source_set_sha256}
+    if variable_mode != "none":
+        order_provenance["beam_count_mode"] = variable_mode
+    bucket_steps = dict(progress.get("bucket_steps", {}))
+    bucket_episodes = dict(progress.get("bucket_episodes", {}))
+    count_steps = dict(progress.get("beam_count_steps", {}))
+    count_episodes = dict(progress.get("beam_count_episodes", {}))
     provenance = {**_job_provenance(job, config), "training_scene_order": order_provenance}
     source_manifest = Path(job["source_root"]) / "source_manifest.json"
     snapshot_provenance = {**provenance, "source_root": job["source_root"],
@@ -602,25 +679,44 @@ def _training(directory, job, config, ledger, resume):
         _artifacts(directory, job, checkpoint=str(checkpoint),
                    **({"learning_snapshots": snapshot_record} if snapshot_record else {}))
     while env_step < training["total_steps"]:
-        env = WorkbenchEnv(config)
         scene_seed = training["seed"] + 100000 + episode
         selection = scene_order.selection(episode)
+        replay_bucket = selection.get("bucket") if variable_mode != "none" else None
         source_index = selection["source_index"]
         source_scene = supplied_scenes[source_index][0] if source_index is not None else None
         if source_scene is not None and _sha256(source_scene) != supplied_scenes[source_index][1]:
             raise ValueError("训练场景文件SHA-256与冻结场景来源不一致")
-        with isolated_rng(scene_seed):
-            state = env.reset(seed=scene_seed, scene=_load_scene(source_scene) if source_scene else None)
-            scene = env.scene()
-        reset_history = getattr(agent, "reset_episode", None)
-        if reset_history is not None:
-            reset_history()
-        scene_ref = _save_scene(Path(directory) / "scenes" / "train" / f"scene_{episode:07d}.npz", scene)
+        if partial_episode is None:
+            env = WorkbenchEnv(config)
+            with isolated_rng(scene_seed):
+                state = env.reset(seed=scene_seed, scene=_load_scene(source_scene) if source_scene else None)
+                scene = env.scene()
+            if variable_mode != "none" and len(scene["rate"]) != selection["beam_count"]:
+                raise ValueError("Frozen scene actual beam count differs from training metadata")
+            reset_history = getattr(agent, "reset_episode", None)
+            if reset_history is not None:
+                reset_history()
+            scene_ref = _save_scene(Path(directory) / "scenes" / "train" / f"scene_{episode:07d}.npz", scene)
+            episode_return, length, episode_terms = 0.0, 0, {}
+            episode_start = time.monotonic()
+        else:
+            if (partial_episode.get("episode") != episode or
+                    partial_episode.get("selection") != selection or
+                    partial_episode.get("scene_sha256") != supplied_scenes[source_index][1]):
+                raise ValueError("Partial episode source differs from frozen checkpoint")
+            env = partial_episode["environment"]
+            if not isinstance(env, WorkbenchEnv):
+                raise ValueError("Partial episode environment type mismatch")
+            state = partial_episode["state"]
+            scene_ref = partial_episode["scene_ref"]
+            if _sha256(scene_ref["path"]) != scene_ref["sha256"]:
+                raise ValueError("Partial episode archived scene differs from checkpoint")
+            episode_return = partial_episode["return"]
+            length = partial_episode["length"]
+            episode_terms = partial_episode["reward_terms"]
+            episode_start = time.monotonic() - partial_episode["elapsed_seconds"]
+            partial_episode = None
         done = False
-        episode_return = 0.0
-        episode_start = time.monotonic()
-        length = 0
-        episode_terms = {}
         while not done and env_step < training["total_steps"]:
             mask = env.action_mask()
             policy_options = {"action_mask": mask} if mask is not None else {}
@@ -633,8 +729,14 @@ def _training(directory, job, config, ledger, resume):
                               if mask is not None else {})
             if getattr(agent, "temporal_enabled", False):
                 replay_options["actual_action"] = info["actual_action"]
+            if replay_bucket is not None:
+                replay_options["replay_bucket"] = replay_bucket
             agent.observe(state, action, reward, next_state, done, **replay_options)
             env_step += 1
+            if replay_bucket is not None:
+                bucket_steps[replay_bucket] = bucket_steps.get(replay_bucket, 0) + 1
+                count_key = str(selection["beam_count"])
+                count_steps[count_key] = count_steps.get(count_key, 0) + 1
             length += 1
             episode_return += float(reward)
             for name, values in info.get("reward_terms", {}).items():
@@ -652,12 +754,18 @@ def _training(directory, job, config, ledger, resume):
                                                                 "values": diagnostics})
                     if agent.update_step % training["log_interval"] == 0:
                         ledger.record("learning", env_step, diagnostics)
+            if variable_mode != "none" and _validation_due(config["evaluation"], progress, env_step):
+                run_validation()
             if env_step % training["log_interval"] == 0:
                 elapsed = max(time.monotonic() - session_started, 1e-6)
                 ledger.record("runtime", env_step, {"env_steps_per_second": (env_step - session_base_steps) / elapsed,
                                                      "updates_per_second": (agent.update_step - session_base_updates) / elapsed,
                                                      "wall_seconds": base_wall_seconds + elapsed,
                                                      "replay_size": len(agent.replay) if hasattr(agent, "replay") else len(agent.rollout),
+                                                     **({"replay_bucket_sizes": {key: len(value) for key, value in agent.replay.bucket_indices.items()},
+                                                         "replay_sampled_by_bucket": dict(agent.replay.sampled_by_bucket),
+                                                         "replay_replacement_draws": dict(agent.replay.replacement_draws)}
+                                                        if variable_mode != "none" else {}),
                                                      "cuda_allocated_mb": torch.cuda.memory_allocated() / 1048576,
                                                      "cuda_reserved_mb": torch.cuda.memory_reserved() / 1048576,
                                                      **{k: v for k, v in agent.last_action_info.items() if isinstance(v, (int, float))}})
@@ -672,6 +780,10 @@ def _training(directory, job, config, ledger, resume):
             _jsonl(Path(directory) / "traces.jsonl", {"env_step": env_step, "group": "training",
                                                           "episode": episode,
                                                           "step": length - 1, "scene_sha256": scene_ref["sha256"],
+                                                          "beam_count": selection.get("beam_count"),
+                                                          "replay_bucket": replay_bucket,
+                                                          "mother_scene_id": selection.get("mother_scene_id"),
+                                                          "load_multiplier": selection.get("load_multiplier"),
                                                           "beam_id": info.get("beam_id"),
                                                           "beam_service_step": info.get("beam_service_step"),
                                                           "service_timing": "after_action_before_later_interference",
@@ -680,6 +792,33 @@ def _training(directory, job, config, ledger, resume):
                                                           "reward": reward, "reward_terms": info.get("reward_terms"),
                                                           "done": done})
             state = next_state
+            if (variable_mode != "none" and not done and
+                    env_step < training["total_steps"] and
+                    env_step % training["checkpoint_interval"] == 0):
+                _ensure_finite_agent(agent)
+                ledger.flush()
+                progress.update({"env_step": env_step, "episode": episode,
+                                 "last_checkpoint_step": env_step,
+                                 "wall_seconds": base_wall_seconds + time.monotonic() - session_started,
+                                 "bucket_steps": bucket_steps,
+                                 "beam_count_steps": count_steps})
+                partial = {"episode": episode, "selection": selection,
+                           "scene_sha256": supplied_scenes[source_index][1],
+                           "environment": env, "state": state,
+                           "scene_ref": scene_ref, "return": episode_return,
+                           "length": length, "reward_terms": episode_terms,
+                           "elapsed_seconds": time.monotonic() - episode_start}
+                save_checkpoint(checkpoint, agent, progress, config,
+                                {**provenance, "boundary": "within_episode",
+                                 "scene_order": scene_order.checkpoint_state(episode),
+                                 "partial_episode": partial})
+                ledger.status["checkpoint_step"] = env_step
+                last_saved_step = env_step
+                snapshot_record = snapshot_artifact(env_step)
+                _artifacts(directory, job, checkpoint=str(checkpoint),
+                           **({"learning_snapshots": snapshot_record} if snapshot_record else {}))
+                save_progress(checkpoint_step=env_step)
+                ledger.flush()
         if config["algorithm"] == "ppo" and agent.rollout:
             diagnostics = agent.update()
             _ensure_finite_agent(agent)
@@ -698,6 +837,9 @@ def _training(directory, job, config, ledger, resume):
                                          "set_id": scene_sets["train"]["id"] if "train" in scene_sets else None}
                                         if source_scene else None),
                        "scene_order": selection,
+                       "beam_count": len(final_beams), "replay_bucket": replay_bucket,
+                       "scene_metadata": (scene_sets["train"]["files"][source_index]
+                                          if variable_mode != "none" else None),
                        "metrics": terminal_metrics,
                        "beams_final": final_beams,
                        "service_timing": "after_last_recorded_action_including_later_interference",
@@ -707,8 +849,14 @@ def _training(directory, job, config, ledger, resume):
                                              **{k: v for k, v in terminal_metrics.items() if isinstance(v, (int, float))}})
         ledger.record("reward", env_step, episode_terms)
         episode += 1
+        if replay_bucket is not None:
+            bucket_episodes[replay_bucket] = bucket_episodes.get(replay_bucket, 0) + 1
+            count_key = str(selection["beam_count"])
+            count_episodes[count_key] = count_episodes.get(count_key, 0) + 1
+            progress.update(bucket_steps=bucket_steps, bucket_episodes=bucket_episodes,
+                            beam_count_steps=count_steps, beam_count_episodes=count_episodes)
         save_progress(scene_order=scene_order.checkpoint_state(episode))
-        if _validation_due(config["evaluation"], progress, env_step):
+        if variable_mode == "none" and _validation_due(config["evaluation"], progress, env_step):
             run_validation()
         stopped = (Path(directory) / "stop.request").exists()
         if stopped or env_step - last_saved_step >= training["checkpoint_interval"] or env_step >= training["total_steps"]:
@@ -733,6 +881,25 @@ def _training(directory, job, config, ledger, resume):
             ledger.event("training_stopped", env_step=env_step)
             save_progress("stopped")
             return
+    # The approved V0/V1 assessment is a separate frozen 440-scene job. A
+    # default workbench test_count would otherwise add unapproved allocations.
+    if variable_mode != "none":
+        export_policy(model_dir / "final", agent, config,
+                      {**provenance, "env_step": env_step,
+                       "selection": "fixed_budget_final"})
+        result_path = Path(directory) / "results.json"
+        _atomic_json(result_path, {"summary": None, "scenes": [],
+                                   "metadata": {**provenance, "group": "training_endpoint",
+                                                "run_id": job["run_id"],
+                                                "git_commit": job["git_commit"],
+                                                "config_hash": config_hash(config),
+                                                "model_selection": "fixed_budget_final",
+                                                "independent_assessment_pending": True}})
+        _artifacts(directory, job, final_policy=str(model_dir / "final"), results=str(result_path))
+        ledger.event("training_completed_assessment_pending", env_step=env_step)
+        ledger.flush()
+        save_progress("completed", metrics=None, independent_assessment_pending=True)
+        return
     # Final test is never used to select a model.
     save_progress("evaluating")
     test_rows, test_summary = _fixed_evaluate(config, agent, directory, "test",
@@ -759,12 +926,15 @@ def _training(directory, job, config, ledger, resume):
 def _baseline_environment_config(config):
     """Original rule baselines share physics, not a learned SAC action head.
 
-    Removing the model's feasible-action mask is intentional for the historical
-    rule baseline. Its environment must also drop SAC-only structure selectors,
-    which require that mask but are never used to build a baseline policy.
+    Historical 100-beam rules retain their unmasked environment. The explicit
+    200-beam adaptation projects their requested actions into the same feasible
+    resource set as the learned policies.
     """
     baseline = deepcopy(config)
-    baseline["environment"]["action_mask"] = "none"
+    if baseline["environment"].get("beam_count_max", 100) == 200:
+        baseline["environment"]["action_mask"] = "joint_feasible"
+    else:
+        baseline["environment"]["action_mask"] = "none"
     baseline["network"]["sac_policy_structure"] = "factorized"
     baseline["network"]["sac_critic_structure"] = "additive"
     return baseline
@@ -785,6 +955,16 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
     else:
         policy = load_policy(job["model_path"], config=job.get("model_config"), device=device)
         environment_config = policy.config
+        overrides = job.get("environment_overrides")
+        if overrides is not None:
+            if (not isinstance(overrides, dict) or overrides != {"beam_count_max": 200} or
+                    environment_config["environment"].get("profile") != "europe_v1" or
+                    policy.metadata.get("state_dim") != 207 or
+                    policy.metadata.get("provenance", {}).get("run_id") !=
+                    "train_sac_20261001_162126_33e89e95"):
+                raise ValueError("Unsupported model evaluation environment override")
+            environment_config = deepcopy(environment_config)
+            environment_config["environment"]["beam_count_max"] = 200
     scene_set = job.get("scene_sets", {}).get("test")
     if scene_set is not None:
         from satellite_rl.workbench.datasets import assert_scene_profile, scene_set_files
@@ -797,6 +977,9 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
         files = _scene_files(job["scene_path"])
     results = []
     repeat_count = int(job.get("repeats", 1))
+    action_seed_base = int(job.get("action_seed", config["evaluation"]["test_seed"]))
+    if action_seed_base < 0 or action_seed_base + repeat_count - 1 > 2 ** 32 - 1:
+        raise ValueError("Evaluation action seed is outside the supported range")
     action_mode = job.get("action_mode", "deterministic")
     baseline_names = list(job.get("baselines", []))
     if len(set(baseline_names)) != len(baseline_names) or any(name not in ("fixed", "greedy") for name in baseline_names):
@@ -818,25 +1001,43 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
     eval_progress(0)
     for index, file in enumerate(files):
         scene = _load_scene(file)
+        source_metadata = scene_set["files"][index] if scene_set is not None else None
         scene_ref = _save_scene(Path(directory) / "scenes" / "test" / f"scene_{index:05d}.npz", scene)
         for repeat in range(repeat_count):
             if (Path(directory) / "stop.request").exists():
                 eval_progress(len(results), "stopped")
                 return
-            seed = config["evaluation"]["test_seed"] + repeat
+            seed = action_seed_base + repeat
             with isolated_rng(seed):
                 if hasattr(policy, "agent") and hasattr(policy.agent, "rng"):
                     policy.agent.rng.seed(seed + 7321)
                 env = WorkbenchEnv(environment_config)
                 result = _evaluation_episode(env, policy, scene, f"{file.stem}_r{repeat}", seed,
                                              action_mode, Path(directory) / "traces.jsonl", len(results),
-                                             scene_sha256=scene_ref["sha256"])
+                                             scene_sha256=scene_ref["sha256"],
+                                             scene_metadata=source_metadata)
             result["scene"] = {**scene_ref, "source_path": str(file), "source_sha256": _sha256(file)}
+            result.setdefault("beam_count", len(scene["rate"]))
+            result.setdefault("scene_metadata", source_metadata)
+            result.setdefault("inference_seconds", None)
+            result.setdefault("initial_preparation_seconds", None)
+            result.setdefault("initial_verification_seconds", None)
+            result.setdefault("initial_allocation_seconds", None)
+            result["repeat_index"] = repeat
+            result["action_seed"] = seed
             results.append(result)
             _jsonl(Path(directory) / "evaluations.jsonl", {"env_step": len(results),
                                                             "group": "test",
                                                             "scene_id": result["scene_id"],
+                                                            "repeat_index": repeat,
+                                                            "action_seed": seed,
                                                             "metrics": result["metrics"],
+                                                            "beam_count": result["beam_count"],
+                                                            "scene_metadata": result["scene_metadata"],
+                                                            "inference_seconds": result["inference_seconds"],
+                                                            "initial_preparation_seconds": result["initial_preparation_seconds"],
+                                                            "initial_verification_seconds": result["initial_verification_seconds"],
+                                                            "initial_allocation_seconds": result["initial_allocation_seconds"],
                                                             "beams_final": result["beams"],
                                                             "service_timing": result["service_timing"],
                                                             "scene_sha256": result["scene"]["sha256"]})
@@ -856,18 +1057,28 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
                 if (Path(directory) / "stop.request").exists():
                     eval_progress(completed_evaluations, "stopped")
                     return
+                baseline_scene = _load_scene(file)
                 scene_ref = _save_scene(Path(directory) / "scenes" / "test" / f"scene_{index:05d}.npz",
-                                        _load_scene(file))
-                seed = config["evaluation"]["test_seed"]
+                                        baseline_scene)
+                source_metadata = scene_set["files"][index] if scene_set is not None else None
+                seed = action_seed_base
                 with isolated_rng(seed):
                     env = WorkbenchEnv(baseline_config)
                     baseline_policy = BaselinePolicy(name, env)
-                    baseline = _evaluation_episode(env, baseline_policy, _load_scene(scene_ref["path"]),
+                    baseline = _evaluation_episode(env, baseline_policy, baseline_scene,
                                                    f"{file.stem}_{name}", seed, "deterministic",
                                                    Path(directory) / "traces.jsonl", completed_evaluations,
                                                    policy_name=name, scene_sha256=scene_ref["sha256"],
-                                                   group=f"baseline_{name}")
+                                                   group=f"baseline_{name}", scene_metadata=source_metadata)
                 baseline["scene"] = {**scene_ref, "source_path": str(file), "source_sha256": _sha256(file)}
+                baseline.setdefault("beam_count", len(baseline_scene["rate"]))
+                baseline.setdefault("scene_metadata", source_metadata)
+                baseline.setdefault("inference_seconds", None)
+                baseline.setdefault("initial_preparation_seconds", None)
+                baseline.setdefault("initial_verification_seconds", None)
+                baseline.setdefault("initial_allocation_seconds", None)
+                baseline["repeat_index"] = 0
+                baseline["action_seed"] = seed
                 baseline_scenes.append(baseline)
                 completed_evaluations += 1
                 for row in baseline_policy.metadata()["power_mappings"]:
@@ -876,7 +1087,15 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
                 _jsonl(Path(directory) / "evaluations.jsonl", {"env_step": completed_evaluations,
                                                                 "group": f"baseline_{name}",
                                                                 "scene_id": baseline["scene_id"],
+                                                                "repeat_index": 0,
+                                                                "action_seed": seed,
                                                                 "metrics": baseline["metrics"],
+                                                                "beam_count": baseline["beam_count"],
+                                                                "scene_metadata": baseline["scene_metadata"],
+                                                                "inference_seconds": baseline["inference_seconds"],
+                                                                "initial_preparation_seconds": baseline["initial_preparation_seconds"],
+                                                                "initial_verification_seconds": baseline["initial_verification_seconds"],
+                                                                "initial_allocation_seconds": baseline["initial_allocation_seconds"],
                                                                 "beams_final": baseline["beams"],
                                                                 "service_timing": baseline["service_timing"],
                                                                 "scene_sha256": scene_ref["sha256"]})
@@ -884,21 +1103,285 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
             baseline_summary = _summarize_scenes(baseline_scenes)
             mapping_rows = [{"source_power_w": source, "mapped_power_w": mapped, "count": count}
                             for (source, mapped), count in sorted(mappings.items())]
+            feasible_baseline = baseline_config["environment"]["action_mask"] == "joint_feasible"
             baselines[name] = {"name": name, "summary": baseline_summary, "scenes": baseline_scenes,
-                               "metadata": {"variant": f"workbench_adapted_{name}_v1", "repeats": 1,
-                                            "action_mask": "none",
+                               "metadata": {"variant": (f"workbench_feasible_{name}_v2" if feasible_baseline
+                                                        else f"workbench_adapted_{name}_v1"), "repeats": 1,
+                                            "action_mask": baseline_config["environment"]["action_mask"],
                                             "power_mappings": mapping_rows,
                                             "exact_power_match": all(np.isclose(row["source_power_w"], row["mapped_power_w"])
                                                                      for row in mapping_rows),
-                                            "note": "原规则按本次功率档位映射后，在相同实际场景各运行一次。"}}
+                                            "note": ("原规则请求动作投影至同等可行资源；保存请求与实际动作。"
+                                                     if feasible_baseline else
+                                                     "原规则按本次功率档位映射后，在相同实际场景各运行一次。")}}
             ledger.record(f"baseline_{name}", completed_evaluations, baseline_summary)
     result_path = Path(directory) / "results.json"
     _atomic_json(result_path, {"summary": summary, "scenes": results, "baselines": baselines,
                                "metadata": {**_job_provenance(job, environment_config), "model_path": job["model_path"],
                                             "git_commit": job["git_commit"], "action_mode": action_mode,
-                                            "repeats": repeat_count}})
+                                            "repeats": repeat_count,
+                                            "action_seed_base": action_seed_base,
+                                            "environment_overrides": job.get("environment_overrides")}})
     _artifacts(directory, job, results=str(result_path))
     eval_progress(completed_evaluations, "completed", metrics=summary)
+
+
+def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
+    """S2-P17 allocation cases survive interruption without rerunning completed work."""
+    from satellite_rl.workbench.baselines import BaselinePolicy
+    from satellite_rl.workbench.datasets import assert_scene_profile, scene_set_files
+    from satellite_rl.workbench.environment import WorkbenchEnv
+    from satellite_rl.workbench.variable_evaluation import VariableEvaluationCases
+
+    if job.get("legacy_type") or job.get("experiment_id") != "S2-P17":
+        raise ValueError("S2-P17 evaluation requires a workbench policy")
+    for reference in job.get("model_files", []):
+        if _sha256(reference["path"]) != reference["sha256"]:
+            raise ValueError("Frozen S2-P17 model file differs")
+    policy = load_policy(job["model_path"], config=job.get("model_config"), device=device)
+    environment_config = policy.config
+    overrides = job.get("environment_overrides")
+    if overrides is not None:
+        if (overrides != {"beam_count_max": 200} or
+                environment_config["environment"].get("profile") != "europe_v1" or
+                policy.metadata.get("state_dim") != 207 or
+                policy.metadata.get("provenance", {}).get("run_id") !=
+                "train_sac_20261001_162126_33e89e95"):
+            raise ValueError("S2-P17 H0 environment override provenance mismatch")
+        environment_config = deepcopy(environment_config)
+        environment_config["environment"]["beam_count_max"] = 200
+    if environment_config["environment"].get("profile") != "europe_v1" or \
+            environment_config["environment"].get("beam_count_max") != 200:
+        raise ValueError("S2-P17 model environment must support 200 European beams")
+    scene_set = job.get("scene_sets", {}).get("test")
+    if not scene_set:
+        raise ValueError("S2-P17 evaluation requires a frozen test set")
+    assert_scene_profile(scene_set, "europe_v1")
+    files = scene_set_files(scene_set)
+    if len(files) != 440 or len(scene_set["files"]) != 440:
+        raise ValueError("S2-P17 independent assessment requires all 440 frozen scenarios")
+    action_seed_base = int(job.get("action_seed", -1))
+    repeats = int(job.get("repeats", 0))
+    action_mode = job.get("action_mode")
+    baseline_names = list(job.get("baselines", []))
+    if (action_seed_base != 53001 or repeats != 3 or action_mode != "stochastic" or
+            len(set(baseline_names)) != len(baseline_names) or
+            any(name not in ("fixed", "greedy") for name in baseline_names)):
+        raise ValueError("S2-P17 evaluation action budget or baseline list differs")
+    for index, (file, digest) in enumerate(files):
+        record = scene_set["files"][index]
+        if (record.get("beam_count") not in (50, 60, 75, 90, 100, 125, 140, 150, 175, 180, 200) or
+                record.get("partition_role") != "test" or
+                record.get("sha256") != digest):
+            raise ValueError("S2-P17 frozen scenario count/role/SHA differs")
+    model_root = Path(job["model_path"])
+    if model_root.is_file():
+        model_root = model_root.parent
+    contract = {"experiment_id": "S2-P17", "run_id": job["run_id"],
+                "git_commit": job["git_commit"], "job_config_hash": config_hash(config),
+                "policy_config_hash": config_hash(policy.config),
+                "model_path": str(model_root),
+                "model_policy_sha256": _sha256(model_root / "policy.pt"),
+                "model_metadata_sha256": _sha256(model_root / "model.json"),
+                "model_files": job.get("model_files", []),
+                "scene_set": scene_set,
+                "action_seed_base": action_seed_base, "repeats": repeats,
+                "action_mode": action_mode, "baselines": baseline_names,
+                "environment_overrides": overrides}
+    store = VariableEvaluationCases(directory, _jsonable(contract))
+    model_cases = []
+    baseline_cases = {name: [] for name in baseline_names}
+    for index, (_, digest) in enumerate(files):
+        record = scene_set["files"][index]
+        for repeat in range(repeats):
+            expected = {"kind": "model", "scene_index": index,
+                        "scene_sha256": digest, "beam_count": record["beam_count"],
+                        "scene_metadata": record,
+                        "repeat_index": repeat, "action_seed": action_seed_base + repeat,
+                        "action_mode": action_mode}
+            model_cases.append((f"model_{index:05d}_{repeat:02d}", expected))
+        for name in baseline_names:
+            expected = {"kind": name, "scene_index": index,
+                        "scene_sha256": digest, "beam_count": record["beam_count"],
+                        "scene_metadata": record,
+                        "repeat_index": 0, "action_seed": action_seed_base,
+                        "action_mode": "deterministic"}
+            baseline_cases[name].append((f"{name}_{index:05d}_00", expected))
+    plan = model_cases + [case for name in baseline_names for case in baseline_cases[name]]
+    budget = len(plan)
+    started = time.monotonic()
+    new_completed = 0
+    reused_completed = 0
+
+    def progress(processed, stage="evaluating", metrics=None):
+        elapsed = max(time.monotonic() - started, 1e-9)
+        rate = new_completed / elapsed
+        ledger.save_status(stage=stage, env_step=processed, budget_env_steps=budget,
+                           completed_cases=processed, case_directory=str(store.directory),
+                           newly_completed_cases=new_completed,
+                           reused_completed_cases=reused_completed,
+                           **({"metrics": metrics} if metrics is not None else {}),
+                           steps_per_second=rate, updates_per_second=0,
+                           eta_seconds=(budget - processed) / rate if rate > 0 else None,
+                           wall_seconds=elapsed,
+                           gpu=ledger.status.get("preflight", {}).get("gpu"),
+                           gpu_memory_mb=torch.cuda.memory_allocated() / 1048576
+                           if torch.cuda.is_available() else 0)
+
+    progress(0)
+    completed = 0
+    for case_id, expected in plan:
+        if (Path(directory) / "stop.request").exists():
+            progress(completed, "stopped")
+            return
+        previous = store.load(case_id, expected)
+        if previous is None:
+            index = expected["scene_index"]
+            file, digest = files[index]
+            scene = _load_scene(file)
+            if len(scene["rate"]) != expected["beam_count"]:
+                raise ValueError("S2-P17 frozen scene arrays differ from metadata")
+            scene_ref = _save_scene(Path(directory) / "scenes" / "test" /
+                                    f"scene_{index:05d}.npz", scene)
+            seed = expected["action_seed"]
+            with isolated_rng(seed):
+                if expected["kind"] == "model":
+                    policy.agent.rng.seed(seed + 7321)
+                    env = WorkbenchEnv(environment_config)
+                    result = _evaluation_episode(
+                        env, policy, scene, f"{file.stem}_r{expected['repeat_index']}",
+                        seed, action_mode, None, completed,
+                        scene_sha256=scene_ref["sha256"],
+                        scene_metadata=scene_set["files"][index])
+                else:
+                    baseline_config = _baseline_environment_config(environment_config)
+                    env = WorkbenchEnv(baseline_config)
+                    baseline_policy = BaselinePolicy(expected["kind"], env)
+                    result = _evaluation_episode(
+                        env, baseline_policy, scene, f"{file.stem}_{expected['kind']}",
+                        seed, "deterministic", None, completed,
+                        policy_name=expected["kind"], scene_sha256=scene_ref["sha256"],
+                        group=f"baseline_{expected['kind']}",
+                        scene_metadata=scene_set["files"][index])
+                    result["baseline_power_mappings"] = baseline_policy.metadata()["power_mappings"]
+            result["scene"] = {**scene_ref, "source_path": str(file), "source_sha256": digest}
+            result["repeat_index"] = expected["repeat_index"]
+            result["action_seed"] = seed
+            result["case_id"] = case_id
+            result["case_completed_at"] = now()
+            store.save(case_id, expected, _jsonable(result))
+            new_completed += 1
+        else:
+            archived = previous["scene"]
+            if _sha256(archived["path"]) != archived["sha256"]:
+                raise ValueError(f"S2-P17 completed case archived scene is missing or damaged: {case_id}")
+            reused_completed += 1
+        completed += 1
+        progress(completed)
+        if completed % 20 == 0:
+            ledger.event("evaluation_cases_progress", completed_cases=completed, total_cases=budget)
+
+    # Build the public result and raw logs from immutable cases in planned order.
+    for _ in store.require_all(plan):
+        pass
+    model_metrics = [{"metrics": store.load(case_id, expected)["metrics"]}
+                     for case_id, expected in model_cases]
+    model_summary = _summarize_scenes(model_metrics)
+    baseline_summaries = {}
+    baseline_mappings = {}
+    for name in baseline_names:
+        rows = []
+        mappings = {}
+        for case_id, expected in baseline_cases[name]:
+            result = store.load(case_id, expected)
+            rows.append({"metrics": result["metrics"]})
+            for mapping in result.get("baseline_power_mappings", []):
+                key = (mapping["source_power_w"], mapping["mapped_power_w"])
+                mappings[key] = mappings.get(key, 0) + mapping["count"]
+        baseline_summaries[name] = _summarize_scenes(rows)
+        baseline_mappings[name] = [dict(source_power_w=a, mapped_power_w=b, count=count)
+                                   for (a, b), count in sorted(mappings.items())]
+    result_path = Path(directory) / "results.json"
+    temp_result = result_path.with_name(result_path.name + ".pending")
+    trace_path = Path(directory) / "traces.jsonl"
+    eval_path = Path(directory) / "evaluations.jsonl"
+    metric_path = Path(directory) / "metrics.jsonl"
+    temp_trace = trace_path.with_name(trace_path.name + ".pending")
+    temp_eval = eval_path.with_name(eval_path.name + ".pending")
+    temp_metric = metric_path.with_name(metric_path.name + ".pending")
+    try:
+        with temp_result.open("w", encoding="utf-8") as result_stream, \
+                temp_trace.open("w", encoding="utf-8") as trace_stream, \
+                temp_eval.open("w", encoding="utf-8") as eval_stream, \
+                temp_metric.open("w", encoding="utf-8") as metric_stream:
+            result_stream.write('{"summary":' + json.dumps(model_summary, ensure_ascii=False, allow_nan=False) + ',"scenes":[')
+            for ordinal, (case_id, expected) in enumerate(model_cases):
+                result = store.load(case_id, expected)
+                row = {key: value for key, value in result.items() if key != "trace"}
+                row["case_path"] = str(store.path(case_id))
+                result_stream.write(("," if ordinal else "") + json.dumps(row, ensure_ascii=False, allow_nan=False))
+            result_stream.write('],"baselines":{')
+            for baseline_index, name in enumerate(baseline_names):
+                mappings = baseline_mappings[name]
+                metadata = {"variant": f"workbench_feasible_{name}_v2", "repeats": 1,
+                            "action_mask": "joint_feasible", "power_mappings": mappings,
+                            "exact_power_match": all(np.isclose(row["source_power_w"], row["mapped_power_w"])
+                                                     for row in mappings),
+                            "note": "原规则请求动作投影至同等可行资源；保存请求与实际动作。"}
+                prefix = {"name": name, "summary": baseline_summaries[name], "metadata": metadata}
+                result_stream.write(("," if baseline_index else "") + json.dumps(name) + ":" +
+                                    json.dumps(prefix, ensure_ascii=False, allow_nan=False)[:-1] + ',"scenes":[')
+                for ordinal, (case_id, expected) in enumerate(baseline_cases[name]):
+                    result = store.load(case_id, expected)
+                    row = {key: value for key, value in result.items() if key != "trace"}
+                    row["case_path"] = str(store.path(case_id))
+                    result_stream.write(("," if ordinal else "") + json.dumps(row, ensure_ascii=False, allow_nan=False))
+                result_stream.write("]}")
+            result_stream.write('},"metadata":' + json.dumps({**_job_provenance(job, environment_config),
+                "experiment_id": "S2-P17", "model_path": job["model_path"],
+                "git_commit": job["git_commit"], "action_mode": action_mode,
+                "repeats": repeats, "action_seed_base": action_seed_base,
+                "case_contract_sha256": store.contract_sha256,
+                "completed_cases": budget}, ensure_ascii=False, allow_nan=False) + "}")
+            for ordinal, (case_id, expected) in enumerate(plan, 1):
+                result = store.load(case_id, expected)
+                group = "test" if expected["kind"] == "model" else f"baseline_{expected['kind']}"
+                eval_row = {"env_step": ordinal, "group": group, "case_id": case_id,
+                            "scene_id": result["scene_id"],
+                            "repeat_index": result["repeat_index"],
+                            "action_seed": result["action_seed"],
+                            "metrics": result["metrics"], "beam_count": result["beam_count"],
+                            "scene_metadata": result["scene_metadata"],
+                            "inference_seconds": result["inference_seconds"],
+                            "initial_preparation_seconds": result.get("initial_preparation_seconds"),
+                            "initial_verification_seconds": result.get("initial_verification_seconds"),
+                            "initial_allocation_seconds": result["initial_allocation_seconds"],
+                            "beams_final": result["beams"],
+                            "service_timing": result["service_timing"],
+                            "scene_sha256": result["scene"]["sha256"]}
+                eval_stream.write(json.dumps(eval_row, ensure_ascii=False, allow_nan=False) + "\n")
+                for trace in result["trace"]:
+                    trace_stream.write(json.dumps({**trace, "case_id": case_id,
+                        "repeat_index": result["repeat_index"],
+                        "action_seed": result["action_seed"]}, ensure_ascii=False,
+                        allow_nan=False) + "\n")
+            for group, values in [("test", model_summary)] + [
+                    (f"baseline_{name}", baseline_summaries[name]) for name in baseline_names]:
+                metric_stream.write(json.dumps({"step": budget, "wall_time": now(),
+                    "group": group, "values": values}, ensure_ascii=False,
+                    allow_nan=False) + "\n")
+            for stream in (result_stream, trace_stream, eval_stream, metric_stream):
+                stream.flush()
+                os.fsync(stream.fileno())
+        replace_with_retry(temp_result, result_path)
+        replace_with_retry(temp_trace, trace_path)
+        replace_with_retry(temp_eval, eval_path)
+        replace_with_retry(temp_metric, metric_path)
+    finally:
+        for path in (temp_result, temp_trace, temp_eval, temp_metric):
+            path.unlink(missing_ok=True)
+    _artifacts(directory, job, results=str(result_path), case_directory=str(store.directory))
+    progress(budget, "completed", model_summary)
 
 
 def run_job(job_dir, *, resume=False):
@@ -925,9 +1408,12 @@ def run_job(job_dir, *, resume=False):
         if job["kind"] == "train":
             _training(directory, job, config, ledger, resume)
         elif job["kind"] == "evaluate":
-            if resume:
+            if job.get("experiment_id") == "S2-P17":
+                _evaluate_variable_job(directory, job, config, ledger)
+            elif resume:
                 raise ValueError("Evaluation restart must create a fresh job")
-            _evaluate_job(directory, job, config, ledger)
+            else:
+                _evaluate_job(directory, job, config, ledger)
         else:
             raise ValueError(f"Unsupported job kind: {job['kind']}")
         # Surface background writer/flush/close failures inside the normal

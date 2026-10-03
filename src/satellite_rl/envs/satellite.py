@@ -252,7 +252,10 @@ class SatelliteFreqState:
 
 
 class BeamInfo:
-    def __init__(self, shuffle=False, profile=None):
+    def __init__(self, shuffle=False, profile=None, count=beam_num):
+        if isinstance(count, bool) or not isinstance(count, (int, np.integer)) or not 1 <= count <= 200:
+            raise ValueError("波束数量须为1至200")
+        self.beam_num = int(count)
         self.region_profile = None if profile is None else get_profile(profile)
         self.generation_metadata = None
         # np.random.seed(None)
@@ -260,13 +263,13 @@ class BeamInfo:
         # 状态元组的第二个元素即为当前种子
         seed = a[1][0]
         #print("当前numpy的随机种子：", seed)
-        self.beam_G_Tx_max = np.ones((beam_num, 1)) * 50  # 发射天线主瓣增益
-        self.UE_G_Rx_max = np.ones((beam_num, 1)) * 40
+        self.beam_G_Tx_max = np.ones((self.beam_num, 1)) * 50  # 发射天线主瓣增益
+        self.UE_G_Rx_max = np.ones((self.beam_num, 1)) * 40
         self.distances = None
         self.beam_location = None
         self.randomize_beam_location()
         self.cal_distance()
-        rate_noise = np.random.normal(loc=0, scale=np.sqrt(400), size=(beam_num, 1))
+        rate_noise = np.random.normal(loc=0, scale=np.sqrt(400), size=(self.beam_num, 1))
         rate_noise = np.round(rate_noise).astype(int)
         #随机
         # prob = np.random.rand(len(valid_rates))
@@ -284,9 +287,9 @@ class BeamInfo:
         #     p=prob                                  # **非均匀权重**
         # )
         # self.rate = (base_rate + rate_noise) * 1e6
-        self.rate = (np.random.choice(valid_rates, size=(beam_num, 1)) + rate_noise) * 1e6
+        self.rate = (np.random.choice(valid_rates, size=(self.beam_num, 1)) + rate_noise) * 1e6
         self.rate = np.where(self.rate < 0, 1e8, self.rate)
-        self.noise_temperature = np.ones((beam_num, 1)) * 290
+        self.noise_temperature = np.ones((self.beam_num, 1)) * 290
         self.beam_info = {
             'beam_location': self.beam_location,
             'beam_G_Tx_max': self.beam_G_Tx_max,
@@ -348,14 +351,14 @@ class BeamInfo:
     def randomize_beam_location(self, use_city=True):
         if self.region_profile is not None and self.region_profile.id == "europe_v1":
             self.beam_location, self.generation_metadata = synthetic_reference_locations(
-                self.region_profile, beam_num)
+                self.region_profile, self.beam_num)
         elif use_city:
             df = pd.read_csv(project_path('cities_china.csv'))
-            sel = df.sample(beam_num, replace=len(df) < beam_num)
+            sel = df.sample(self.beam_num, replace=len(df) < self.beam_num)
             self.beam_location = sel[['lat', 'lon']].values
         else:
-            lat = np.random.uniform(LAT_MIN, LAT_MAX, beam_num)
-            lon = np.random.uniform(LON_MIN, LON_MAX, beam_num)
+            lat = np.random.uniform(LAT_MIN, LAT_MAX, self.beam_num)
+            lon = np.random.uniform(LON_MIN, LON_MAX, self.beam_num)
             self.beam_location = np.column_stack((lat, lon))
 
 class CurrentBeamState:
@@ -424,7 +427,9 @@ class Env:
         self.basic_fraction = basic_fraction
         self.beam_idx = 0  # 当前波束
         self.beam_info = beam_info.beam_info
-        self.beam_num = beam_num
+        self.beam_num = len(self.beam_info['rate'])
+        if not 1 <= self.beam_num <= 200:
+            raise ValueError("波束数量须为1至200")
         self.satellite_freq_state = satellite_freq_state
         self.current_beam_state = hist_beam_state
         self.antenna_pattern = AntennaPattern()
@@ -437,7 +442,7 @@ class Env:
         self.reward_satisfaction = 0.0
         self.total_sgm = 0.0
         self.overload = False
-        self.beta = sum(self.beam_info['rate']) / self.beam_num
+        self.beta = float(np.mean(self.beam_info['rate']))
         self.alpha = power_threshold / self.beam_num
         self.beam_bps = []  # 记录每个波束的数据速率
         self.occupy = 0
@@ -454,7 +459,7 @@ class Env:
         :param freq_state: SatelliteFreqState 的实例
         :return: 拼接后的状态向量
         """
-        if self.beam_idx == 0 or self.beam_idx == beam_num:
+        if self.beam_idx == 0 or self.beam_idx == self.beam_num:
             beam_state_vector = beam_state.get_state()
             freq_state_vector = np.zeros(100, dtype=np.float64)
             P_slot = np.zeros(100, dtype=np.float64)
@@ -491,7 +496,8 @@ class Env:
         self.reward_satisfaction = 0.0
         self.total_sgm = 0.0
         self.beam_info = beam_info.beam_info
-        self.beta = sum(self.beam_info['rate']) / self.beam_num
+        self.beam_num = len(self.beam_info['rate'])
+        self.beta = float(np.mean(self.beam_info['rate']))
         self.current_beam_state.reset(self.beam_info)
         self.current_beam_state.update_state()
         state = self.get_combined_state(self.current_beam_state, self.satellite_freq_state)

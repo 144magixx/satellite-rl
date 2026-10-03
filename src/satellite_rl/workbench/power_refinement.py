@@ -79,7 +79,12 @@ class PowerRefinementApplication:
         from .checkpoints import load_policy
         from .datasets import assert_scene_profile, scene_set_files
 
+        if body.get("source_run_id"):
+            return self.submit_saved(body)
         controls = validate_config(body.get("config", default_config()))
+        from satellite_rl.power_refinement.config import VARIABLE_BEAM_METHODS
+        if controls["methods"] == list(VARIABLE_BEAM_METHODS):
+            raise ValueError("可变束数SCA须选择已完成第二阶段分配，不能再次生成初始解")
         request_id = body.get("request_id")
         if request_id is not None:
             validate_id(request_id)
@@ -168,7 +173,50 @@ class PowerRefinementApplication:
             extra["priority_solver_dependency_files"] = priority_dependency_files
         return self.store.create_job(config, kind="refine", request_id=body.get("request_id"), extra=extra)
 
+    def submit_saved(self, body):
+        from .refinement_sources import prepare_source
+        from satellite_rl.power_refinement.config import VARIABLE_BEAM_METHODS
+        source_job, model_config, dataset, reference = prepare_source(self.app, body)
+        controls = validate_config(body.get("config", {}))
+        if (controls["methods"] != list(VARIABLE_BEAM_METHODS)
+                or controls["power_budget_mode"] != "total"
+                or controls["action_mode"] != reference["action_mode"]
+                or controls["repeats"] != reference["repeats"]
+                or controls["action_seed"] != reference["action_seed"]):
+            raise ValueError("S2-P17须保留原动作次数/种子及总3000W的原分配+A+B路线")
+        config = deepcopy(model_config)
+        config.update(research_stage="power_refinement", power_refinement=controls,
+                      name=f"S2-P17 · {source_job['name']} · {reference['group']} · 原分配与SCA")
+        config["training"]["total_steps"] = reference["scene_count"] * reference["repeats"] * 3
+        return self.store.create_job(config, kind="refine", request_id=body.get("request_id"), extra={
+            "research_stage": "power_refinement", "experiment_id": "S2-P17",
+            "experiment_role": "formal", "name": config["name"],
+            "model_id": source_job["model_id"], "model_path": source_job["model_path"],
+            "model_files": source_job["model_files"], "model_config": model_config,
+            "model_provenance": source_job.get("model_provenance"),
+            "scene_id": source_job["scene_id"], "scene_sets": {"test": dataset},
+            "scene_path": dataset["path"], "initial_source": reference,
+            "power_refinement": controls, "evaluation_units": config["training"]["total_steps"],
+            "evaluation_units_label": "已保存初始分配/中间A/最终B；不新增初始动作",
+        })
+
+    def initial_sources(self):
+        rows = []
+        for job, status in self.store.jobs():
+            if (job.get("kind") == "evaluate" and job.get("experiment_id") == "S2-P17"
+                    and status.get("stage") == "completed"):
+                for group in ["model", *job.get("baselines", [])]:
+                    rows.append({"id": job["run_id"] + ":" + group,
+                                 "run_id": job["run_id"], "group": group,
+                                 "name": job["name"] + " · " + group,
+                                 "repeats": job["repeats"] if group == "model" else 1,
+                                 "action_mode": job["action_mode"] if group == "model" else "deterministic",
+                                 "action_seed": job["action_seed"]})
+        return rows
+
     def api(self, method, parts, query, body):
+        if parts == ["initial-sources"] and method == "GET":
+            return {"sources": self.initial_sources()}
         if parts == ["defaults"] and method == "GET":
             return {"defaults": default_config(), "methods": [
                 {"id": name, "label": label} for name, label in METHOD_LABELS.items()]}

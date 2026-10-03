@@ -41,25 +41,33 @@ def _seed_scope(seed):
             np.random.set_state(previous)
 
 
-def validate_scene(scene, profile="china_legacy"):
-    """Copy and check a full 100-beam scene in processing order."""
+def validate_scene(scene, profile="china_legacy", max_beams=200):
+    """Copy and check a scene in processing order, without padding beams."""
     if not isinstance(scene, dict):
         raise ValueError("场景必须是数组映射")
     if set(scene) != set(SCENE_KEYS) | {"original_indices"}:
         raise ValueError("场景字段不完整或含未知字段")
+    rate_shape = np.asarray(scene["rate"]).shape
+    if not rate_shape:
+        raise ValueError("场景rate必须是逐束数组")
+    count = rate_shape[0]
+    if not 0 <= count <= max_beams <= 200:
+        raise ValueError("目标波束数量须在0至配置上限之间，且不得超过200")
     out = {}
-    shapes = {"beam_location": (100, 2), "beam_G_Tx_max": (100, 1),
-              "UE_G_Rx_max": (100, 1), "distances": (100,),
-              "rate": (100, 1), "noise_temperature": (100, 1),
-              "original_indices": (100,)}
+    shapes = {"beam_location": (count, 2), "beam_G_Tx_max": (count, 1),
+              "UE_G_Rx_max": (count, 1), "distances": (count,),
+              "rate": (count, 1), "noise_temperature": (count, 1),
+              "original_indices": (count,)}
     for key, shape in shapes.items():
         arr = np.asarray(scene[key])
         if arr.shape != shape or not (np.issubdtype(arr.dtype, np.integer) or np.issubdtype(arr.dtype, np.floating)) or not np.isfinite(arr).all():
             raise ValueError(f"场景字段 {key} 形状或数值无效，应为 {shape}")
         out[key] = np.array(arr, dtype=np.int64 if key == "original_indices" else np.float64, copy=True)
+    if count == 0:
+        return out  # No business: there is no allocation, SI or SGM denominator.
     indices = np.asarray(scene["original_indices"])
-    if not np.array_equal(indices, out["original_indices"]) or set(out["original_indices"].tolist()) != set(range(100)):
-        raise ValueError("original_indices 必须是0至99的完整排列")
+    if not np.array_equal(indices, out["original_indices"]) or set(out["original_indices"].tolist()) != set(range(count)):
+        raise ValueError(f"original_indices 必须是0至{count - 1}的完整排列")
     if (out["rate"] <= 0).any() or (out["noise_temperature"] <= 0).any() or (out["distances"] <= 0).any():
         raise ValueError("业务需求、噪声温度与距离必须为正")
     if ((out["beam_location"][:, 0] < -90) | (out["beam_location"][:, 0] > 90)).any() or ((out["beam_location"][:, 1] < -180) | (out["beam_location"][:, 1] > 180)).any():
@@ -145,20 +153,31 @@ class WorkbenchEnv:
         self._overload_seen = False
         self._mask_used_power = Decimal(0)
         self._previous_actual_action = np.zeros(4, dtype=np.float32)
+        self._no_business = False
 
     def reset(self, seed=None, scene=None):
+        max_beams = self.config["environment"]["beam_count_max"]
         if scene is None:
             scenario_seed = np.random.SeedSequence().generate_state(1)[0] if seed is None else seed
             with _seed_scope(scenario_seed):
-                beam = legacy.BeamInfo(profile=self.region_profile)
+                beam = legacy.BeamInfo(profile=self.region_profile, count=100)
             arrays = {key: np.array(beam.beam_info[key], copy=True) for key in SCENE_KEYS}
             arrays["original_indices"] = np.array(beam.shuffle_indices, copy=True)
-            arrays = validate_scene(arrays, self.region_profile)
+            arrays = validate_scene(arrays, self.region_profile, max_beams=max_beams)
             scene_metadata = deepcopy(beam.generation_metadata) or dict(
                 kind=self.region_profile.default_scene_kind, measured_traffic=False)
         else:
-            arrays = validate_scene(scene, self.region_profile)
+            arrays = validate_scene(scene, self.region_profile, max_beams=max_beams)
             scene_metadata = dict(kind="imported_scene", measured_traffic=None)
+        if len(arrays["rate"]) == 0:
+            self._scene = arrays
+            self.scene_metadata = dict(scene_metadata, no_business=True)
+            self.raw_env = None
+            self._no_business = True
+            self._trace = []
+            self._prior = None
+            return np.zeros(self.summary["state_dim"], dtype=np.float32)
+        self._no_business = False
         if self.config["network"].get("graph_mode", "none") == "interference_bias":
             from satellite_rl.agents.graph_encoder import validate_physical_contract
             validate_physical_contract(arrays, self.config, {
@@ -200,7 +219,7 @@ class WorkbenchEnv:
         return {key: np.array(value, copy=True) for key, value in self._scene.items()}
 
     def _require_reset(self):
-        if self.raw_env is None:
+        if self.raw_env is None and not self._no_business:
             raise RuntimeError("请先 reset 环境")
 
     def _snapshot(self):
@@ -242,6 +261,15 @@ class WorkbenchEnv:
             "longest_free": [longest / 100],
             "previous_actual_action": self._previous_actual_action,
         }
+        power_left = self.config["environment"]["power_budget_w"] - env.total_power
+        if power_left < -1e-7 and "power_pressure" in self.config["state"]["features"]:
+            raise RuntimeError("剩余功率为负，资源账错误")
+        remaining = count - idx
+        definitions.update(
+            beam_count_normalized=[count / 200],
+            remaining_beams_normalized=[remaining / 200],
+            power_pressure=[power_left / (power_left + 30 * remaining) if remaining else 0],
+        )
         if self.config["state"]["demand_visibility"] == "known":
             demands = self._scene["rate"].reshape(-1)
             definitions.update(beta=[float(demands.mean()) / 6e8],
@@ -374,6 +402,8 @@ class WorkbenchEnv:
         one slot in their own group and one minimum configured power level.
         """
         self._require_reset()
+        if self._no_business:
+            return None
         if self.config["environment"].get("action_mask", "none") == "none":
             return None
         env = self.raw_env
@@ -408,6 +438,8 @@ class WorkbenchEnv:
 
     def step(self, action_indices):
         self._require_reset()
+        if self._no_business:
+            raise RuntimeError("无业务场景没有可执行动作")
         if self.raw_env.beam_idx >= self.raw_env.beam_num or self._trace and self._trace[-1]["done"]:
             raise RuntimeError("回合已结束，请 reset")
         if not isinstance(action_indices, (tuple, list, np.ndarray)) or len(action_indices) != 3:
@@ -577,6 +609,8 @@ class WorkbenchEnv:
 
     def beam_results(self):
         self._require_reset()
+        if self._no_business:
+            return []
         env = self.raw_env
         rates = np.zeros(env.beam_num)
         rates[:len(env.beam_bps)] = np.maximum(env.beam_bps, 0)
@@ -600,6 +634,13 @@ class WorkbenchEnv:
 
     def metrics(self, beams=None):
         self._require_reset()
+        if self._no_business:
+            return dict(beam_count=0, processed_count=0, complete=True,
+                        termination_reason="no_business", final_si_total=None,
+                        final_si_mean=None, final_sgm_total=None,
+                        final_sgm_mean=None, basic_met_count=None,
+                        zero_capacity_count=None, power_w=0.0,
+                        power_budget_w=float(self.config["environment"]["power_budget_w"]))
         env = self.raw_env
         beams = self.beam_results() if beams is None else beams
         rates = np.array([b["rate_bps"] for b in beams])

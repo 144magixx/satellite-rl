@@ -189,6 +189,20 @@ class Application:
         model = self.get_model(body["model_id"])
         scene = self.store.get_record("scenes", body["scene_id"])
         config = validate_config(model["config"])
+        variable_experiment = body.get("experiment_id") == "S2-P17"
+        if body.get("experiment_id") not in (None, "S2-P17"):
+            raise ValueError("未知独立考核实验编号")
+        if variable_experiment:
+            from .power_refinement import _is_t0
+            training = config["training"]
+            expected_new = (config["network"].get("transformer_layout") == "tsac_14_variable_context"
+                            and training.get("beam_count_mode") in ("fixed_100", "mixed_four_buckets")
+                            and training["seed"] == 51001 and training["total_steps"] == 400000
+                            and (model.get("provenance") or {}).get("env_step") == 400000)
+            if not (_is_t0(model) or expected_new):
+                raise ValueError("S2-P17须使用V0/V1四十万步终点或冻结T0十五万步终点")
+            if (scene.get("source") or {}).get("experiment_id") != "S2-P17":
+                raise ValueError("S2-P17须选择本实验冻结场景")
         from .datasets import assert_scene_profile
         profile = config["environment"].get("profile", "china_legacy")
         if model.get("legacy_type") and profile != "china_legacy":
@@ -210,11 +224,13 @@ class Application:
                     raise ValueError("考核航空来源或快照日期与模型训练/验证分区重叠")
         provenance = model.get("provenance")
         check_provenance(provenance)
-        mode = body.get("action_mode", "deterministic")
+        mode = body.get("action_mode", "stochastic" if variable_experiment else "deterministic")
         if mode == "sample":
             mode = "stochastic"
         if mode not in ("deterministic", "stochastic"):
             raise ValueError("未知评价动作方式")
+        if variable_experiment and mode != "stochastic":
+            raise ValueError("S2-P17共同考核使用三个随机动作样本，不得改为确定性取最大值")
         repeats = body.get("repeats", 1)
         if not isinstance(repeats, int) or not 1 <= repeats <= 30:
             raise ValueError("动作重复次数须为1–30")
@@ -232,6 +248,19 @@ class Application:
                 # Validate the provenance of the actual checked policy as well.
                 provenance = loaded.metadata.get("provenance")
                 check_provenance(provenance)
+        extra = {}
+        if variable_experiment:
+            action_seed = body.get("action_seed", 53001)
+            if type(action_seed) is not int or action_seed != 53001 or repeats != 3:
+                raise ValueError("S2-P17模型共同考核须三次动作且种子53001起")
+            if (provenance or {}).get("run_id") == "train_sac_20261001_162126_33e89e95":
+                if not any(Path(ref["path"]).name == "policy.pt" and ref["sha256"] ==
+                           "ae095e8246d22b2716ba154315cee18584917d215580821cb53f9aeba78eb824"
+                           for ref in model_files):
+                    raise ValueError("S2-P17 H0实际权重SHA不是冻结T0十五万步终点")
+            extra.update(experiment_id="S2-P17", action_seed=action_seed)
+            if config["network"].get("transformer_layout") != "tsac_14_variable_context":
+                extra["environment_overrides"] = {"beam_count_max": 200}
         return self.store.create_job(config, kind="evaluate", request_id=body.get("request_id"), extra={
             "name": "测试 · " + model["name"], "model_id": model["id"], "model_path": model["path"],
             "model_config": config, "legacy_type": model.get("legacy_type"),
@@ -239,6 +268,7 @@ class Application:
             "repeats": repeats, "baselines": sorted(set(baselines)),
             "scene_sets": {"test": scene},
             "model_files": model_files, "model_provenance": provenance,
+            **extra,
         })
 
     def training_scene_sets(self, config, body):
@@ -272,6 +302,20 @@ class Application:
                 if dates[role] & dates[previous]:
                     raise ValueError("航空轨迹来源日期跨分区重叠")
             sets[role] = record
+        if config["training"].get("beam_count_mode", "none") != "none":
+            if "train" not in sets or "validation" not in sets:
+                raise ValueError("可变束数训练须选择冻结训练与验证数据集")
+            from .scene_order import VariableBeamSceneOrder
+            for role, record in sets.items():
+                if (record.get("source") or {}).get("experiment_id") != "S2-P17":
+                    raise ValueError("可变束数训练须使用S2-P17来源清单")
+                if role in ("train", "validation") and any(
+                        ref.get("beam_count") in (60, 90, 140, 180) for ref in record["files"]):
+                    raise ValueError("最终留出束数不得进入训练或验证")
+            VariableBeamSceneOrder(config["training"]["beam_count_mode"],
+                                   config["training"]["scene_order_seed"],
+                                   [ref["sha256"] for ref in sets["train"]["files"]],
+                                   sets["train"]["files"])
         return sets
 
     @staticmethod
@@ -433,6 +477,8 @@ class Application:
                     raise ValueError("正式训练必须使用DQN/CUDA；CPU仅供代码单元检查，工作台不会静默更换设备")
                 sets = self.training_scene_sets(config, body)
                 extra = {"scene_sets": sets} if sets else {}
+                if config["training"].get("beam_count_mode", "none") != "none":
+                    extra["experiment_id"] = "S2-P17"
                 if "train" in sets:
                     extra["training_scene_path"] = sets["train"]["path"]
                 return self.store.create_job(config, request_id=body.get("request_id"), extra=extra)
