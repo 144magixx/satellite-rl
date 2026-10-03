@@ -40,6 +40,14 @@ def optimize_power(problem: FixedAllocationPhysics, initial_power, method="none"
     Neither solver status nor output implies a global optimum.
     ``callback(entry)`` runs for each accepted improvement.
     """
+    if method in {"sca", "wmmse"}:
+        from .model_based import optimize_model_based
+        return optimize_model_based(problem, initial_power, method, options,
+                                    callback=callback, stop_requested=stop_requested)
+    if method in {"de", "pso"}:
+        from .population import optimize_population
+        return optimize_population(problem, initial_power, method, options,
+                                   callback=callback, stop_requested=stop_requested)
     if not isinstance(problem, FixedAllocationPhysics):
         raise TypeError("problem must be FixedAllocationPhysics")
     if method not in {"none", "discrete", "slsqp"}:

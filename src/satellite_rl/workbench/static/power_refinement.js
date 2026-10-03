@@ -19,6 +19,8 @@
   }
   function input(name, value) { el(name).value = value; }
   function writeControls() {
+    input("routes", controls.methods.length > 3 ? "all" : "legacy");
+    for (const key of ["optimizer_seed","population_size","de_mutation","de_crossover","pso_inertia","pso_cognitive","pso_social"]) input(key.replaceAll("_","-"),controls[key]);
     input("action-mode", controls.action_mode);
     input("action-seed", controls.action_seed);
     input("repeats", controls.repeats);
@@ -34,6 +36,8 @@
   }
   function readControls() {
     return {...controls,
+      methods:el("routes").value === "all" ? ["none","discrete","slsqp","sca","de","pso","wmmse"] : ["none","discrete","slsqp"],
+      ...Object.fromEntries(["optimizer_seed","population_size","de_mutation","de_crossover","pso_inertia","pso_cognitive","pso_social"].map(key=>[key,Number(el(key.replaceAll("_","-")).value)])),
       action_mode:el("action-mode").value,
       action_seed:Number(el("action-seed").value),
       repeats:Number(el("repeats").value),
@@ -93,6 +97,7 @@
       downloadLink("download-report", "power_report.md");
       downloadLink("download-results", "power_results.csv");
       downloadLink("download-beams", "power_beams.csv");
+      downloadLink("download-times", "power_scene_times.csv");
       downloadLink("download-cases", "power_cases.jsonl");
       downloadLink("download-iterations", "power_iterations.jsonl");
     } catch (error) { message(error.message, true); }
@@ -117,7 +122,7 @@
     const checked = await request("power-refinement/validate", readControls());
     controls = checked.config;
     writeControls();
-    message("配置已校验：三种方法共用同一初始动作；连续功率逐束≥0且总和不超过预算。");
+    message("配置已校验：所选方法共用同一初始动作；连续功率逐束≥0且总和不超过预算。");
     return controls;
   }
   function stablePending(payload) {

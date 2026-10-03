@@ -85,7 +85,7 @@ class PowerRefinementWorkbenchTests(unittest.TestCase):
 
     def test_catalog_only_offers_t0_and_dated_europe_test(self):
         catalog = self.app.api("GET", ["power-refinement", "defaults"], {}, {})
-        self.assertEqual(catalog["defaults"]["methods"], ["none", "discrete", "slsqp"])
+        self.assertEqual(catalog["defaults"]["methods"], ["none", "discrete", "slsqp", "sca", "de", "pso", "wmmse"])
         self.assertEqual(len(self.app.api("GET", ["power-refinement", "models"], {}, {})["models"]), 1)
         self.assertEqual([s["id"] for s in self.app.api("GET", ["power-refinement", "scenes"], {}, {})["scenes"]],
                          [self.scene["id"]])
@@ -99,7 +99,7 @@ class PowerRefinementWorkbenchTests(unittest.TestCase):
         self.assertEqual(first["kind"], "refine")
         self.assertEqual(first["research_stage"], "power_refinement")
         self.assertEqual(first["model_config"], self.model_config)
-        self.assertEqual(first["evaluation_units"], 9)
+        self.assertEqual(first["evaluation_units"], 21)
         self.assertEqual(first["model_provenance"], self.provenance)
         job_dir = self.app.store.job_dir(first["run_id"])
         self.assertEqual(read_json(job_dir / "config.json")["power_refinement"], default_config())

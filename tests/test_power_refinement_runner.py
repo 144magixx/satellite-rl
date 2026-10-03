@@ -91,7 +91,7 @@ class RefinementRunnerTests(unittest.TestCase):
         scene["source"].update(partition_role="test", source_dates=["2024-02-03"])
         self.app.store.save_record("scenes", scene)
         controls = refinement_defaults()
-        controls.update(repeats=1, maxiter=2, maxeval=4, max_time_seconds=1.0)
+        controls.update(methods=["none", "discrete", "slsqp"], repeats=1, maxiter=2, maxeval=4, max_time_seconds=1.0)
         self.job = self.app.api("POST", ["power-refinement", "runs"], {},
                                 {"model_id": "T0", "scene_id": scene["id"],
                                  "config": controls, "request_id": "runner_short_fixture"})
@@ -135,6 +135,46 @@ class RefinementRunnerTests(unittest.TestCase):
         self.assertEqual(len((self.directory / "power_cases.jsonl").read_text(encoding="utf-8").splitlines()), 3)
         self.assertTrue((self.directory / "power_report.md").is_file())
         self.assertEqual(read_json(self.directory / "status.json")["env_step"], 3)
+        self.assertEqual(read_json(self.directory / "status.json")["stage"], "completed")
+
+    def test_seven_methods_keep_one_initial_action_and_store_real_stage_timing(self):
+        controls = refinement_defaults()
+        controls.update(repeats=1, maxiter=2, maxeval=4, max_time_seconds=1.0)
+        self.job = self.app.api("POST", ["power-refinement", "runs"], {}, {
+            "model_id": self.job["model_id"], "scene_id": self.job["scene_id"],
+            "config": controls, "request_id": "runner_seven_routes"})
+        self.directory = self.app.store.job_dir(self.job["run_id"])
+        self.config = read_json(self.directory / "config.json")
+        observed = {}
+        def record_options(problem, initial_power, method="none", options=None, **kwargs):
+            observed[method] = deepcopy(options)
+            return self.unchanged_solver(problem, initial_power, method, options, **kwargs)
+        with patch("satellite_rl.power_refinement.optimizer.optimize_power", side_effect=record_options):
+            summary = evaluate_refinement(self.directory, self.job, self.config, device="cpu")
+        self.assertEqual(set(summary), set(controls["methods"]))
+        self.assertEqual(self._solver_calls, 7)
+        self.assertEqual(observed["de"]["optimizer_seed"], 63002)
+        self.assertEqual(observed["pso"]["optimizer_seed"], 63003)
+        self.assertEqual(observed["de"]["population_size"], 24)
+        self.assertNotIn("optimizer_seed", observed["sca"])
+        cases = read_json(self.directory / "results.json")["scenes"]
+        self.assertEqual(len({r["initial_allocation_sha256"] for r in cases}), 1)
+        self.assertEqual(len(list((self.directory / "initial_allocations").glob("*.json"))), 1)
+        for row in cases:
+            t = row["timing"]
+            self.assertGreater(t["initialization_seconds"], 0)
+            self.assertAlmostEqual(t["total_pipeline_seconds"],
+                t["initialization_seconds"] + t["physics_setup_seconds"]
+                + t["optimizer_wall_seconds"] + t["verification_seconds"])
+        with (self.directory / "power_scene_times.csv").open(encoding="utf-8-sig", newline="") as stream:
+            table = list(csv.DictReader(stream))
+        self.assertEqual(len(table), 7)
+        self.assertIn("optimizer_excluding_callback_seconds_sum", table[0])
+        for row in table:
+            self.assertAlmostEqual(float(row["total_pipeline_seconds_sum"]),
+                                   float(row["total_pipeline_seconds_mean_per_action"]))
+        self.assertTrue((self.directory / "power_report.md").is_file())
+        self.assertEqual(read_json(self.directory / "status.json")["env_step"], 7)
         self.assertEqual(read_json(self.directory / "status.json")["stage"], "completed")
 
     def test_same_run_resume_does_not_repeat_inference_or_solve(self):

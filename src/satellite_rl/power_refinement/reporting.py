@@ -17,6 +17,8 @@ def write_report(directory, rows, summaries, config):
     plt.rcParams["axes.unicode_minus"] = False
     directory = Path(directory)
     methods = list(summaries)
+    colors = dict(zip(("none", "discrete", "slsqp", "sca", "de", "pso", "wmmse"),
+                      ("#666666", "#e69f00", "#0072b2", "#009e73", "#cc79a7", "#d55e00", "#56b4e9")))
     scenes = sorted({r["source_scene_sha256"] for r in rows})
     fig, axes = plt.subplots(2, 1, figsize=(11, 7), constrained_layout=True)
     for method in methods:
@@ -24,7 +26,7 @@ def write_report(directory, rows, summaries, config):
         for axis, metric, label in zip(axes, ("final_si_mean", "final_sgm_mean"), ("SI", "SGM")):
             values = [np.mean([r["metrics"][metric] for r in selected
                                if r["source_scene_sha256"] == scene]) for scene in scenes]
-            axis.plot(range(1, len(scenes) + 1), values, label=method, linewidth=1)
+            axis.plot(range(1, len(scenes) + 1), values, label=method, linewidth=1, color=colors[method])
             axis.set_ylabel(label)
             axis.grid(alpha=0.2)
     axes[0].set_title("Paired scenes: repeated actions averaged within each scene")
@@ -43,11 +45,13 @@ def write_report(directory, rows, summaries, config):
             for axis, metric in zip(axes, ("final_si_mean", "final_sgm_mean")):
                 gain = [h[metric] - history[0][metric] for h in history]
                 axis.plot(elapsed, gain, alpha=0.12, linewidth=0.7,
-                          color="tab:blue" if method == "slsqp" else "tab:orange")
+                          color=colors[method])
     for axis, label in zip(axes, ("SI gain", "SGM gain")):
         axis.set(xlabel="Solver elapsed seconds", ylabel=label)
         axis.grid(alpha=0.2)
-    axes[0].set_title("Accepted feasible records; blue=SLSQP, orange=discrete")
+    axes[0].set_title("Accepted feasible records, all methods")
+    from matplotlib.lines import Line2D
+    axes[0].legend(handles=[Line2D([0],[0],color=colors[m],label=m) for m in methods if m != "none"],fontsize=7)
     axes[1].set_title("Every action sample shown; no smoothing")
     fig.savefig(directory / "power_progress.png", dpi=150)
     plt.close(fig)
@@ -58,8 +62,8 @@ def write_report(directory, rows, summaries, config):
         ratios = np.array([b["rate_bps"] / b["required_bps"] for r in selected for b in r["beams"]])
         watts = np.array([b["power_w"] for r in selected for b in r["beams"]])
         axes[0].hist(np.log10(np.maximum(ratios, 1e-6)), bins=60, histtype="step",
-                     density=True, label=method)
-        axes[1].hist(watts, bins=50, histtype="step", density=True, label=method)
+                     density=True, label=method, color=colors[method])
+        axes[1].hist(watts, bins=50, histtype="step", density=True, label=method, color=colors[method])
     axes[0].axvline(0, color="black", linestyle="--", linewidth=0.8)
     axes[0].set(xlabel="log10(C / D), zero capacity plotted at -6", ylabel="Density")
     axes[1].set(xlabel="Whole-beam power (W)", ylabel="Density")
@@ -70,7 +74,7 @@ def write_report(directory, rows, summaries, config):
 
     options = config["power_refinement"]
     lines = ["# 第三阶段固定频率槽功率细调结果", "",
-             "冻结T0生成初始分配，各方法共享相同实际频率槽、需求及初始功率。连续方法为SLSQP含需求匹配初始化，功率非负且仅受总预算约束；原档位参照仍为5–50 W、步长5 W。",
+             "冻结T0生成初始分配，各方法共享相同实际频率槽、需求及初始功率。连续路线包括SLSQP含需求匹配初始化、SCA、DE、PSO及WMMSE适配；功率非负且仅受总预算约束；原档位参照仍为5–50 W、步长5 W。",
              "", f"预算口径：{options['power_budget_mode']}；场景{len(scenes)}个，每场景{options['repeats']}次动作；新增训练交互0。",
              "", "| 方法 | SI | SGM | 基本服务束 | 全束基本服务比例 | 功率W | 求解均时s | 求解95分位s | 回退数 |",
              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
@@ -82,7 +86,37 @@ def write_report(directory, rows, summaries, config):
               "", "![共同场景](power_paired.png)", "", "![优化过程](power_progress.png)", "",
               "过程图是保存的已接受可行候选，不是所有求解器试探点；未平滑，失败和无改善样本保留于原始表。",
               "", "![逐束分布](power_distributions.png)", "",
-              "单训练种子及单考核日期限制仍在。连续方案同时放宽了原功率粒度、最低和最高整束功率，差值不能只归因为SQP算法，需求匹配初始化也有贡献；各case的algorithm_components及history.phase分别记录。局部解、停止或回退均不证明全局最优。",
+              "单训练种子及单考核日期限制仍在。连续方案同时放宽了原功率粒度、最低和最高整束功率，各路线的algorithm_components及history.phase单独记录；SLSQP含需求匹配初始化，WMMSE使用速率代理提议，不能把代理目标等同于SI/SGM。局部解、停止或回退均不证明全局最优。",
               "", "原始入口：power_cases.jsonl、power_results.csv、power_beams.csv、power_iterations.jsonl；每个case含初始化SHA、来源场景SHA、方法、预算、终止原因和约束误差。",
               "", "本报告由保存的完整case生成；模型/场景冻结证据见job.json、config.json、refinement_manifest.json与results.json。"]
+    lines += ["", "## 每场景运行时间与终态结果", "",
+              "公共T0初始解在实验中只生成一次；为比较单独部署每种方法，将其同一次实测生成时间分别计入各方法。GPU生成初始解前后显式同步。总时间是初始解、物理准备、求解墙钟和最终核验的分段实测合计，包含求解日志回调；不包含一次性加载权重、最终文件导出、绘图与归档。求解回调时间另存，可查看扣除该部分的参考计算时间。",
+              "", f"| 方法 | SI | SGM | 单次分配总耗时均值/中位/P95 秒 | 每景{options['repeats']}次合计均值/中位/P95 秒 |",
+              "| --- | ---: | ---: | ---: | ---: |"]
+    for method, item in summaries.items():
+        if item.get("timing_available"):
+            per_action = "/".join(f"{item['single_allocation_total_pipeline_seconds_' + key]:.4f}" for key in ("mean","median","p95"))
+            per_scene = "/".join(f"{item['scene_repeats_sum_total_pipeline_seconds_' + key]:.4f}" for key in ("mean","median","p95"))
+        else:
+            per_action = per_scene = "未记录"
+        lines.append(f"| {method} | {item['final_si_mean']:.6f} | {item['final_sgm_mean']:.6f} | {per_action} | {per_scene} |")
+    lines += ["", "每景合计按该任务实际重复次数统计；默认3次。逐场景原值与分段时间见power_scene_times.csv和power_results.csv；历史缺失字段不以0补造。各方法停止判据不同，SCA/WMMSE未认证原双指标的驻点，不能把converged=False一律理解为任务失败。"]
+    if all(row.get("timing") for row in rows):
+        fig, axes = plt.subplots(2, 1, figsize=(11, 7), constrained_layout=True)
+        boxes = []
+        for method in methods:
+            selected = [r for r in rows if r["method"] == method]
+            totals = [sum(r["timing"]["total_pipeline_seconds"] for r in selected
+                          if r["source_scene_sha256"] == scene) for scene in scenes]
+            axes[0].plot(range(1, len(scenes)+1), totals, label=method, color=colors[method], lw=0.8)
+            boxes.append(totals)
+        axes[0].set(xlabel="Common scene index", ylabel="Sum over action repeats / seconds", title="Per-scene measured stage sums; no smoothing")
+        axes[0].set_yscale("log")
+        axes[0].legend(ncol=4, fontsize=8)
+        axes[1].boxplot(boxes, labels=methods, showfliers=True)
+        axes[1].set(ylabel="Per-scene total / seconds (log)", xlabel="Method")
+        axes[1].set_yscale("log")
+        fig.savefig(directory / "power_scene_timing.png", dpi=150)
+        plt.close(fig)
+        lines += ["", "![逐场景耗时](power_scene_timing.png)"]
     (directory / "power_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

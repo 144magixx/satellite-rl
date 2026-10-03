@@ -6,7 +6,14 @@ from copy import deepcopy
 import math
 
 
-METHODS = ("none", "discrete", "slsqp")
+LEGACY_METHODS = ("none", "discrete", "slsqp")
+METHODS = (*LEGACY_METHODS, "sca", "de", "pso", "wmmse")
+METHOD_LABELS = {
+    "none": "T0原分配", "discrete": "原5 W档位调整",
+    "slsqp": "SLSQP含需求匹配初始化", "sca": "SCA信赖域凸近似",
+    "de": "差分进化DE", "pso": "粒子群PSO",
+    "wmmse": "WMMSE速率提议与双指标验收",
+}
 TOTAL_POWER_W = 3000.0
 DEFAULTS = {
     "methods": list(METHODS),
@@ -22,6 +29,13 @@ DEFAULTS = {
     "maxeval": 2000,
     "max_time_seconds": 30.0,
     "discrete_step_w": 5.0,
+    "optimizer_seed": 63001,
+    "population_size": 24,
+    "de_mutation": 0.7,
+    "de_crossover": 0.8,
+    "pso_inertia": 0.7,
+    "pso_cognitive": 1.4,
+    "pso_social": 1.4,
 }
 
 
@@ -50,8 +64,8 @@ def validate_config(raw):
         raise ValueError("未知功率细调参数：" + ", ".join(sorted(unknown)))
     result = default_config()
     result.update(deepcopy(raw))
-    if result["methods"] != list(METHODS):
-        raise ValueError("首轮须对同一初始动作依次评价原档位、离散细调和连续SLSQP")
+    if result["methods"] not in (list(LEGACY_METHODS), list(METHODS)):
+        raise ValueError("请选择原三方法或完整七路线共同对照，方法顺序须一致")
     if result["action_mode"] not in ("deterministic", "stochastic"):
         raise ValueError("动作方式须为确定性或随机采样")
     result["action_seed"] = _integer(result["action_seed"], "动作种子", 0, 2**32 - 1)
@@ -67,4 +81,11 @@ def validate_config(raw):
     result["maxeval"] = _integer(result["maxeval"], "最大容量计算次数", 1, 1000000)
     result["max_time_seconds"] = _number(result["max_time_seconds"], "每次优化时限/秒", 0.01, 3600)
     result["discrete_step_w"] = _number(result["discrete_step_w"], "原功率档位步长/W", 5, 5)
+    result["optimizer_seed"] = _integer(result["optimizer_seed"], "优化器基础种子", 0, 2**32 - 1)
+    result["population_size"] = _integer(result["population_size"], "种群/粒子数", 4, 256)
+    result["de_mutation"] = _number(result["de_mutation"], "DE变异系数", 1e-6, 2)
+    result["de_crossover"] = _number(result["de_crossover"], "DE交叉概率", 0, 1)
+    result["pso_inertia"] = _number(result["pso_inertia"], "PSO惯性", 0, 0.999999)
+    result["pso_cognitive"] = _number(result["pso_cognitive"], "PSO个体系数", 0, 4)
+    result["pso_social"] = _number(result["pso_social"], "PSO群体系数", 0, 4)
     return result

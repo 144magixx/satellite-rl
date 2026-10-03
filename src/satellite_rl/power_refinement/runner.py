@@ -24,6 +24,16 @@ def _fingerprint(value):
     return hashlib.sha256(payload).hexdigest()
 
 
+def _optimizer_seed(base, scene_index, repeat, method):
+    """Disjoint scene/repeat/method streams for the supported repeat range."""
+    if (type(base) is not int or not 0 <= base < 2**32
+            or type(scene_index) is not int or scene_index < 0
+            or type(repeat) is not int or not 0 <= repeat < 30
+            or method not in ("de", "pso")):
+        raise ValueError("Invalid optimizer stream identity")
+    return (base + 1000 * scene_index + 10 * repeat + {"de": 1, "pso": 2}[method]) % 2**32
+
+
 def _status(directory, job, **fields):
     previous = _read_json(directory / "status.json", {})
     previous.update(run_id=job["run_id"], heartbeat_at=now(), pid=os.getpid(),
@@ -120,7 +130,11 @@ def _summaries(rows):
                        p95_solver_seconds=float(np.percentile(durations, 95)),
                        fallback_count=sum(bool(r["solver"].get("fallback_used")) for r in selected),
                        nonconverged_count=sum(not r["solver"].get("converged", False)
-                                              for r in selected if method == "slsqp"))
+                                              for r in selected),
+                       convergence_scope=("not_certified_for_original_objective" if method in ("sca", "wmmse")
+                                          else "method_specific_stopping_rule"))
+        from satellite_rl.power_refinement.timing import aggregate_scene_timing
+        summary.update(aggregate_scene_timing(selected))
         output[method] = summary
     return output
 
@@ -132,7 +146,9 @@ def finalize_results(directory, job, config, rows):
         common = {key: row[key] for key in ("run_id", "git_commit", "source_model_sha256",
                                            "scene_id", "source_scene_sha256", "repeat", "method",
                                            "initial_allocation_sha256", "power_budget_mode")}
+        common["optimizer_seed"] = row.get("optimizer_seed")
         table.append({**common, **row["metrics"],
+                      **row.get("timing", {}),
                       "solver_seconds": row["solver"]["elapsed_seconds"],
                       "solver_evaluations": row["solver"]["evaluations"],
                       "termination_reason": row["solver"]["termination_reason"],
@@ -140,6 +156,23 @@ def finalize_results(directory, job, config, rows):
         beams.extend({**common, **beam} for beam in row["beams"])
     _write_csv(directory / "power_results.csv", table)
     _write_csv(directory / "power_beams.csv", beams)
+    scene_table = []
+    for method in summaries:
+        method_rows = [row for row in rows if row["method"] == method]
+        for scene in sorted({row["source_scene_sha256"] for row in method_rows}):
+            group = [row for row in method_rows if row["source_scene_sha256"] == scene]
+            entry = {"source_scene_sha256": scene, "method": method, "repeats": len(group),
+                     "final_si_mean": float(np.mean([r["metrics"]["final_si_mean"] for r in group])),
+                     "final_sgm_mean": float(np.mean([r["metrics"]["final_sgm_mean"] for r in group])),
+                     "power_w": float(np.mean([r["metrics"]["power_w"] for r in group]))}
+            if all("timing" in r for r in group):
+                for key in ("initialization_seconds", "physics_setup_seconds", "optimizer_wall_seconds",
+                            "optimizer_callback_io_seconds", "optimizer_excluding_callback_seconds",
+                            "verification_seconds", "total_pipeline_seconds"):
+                    entry[key + "_sum"] = sum(r["timing"][key] for r in group)
+                    entry[key + "_mean_per_action"] = entry[key + "_sum"] / len(group)
+            scene_table.append(entry)
+    _write_csv(directory / "power_scene_times.csv", scene_table)
     # Rebuild the canonical complete-case stream; partial attempts remain in iteration logs.
     temporary = directory / "power_cases.jsonl.tmp"
     with temporary.open("w", encoding="utf-8") as stream:
@@ -171,7 +204,7 @@ def finalize_results(directory, job, config, rows):
     write_report(directory, rows, summaries, config)
     artifacts = {p.name: {"path": str(p), "sha256": _sha256(p)} for p in
                  [directory / name for name in ("results.json", "power_results.csv", "power_beams.csv",
-                                                "power_cases.jsonl", "power_report.md")]
+                                                "power_cases.jsonl", "power_scene_times.csv", "power_report.md")]
                  if p.is_file()}
     _atomic_json(directory / "artifacts.json", {"files": artifacts, "created_at": now()})
     return summaries
@@ -238,6 +271,9 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
             seed = int(options["action_seed"]) + repeat
             initial_identity = _fingerprint([identity, source_sha, index, repeat, seed])
             if initial is None:
+                if str(device).startswith("cuda"):
+                    import torch
+                    torch.cuda.synchronize()
                 before = time.monotonic()
                 attempt_path = attempts_dir / f"scene_{index:05d}_r{repeat}_{time.time_ns()}.jsonl"
                 with isolated_rng(seed):
@@ -248,18 +284,24 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                                                   seed, options["action_mode"],
                                                   attempt_path, len(rows),
                                                   scene_sha256=source_sha, group="stage3_initial")
+                if str(device).startswith("cuda"):
+                    torch.cuda.synchronize()
                 initial.update(identity=initial_identity, source_scene_sha256=source_sha,
                                inference_seconds=time.monotonic() - before, action_seed=seed,
                                trace_attempt_path=str(attempt_path))
                 _atomic_json(initial_path, initial)
             if initial.get("identity") != initial_identity:
                 raise ValueError("初始分配与冻结场景或动作种子不一致")
+            setup_started = time.perf_counter()
             problem = FixedAllocationPhysics.from_scene(scene, policy.config, initial["beams"])
             p0 = np.array([b["power_w"] for b in initial["beams"]])
             reproduced = problem.evaluate(p0)
             expected = np.array([b["rate_bps"] for b in initial["beams"]])
             if not np.allclose(reproduced.capacity_bps, expected, rtol=1e-8, atol=1e-3):
                 raise ValueError("新容量计算未复现原环境全束终态")
+            if "physics_setup_seconds" not in initial:
+                initial["physics_setup_seconds"] = time.perf_counter() - setup_started
+                _atomic_json(initial_path, initial)
             cap = (min(float(p0.sum()), float(options["total_power_w"])) if options["power_budget_mode"] == "initial"
                    else float(options["total_power_w"]))
             allocation_sha = _fingerprint(initial["beams"])
@@ -289,27 +331,43 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                     return None
                 progress(scene_index=index, repeat=repeat, method=method)
 
+                callback_seconds = 0.0
                 def callback(entry):
+                    nonlocal callback_seconds
+                    callback_started = time.perf_counter()
                     _jsonl(directory / "power_iterations.jsonl", {
                         "time": now(), "scene_id": initial["scene_id"], "repeat": repeat,
                         "method": method, "case_identity": case_identity, **clean_json(entry)})
                     progress(scene_index=index, repeat=repeat, method=method,
                              optimizer_progress=clean_json(entry))
+                    callback_seconds += time.perf_counter() - callback_started
 
                 solve_options = {"power_cap_w": cap, "maxiter": options["maxiter"],
                                  "max_evaluations": options["maxeval"],
                                  "time_limit_seconds": options["max_time_seconds"],
                                  "si_tolerance": options["si_tolerance"],
                                  "sgm_tolerance": options["sgm_tolerance"]}
+                optimizer_seed = None
+                if method in ("de", "pso"):
+                    optimizer_seed = _optimizer_seed(options["optimizer_seed"], index, repeat, method)
+                    solve_options.update(optimizer_seed=optimizer_seed,
+                        **{key: options[key] for key in ("population_size", "de_mutation", "de_crossover",
+                                                        "pso_inertia", "pso_cognitive", "pso_social")})
+                solver_started = time.perf_counter()
                 solved = optimize_power(problem, p0, method=method, options=solve_options,
                                         callback=callback, stop_requested=stop_requested)
+                solver_wall = time.perf_counter() - solver_started
                 if stop_requested():
                     _status(directory, job, stage="stopped", env_step=len(rows), budget_env_steps=budget)
                     return None
+                verify_started = time.perf_counter()
                 power = np.asarray(solved["power_w"], dtype=float)
                 evaluated = problem.evaluate(power)
                 beams = _beam_rows(initial, evaluated, power)
                 metrics = verify_solution(initial, beams, cap, options)
+                from satellite_rl.power_refinement.timing import build_timing
+                timing = build_timing(initial["inference_seconds"], initial["physics_setup_seconds"],
+                                      solver_wall, callback_seconds, time.perf_counter() - verify_started)
                 row = {"identity": case_identity, "run_id": job["run_id"],
                        "git_commit": job["git_commit"],
                        "source_model_sha256": next(ref["sha256"] for ref in job["model_files"]
@@ -317,6 +375,7 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                        "scene_id": initial["scene_id"],
                        "source_scene_sha256": source_sha, "source_scene_path": str(source),
                        "repeat": repeat, "method": method, "power_budget_mode": options["power_budget_mode"],
+                       "optimizer_seed": optimizer_seed, "timing": timing,
                        "initial_allocation_sha256": allocation_sha, "initial_path": str(initial_path),
                        "initial_metrics": initial["metrics"], "metrics": metrics,
                        "beams": beams, "solver": clean_json(solved),
@@ -351,6 +410,11 @@ def run_refinement_job(job_dir, *, resume=False):
         preflight = strict_cuda_preflight(job)
         import scipy
         preflight.update(scipy=scipy.__version__, optimizer_device="cpu", policy_device="cuda")
+        import platform
+        preflight.update(cpu_description=platform.processor(), cpu_logical_count=os.cpu_count(),
+            cpu_affinity_count=len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
+            thread_environment={key: os.environ.get(key) for key in
+                ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")})
         _status(directory, job, stage="initializing", preflight=preflight, resume=bool(resume))
         _jsonl(directory / "events.jsonl", {"time": now(), "message": "refinement_worker_started",
                                              "resume": bool(resume), "preflight": preflight})

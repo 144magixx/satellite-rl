@@ -76,7 +76,7 @@ class Application:
         artifacts = read_json(directory / "artifacts.json", {})
         for filename in ("manifest.json", "status.json", "config.json", "metrics.jsonl",
                          "traces.jsonl", "episodes.jsonl", "evaluations.jsonl", "updates.csv",
-                         "episodes.csv", "evaluations.csv", "power_results.csv", "power_beams.csv",
+                         "episodes.csv", "evaluations.csv", "power_results.csv", "power_beams.csv", "power_scene_times.csv",
                          "power_iterations.jsonl", "power_cases.jsonl", "power_report.md", "events.jsonl", "failure.json",
                          "worker.log", "results.json"):
             if (directory / filename).is_file():
@@ -505,7 +505,7 @@ class Application:
         allow = {"metrics.jsonl", "updates.jsonl", "episodes.jsonl", "evaluations.jsonl", "traces.jsonl",
                  "updates.csv", "episodes.csv", "evaluations.csv", "events.jsonl", "worker.log", "config.json",
                  "job.json", "manifest.json", "status.json", "results.json", "failure.json", "artifacts.json",
-                 "power_results.csv", "power_beams.csv", "power_iterations.jsonl", "power_cases.jsonl",
+                 "power_results.csv", "power_beams.csv", "power_scene_times.csv", "power_iterations.jsonl", "power_cases.jsonl",
                  "power_report.md"}
         if filename == "report.md":
             detail, result = self.run_detail(identifier), self.results(identifier)

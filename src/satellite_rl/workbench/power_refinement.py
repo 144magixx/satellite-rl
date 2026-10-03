@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from satellite_rl.power_refinement.config import default_config, validate_config
+from satellite_rl.power_refinement.config import default_config, validate_config, METHOD_LABELS
 
 from .storage import model_input_files, validate_id
 
@@ -148,10 +148,7 @@ class PowerRefinementApplication:
     def api(self, method, parts, query, body):
         if parts == ["defaults"] and method == "GET":
             return {"defaults": default_config(), "methods": [
-                {"id": "none", "label": "冻结原始5–50 W档位初始解"},
-                {"id": "discrete", "label": "原5 W档位离散细调"},
-                {"id": "slsqp", "label": "连续功率优化：SLSQP含需求匹配初始化（p≥0，Σp≤预算）"},
-            ]}
+                {"id": name, "label": label} for name, label in METHOD_LABELS.items()]}
         if parts == ["validate"] and method == "POST":
             return {"config": validate_config(body)}
         if parts == ["models"] and method == "GET":
