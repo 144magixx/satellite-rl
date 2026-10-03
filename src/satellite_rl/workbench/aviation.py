@@ -176,15 +176,15 @@ def _vectors(locations, profile):
     return rays / np.linalg.norm(rays, axis=1, keepdims=True)
 
 
-def _cover(locations, demand, profile):
+def _cover(locations, demand, profile, beam_count=100):
     """Demand weighted farthest-point medoids, then exclusive nearest association.
 
     Centres are existing unique positions, so every selected centre has positive
     demand and lies inside the service region. This avoids fictitious empty beams.
     """
     unique = np.unique(locations, axis=0)
-    if len(unique) < 100:
-        raise AviationSceneError("可用正需求航空器的唯一位置不足100，不能生成100个非空波束",
+    if len(unique) < beam_count:
+        raise AviationSceneError(f"可用正需求航空器的唯一位置不足{beam_count}，不能生成非空波束",
                                  {"unique_positive_positions": len(unique)})
     weights = np.zeros(len(unique))
     inverse = np.unique(locations, axis=0, return_inverse=True)[1]
@@ -192,7 +192,7 @@ def _cover(locations, demand, profile):
     rays = _vectors(unique, profile)
     chosen = [int(np.argmax(weights))]
     nearest = np.full(len(unique), np.inf)
-    for _ in range(99):
+    for _ in range(beam_count - 1):
         distance = np.sum((rays - rays[chosen[-1]]) ** 2, axis=1)
         nearest = np.minimum(nearest, distance)
         score = nearest * weights
@@ -204,7 +204,7 @@ def _cover(locations, demand, profile):
     angles = np.rad2deg(np.arccos(dots[np.arange(len(locations)), assigned]))
     covered = angles <= 0.25 + 1e-10
     assigned = np.where(covered, assigned, -1)
-    rates = np.bincount(assigned[covered], weights=demand[covered], minlength=100)
+    rates = np.bincount(assigned[covered], weights=demand[covered], minlength=beam_count)
     if (rates <= 0).any():
         raise AviationSceneError("覆盖聚合出现空束，不补充人工需求")
     return centres, rates, assigned, angles
@@ -212,7 +212,8 @@ def _cover(locations, demand, profile):
 
 def build_aviation_scenes(paths, selected_times, *, source_format="csv_snapshot", units=None,
                           demand_model, seed, max_record_age_seconds=300,
-                          environment_profile="europe_v1", partition_role, window_seconds=None):
+                          environment_profile="europe_v1", partition_role, window_seconds=None,
+                          beam_count=100, load_multiplier=1.0, min_positive_aircraft=None):
     """Return canonical scene arrays and JSON provenance, without writing files.
 
     Explicit times are UTC ISO strings. The caller owns source/date partition
@@ -224,6 +225,16 @@ def build_aviation_scenes(paths, selected_times, *, source_format="csv_snapshot"
         raise ValueError("航空适配器首版仅支持独立europe_v1环境")
     if partition_role not in ("train", "validation", "test"):
         raise ValueError("每批航空数据须明确train/validation/test用途")
+    if isinstance(beam_count, bool) or not isinstance(beam_count, int) or not 1 <= beam_count <= 200:
+        raise ValueError("实际波束数须为1–200整数")
+    load_multiplier = _finite(load_multiplier)
+    if load_multiplier <= 0:
+        raise ValueError("业务需求倍率须为正有限数")
+    if min_positive_aircraft is None:
+        min_positive_aircraft = beam_count
+    if (isinstance(min_positive_aircraft, bool) or not isinstance(min_positive_aircraft, int)
+            or not beam_count <= min_positive_aircraft <= 100000):
+        raise ValueError("正需求航空器门槛须不小于波束数")
     if not isinstance(selected_times, (list, tuple)) or not 1 <= len(selected_times) <= 1000:
         raise ValueError("须显式提供1–1000个UTC场景时刻")
     times = [_utc(t) for t in selected_times]
@@ -287,8 +298,8 @@ def build_aviation_scenes(paths, selected_times, *, source_format="csv_snapshot"
         counts["selected_aircraft"] = len(selected)
         if len(selected) > 100000:
             raise AviationSceneError("单时刻可用航空器超过10万，须先限定日期与空域", counts)
-        if len(selected) < 100:
-            raise AviationSceneError("清洗后可用航空器不足100，不能生成100个非空波束", counts)
+        if len(selected) < min_positive_aircraft:
+            raise AviationSceneError(f"清洗后可用航空器不足{min_positive_aircraft}", counts)
         # Timestamp-derived stream makes snapshots reproducible even when reordered.
         stream_id = hashlib.sha256(_iso(stamp).encode()).digest()
         rng = np.random.default_rng(np.random.SeedSequence([int(seed), *np.frombuffer(stream_id, dtype="<u4").tolist()]))
@@ -304,10 +315,16 @@ def build_aviation_scenes(paths, selected_times, *, source_format="csv_snapshot"
         if not np.isfinite(demand).all():
             raise AviationSceneError("合成业务需求超过有限数值范围", counts)
         positive = demand > 0
+        counts["positive_demand_aircraft"] = int(positive.sum())
+        if int(positive.sum()) < min_positive_aircraft:
+            raise AviationSceneError(f"正需求航空器不足{min_positive_aircraft}", counts)
+        base_total_demand = float(demand.sum())
+        demand = demand * load_multiplier
         counts["zero_demand_aircraft"] = int((~positive).sum())
         positions = np.array([[o["lat"], o["lon"]] for o in selected])
         try:
-            centres, rates, association, angles = _cover(positions[positive], demand[positive], profile)
+            centres, rates, association, angles = _cover(positions[positive], demand[positive], profile,
+                                                         beam_count=beam_count)
         except AviationSceneError as exc:
             raise AviationSceneError(str(exc), {**counts, **exc.diagnostics}) from exc
         full_association = np.full(len(selected), -1, dtype=int)
@@ -321,12 +338,12 @@ def build_aviation_scenes(paths, selected_times, *, source_format="csv_snapshot"
         if not np.isclose(total, covered + uncovered, rtol=1e-12, atol=1e-6):
             raise AviationSceneError("需求汇总未守恒", counts)
         order = np.argsort(-rates, kind="stable")
-        processing_index = np.empty(100, dtype=int)
-        processing_index[order] = np.arange(100)
-        arrays.append({"beam_location": centres[order], "rate": rates[order].reshape(100, 1),
+        processing_index = np.empty(beam_count, dtype=int)
+        processing_index[order] = np.arange(beam_count)
+        arrays.append({"beam_location": centres[order], "rate": rates[order].reshape(beam_count, 1),
                        "distances": geo_distances_km(centres[order], profile),
-                       "beam_G_Tx_max": np.full((100, 1), 50.0), "UE_G_Rx_max": np.full((100, 1), 40.0),
-                       "noise_temperature": np.full((100, 1), 290.0), "original_indices": order})
+                       "beam_G_Tx_max": np.full((beam_count, 1), 50.0), "UE_G_Rx_max": np.full((beam_count, 1), 40.0),
+                       "noise_temperature": np.full((beam_count, 1), 290.0), "original_indices": order})
         selected_records = [{"aircraft_id": obs["aircraft_id"], "timestamp_utc": _iso(obs["timestamp"]),
                              "source_date": _iso(obs["timestamp"])[:10], "source_sha256": obs["source_sha256"],
                              "lat": obs["lat"], "lon": obs["lon"], "altitude_m": obs["altitude_m"],
@@ -338,12 +355,20 @@ def build_aviation_scenes(paths, selected_times, *, source_format="csv_snapshot"
         source_dates = sorted({_iso(o["timestamp"])[:10] for o in latest.values()
                                if stamp - o["timestamp"] <= max_age})
         snapshots.append({"selected_time_utc": _iso(stamp), "source_dates": source_dates,
+                          "mother_scene_id": _iso(stamp), "beam_count": beam_count,
+                          "load_multiplier": load_multiplier,
                           "counts": counts, "total_demand_bps": total, "covered_demand_bps": covered,
+                          "base_total_demand_bps": base_total_demand,
+                          "covered_aircraft_fraction": counts["covered_aircraft"] / len(selected),
+                          "covered_demand_fraction": covered / total if total else 0.0,
                           "uncovered_demand_bps": uncovered, "beam_order_original_indices": order.tolist(),
                           "source_observations": selected_records})
-    provenance = {"type": "aviation_imported_positions_synthetic_demand", "adapter_version": "aviation_v1",
+    provenance = {"type": "aviation_imported_positions_synthetic_demand",
+                  "adapter_version": "aviation_variable_v1" if beam_count != 100 or load_multiplier != 1.0 else "aviation_v1",
                   "position_source_status": "user_supplied_not_independently_verified",
                   "source_format": source_format, "files": references, "seed": int(seed), "partition_role": partition_role,
+                  "beam_count": beam_count, "load_multiplier": load_multiplier,
+                  "min_positive_aircraft": min_positive_aircraft,
                   "selected_times": [_iso(t) for t in times],
                   "environment_profile": environment_profile, "profile": profile_metadata(profile),
                   "source_dates": sorted({date for s in snapshots for date in s["source_dates"]}),
@@ -354,10 +379,10 @@ def build_aviation_scenes(paths, selected_times, *, source_format="csv_snapshot"
                   "time_selection": "latest observation at or before selected UTC time; no interpolation; stale flag excluded",
                   "duplicate_policy": "latest timestamp per aircraft; equal-time conflicting observations reject; equal records first lexical file",
                   "coverage": {"algorithm": "demand-weighted farthest-point medoids; exclusive nearest beam",
-                               "beam_count": 100, "beam_full_width_degrees": 0.5, "coverage_radius_degrees": 0.25,
+                               "beam_count": beam_count, "beam_full_width_degrees": 0.5, "coverage_radius_degrees": 0.25,
                                "angle_reference": "satellite-to-ground line of sight", "aircraft_altitude": "ground projection for geometry; altitude retained and airborne filtered",
                                "beam_order": "stable descending aggregated demand; group=processing_index%8",
-                               "beam_identity": "original medoid selection index 0..99; original_indices and per-snapshot beam_order_original_indices preserve mapping",
+                               "beam_identity": "original medoid selection index 0..N-1; original_indices and per-snapshot beam_order_original_indices preserve mapping",
                                "uncovered_policy": "retain IDs and demand; never duplicate or redistribute uncovered demand",
                                "link_approximation": "beam centre represents all assigned users; not per-aircraft throughput"},
                   "source_date_policy": "UTC dates of latest nonfuture observations within maximum age, including filtered aircraft",

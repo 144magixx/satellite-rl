@@ -137,6 +137,7 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         historical = copy.deepcopy(config)
         historical["environment"].pop("action_mask", None)
         historical["environment"].pop("profile", None)
+        historical["environment"].pop("beam_count_max", None)
         historical["network"].pop("transformer_layout", None)
         historical["network"].pop("sac_policy_structure", None)
         historical["network"].pop("sac_critic_structure", None)
@@ -150,6 +151,8 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         historical["training"].pop("scene_order_seed", None)
         historical["training"].pop("alpha_mode", None)
         historical["training"].pop("fixed_alpha", None)
+        for key in ("beam_count_mode", "beam_count_min", "beam_count_max", "held_out_beam_counts"):
+            historical["training"].pop(key, None)
         historical.pop("telemetry", None)
         expected = hashlib.sha256(json.dumps(historical, ensure_ascii=False, sort_keys=True,
                                             separators=(",", ":")).encode("utf-8")).hexdigest()

@@ -24,6 +24,13 @@ def _fingerprint(value):
     return hashlib.sha256(payload).hexdigest()
 
 
+def _verify_saved_initial(initial, frozen_initial, source_reference):
+    if (any(initial.get(key) != value for key, value in frozen_initial.items())
+            or initial.get("source_evaluation") != source_reference
+            or initial.get("initial_allocation_reused") is not True):
+        raise ValueError("本任务初解副本与冻结第二阶段原始case不一致")
+
+
 def _optimizer_seed(base, scene_index, repeat, method):
     """Disjoint scene/repeat/method streams for the supported repeat range."""
     if (type(base) is not int or not 0 <= base < 2**32
@@ -189,6 +196,11 @@ def finalize_results(directory, job, config, rows):
         common = {key: row[key] for key in ("run_id", "git_commit", "source_model_sha256",
                                            "scene_id", "source_scene_sha256", "repeat", "method",
                                            "initial_allocation_sha256", "power_budget_mode")}
+        for key in ("initial_source_group", "initializer_kind", "source_evaluation_run_id",
+                    "source_workbench_model_sha256", "source_initial_case_path", "source_initial_case_sha256",
+                    "beam_count", "scene_metadata"):
+            if key in row:
+                common[key] = row[key]
         if "reference_allocation_sha256" in row:
             common["reference_allocation_sha256"] = row["reference_allocation_sha256"]
         if "reference_case_sha256" in row:
@@ -257,6 +269,7 @@ def finalize_results(directory, job, config, rows):
             "run_id": job["run_id"], "git_commit": job["git_commit"],
             "model_files": job["model_files"], "model_provenance": job.get("model_provenance"),
             "power_refinement": config["power_refinement"], "training_interactions": 0,
+            "initial_source": job.get("initial_source"),
             "scope": "Fixed-frequency power refinement; repeated actions are not independent scenes",
             "capacity_semantics": "Environment link capacity; min(C,D) is estimated effective carriage",
         }})
@@ -284,7 +297,15 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
     for reference in job["model_files"]:
         if _sha256(reference["path"]) != reference["sha256"]:
             raise ValueError("冻结模型SHA不一致")
-    policy = load_policy(job["model_path"], config=job["model_config"], device=device)
+    saved = None
+    if job.get("initial_source"):
+        from satellite_rl.workbench.refinement_sources import source_rows
+        saved = source_rows(job["initial_source"])
+        policy = None
+        physics_config = job["model_config"]
+    else:
+        policy = load_policy(job["model_path"], config=job["model_config"], device=device)
+        physics_config = policy.config
     dataset = job["scene_sets"]["test"]
     assert_scene_profile(dataset, "europe_v1")
     files = scene_set_files(dataset)
@@ -292,6 +313,8 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
     # Scheduler resume flags are operational state, not scientific identity.
     job_identity = {k: job.get(k) for k in
         ("run_id", "git_commit", "source_root", "model_files", "model_config", "scene_sets")}
+    if saved is not None:
+        job_identity["initial_source"] = job["initial_source"]
     if options["methods"] == list(SI_PRIORITY_METHODS):
         job_identity.update(priority_solver_deps_path=job.get("priority_solver_deps_path"),
                             priority_solver_dependency_files=job.get("priority_solver_dependency_files"))
@@ -334,6 +357,13 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                 raise ValueError("已保存初始分配文件损坏，原文件保留")
             seed = int(options["action_seed"]) + repeat
             initial_identity = _fingerprint([identity, source_sha, index, repeat, seed])
+            if initial is None and saved is not None:
+                from copy import deepcopy
+                initial = deepcopy(saved[(source_sha, repeat)])
+                initial.update(identity=initial_identity, source_scene_sha256=source_sha,
+                               source_evaluation=job["initial_source"],
+                               initial_allocation_reused=True)
+                _atomic_json(initial_path, initial)
             if initial is None:
                 if str(device).startswith("cuda"):
                     import torch
@@ -356,8 +386,11 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                 _atomic_json(initial_path, initial)
             if initial.get("identity") != initial_identity:
                 raise ValueError("初始分配与冻结场景或动作种子不一致")
+            if saved is not None:
+                frozen_initial = saved[(source_sha, repeat)]
+                _verify_saved_initial(initial, frozen_initial, job["initial_source"])
             setup_started = time.perf_counter()
-            problem = FixedAllocationPhysics.from_scene(scene, policy.config, initial["beams"])
+            problem = FixedAllocationPhysics.from_scene(scene, physics_config, initial["beams"])
             p0 = np.array([b["power_w"] for b in initial["beams"]])
             reproduced = problem.evaluate(p0)
             expected = np.array([b["rate_bps"] for b in initial["beams"]])
@@ -491,7 +524,20 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                        "initial_metrics": initial["metrics"], "metrics": metrics,
                        "beams": beams, "solver": clean_json(solved),
                        "inference_seconds": initial["inference_seconds"],
+                       "initial_source": job.get("initial_source"),
+                       "beam_count": len(initial["beams"]),
+                       "scene_metadata": initial.get("scene_metadata"),
                        "service_timing": "after_power_refinement_all_interference"}
+                if job.get("initial_source"):
+                    source_group = job["initial_source"]["group"]
+                    row.update(initial_source_group=source_group,
+                               initializer_kind="model" if source_group == "model" else "baseline_" + source_group,
+                               source_evaluation_run_id=job["initial_source"]["run_id"],
+                               source_workbench_model_sha256=row["source_model_sha256"],
+                               source_initial_case_path=initial.get("original_case_path"),
+                               source_initial_case_sha256=initial.get("original_case_file_sha256"))
+                    if source_group != "model":
+                        row["source_model_sha256"] = None
                 if reference is not None:
                     row.update(reference_allocation_sha256=reference_sha,
                                reference_case_sha256=reference_case_sha,

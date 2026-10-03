@@ -134,21 +134,77 @@ def generalized_advantages(rewards, values, dones, last_value, gamma, gae_lambda
 
 
 class Replay:
-    def __init__(self, capacity, seed):
-        self.rows = deque(maxlen=capacity)
+    def __init__(self, capacity, seed, bucket_mode="none"):
+        if bucket_mode not in ("none", "fixed_100", "mixed_four_buckets"):
+            raise ValueError("Unknown replay bucket mode")
+        self.bucket_mode = bucket_mode
+        self.capacity = capacity
+        self.rows = (deque(maxlen=capacity) if bucket_mode == "none" else [])
         self.rng = random.Random(seed)
+        self.next_position = 0
+        self.bucket_indices = ({name: [] for name in
+                                (("anchor_100",) if bucket_mode == "fixed_100" else
+                                 ("anchor_100", "lower", "middle", "upper"))}
+                               if bucket_mode != "none" else None)
+        self.bucket_positions = ({name: {} for name in self.bucket_indices}
+                                 if self.bucket_indices is not None else None)
+        self.slot_buckets = []
+        self.sampled_by_bucket = {key: 0 for key in (self.bucket_indices or {})}
+        self.replacement_draws = {key: 0 for key in (self.bucket_indices or {})}
 
     def __len__(self):
         return len(self.rows)
 
-    def add(self, state, action, reward, next_state, done, action_mask=None, next_action_mask=None):
+    def add(self, state, action, reward, next_state, done, action_mask=None, next_action_mask=None,
+            bucket=None):
         row = (np.asarray(state, dtype=np.float32).copy(),
                tuple(int(x) for x in action), float(reward),
                np.asarray(next_state, dtype=np.float32).copy(), bool(done))
-        self.rows.append(row if action_mask is None else row + (action_mask, next_action_mask))
+        row = row if action_mask is None else row + (action_mask, next_action_mask)
+        if self.bucket_mode == "none":
+            if bucket is not None:
+                raise ValueError("Legacy replay does not accept a bucket")
+            self.rows.append(row)
+            return
+        if bucket not in self.bucket_indices:
+            raise ValueError("Transition bucket does not match configured sampling mode")
+        index = self.next_position
+        if index < len(self.rows):
+            old_bucket = self.slot_buckets[index]
+            members = self.bucket_indices[old_bucket]
+            old_position = self.bucket_positions[old_bucket].pop(index)
+            last_index = members.pop()
+            if old_position < len(members):
+                members[old_position] = last_index
+                self.bucket_positions[old_bucket][last_index] = old_position
+            self.rows[index] = row
+            self.slot_buckets[index] = bucket
+        else:
+            self.rows.append(row)
+            self.slot_buckets.append(bucket)
+        self.bucket_positions[bucket][index] = len(self.bucket_indices[bucket])
+        self.bucket_indices[bucket].append(index)
+        self.next_position = (index + 1) % self.capacity
 
     def sample(self, count, device, action_dims=None):
-        rows = self.rng.sample(self.rows, count)
+        if self.bucket_mode == "none":
+            rows = self.rng.sample(self.rows, count)
+        else:
+            if count % len(self.bucket_indices):
+                raise ValueError("Batch size must divide evenly across replay buckets")
+            per_bucket = count // len(self.bucket_indices)
+            indices = []
+            for bucket, members in self.bucket_indices.items():
+                if not members:
+                    raise ValueError("Every active replay bucket needs a real transition")
+                chosen = (self.rng.sample(members, per_bucket) if len(members) >= per_bucket
+                          else self.rng.choices(members, k=per_bucket))
+                indices.extend(chosen)
+                self.sampled_by_bucket[bucket] += per_bucket
+                if len(members) < per_bucket:
+                    self.replacement_draws[bucket] += per_bucket - len(set(chosen))
+            self.rng.shuffle(indices)
+            rows = [self.rows[index] for index in indices]
         states, actions, rewards, next_states, dones = zip(*(row[:5] for row in rows))
         result = (_state_tensor(states, device), torch.as_tensor(actions, dtype=torch.long, device=device),
                   torch.as_tensor(rewards, dtype=torch.float32, device=device),
@@ -161,13 +217,55 @@ class Replay:
                          mask_batch([row[6] for row in rows], action_dims, device))
 
     def state_dict(self):
-        return {"rows": list(self.rows), "rng": self.rng.getstate(), "capacity": self.rows.maxlen}
+        if self.bucket_mode == "none":
+            return {"rows": list(self.rows), "rng": self.rng.getstate(), "capacity": self.rows.maxlen}
+        return {"rows": list(self.rows), "rng": self.rng.getstate(), "capacity": self.capacity,
+                "bucket_mode": self.bucket_mode, "next_position": self.next_position,
+                "slot_buckets": list(self.slot_buckets),
+                "bucket_indices": {key: list(value) for key, value in self.bucket_indices.items()},
+                "sampled_by_bucket": dict(self.sampled_by_bucket),
+                "replacement_draws": dict(self.replacement_draws)}
 
     def load_state_dict(self, data):
-        if data["capacity"] != self.rows.maxlen:
+        if data["capacity"] != self.capacity:
             raise ValueError("Replay capacity changed")
-        self.rows = deque(data["rows"], maxlen=self.rows.maxlen)
+        if data.get("bucket_mode", "none") != self.bucket_mode:
+            raise ValueError("Replay bucket mode changed")
+        if self.bucket_mode == "none":
+            self.rows = deque(data["rows"], maxlen=self.capacity)
+        else:
+            rows, buckets = list(data["rows"]), list(data["slot_buckets"])
+            if len(rows) != len(buckets) or len(rows) > self.capacity:
+                raise ValueError("Replay ring length mismatch")
+            indices = {key: [] for key in self.bucket_indices}
+            saved_indices = data["bucket_indices"]
+            if set(saved_indices) != set(indices):
+                raise ValueError("Replay checkpoint bucket names differ")
+            for index, bucket in enumerate(buckets):
+                if bucket not in indices:
+                    raise ValueError("Unknown checkpoint replay bucket")
+                indices[bucket].append(index)
+            if any(sorted(value) != sorted(saved_indices[key]) for key, value in indices.items()):
+                raise ValueError("Replay bucket index differs from stored rows")
+            position = data["next_position"]
+            if not isinstance(position, int) or position < 0 or position >= self.capacity or (len(rows) < self.capacity and position != len(rows)):
+                raise ValueError("Invalid replay ring position")
+            self.rows, self.slot_buckets = rows, buckets
+            self.bucket_indices = {key: list(saved_indices[key]) for key in indices}
+            self.bucket_positions = {key: {index: offset for offset, index in enumerate(value)}
+                                     for key, value in self.bucket_indices.items()}
+            self.next_position = position
+            self.sampled_by_bucket = dict(data["sampled_by_bucket"])
+            self.replacement_draws = dict(data["replacement_draws"])
         self.rng.setstate(data["rng"])
+
+    @property
+    def capacity(self):
+        return self.rows.maxlen if self.bucket_mode == "none" else self._capacity
+
+    @capacity.setter
+    def capacity(self, value):
+        self._capacity = value
 
 
 class WorkbenchAgent:
@@ -237,7 +335,8 @@ class WorkbenchAgent:
             self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=self.train["alpha_lr"])
             self.replay = (SequenceReplay(self.train["replay_capacity"], self.train["seed"] + 41,
                                           self.temporal_window) if self.temporal_enabled else
-                           Replay(self.train["replay_capacity"], self.train["seed"] + 41))
+                           Replay(self.train["replay_capacity"], self.train["seed"] + 41,
+                                  self.train.get("beam_count_mode", "none")))
         elif self.algorithm == "ppo":
             self.actor = MultiHeadNetwork(config, state_dim, action_dims).to(self.device)
             self.value = ScalarNetwork(config, state_dim).to(self.device)
@@ -368,7 +467,7 @@ class WorkbenchAgent:
         return action
 
     def observe(self, state, action, reward, next_state, done,
-                action_mask=None, next_action_mask=None, actual_action=None):
+                action_mask=None, next_action_mask=None, actual_action=None, replay_bucket=None):
         if self.action_mask_mode == "joint_feasible":
             action_mask = copy_action_mask(action_mask, self.action_dims)
             if next_action_mask is None:
@@ -387,7 +486,8 @@ class WorkbenchAgent:
                 self.replay.add(state, chosen, reward, next_state, done,
                                 action_mask, next_action_mask, actual_action)
             else:
-                self.replay.add(state, chosen, reward, next_state, done, action_mask, next_action_mask)
+                self.replay.add(state, chosen, reward, next_state, done, action_mask, next_action_mask,
+                                bucket=replay_bucket)
             return
         if action_mask is not None or next_action_mask is not None:
             raise ValueError("action_mask supplied while masking is disabled")
@@ -398,12 +498,14 @@ class WorkbenchAgent:
                                  float(reward), np.asarray(next_state, dtype=np.float32).copy(), bool(done),
                                  self.last_action_info["log_prob"], self.last_action_info["value"]))
         else:
-            self.replay.add(state, action, reward, next_state, done)
+            self.replay.add(state, action, reward, next_state, done, bucket=replay_bucket)
 
     def ready(self, env_step, done=False):
         if self.algorithm == "ppo":
             return len(self.rollout) >= self.train["rollout_steps"] or (done and bool(self.rollout))
-        return (env_step >= self.train["warmup_steps"] and
+        buckets_ready = (not self.replay.bucket_indices or
+                         all(self.replay.bucket_indices.values()))
+        return (env_step >= self.train["warmup_steps"] and buckets_ready and
                 len(self.replay) >= self.train["batch_size"] and
                 env_step % self.train["update_every"] == 0)
 

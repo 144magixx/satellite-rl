@@ -9,6 +9,7 @@ import math
 LEGACY_METHODS = ("none", "discrete", "slsqp")
 METHODS = (*LEGACY_METHODS, "sca", "de", "pso", "wmmse")
 SI_PRIORITY_METHODS = ("sca", "sca_si_lp", "sca_si_lb")
+VARIABLE_BEAM_METHODS = ("none", "sca", "sca_si_lp")
 METHOD_LABELS = {
     "none": "T0原分配", "discrete": "原5 W档位调整",
     "slsqp": "SLSQP含需求匹配初始化", "sca": "SCA信赖域凸近似",
@@ -72,8 +73,8 @@ def validate_config(raw):
         raise ValueError("未知功率细调参数：" + ", ".join(sorted(unknown)))
     result = default_config()
     result.update(deepcopy(raw))
-    if result["methods"] not in (list(LEGACY_METHODS), list(METHODS), list(SI_PRIORITY_METHODS)):
-        raise ValueError("请选择原三方法、完整七路线或SI优先三组，方法顺序须一致")
+    if result["methods"] not in (list(LEGACY_METHODS), list(METHODS), list(SI_PRIORITY_METHODS), list(VARIABLE_BEAM_METHODS)):
+        raise ValueError("请选择原三方法、完整七路线、SI优先三组或可变束数原分配+A+B，方法顺序须一致")
     if result["action_mode"] not in ("deterministic", "stochastic"):
         raise ValueError("动作方式须为确定性或随机采样")
     result["action_seed"] = _integer(result["action_seed"], "动作种子", 0, 2**32 - 1)
@@ -101,7 +102,7 @@ def validate_config(raw):
     result["si_min_evaluations"] = _integer(result["si_min_evaluations"], "SI最低容量调用", 1, 1000000)
     result["si_max_fraction"] = _number(result["si_max_fraction"], "SI阶段最大占比", 0.01, 0.99)
     result["service_margin_ratio"] = _number(result["service_margin_ratio"], "基本服务安全裕量", 0, 1e-3)
-    if result["methods"] == list(SI_PRIORITY_METHODS):
+    if result["methods"] in (list(SI_PRIORITY_METHODS), list(VARIABLE_BEAM_METHODS)):
         fixed = {"si_tolerance": 1e-8, "sgm_tolerance": 1e-8,
                  "maxiter": 300, "maxeval": 2000,
                  "max_time_seconds": 30.0, "si_stall_window": 200,

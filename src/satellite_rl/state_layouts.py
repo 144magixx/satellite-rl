@@ -5,6 +5,12 @@ from math import prod
 
 NATURAL_CONTEXT_LEVELS = ("none", "compact", "summary", "layout", "full")
 BASE_FEATURES = ("beam", "power", "interference", "occupancy")
+VARIABLE_BEAM_FEATURES = BASE_FEATURES + (
+    "beta", "progress", "remaining_demand", "beam_count_normalized",
+    "remaining_beams_normalized", "power_pressure",
+)
+VARIABLE_BEAM_STATE_DIM = 210
+VARIABLE_BEAM_MAX = 200
 
 
 def natural_shapes(level):

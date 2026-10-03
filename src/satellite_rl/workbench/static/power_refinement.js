@@ -3,7 +3,7 @@
   const prefix = "power-refinement-";
   const el = (name) => document.getElementById(prefix + name);
   const pendingKey = "satellite-power-refinement-pending";
-  let controls, models = [], scenes = [], runs = [], runId = "", busy = false, reading = false;
+  let controls, models = [], scenes = [], sources = [], runs = [], runId = "", busy = false, reading = false;
   const escape = (value) => String(value ?? "").replace(/[&<>"']/g, x => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]));
   async function request(path, body) {
     const response = await fetch("/api/" + path, body === undefined ? {} : {
@@ -19,7 +19,10 @@
   }
   function input(name, value) { el(name).value = value; }
   function freezePriorityControls() {
-    const selected = el("routes").value === "si-priority";
+    const variable = el("routes").value === "variable-beams";
+    if (el("intro")) el("intro").textContent = variable ? "S2-P17复用已完成并保存的第二阶段分配；展示直接结果、中间SCA A和最终SCA B，初始动作不重复生成。" : "G11 T0固定温度终点给出频率槽及原始功率；固定实际频率槽，让所有算法路线共用同一初始动作并记录每场景耗时。";
+    if (el("route-note")) el("route-note").textContent = variable ? "本路线从已保存的模型或基线初解开始：原分配仅复核，A为中间SCA，B为最终SI优先结果。A与B追加各最多2000容量调用/30秒，完整细调最多4000调用/60秒。报告并列第二阶段直接结果和最终B；母场景、束数和动作次数按来源清单，不把中间A当新增初始分配。" : "SI优先三组从同一T0初解与公共A终值比较B/C，分别记录追加及完整时间；完整七路线与原三方法保持各自既定范围。";
+    const selected = ["si-priority","variable-beams"].includes(el("routes").value);
     const fixed = {"si-tolerance":1e-8,"sgm-tolerance":1e-8,"maxiter":300,"maxeval":2000,"max-time":30,
       "si-stall-window":200,"si-stall-tolerance":1e-6,"si-min-evaluations":200,
       "si-max-fraction":0.85,"service-margin-ratio":5e-9};
@@ -30,7 +33,8 @@
     }
   }
   function writeControls() {
-    input("routes", controls.methods.join(",") === "sca,sca_si_lp,sca_si_lb" ? "si-priority" :
+    input("routes", controls.methods.join(",") === "none,sca,sca_si_lp" ? "variable-beams" :
+      controls.methods.join(",") === "sca,sca_si_lp,sca_si_lb" ? "si-priority" :
       controls.methods.length > 3 ? "all" : "legacy");
     for (const key of ["optimizer_seed","population_size","de_mutation","de_crossover","pso_inertia","pso_cognitive","pso_social"]) input(key.replaceAll("_","-"),controls[key]);
     input("action-mode", controls.action_mode);
@@ -51,7 +55,7 @@
   }
   function readControls() {
     return {...controls,
-      methods:el("routes").value === "si-priority" ? ["sca","sca_si_lp","sca_si_lb"] :
+      methods:el("routes").value === "variable-beams" ? ["none","sca","sca_si_lp"] : el("routes").value === "si-priority" ? ["sca","sca_si_lp","sca_si_lb"] :
         el("routes").value === "all" ? ["none","discrete","slsqp","sca","de","pso","wmmse"] : ["none","discrete","slsqp"],
       ...Object.fromEntries(["optimizer_seed","population_size","de_mutation","de_crossover","pso_inertia","pso_cognitive","pso_social"].map(key=>[key,Number(el(key.replaceAll("_","-")).value)])),
       action_mode:el("action-mode").value,
@@ -77,6 +81,14 @@
     if ([...node.options].some(option => option.value === previous)) node.value = previous;
   }
   function sourceDetail() {
+    const source = sources.find(row => row.id === el("initial-source").value);
+    if (source) {
+      el("source").textContent = `复用已保存的第二阶段分配：${source.name}；不重新生成初始动作。`;
+      input("routes", "variable-beams"); input("repeats", source.repeats);
+      input("action-seed", source.action_seed); input("action-mode", source.action_mode); input("budget-mode", "total");
+      freezePriorityControls();
+      return;
+    }
     const model = models.find(row => row.id === el("model").value);
     const scene = scenes.find(row => row.id === el("scene").value);
     el("source").innerHTML = model && scene ?
@@ -122,11 +134,12 @@
     finally { reading = false; }
   }
   async function refresh() {
-    const [modelData, sceneData, runData] = await Promise.all([
+    const [modelData, sceneData, runData, sourceData] = await Promise.all([
       request("power-refinement/models"), request("power-refinement/scenes"),
-      request("power-refinement/runs")
+      request("power-refinement/runs"), request("power-refinement/initial-sources")
     ]);
-    models = modelData.models || []; scenes = sceneData.scenes || []; runs = runData.runs || [];
+    models = modelData.models || []; scenes = sceneData.scenes || []; runs = runData.runs || []; sources = sourceData.sources || [];
+    options(el("initial-source"), sources, row => row.name, "使用原T0模型入口");
     options(el("model"), models, row => `${row.config?.name || row.name} · ${row.id}`, "请选择已导入的G11 T0模型");
     options(el("scene"), scenes, row => `${row.name} · ${row.count}景 · test`, "请选择欧洲test场景");
     options(el("run"), runs, row => `${row.name || row.run_id} · ${row.stage}`, "请选择第三阶段任务");
@@ -158,8 +171,9 @@
     try {
       const config = await validate();
       const model_id = el("model").value, scene_id = el("scene").value;
-      if (!model_id || !scene_id) throw new Error("请选择G11 T0模型及欧洲test场景");
-      const payload = {config, model_id, scene_id};
+      const source = sources.find(row => row.id === el("initial-source").value);
+      if (!source && (!model_id || !scene_id)) throw new Error("请选择已保存初始分配，或T0模型及场景");
+      const payload = source ? {config, source_run_id:source.run_id, source_group:source.group} : {config, model_id, scene_id};
       const pending = stablePending(payload);
       const created = await request("power-refinement/runs", {...payload, request_id:pending.request_id});
       if (!created.run_id) throw new Error("服务尚未返回任务编号，请按原请求编号重试");
@@ -191,6 +205,7 @@
         stop:()=>action("stop"),resume:()=>action("resume")};
       el(id).addEventListener("click", () => guarded(callbacks[id]));
     }
+    el("initial-source").addEventListener("change", sourceDetail);
     el("model").addEventListener("change", sourceDetail);
     el("scene").addEventListener("change", sourceDetail);
     el("run").addEventListener("change", () => {runId = el("run").value; guarded(detail);});

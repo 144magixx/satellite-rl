@@ -281,13 +281,14 @@ class Scheduler:
             directory = self.store.job_dir(run_id)
             job = read_json(directory / "job.json")
             status = read_json(directory / "status.json", {})
-            if not job or job["kind"] not in ("train", "refine"):
+            saved_evaluation = bool(job and job.get("kind") == "evaluate" and job.get("experiment_id") == "S2-P17")
+            if not job or (job["kind"] not in ("train", "refine") and not saved_evaluation):
                 raise ValueError("只有工作台训练或功率优化任务支持恢复")
             if status.get("stage") not in ("stopped", "failed", "interrupted"):
                 raise ValueError("该任务当前不能恢复；已完成任务请复制配置新建")
             if job["kind"] == "train" and not (directory / "checkpoint.pt").is_file():
                 raise ValueError("没有可恢复的训练断点，推理权重不能代替断点")
-            if job["kind"] == "refine" and source_repair is not None:
+            if (job["kind"] == "refine" or saved_evaluation) and source_repair is not None:
                 raise ValueError("功率优化按冻结源码及完整场景记录恢复，不支持训练源码替换")
             if pid_alive(status.get("pid")):
                 raise ValueError("进程仍在运行，不能重复启动")
@@ -297,7 +298,7 @@ class Scheduler:
             (directory / "stop.request").unlink(missing_ok=True)
             job["resume"] = True
             atomic_json(directory / "job.json", job)
-            fields = {"stage": "queued", "queue_reason": ("从已保存完整优化记录恢复" if job["kind"] == "refine" else "从正常断点恢复"), "pid": None,
+            fields = {"stage": "queued", "queue_reason": ("从已保存完整评价案例恢复" if saved_evaluation else "从已保存完整优化记录恢复" if job["kind"] == "refine" else "从正常断点恢复"), "pid": None,
                       "error": None, "traceback": None, "failure_path": None,
                       "exit_code": None, "exit_hex": None}
             if source_repair is not None:

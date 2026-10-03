@@ -75,8 +75,9 @@ def write_report(directory, rows, summaries, config):
     plt.close(fig)
 
     options = config["power_refinement"]
-    from satellite_rl.power_refinement.config import SI_PRIORITY_METHODS
-    priority_routes = options["methods"] == list(SI_PRIORITY_METHODS)
+    from satellite_rl.power_refinement.config import SI_PRIORITY_METHODS, VARIABLE_BEAM_METHODS
+    variable_routes = options["methods"] == list(VARIABLE_BEAM_METHODS)
+    priority_routes = options["methods"] == list(SI_PRIORITY_METHODS) or variable_routes
     lines = ["# 第三阶段固定频率槽功率细调结果", "",
              ("冻结T0生成初始分配，A为原SCA；B与C从同一A终值分别追加求解。B使用旧线性容量估计，C使用改进容量估计；两者先提高SI，随后在已找到的SI水平上提高SGM。SGM允许低于A，基本服务与总功率仍须守住。"
               if priority_routes else
@@ -129,4 +130,14 @@ def write_report(directory, rows, summaries, config):
         fig.savefig(directory / "power_scene_timing.png", dpi=150)
         plt.close(fig)
         lines += ["", "![逐场景耗时](power_scene_timing.png)"]
+    if variable_routes:
+        lines[2] = "本任务只读复用已保存的第二阶段分配；none为直接结果，sca为中间A，sca_si_lp为SCA最终B。没有重新生成初始动作。"
+        labels = {"none": "第二阶段直接分配", "sca": "中间SCA A", "sca_si_lp": "第二阶段＋SCA最终B"}
+        lines = [line.replace("T0", "第二阶段").replace("B/C", "B").replace("B与C", "B")
+                 .replace("，C对B主要比较容量估计", "") for line in lines]
+        for index, line in enumerate(lines):
+            for method, label in labels.items():
+                if line.startswith("| " + method + " |"):
+                    lines[index] = line.replace("| " + method + " |", "| " + label + " |", 1)
+        lines += ["", "S2-P17主报告按波束数量和母场景配对；本任务总体表不能替代分档报告。直接分配原始耗时另见已保存初始结果的initial_allocation_seconds；本表none包含同一初解的额外物理复核。"]
     (directory / "power_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

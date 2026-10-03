@@ -4,7 +4,8 @@ from copy import deepcopy
 import math
 from satellite_rl.envs.regions import get_profile, profile_catalog, profile_metadata
 from satellite_rl.state_layouts import (NATURAL_CONTEXT_LEVELS, natural_dim,
-                                        natural_shapes, natural_token_count)
+                                        natural_shapes, natural_token_count,
+                                        VARIABLE_BEAM_FEATURES)
 
 
 FEATURES = [
@@ -18,6 +19,9 @@ FEATURES = [
     dict(id="power_per_remaining", label="每束可用功率", description="剩余功率除以剩余束数，再除以单束参考30W", shape=[1], unit="比例", timing="动作前", source="已分配功率", visibility="both"),
     dict(id="beta", label="平均业务需求", description="全场景平均需求除以600 Mbps", shape=[1], unit="比例", timing="动作前", source="全场景需求", visibility="known"),
     dict(id="remaining_demand", label="剩余业务需求", description="含当前波束的剩余总需求除以全部波束参考需求", shape=[1], unit="比例", timing="动作前", source="全场景需求", visibility="known"),
+    dict(id="beam_count_normalized", label="实际波束数", description="实际目标束数除以200", shape=[1], unit="比例", timing="动作前", source="场景", visibility="both"),
+    dict(id="remaining_beams_normalized", label="剩余波束数/200", description="含当前待分配束，终态为0", shape=[1], unit="比例", timing="动作前", source="处理序号", visibility="both"),
+    dict(id="power_pressure", label="剩余功率压力", description="剩余功率/(剩余功率+30W×剩余目标束数)，终态为0", shape=[1], unit="比例", timing="动作前", source="真实功率账", visibility="both"),
     dict(id="remaining_demand_mean", label="剩余平均需求", description="含当前波束的剩余平均需求除以600 Mbps", shape=[1], unit="比例", timing="动作前", source="全场景需求", visibility="known"),
     dict(id="served_shortfall", label="已服务平均欠供", description="已处理波束的平均(1-满足率)，无记录时为0", shape=[1], unit="比例", timing="动作前", source="已处理波束当前速率", visibility="both"),
     dict(id="served_met", label="已服务达标比例", description="已处理波束中满足需求者比例，无记录时为0", shape=[1], unit="比例", timing="动作前", source="已处理波束当前速率", visibility="both"),
@@ -116,10 +120,12 @@ def default_config():
                      temporal_mode="none", temporal_window=16, graph_mode="none"),
         state=dict(features=["beam", "power", "interference", "occupancy"], demand_visibility="known", context_level="none"),
         reward=dict(preset="legacy_repaired", terms=[dict(id="si_delta", weight=1, scale=1, timing="step")]),
-        environment=dict(profile="china_legacy", power_budget_w=3000, basic_fraction=0.1, action_mode="legacy_clip",
+        environment=dict(profile="china_legacy", beam_count_max=100, power_budget_w=3000, basic_fraction=0.1, action_mode="legacy_clip",
                          action_mask="none",
                          power_levels_w=[5, 10, 15, 20, 25, 30, 35, 40, 45, 50]),
         training=dict(seed=51001, scene_order="sequential", scene_order_seed=51001,
+                      beam_count_mode="none", beam_count_min=50, beam_count_max=200,
+                      held_out_beam_counts=[60, 90, 140, 180],
                       total_steps=10000, batch_size=256, actor_lr=0.00001,
                       critic_lr=0.0001, alpha_lr=0.0001, gamma=0.99, tau=0.005,
                       replay_capacity=20000, warmup_steps=2000, update_every=1,
@@ -177,14 +183,16 @@ def _network_size(config):
         embed, ff = n["embedding_dim"], n["feedforward_dim"]
         token_count = (natural_token_count(config["state"]["context_level"])
                        if n["transformer_layout"] == "tsac_natural_context" else
-                       {"tsac_13_tokens": 13, "tsac_14_context": 14, "tsac_32_context": 32}.get(n["transformer_layout"], state_dim))
+                       {"tsac_13_tokens": 13, "tsac_14_context": 14,
+                        "tsac_14_variable_context": 14, "tsac_32_context": 32}.get(n["transformer_layout"], state_dim))
         if n["graph_mode"] != "none":
             token_count = 122
         elif n["temporal_mode"] != "none":
             token_count += 1
         if token_count ** 2 * n["num_heads"] * n["num_layers"] > 20_000_000:
             raise ValueError("Transformer 状态长度、注意力头数与层数的组合过大")
-        projection = {"tsac_13_tokens": 42 * embed, "tsac_14_context": 47 * embed, "tsac_32_context": 388 * embed}.get(
+        projection = {"tsac_13_tokens": 42 * embed, "tsac_14_context": 47 * embed,
+                      "tsac_14_variable_context": 50 * embed, "tsac_32_context": 388 * embed}.get(
             n["transformer_layout"], (state_dim + 2) * embed)
         if n["transformer_layout"] == "tsac_natural_context":
             shapes = natural_shapes(config["state"]["context_level"])
@@ -265,7 +273,7 @@ def validate_config(raw):
     if (n["sac_policy_structure"] != "factorized" or n["sac_critic_structure"] != "additive") and (
             c["algorithm"] != "sac" or c["environment"]["action_mask"] != "joint_feasible"):
         raise ValueError("条件策略和联合价值结构仅支持 SAC＋联合可行动作掩码")
-    if n["transformer_layout"] not in ("scalar_tokens", "tsac_13_tokens", "tsac_14_context", "tsac_32_context", "tsac_natural_context"):
+    if n["transformer_layout"] not in ("scalar_tokens", "tsac_13_tokens", "tsac_14_context", "tsac_14_variable_context", "tsac_32_context", "tsac_natural_context"):
         raise ValueError("不支持的 Transformer 输入布局")
     if n["transformer_layout"] == "tsac_13_tokens":
         if c["algorithm"] != "sac" or n["kind"] != "transformer":
@@ -279,6 +287,11 @@ def validate_config(raw):
             raise ValueError("T-SAC全局状态布局要求原204维后依次追加平均需求、处理进度、剩余需求，共207维")
         if c["state"]["demand_visibility"] != "known":
             raise ValueError("T-SAC全局状态布局需要全场景需求已知")
+    if n["transformer_layout"] == "tsac_14_variable_context":
+        if c["algorithm"] != "sac" or n["kind"] != "transformer":
+            raise ValueError("可变波束14令牌布局仅支持SAC Transformer")
+        if c["state"]["features"] != list(VARIABLE_BEAM_FEATURES) or c["state"]["demand_visibility"] != "known":
+            raise ValueError("可变波束布局要求规范210维字段顺序及已知全场景需求")
     if n["transformer_layout"] == "tsac_32_context":
         if c["algorithm"] != "sac" or n["kind"] != "transformer":
             raise ValueError("32令牌分档状态布局仅支持SAC的Transformer网络")
@@ -325,6 +338,7 @@ def validate_config(raw):
     if not isinstance(e["profile"], str):
         raise ValueError("environment.profile 必须是地区版本字符串")
     get_profile(e["profile"])
+    _number(e["beam_count_max"], "beam_count_max", 1, 200, integer=True)
     _number(e["power_budget_w"], "power_budget_w", 0, strictly=True)
     _number(e["basic_fraction"], "basic_fraction", 0, 1, strictly=True)
     if e["action_mode"] not in ("legacy_clip", "feasible_projection"):
@@ -342,8 +356,8 @@ def validate_config(raw):
     for level in levels: _number(level, "功率档位", 0, strictly=True)
     if sorted(set(levels)) != levels:
         raise ValueError("功率档位必须严格递增")
-    if e["action_mask"] == "joint_feasible" and e["power_budget_w"] < 100 * levels[0]:
-        raise ValueError("联合无效动作掩码要求总功率预算至少覆盖100束的最低功率档位")
+    if e["action_mask"] == "joint_feasible" and e["power_budget_w"] < e["beam_count_max"] * levels[0]:
+        raise ValueError(f"联合无效动作掩码要求总功率预算至少覆盖{e['beam_count_max']}束的最低功率档位")
     r = c["reward"]
     if not isinstance(r["preset"], str) or r["preset"] not in {p["id"] for p in PRESETS}:
         raise ValueError("未知奖励预设")
@@ -374,8 +388,35 @@ def validate_config(raw):
             "rollout_steps": (1, None), "ppo_epochs": (1, None), "eps_decay_steps": (1, None),
             "target_update_interval": (1, None), "checkpoint_interval": (1, None), "log_interval": (1, None)}
     for key, (lo, hi) in ints.items(): _number(t[key], key, lo, hi, integer=True)
-    if t["scene_order"] not in ("sequential", "shuffle_each_cycle"):
-        raise ValueError("训练场景顺序必须为 sequential 或 shuffle_each_cycle")
+    if t["scene_order"] not in ("sequential", "shuffle_each_cycle", "variable_beams"):
+        raise ValueError("训练场景顺序无效")
+    if t["beam_count_mode"] not in ("none", "fixed_100", "mixed_four_buckets"):
+        raise ValueError("波束数量训练模式无效")
+    _number(t["beam_count_min"], "beam_count_min", 1, 200, integer=True)
+    _number(t["beam_count_max"], "beam_count_max", 1, 200, integer=True)
+    held_out = t["held_out_beam_counts"]
+    if (not isinstance(held_out, list) or any(type(v) is not int or not 1 <= v <= 200 for v in held_out)
+            or held_out != sorted(set(held_out))):
+        raise ValueError("留出束数必须是升序、不重复的1至200整数")
+    if t["beam_count_mode"] == "none":
+        if t["scene_order"] == "variable_beams":
+            raise ValueError("可变束数场景顺序只能用于V0/V1")
+    elif (t["scene_order"] != "variable_beams" or e["profile"] != "europe_v1"
+          or e["beam_count_max"] != 200 or t["beam_count_min"] != 50
+          or t["beam_count_max"] != 200 or held_out != [60, 90, 140, 180]
+          or n["transformer_layout"] != "tsac_14_variable_context"
+          or e["action_mask"] != "joint_feasible" or e["action_mode"] != "legacy_clip"
+          or e["power_budget_w"] != 3000 or e["power_levels_w"] != [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
+          or n["sac_policy_structure"] != "factorized" or n["sac_critic_structure"] != "additive"
+          or n["dropout"] != 0 or r["preset"] != "legacy_repaired"
+          or t["alpha_mode"] != "fixed" or t["fixed_alpha"] != 0.01
+          or t["seed"] != 51001 or t["total_steps"] != 400000
+          or t["batch_size"] != 256 or t["replay_capacity"] != 20000 or t["warmup_steps"] != 2000
+          or t["update_every"] != 1 or t["gradient_steps"] != 1 or t["checkpoint_interval"] != 10000
+          or n["embedding_dim"] != 128 or n["num_heads"] != 8 or n["num_layers"] != 2
+          or n["feedforward_dim"] != 512 or t["gamma"] != 0.99 or t["tau"] != 0.005
+          or t["actor_lr"] != 1e-5 or t["critic_lr"] != 1e-4 or t["gradient_clip"] != 10):
+        raise ValueError("V0/V1配置必须与已批准的欧洲可变束数方案一致")
     for key in ("actor_lr", "critic_lr", "alpha_lr", "tau", "initial_alpha", "gradient_clip"):
         _number(t[key], key, 0, strictly=True)
     if t["tau"] > 1:
@@ -407,6 +448,12 @@ def validate_config(raw):
         raise ValueError("场景种子超出NumPy允许范围")
     if ev["action_mode"] not in ("deterministic", "stochastic"):
         raise ValueError("不支持的评价动作方式")
+    if t["beam_count_mode"] != "none" and (
+            ev["validation_count"] != 144 or ev["interval_steps"] != 20000
+            or ev["extra_steps"] != [0] or ev["repeats"] != 1
+            or ev["validation_seed"] != 53001 or ev["action_mode"] != "stochastic"
+            or ev["test_count"] != 0):
+        raise ValueError("V0/V1验证须为144场景、0至400000每20000步、每场景一次；训练任务不运行最终考核")
     telemetry = c["telemetry"]
     if telemetry["mode"] not in ("sync", "async"):
         raise ValueError("记录方式仅支持sync或async")
@@ -440,13 +487,19 @@ def catalog():
                              dict(id="beam_tokens", label="逐束令牌（122）"),
                              dict(id="interference_bias", label="逐束令牌＋物理干扰关系")],
                 scene_orders=[dict(id="sequential", label="原顺序循环", description="按固定场景集记录顺序循环", implemented=True),
-                              dict(id="shuffle_each_cycle", label="每轮打乱", description="每轮将所有固定训练场景无放回排列；不改变场景内波束顺序", implemented=True)],
+                              dict(id="shuffle_each_cycle", label="每轮打乱", description="每轮将所有固定训练场景无放回排列；不改变场景内波束顺序", implemented=True),
+                              dict(id="variable_beams", label="可变束数四桶", description="V0固定100束或V1四数量桶等概率抽样", implemented=True)],
+                beam_count_modes=[dict(id="none", label="原固定束数"),
+                                  dict(id="fixed_100", label="V0 固定100束"),
+                                  dict(id="mixed_four_buckets", label="V1 四桶各25%")],
                 presets=deepcopy(PRESETS),
                 transformer_layouts=[dict(id="scalar_tokens", label="逐标量令牌（现有工作台）", implemented=True),
                                      dict(id="tsac_13_tokens", label="原 T-SAC（13 令牌）", implemented=True,
                                           description="需 SAC、Transformer 和原204维状态顺序；旧权重不直接复用"),
                                      dict(id="tsac_14_context", label="T-SAC＋全局状态（14令牌）", implemented=True,
                                           description="207维：原204维后加平均需求、进度、剩余需求；独立权重版本"),
+                                     dict(id="tsac_14_variable_context", label="可变束数T-SAC（14令牌）", implemented=True,
+                                          description="210维：原207维后加实际束数、剩余束数、剩余功率压力；频率动作仍为100槽"),
                                      dict(id="tsac_32_context", label="状态分档对照（32令牌）", implemented=True,
                                           description="四档共用2946维封装与32令牌骨干，未开放信息严格置零"),
                                      dict(id="tsac_natural_context", label="自然维度状态对照", implemented=True,
@@ -464,6 +517,14 @@ def catalog():
                                       network=dict(kind="transformer", transformer_layout="tsac_14_context",
                                                    embedding_dim=128, num_heads=8, num_layers=2,
                                                    feedforward_dim=512, activation="relu", dropout=0.1)),
+                                 dict(id="tsac_14_variable_context", label="可变束数T-SAC（14令牌）",
+                                      description="V0/V1共同210维网络；需欧洲场景、3000W及四桶配置",
+                                      algorithm="sac", demand_visibility="known", context_level="none",
+                                      reward_preset="legacy_repaired", scene_order="variable_beams",
+                                      state_features=list(VARIABLE_BEAM_FEATURES),
+                                      network=dict(kind="transformer", transformer_layout="tsac_14_variable_context",
+                                                   embedding_dim=128, num_heads=8, num_layers=2,
+                                                   feedforward_dim=512, activation="relu", dropout=0)),
                                  dict(id="tsac_32_context", label="状态分档对照（32令牌）",
                                       description="同一结构比较四档可见信息，未开放信息归零；保留旧奖励设置",
                                       algorithm="sac", demand_visibility="known", context_level="compact",
@@ -541,6 +602,7 @@ def config_summary(config):
     layout_description = ({"scalar_tokens": "状态中每个标量各形成一个令牌，全部令牌汇总后输出",
                            "tsac_13_tokens": "位置、业务需求、功率各1个令牌，干扰与占用按10段合为10个频率槽令牌；读取首令牌输出",
                            "tsac_14_context": "保留原13令牌，另加平均需求、处理进度与剩余需求组成的全局令牌；207维输入，读取首令牌输出",
+                           "tsac_14_variable_context": "保留原13令牌，全局令牌含原3项与束数、剩余束数、功率压力；210维输入，共14令牌",
                            "tsac_32_context": "四档同2946维封装：原13令牌＋全局1＋每10束一段共10＋8个资源组；未开放信息置零，共32令牌",
                            "tsac_natural_context": "状态与令牌仅包含本档实际开放的信息；无未开放字段占位"}
                           .get(transformer_layout))
@@ -548,7 +610,8 @@ def config_summary(config):
     graph_mode = c["network"]["graph_mode"]
     token_count = (natural_token_count(c["state"]["context_level"])
                    if transformer_layout == "tsac_natural_context" else
-                   {"tsac_13_tokens": 13, "tsac_14_context": 14, "tsac_32_context": 32}.get(transformer_layout, offset)
+                   {"tsac_13_tokens": 13, "tsac_14_context": 14,
+                    "tsac_14_variable_context": 14, "tsac_32_context": 32}.get(transformer_layout, offset)
                    if transformer_layout else None)
     if graph_mode != "none":
         token_count = 122
@@ -561,6 +624,12 @@ def config_summary(config):
         if temporal_mode in ("gru", "causal_transformer"):
             layout_description += f"；每个目标决策附最多{c['network']['temporal_window']}步同场景历史，仅目标位置计一个学习损失"
     return dict(state_dim=offset, state_layout=layout,
+                state_version=("variable_beams_210_v1" if transformer_layout == "tsac_14_variable_context"
+                               else "tsac_14_context_207_v1" if transformer_layout == "tsac_14_context"
+                               else transformer_layout),
+                beam_count_max=c["environment"]["beam_count_max"],
+                beam_count_mode=c["training"]["beam_count_mode"],
+                held_out_beam_counts=c["training"]["held_out_beam_counts"],
                 environment_profile=c["environment"]["profile"],
                 environment_metadata=environment_metadata,
                 transformer_layout=transformer_layout,
