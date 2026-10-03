@@ -751,7 +751,10 @@ def run_coverage_job(job_dir, resume=False):
         for role, record in config["datasets"].items():
             if _sha256(record["path"]) != record["sha256"]:
                 raise ValueError(f"Frozen {role} dataset hash mismatch")
-        if job["kind"] == "train":
+        if config["schema_version"] == 3:
+            from .balance_runner import run_balance_job
+            run_balance_job(directory, job, config, resume=resume, preflight=preflight)
+        elif job["kind"] == "train":
             _train(directory, job, config, resume, preflight)
         elif job["kind"] == "evaluate":
             if resume:

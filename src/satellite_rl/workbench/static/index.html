@@ -67,6 +67,7 @@
         <div class="layout-two"><div class="stack">
           <div class="panel"><h2>覆盖方案</h2><div class="field-grid">
             <label class="field">方案名称<input id="coverage-name" value="第一阶段 · 规则布局＋PPO"></label>
+            <label class="field">配置版本<select id="coverage-schema"><option value="2">S1-01原九动作（旧模型）</option><option value="3">S1-02覆盖与主体均衡</option></select></label>
             <label class="field">环境<select id="coverage-profile" disabled><option value="europe_v1">欧洲版（航空业务）</option></select></label>
             <label class="field">基础布局<select id="coverage-initialization"><option value="rule">现有需求加权覆盖规则</option><option value="cluster">需求加权聚类</option><option value="empty">无基础布局（纯PPO逐束构建）</option></select></label>
             <label class="field">布局决策<select id="coverage-method"><option value="ppo">PPO</option><option value="none">不微调（评价基线）</option><option value="local_search">普通局部搜索（评价基线）</option></select></label>
@@ -76,12 +77,31 @@
             <label class="field">需求覆盖下限<input type="number" id="coverage-demand-floor" min="0" max="1" step="0.001" value="0.99"></label>
             <label class="field">用户覆盖下限<input type="number" id="coverage-user-floor" min="0" max="1" step="0.001" value="0.99"></label>
             <label class="field">聚类迭代次数<input type="number" id="coverage-cluster-iterations" min="1" max="100" value="12"></label>
+            <label class="field coverage-balance-field">路线<select id="coverage-route"><option value="prepare">准备共同A2起点</option><option value="A0">A0 旧C1聚类加局部搜索</option><option value="A1">A1 C1加覆盖修补</option><option value="A2">A2 加负载感知归属</option><option value="A3">A3 加四向格点调位</option><option value="X0">X0 四向固定步长搜索</option><option value="X1">X1 八方向固定步长搜索</option><option value="X2">X2 四向1/2/4格搜索</option><option value="X3">X3 加业务引导候选搜索</option><option value="X4">X4 加相邻双束搜索</option><option value="ppo">PPO 按所选菜单训练或评价</option></select></label>
+            <label class="field coverage-balance-field">PPO或搜索动作菜单<select id="coverage-action-menu"><option value="X0">X0 四向5动作</option><option value="X1">X1 八方向9动作</option><option value="X2">X2 四向多步13动作</option><option value="X3">X3 业务引导最多21动作</option><option value="X4">X4 相邻双束最多37动作</option></select></label>
+            <label class="field coverage-balance-field">卫星视角一格角距（度）<input type="number" id="coverage-step-angle" min="0.0001" max="1" step="0.001"></label>
+            <label class="field coverage-balance-field">覆盖目标<select id="coverage-goal"><option value="strict_100">双100%完整覆盖</option><option value="near_99_9">双99.9%接近完整</option></select></label>
+            <label class="field coverage-balance-field">主体CV目标<input type="number" id="coverage-subject-cv" min="0" max="2" step="0.01"></label>
+            <label class="field coverage-balance-field">主体负载±比例<input type="number" id="coverage-subject-range" min="0" max="1" step="0.01"></label>
+            <label class="field coverage-balance-field">范围内最少束数<input type="number" id="coverage-subject-count" min="0" max="100"></label>
+            <label class="field coverage-balance-field">最多边缘例外束<input type="number" id="coverage-edge-count" min="0" max="100"></label>
+            <label class="field coverage-balance-field">边缘区域需求比例上限<input type="number" id="coverage-edge-demand-ratio" min="0" max="1" step="0.01"></label>
+            <label class="field coverage-balance-field">最多轮数<input type="number" id="coverage-max-rounds" min="1" max="10"></label>
+            <label class="field coverage-balance-field">最多束处理<input type="number" id="coverage-max-decisions" min="1" max="1000"></label>
+            <label class="field coverage-balance-field">修补动作上限<input type="number" id="coverage-repair-decisions" min="1" max="200"></label>
+            <label class="field coverage-balance-field">修补候选核验上限<input type="number" id="coverage-repair-evaluations" min="1" max="20000"></label>
+            <label class="field coverage-balance-field">归属扫描上限<input type="number" id="coverage-assignment-passes" min="1" max="20"></label>
+            <label class="field coverage-balance-field">归属尝试上限<input type="number" id="coverage-assignment-attempts" min="1" max="200000"></label>
+            <label class="field coverage-balance-field">每次动作后最多完整转移<input type="number" id="coverage-post-move-transfers" min="1" max="1"></label>
+            <label class="field coverage-balance-field">调位候选核验上限<input type="number" id="coverage-candidate-evaluations" min="1" max="20000"></label>
+            <label class="field coverage-balance-field">细调秒数上限<input type="number" id="coverage-max-seconds" min="0.001" max="60" step="0.1"></label>
           </div><p class="small muted" id="coverage-action-note">固定100束、0.5°全宽，规则/聚类组每步局部微调；纯PPO从空布局逐束选择原始航空器位置，100步构建完成。终态覆盖、负载与约束分别记录。</p></div>
           <div class="panel"><h2>航空业务数据</h2><div class="field-grid">
             <label class="field">远端逐机目录或已准备NPZ<input id="coverage-data-path" placeholder="/home/.../data_inputs/train"></label>
             <label class="field">数据用途<select id="coverage-data-role"><option value="train">训练</option><option value="validation">验证</option><option value="test">独立考核</option></select></label>
           </div><button id="coverage-import-data" type="button">准备并登记数据</button><p class="small muted">按当前布局模式准备数据，保留原始飞机需求、UTC日期与来源校验。规则、聚类和空布局各自登记训练、验证与考核数据。</p>
           <div class="field-grid"><label class="field">训练数据<select id="coverage-data-train"></select></label><label class="field">验证数据<select id="coverage-data-validation"></select></label><label class="field">独立考核数据<select id="coverage-data-test"></select></label></div></div>
+          <div class="panel coverage-balance-field"><h2>共同A2起点来源</h2><p class="small muted">先用当前数据分区提交“准备共同A2起点”评价任务。训练、验证及考核分别绑定已完成任务，来源文件和SHA随新任务冻结。</p><div class="field-grid"><label class="field">训练A2任务<select id="coverage-start-train"></select></label><label class="field">验证A2任务<select id="coverage-start-validation"></select></label><label class="field">考核A2任务<select id="coverage-start-test"></select></label></div></div>
           <div class="panel"><h2>PPO训练与评价</h2><div class="field-grid">
             <label class="field">任务用途<select id="coverage-purpose"><option value="formal">正式实验</option><option value="verification">工程短验证（不计训练成果）</option></select></label>
             <label class="field">训练种子<input id="coverage-seed" type="number" value="51001"></label>
@@ -94,12 +114,13 @@
             <label class="field">验证间隔（交互步）<input id="coverage-validation-interval" type="number" min="0" value="20480"></label>
             <label class="field">断点间隔（交互步）<input id="coverage-checkpoint-interval" type="number" min="1" value="20480"></label>
             <label class="field">PPO评价模型<select id="coverage-model"></select></label>
+            <label class="field coverage-balance-field">准备数据分区<select id="coverage-dataset-role"><option value="train">训练</option><option value="validation">验证</option><option value="test">考核</option></select></label>
           </div><details><summary>完整配置</summary><textarea id="coverage-config-json" rows="12" spellcheck="false"></textarea><button id="coverage-apply-json" type="button">应用配置</button></details>
           <div class="actions"><button id="coverage-validate" type="button">检查配置</button><button id="coverage-save" type="button">保存方案</button><button id="coverage-start" class="primary" type="button">提交PPO训练</button><button id="coverage-evaluate" type="button">提交评价或基线</button></div><div id="coverage-message" class="notice muted" role="status">正在读取第一阶段配置…</div></div>
         </div><aside class="stack"><div class="panel"><h2>远端运行记录</h2><label class="field">任务<select id="coverage-run"></select></label><div class="actions"><button id="coverage-stop" type="button">停止并保存</button><button id="coverage-resume" type="button">从断点恢复</button></div><div id="coverage-status" class="facts"></div></div>
           <div class="panel"><h2>覆盖与学习曲线</h2><div id="coverage-curves"></div></div>
           <div class="panel"><h2>原始日志</h2><pre id="coverage-logs" class="log-box">选择任务查看日志。</pre></div>
-          <div class="panel"><h2>模型与评价结果</h2><pre id="coverage-results" class="log-box">评价完成后显示结果。</pre></div>
+          <div class="panel"><h2>模型与评价结果</h2><a id="coverage-result-download" href="#" target="_blank" rel="noopener">查看完整逐场景、逐束与动作结果</a><pre id="coverage-results" class="log-box">评价完成后显示结果。</pre></div>
         </aside></div>
       </section>
       <section class="page active" id="page-config" aria-labelledby="config-title">

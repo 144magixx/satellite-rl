@@ -197,12 +197,18 @@ class Store:
                                 "training_scene_path" if role == "train" else role + "_scene_path")
                     frozen_extra[path_key] = record["path"]
             if is_coverage:
-                from .coverage import freeze_dataset
+                from .coverage import freeze_balance_start, freeze_dataset
                 config = dict(config)
                 config["datasets"] = {role: freeze_dataset(record, directory / "scene_inputs" / role)
                                       for role, record in config["datasets"].items()}
+                if config.get("schema_version") == 3:
+                    config["balance_starts"] = {
+                        role: freeze_balance_start(record, directory / "balance_starts" / role)
+                        for role, record in config.get("balance_starts", {}).items()}
                 frozen_extra["research_stage"] = "coverage"
                 frozen_extra["dataset_provenance"] = config["datasets"]
+                if config.get("schema_version") == 3:
+                    frozen_extra["balance_start_provenance"] = config["balance_starts"]
             if kind in ("evaluate", "refine") and (not is_coverage or config["coverage"]["method"] == "ppo"):
                 model_target = directory / "model_input"
                 model_target.mkdir()
