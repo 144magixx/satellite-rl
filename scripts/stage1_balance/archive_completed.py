@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import time
 
 from remote_sources import LOCAL, REMOTE, connect
@@ -84,15 +85,38 @@ def target(relative: str) -> Path:
     return LOCAL / "remote_archive" / path
 
 
-def copy_file(sftp, item: dict) -> dict:
+def copy_file(sftp, item: dict, inventory_by_relative: dict[str, dict]) -> dict:
     rel = item["relative"]
     source = REMOTE + "/" + rel.replace("\\", "/")
     destination = target(rel)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
-        if destination.stat().st_size != item["bytes"] or sha(destination) != item["sha256"]:
-            raise RuntimeError("Local archived artifact changed: " + str(destination))
-        action = "verified_existing"
+        if destination.stat().st_size == item["bytes"] and sha(destination) == item["sha256"]:
+            action = "verified_existing"
+        else:
+            prefix = "outputs/experiments/first_stage_s1_02_20261004/analysis/A_development/"
+            name = rel[len(prefix):] if rel.startswith(prefix) else ""
+            if name not in ("audit.json", "audit.stdout.log", "audit.stderr.log"):
+                raise RuntimeError("Local archived artifact changed: " + str(destination))
+            history_rel = prefix + "history/initial_failed_" + name
+            historical = inventory_by_relative.get(history_rel)
+            if historical is None or sha(destination) != historical["sha256"]:
+                raise RuntimeError("Earlier failed audit is not represented by remote SHA history")
+            historical_target = target(history_rel)
+            historical_target.parent.mkdir(parents=True, exist_ok=True)
+            if historical_target.exists():
+                if sha(historical_target) != historical["sha256"]:
+                    raise RuntimeError("Local failed-audit history changed")
+            else:
+                shutil.copyfile(destination, historical_target)
+                if sha(historical_target) != historical["sha256"]:
+                    raise RuntimeError("Failed-audit history copy differs")
+            temporary = destination.with_suffix(destination.suffix + ".tmp")
+            sftp.get(source, str(temporary))
+            if temporary.stat().st_size != item["bytes"] or sha(temporary) != item["sha256"]:
+                raise RuntimeError("Corrected audit transfer SHA differs")
+            temporary.replace(destination)
+            action = "corrected_audit_with_prior_sha_history"
     else:
         temporary = destination.with_suffix(destination.suffix + ".tmp")
         sftp.get(source, str(temporary))
@@ -157,7 +181,8 @@ def archive_once() -> dict:
                 elif gate and gate.get("status") == "passed":
                     roots.append(analysis + "/" + phase)
             inventory = remote_inventory(client, roots)
-            files = [copy_file(sftp, item) for item in inventory]
+            inventory_by_relative = {item["relative"]: item for item in inventory}
+            files = [copy_file(sftp, item, inventory_by_relative) for item in inventory]
             receipt = {"experiment_id": "S1-02", "status": "completed_artifacts_sha_mirrored",
                        "checked_utc": now(), "controller_phase": state.get("phase"),
                        "controller_route": route,
