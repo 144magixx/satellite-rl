@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**S2-P17已获执行授权，正在实现与预检（2026-10-04）：**用户批准方案17开始，并明确本轮只在`10.160.17.102:20424`执行，覆盖原双实例建议。两新组各400000交互/seed51001、总800000；6048验证分配、4840独立初始分配及同数SCA完整细调预算保持。最终报告须并列第二阶段直接结果与第三阶段SCA最终结果及分段/总耗时。已从70572f7建立独立开发worktree与`codex/variable-beams-20261004`分支，正在做可变N、210维状态、混合采样、工作台和数据适配；源码尚未冻结，正式任务尚未提交，效果待验证。真实远端观测与数据资格见[运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)及preflight，不用旧完成记录代替本轮检查。[方案17](docs/第二阶段/方案/17_可变波束数量泛化训练方案.md)。
+
 **S1-02已获执行授权，正在实现和数据准备（2026-10-04）：**用户批准“先A阶段，再按方案05做B阶段”，本轮仅20418。范围落实为A开发80/正式400方法结果，B验证集五菜单筛选100结果，X0加两个候选各409600交互/seed51001（共1228800），训练验证1200及新100景三模型加三搜索600结果；原两奖励目标矩阵不额外执行。开发worktree为`C:/Users/Admin/.codex/worktrees/stage1-balance-actions/paper`，分支`codex/stage1-balance-actions`；核心、工作台与运行管线并行实现，尚未冻结新科学提交或提交正式任务，效果待验证。
 
 实际远端核验北京时间02:53:24：20418 DQN/CUDA可用、4090D无训练占用，默认包仍指旧repo，正式将显式绑定新snapshot。A Jan28与B Jan30各100时刻已在看场景/成绩前冻结，避开另一个第二阶段任务的Jan29；原train576/val20来源已核，原包下载由两持久后台进程执行，下载不算训练。每小时`s1-02-a-b`已ACTIVE并精确回读。入口：[执行说明06](docs/第一阶段/方案/06_A阶段与动作空间B阶段远端执行说明.md) · [运行清单](outputs/experiments/first_stage_s1_02_20261004/run_manifest.json) · [真实远端预检](outputs/experiments/first_stage_s1_02_20261004/preflight/remote_readonly_20418.json) · [定时配置回读](outputs/experiments/first_stage_s1_02_20261004/preflight/automation_readback.json)。旧S1-01及其他阶段保持原记录，本条优先于以下未授权候选历史。
