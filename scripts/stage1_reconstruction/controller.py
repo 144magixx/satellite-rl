@@ -307,7 +307,7 @@ else:
             observation["other_instance_error"] = str(error)
         if label == "train_P1":
             code = """
-import json,urllib.request
+import json,urllib.request,sys
 try:
  with urllib.request.urlopen('http://127.0.0.1:8781/api/runs',timeout=10) as response:
   rows=json.load(response).get('runs',[])
@@ -461,6 +461,11 @@ else:
   status=json.loads(status_path.read_text(encoding='utf-8-sig')) if status_path.is_file() else {{}}
   jobs[key]={{'run_id':entry.get('run_id'),'manifest_stage':entry.get('stage'),
              'status_stage':status.get('stage'),'status_path':str(status_path)}}
+ if (manifest.get('phase')!='awaiting_report_and_archive' or
+     any(item['manifest_stage']!='completed' or item['status_stage']!='completed' or
+         not item['run_id'] for item in jobs.values())):
+  print(json.dumps({{'ready':True,'phase':manifest.get('phase'),'jobs':jobs,'live':[],
+   'api_error':None,'api_skipped':'S2 controller still has pending scientific work'}}));sys.exit(0)
  try:
   with urllib.request.urlopen('http://127.0.0.1:8781/api/runs',timeout=10) as response:
    runs=json.load(response).get('runs',[])
@@ -472,12 +477,20 @@ else:
  print(json.dumps({{'ready':True,'phase':manifest.get('phase'),'jobs':jobs,
                     'live':live,'api_error':error}},ensure_ascii=False))
 """
-        observed = self.code(20424, code)
+        try:
+            observed = self.code(20424, code)
+        except Attention as error:
+            self.state["observed"]["s2_release"] = {
+                "observed_utc": utcnow(), "ready": False,
+                "blocked_reason": "S2 resource release cannot currently be verified",
+                "transport_error": str(error)}
+            return False
         self.state["observed"]["s2_release"] = {"observed_utc": utcnow(), **observed}
         if not observed.get("ready"):
             return False
         if observed.get("api_error"):
-            raise Attention("S2-P17工作台8781不可用，不能确认无活动任务：" + observed["api_error"])
+            self.state["observed"]["s2_release"]["blocked_reason"] = "S2 API unavailable; keep 20424 queued while 20418 continues"
+            return False
         if observed.get("phase") != "awaiting_report_and_archive" or observed["live"]:
             return False
         jobs = observed["jobs"]

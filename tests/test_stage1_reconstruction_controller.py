@@ -295,6 +295,23 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(controller.state["s2_release"]["mode"],
                              "S2_controller_terminal_and_live_API")
 
+    def test_unavailable_s2_dependency_keeps_peer_queued_without_halting_primary(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = Controller(plan(Path(temporary)), SHA, Path(temporary) / "state.json")
+            controller.code = lambda *_args, **_kwargs: {
+                "ready": True, "phase": "awaiting_report_and_archive",
+                "jobs": {}, "live": [], "api_error": "timed out"}
+            self.assertFalse(controller._s2_released())
+            self.assertIsNone(controller.state["attention"])
+            self.assertIsNone(controller.state["s2_release"])
+            self.assertIn("20418 continues", controller.state["observed"]["s2_release"]["blocked_reason"])
+            def unavailable(*_args, **_kwargs):
+                raise Attention("20424 unavailable")
+            controller.code = unavailable
+            self.assertFalse(controller._s2_released())
+            self.assertIsNone(controller.state["attention"])
+            self.assertIsNone(controller.state["s2_release"])
+
 
 if __name__ == "__main__":
     unittest.main()
