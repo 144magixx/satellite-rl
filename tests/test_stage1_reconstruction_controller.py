@@ -312,6 +312,29 @@ class ControllerTests(unittest.TestCase):
             self.assertIsNone(controller.state["attention"])
             self.assertIsNone(controller.state["s2_release"])
 
+    def test_busy_s2_generated_probe_does_not_query_api(self):
+        import contextlib
+        import io
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "s2.json"
+            manifest.write_text(json.dumps({"phase": "sca", "jobs": {}}), encoding="utf-8")
+            source = plan(root)
+            source["s2_release"]["controller_manifest"] = str(manifest)
+            controller = Controller(source, SHA, root / "state.json")
+            def execute_probe(_port, code):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), patch("urllib.request.urlopen", side_effect=AssertionError("busy S2 must not query API")):
+                    try:
+                        exec(code, {})
+                    except SystemExit as error:
+                        self.assertEqual(error.code, 0)
+                return json.loads(output.getvalue())
+            controller.code = execute_probe
+            self.assertFalse(controller._s2_released())
+            self.assertEqual(controller.state["observed"]["s2_release"]["phase"], "sca")
+
 
 if __name__ == "__main__":
     unittest.main()

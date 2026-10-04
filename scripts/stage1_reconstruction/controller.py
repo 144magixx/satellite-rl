@@ -465,7 +465,7 @@ else:
      any(item['manifest_stage']!='completed' or item['status_stage']!='completed' or
          not item['run_id'] for item in jobs.values())):
   print(json.dumps({{'ready':True,'phase':manifest.get('phase'),'jobs':jobs,'live':[],
-   'api_error':None,'api_skipped':'S2 controller still has pending scientific work'}}));sys.exit(0)
+   'api_error':None,'api_skipped':'S2 controller still has pending scientific work'}}));raise SystemExit(0)
  try:
   with urllib.request.urlopen('http://127.0.0.1:8781/api/runs',timeout=10) as response:
    runs=json.load(response).get('runs',[])
