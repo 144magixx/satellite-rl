@@ -27,8 +27,12 @@ def stage(client, port, commit):
     base = git("merge-base", commit, OLD_COMMIT).decode().strip()
     bundle = LOCAL / "preflight" / ("source_" + commit + ".bundle")
     if not bundle.is_file():
-        subprocess.run(["git", "bundle", "create", str(bundle), commit, "^"+base],
+        if git("rev-parse", "HEAD").decode().strip() != commit:
+            raise RuntimeError("Create a source bundle while the clean checkout is at the requested commit")
+        subprocess.run(["git", "bundle", "create", str(bundle), "HEAD", "^"+base],
                        cwd=REPOSITORY, check=True)
+    subprocess.run(["git", "bundle", "verify", str(bundle)], cwd=REPOSITORY,
+                   check=True, capture_output=True)
     run_code(client, f"""
 import pathlib,json
 root=pathlib.Path({root!r})
@@ -58,7 +62,7 @@ if current!={commit!r}:
    raw=(p/'stat').read_text();birth=int(raw[raw.rfind(')')+2:].split()[19])
    if birth==record.get('start_ticks'): raise RuntimeError('Cannot change source under an active S1-03 service')
  if not fresh and call(['git','-C',str(repo),'status','--porcelain']):raise RuntimeError('Existing isolated repo has local modifications')
- call(['git','-C',str(repo),'fetch',{incoming!r},{commit!r}])
+ call(['git','-C',str(repo),'fetch',{incoming!r},'HEAD'])
  call(['git','-C',str(repo),'checkout','--detach',{commit!r}])
 actual=call(['git','-C',str(repo),'rev-parse','HEAD'])
 if actual!={commit!r} or call(['git','-C',str(repo),'status','--porcelain','--','src','data','pyproject.toml']):
