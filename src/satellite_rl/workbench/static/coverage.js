@@ -29,7 +29,7 @@
     for(const node of document.querySelectorAll(".coverage-reconstruction-field")) node.hidden = !reconstructed();
     for(const node of document.querySelectorAll(".coverage-start-field")) node.hidden = !(balanced()||reconstructed());
     for(const id of ["method","sweeps","coordinate-step","max-movement","demand-floor","user-floor"])el(id).closest(".field").hidden=reconstructed();
-    for(const id of ["coordinate-step","max-movement","sweeps"])el(id).disabled=pure||balanced()||reconstructed();
+    for(const id of ["coordinate-step","max-movement","sweeps"]){el(id).disabled=pure||balanced()||reconstructed();el(id).closest("label").hidden=reconstructed();}
     el("initialization").disabled=balanced()||reconstructed();el("method").disabled=balanced()||reconstructed();
     for(const option of el("method").options)option.disabled=pure&&option.value!=="ppo";
     el("action-menu").disabled=balanced() && ["prepare","A0","A1","A2","A3","X0","X1","X2","X3","X4"].includes(config.coverage.balance.route);
@@ -37,7 +37,7 @@
     el("start").disabled=(balanced()&&config.coverage.balance.route!=="ppo")||(reconstructed()&&config.coverage.reconstruction.route!=="P1");
     el("start-heading").textContent=reconstructed()?"S1-03共同覆盖初始化来源":"共同A2起点来源";
     el("start-note").textContent=reconstructed()?"每个分区先提交prepare评价任务；P1训练及R0–R3/P1评价绑定已完成起点。跨实例来源先只读导入，逐SHA冻结。":"先用当前数据分区提交A2准备评价任务。训练、验证及考核分别绑定已完成任务，来源文件和SHA随新任务冻结。";
-    el("action-note").textContent=reconstructed()?"S1-03欧洲版固定100束、0.5°全宽。PPO选择完整区域重构宏动作，包括区域/波束与切分模板；STOP立即交出原终态。每动作及每景几何调用有硬预算，覆盖、主体CV与全体束负载独立报告；轨迹最好仅作诊断。":balanced()?"欧洲版固定100束、0.5°全宽；卫星视角格宽与旧经纬度步长不同。四向/八向/多步/业务候选/双束按菜单独立计数；X4双束占两次束处理。覆盖目标、主体CV、例外、早停原因与实际动作在任务中记录。第一阶段未计算的容量、SI、SGM标为不适用。":pure?"纯PPO起始真实激活束为0；从原始正需求航空器位置池中逐次选100个唯一波位。局部格步长、移动范围与移动代价不适用。":"规则/聚类提供100束基础布局，PPO每步保持或局部移动一束；固定0.5°全宽。";
+    el("action-note").textContent=reconstructed()?"S1-03欧洲版固定100束、0.5°全宽，不受旧聚类中心0.25°位移限制。PPO选择完整区域重构宏动作，包括区域/波束与切分模板；STOP立即交出原终态。每动作及每景几何调用有硬预算，覆盖、主体CV与全体束负载独立报告；轨迹最好仅作诊断。":balanced()?"欧洲版固定100束、0.5°全宽；卫星视角格宽与旧经纬度步长不同。四向/八向/多步/业务候选/双束按菜单独立计数；X4双束占两次束处理。覆盖目标、主体CV、例外、早停原因与实际动作在任务中记录。第一阶段未计算的容量、SI、SGM标为不适用。":pure?"纯PPO起始真实激活束为0；从原始正需求航空器位置池中逐次选100个唯一波位。局部格步长、移动范围与移动代价不适用。":"规则/聚类提供100束基础布局，PPO每步保持或局部移动一束；固定0.5°全宽。";
   }
   function readForm() {
     config.name = el("name").value;

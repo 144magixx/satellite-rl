@@ -10,3 +10,5 @@
 .spectrum-row span{width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .trace-controls{display:flex;align-items:center;gap:6px;margin:10px 0}.trace-controls button{padding:4px 9px}.trace-controls input{flex:1;min-width:50px;accent-color:var(--accent)}.trace-controls span{min-width:53px;text-align:right;color:var(--muted);font-size:11px}.trace-box{max-height:300px;overflow:auto}.trace-step-card{font-size:11px;line-height:1.55}.trace-step-card h4{font-size:12px;margin:0 0 7px}.trace-step-card dl{display:grid;grid-template-columns:auto 1fr;gap:5px 9px;margin:0}.trace-step-card dt{color:var(--muted)}.trace-step-card dd{margin:0;overflow-wrap:anywhere}.trace-step-card details{margin-top:10px}.trace-step-card pre,.trace-raw{white-space:pre-wrap;overflow-wrap:anywhere;font:10px/1.5 Consolas,"Microsoft YaHei",monospace;background:#f4f8fa;padding:9px;border:1px solid var(--line);border-radius:6px;max-height:260px;overflow:auto}.trace-box .empty-state{min-height:130px}
 .coverage-balance-field[hidden] { display: none !important; }
+
+#page-coverage [hidden]{display:none!important}
