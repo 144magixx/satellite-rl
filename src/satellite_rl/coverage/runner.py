@@ -751,7 +751,16 @@ def run_coverage_job(job_dir, resume=False):
         for role, record in config["datasets"].items():
             if _sha256(record["path"]) != record["sha256"]:
                 raise ValueError(f"Frozen {role} dataset hash mismatch")
-        if config["schema_version"] == 3:
+        if config["schema_version"] == 4:
+            from satellite_rl.workbench.coverage import _reconstruction_target
+            from types import SimpleNamespace
+            target = _reconstruction_target(SimpleNamespace(archive_root=Path(job["archive_root"])))
+            if job.get("execution_target") != target:
+                raise ValueError("S1-03任务归属实例与当前执行实例不一致")
+            preflight["execution_target"] = target
+            from .reconstruction_runner import run_reconstruction_job
+            run_reconstruction_job(directory, job, config, resume=resume, preflight=preflight)
+        elif config["schema_version"] == 3:
             from .balance_runner import run_balance_job
             run_balance_job(directory, job, config, resume=resume, preflight=preflight)
         elif job["kind"] == "train":

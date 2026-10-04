@@ -63,11 +63,11 @@
         </div></div>
       </section>
       <section class="page" id="page-coverage" hidden>
-        <div class="page-heading"><div><p class="eyebrow">FIRST STAGE</p><h1>波束覆盖规划</h1><p>比较规则或聚类基础布局的微调，以及从空布局由PPO逐束构建；覆盖与负载独立于第二阶段资源分配评价。</p></div><button type="button" id="coverage-refresh">刷新任务与数据</button></div>
+        <div class="page-heading"><div><p class="eyebrow">FIRST STAGE</p><h1>波束覆盖规划</h1><p>可选择历史布局方法或S1-03需求区域重构：共同覆盖初始化、完整宏动作规则/搜索与PPO；覆盖和负载独立于第二阶段资源分配评价。</p></div><button type="button" id="coverage-refresh">刷新任务与数据</button></div>
         <div class="layout-two"><div class="stack">
           <div class="panel"><h2>覆盖方案</h2><div class="field-grid">
             <label class="field">方案名称<input id="coverage-name" value="第一阶段 · 规则布局＋PPO"></label>
-            <label class="field">配置版本<select id="coverage-schema"><option value="2">S1-01原九动作（旧模型）</option><option value="3">S1-02覆盖与主体均衡</option></select></label>
+            <label class="field">配置版本<select id="coverage-schema"><option value="2">S1-01原九动作（旧模型）</option><option value="3">S1-02覆盖与主体均衡</option><option value="4">S1-03需求区域重构</option></select></label>
             <label class="field">环境<select id="coverage-profile" disabled><option value="europe_v1">欧洲版（航空业务）</option></select></label>
             <label class="field">基础布局<select id="coverage-initialization"><option value="rule">现有需求加权覆盖规则</option><option value="cluster">需求加权聚类</option><option value="empty">无基础布局（纯PPO逐束构建）</option></select></label>
             <label class="field">布局决策<select id="coverage-method"><option value="ppo">PPO</option><option value="none">不微调（评价基线）</option><option value="local_search">普通局部搜索（评价基线）</option></select></label>
@@ -95,13 +95,22 @@
             <label class="field coverage-balance-field">每次动作后最多完整转移<input type="number" id="coverage-post-move-transfers" min="1" max="1"></label>
             <label class="field coverage-balance-field">调位候选核验上限<input type="number" id="coverage-candidate-evaluations" min="1" max="20000"></label>
             <label class="field coverage-balance-field">细调秒数上限<input type="number" id="coverage-max-seconds" min="0.001" max="60" step="0.1"></label>
+          </div><div class="field-grid coverage-reconstruction-field" hidden>
+            <label class="field">S1-03路线<select id="coverage-reconstruction-route"><option value="prepare">prepare 共同覆盖初始化</option><option value="R0">R0 仅共同初始化</option><option value="R1">R1 完整宏动作确定性规则</option><option value="R2">R2 完整宏动作随机选择</option><option value="R3">R3 等几何预算搜索</option><option value="P1">P1 完整宏动作关系PPO</option></select></label>
+            <label class="field">每景最多完整宏动作<input id="coverage-macro-steps" type="number" min="1" max="128" value="32"></label>
+            <label class="field">每动作最多几何调用<input id="coverage-geometry-action" type="number" min="1" value="256"></label>
+            <label class="field">每景最多几何调用<input id="coverage-geometry-total" type="number" min="1" value="8192"></label>
+            <label class="field">初始化独立几何调用预算<input id="coverage-initialization-geometry" type="number" min="1" value="8192"></label>
+            <label class="field">R3每步最多试算完整动作<input id="coverage-search-width" type="number" min="1" max="64" value="8"></label>
+            <label class="field">固定切分模板<input id="coverage-split-templates" value="0,1,2,3" readonly></label>
+            <label class="field">机制闸门交互步<input id="coverage-mechanism-gate" type="number" min="1" value="65536" readonly></label>
           </div><p class="small muted" id="coverage-action-note">固定100束、0.5°全宽，规则/聚类组每步局部微调；纯PPO从空布局逐束选择原始航空器位置，100步构建完成。终态覆盖、负载与约束分别记录。</p></div>
           <div class="panel"><h2>航空业务数据</h2><div class="field-grid">
             <label class="field">远端逐机目录或已准备NPZ<input id="coverage-data-path" placeholder="/home/.../data_inputs/train"></label>
             <label class="field">数据用途<select id="coverage-data-role"><option value="train">训练</option><option value="validation">验证</option><option value="test">独立考核</option></select></label>
           </div><button id="coverage-import-data" type="button">准备并登记数据</button><p class="small muted">按当前布局模式准备数据，保留原始飞机需求、UTC日期与来源校验。规则、聚类和空布局各自登记训练、验证与考核数据。</p>
-          <div class="field-grid"><label class="field">训练数据<select id="coverage-data-train"></select></label><label class="field">验证数据<select id="coverage-data-validation"></select></label><label class="field">独立考核数据<select id="coverage-data-test"></select></label></div></div>
-          <div class="panel coverage-balance-field"><h2>共同A2起点来源</h2><p class="small muted">先用当前数据分区提交“准备共同A2起点”评价任务。训练、验证及考核分别绑定已完成任务，来源文件和SHA随新任务冻结。</p><div class="field-grid"><label class="field">训练A2任务<select id="coverage-start-train"></select></label><label class="field">验证A2任务<select id="coverage-start-validation"></select></label><label class="field">考核A2任务<select id="coverage-start-test"></select></label></div></div>
+          <div class="field-grid"><label class="field">训练数据<select id="coverage-data-train"></select></label><label class="field">验证数据<select id="coverage-data-validation"></select></label><label class="field">独立考核数据<select id="coverage-data-test"></select></label></div><div class="coverage-reconstruction-field" hidden><p class="small muted">跨实例已准备NPZ请登记来源记录ID后只读导入；来源SHA、原实例和分区一并保存。</p><div class="field-grid"><label class="field">来源数据实例<select id="coverage-import-data-target"><option value="20418">20418</option><option value="20424">20424</option></select></label><label class="field">来源数据记录ID<input id="coverage-import-dataset-id" placeholder="coverage_scenes_..."></label><label class="field">来源数据用途<select id="coverage-import-data-role"><option value="train">训练</option><option value="validation">验证</option><option value="test">考核</option></select></label></div><button id="coverage-import-dataset" type="button">跨实例导入数据</button></div></div>
+          <div class="panel coverage-start-field" hidden><h2 id="coverage-start-heading">共同起点来源</h2><p class="small muted" id="coverage-start-note">已完成的prepare任务可作为同分区共同起点，来源和SHA随新任务冻结。</p><div class="field-grid"><label class="field">训练起点任务<select id="coverage-start-train"></select></label><label class="field">验证起点任务<select id="coverage-start-validation"></select></label><label class="field">考核起点任务<select id="coverage-start-test"></select></label></div><div class="coverage-reconstruction-field" hidden><p class="small muted">跨实例来源须先只读导入。当前工作台实例由服务器核验，不能在请求中手填执行端口。</p><div class="field-grid"><label class="field">来源实例<select id="coverage-import-target"><option value="20418">20418</option><option value="20424">20424</option></select></label><label class="field">来源prepare或P1任务ID<input id="coverage-import-run-id" placeholder="已完成任务ID"></label><label class="field">起点分区<select id="coverage-import-role"><option value="train">训练</option><option value="validation">验证</option><option value="test">考核</option></select></label></div><div class="actions"><button id="coverage-import-start" type="button">导入共同起点</button><button id="coverage-import-model" type="button">导入P1模型</button></div></div></div>
           <div class="panel"><h2>PPO训练与评价</h2><div class="field-grid">
             <label class="field">任务用途<select id="coverage-purpose"><option value="formal">正式实验</option><option value="verification">工程短验证（不计训练成果）</option></select></label>
             <label class="field">训练种子<input id="coverage-seed" type="number" value="51001"></label>
@@ -120,7 +129,7 @@
         </div><aside class="stack"><div class="panel"><h2>远端运行记录</h2><label class="field">任务<select id="coverage-run"></select></label><div class="actions"><button id="coverage-stop" type="button">停止并保存</button><button id="coverage-resume" type="button">从断点恢复</button></div><div id="coverage-status" class="facts"></div></div>
           <div class="panel"><h2>覆盖与学习曲线</h2><div id="coverage-curves"></div></div>
           <div class="panel"><h2>原始日志</h2><pre id="coverage-logs" class="log-box">选择任务查看日志。</pre></div>
-          <div class="panel"><h2>模型与评价结果</h2><a id="coverage-result-download" href="#" target="_blank" rel="noopener">查看完整逐场景、逐束与动作结果</a><pre id="coverage-results" class="log-box">评价完成后显示结果。</pre></div>
+          <div class="panel"><h2>模型与评价结果</h2><a id="coverage-result-download" href="#" target="_blank" rel="noopener">查看结果汇总</a> · <a id="coverage-raw-download" href="#" target="_blank" rel="noopener">下载逐场景原始记录</a><pre id="coverage-results" class="log-box">评价完成后显示结果。</pre></div>
         </aside></div>
       </section>
       <section class="page active" id="page-config" aria-labelledby="config-title">

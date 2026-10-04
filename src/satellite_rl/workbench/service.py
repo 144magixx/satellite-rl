@@ -552,7 +552,8 @@ class Application:
                  "updates.csv", "episodes.csv", "evaluations.csv", "events.jsonl", "worker.log", "config.json",
                  "job.json", "manifest.json", "status.json", "results.json", "failure.json", "artifacts.json",
                  "power_results.csv", "power_beams.csv", "power_scene_times.csv", "power_iterations.jsonl", "power_cases.jsonl",
-                 "power_report.md"}
+                 "power_report.md", "starts.jsonl", "starts.partial.jsonl",
+                 "results.partial.jsonl", "mechanism_gate.json", "mechanism_audit.json"}
         if filename == "report.md":
             detail, result = self.run_detail(identifier), self.results(identifier)
             lines = ["# 卫星资源分配实验报告", "", "运行：" + identifier,

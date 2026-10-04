@@ -205,10 +205,16 @@ class Store:
                     config["balance_starts"] = {
                         role: freeze_balance_start(record, directory / "balance_starts" / role)
                         for role, record in config.get("balance_starts", {}).items()}
+                elif config.get("schema_version") == 4:
+                    config["reconstruction_starts"] = {
+                        role: freeze_balance_start(record, directory / "reconstruction_starts" / role)
+                        for role, record in config.get("reconstruction_starts", {}).items()}
                 frozen_extra["research_stage"] = "coverage"
                 frozen_extra["dataset_provenance"] = config["datasets"]
                 if config.get("schema_version") == 3:
                     frozen_extra["balance_start_provenance"] = config["balance_starts"]
+                elif config.get("schema_version") == 4:
+                    frozen_extra["reconstruction_start_provenance"] = config["reconstruction_starts"]
             if kind in ("evaluate", "refine") and (not is_coverage or config["coverage"]["method"] == "ppo"):
                 model_target = directory / "model_input"
                 model_target.mkdir()

@@ -286,8 +286,11 @@ class Scheduler:
             resumable_balance_eval = bool(job and job.get("kind") == "evaluate" and
                                           config.get("research_stage") == "coverage" and
                                           config.get("schema_version") == 3)
+            resumable_reconstruction_eval = bool(job and job.get("kind") == "evaluate" and
+                                                 config.get("research_stage") == "coverage" and
+                                                 config.get("schema_version") == 4)
             if not job or (job["kind"] not in ("train", "refine") and
-                           not (saved_evaluation or resumable_balance_eval)):
+                           not (saved_evaluation or resumable_balance_eval or resumable_reconstruction_eval)):
                 raise ValueError("只有工作台训练或功率优化任务支持恢复")
             if status.get("stage") not in ("stopped", "failed", "interrupted"):
                 raise ValueError("该任务当前不能恢复；已完成任务请复制配置新建")
@@ -298,8 +301,32 @@ class Scheduler:
                 partial_name = "starts.partial.jsonl" if route == "prepare" else "results.partial.jsonl"
                 if not (directory / partial_name).is_file():
                     raise ValueError("没有可恢复的逐场景记录；评价不能跳过已完成场景")
-            if (job["kind"] == "refine" or saved_evaluation or resumable_balance_eval) and source_repair is not None:
+            if resumable_reconstruction_eval:
+                route = config.get("coverage", {}).get("reconstruction", {}).get("route")
+                partial_name = "starts.partial.jsonl" if route == "prepare" else "results.partial.jsonl"
+                if not (directory / partial_name).is_file():
+                    raise ValueError("没有可恢复的S1-03逐场景记录；评价不能伪重跑")
+            if (job["kind"] == "refine" or saved_evaluation or resumable_balance_eval or
+                    resumable_reconstruction_eval) and source_repair is not None:
                 raise ValueError("功率优化按冻结源码及完整场景记录恢复，不支持训练源码替换")
+            if (config.get("research_stage") == "coverage" and config.get("schema_version") == 4 and
+                    job["kind"] == "train" and status.get("stop_reason") == "mechanism_gate_pending"):
+                from satellite_rl.workbench.storage import digest
+                checkpoint_sha = digest(directory / "checkpoint.pt")
+                gate = read_json(directory / "mechanism_gate.json", {})
+                audit_path = Path(gate.get("audit_path", ""))
+                audit = read_json(audit_path, {})
+                allowed = (directory.resolve(), (self.store.archive_root / "ops" / "audits").resolve())
+                if (gate.get("approved") is not True or gate.get("run_id") != run_id or
+                        gate.get("env_step") != status.get("env_step") or
+                        gate.get("checkpoint_sha256") != checkpoint_sha or
+                        status.get("checkpoint_sha256") != checkpoint_sha or
+                        not audit_path.is_file() or not any(audit_path.resolve().is_relative_to(root) for root in allowed) or
+                        digest(audit_path) != gate.get("audit_sha256") or
+                        audit.get("passed") is not True or audit.get("run_id") != run_id or
+                        audit.get("env_step") != status.get("env_step") or
+                        audit.get("checkpoint_sha256") != checkpoint_sha):
+                    raise ValueError("S1-03机制闸门缺少与当前断点一致的工作台审计证明；保持停止状态")
             if pid_alive(status.get("pid")):
                 raise ValueError("进程仍在运行，不能重复启动")
             if source_repair is not None:
@@ -311,6 +338,8 @@ class Scheduler:
             reason = ("从已保存完整评价案例恢复" if saved_evaluation else
                       "从已保存完整优化记录恢复" if job["kind"] == "refine" else
                       "从S1-02逐场景记录恢复" if resumable_balance_eval else "从正常断点恢复")
+            if resumable_reconstruction_eval:
+                reason = "从S1-03逐场景记录恢复"
             fields = {"stage": "queued", "queue_reason": reason, "pid": None,
                       "error": None, "traceback": None, "failure_path": None,
                       "exit_code": None, "exit_hex": None}

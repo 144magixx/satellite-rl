@@ -89,7 +89,7 @@ def _merge(default, supplied, path=""):
         raise ValueError(f"{path}存在未实现的配置项: {sorted(unknown)}")
     result = deepcopy(default)
     for key, value in supplied.items():
-        if isinstance(default[key], dict) and key not in ("datasets", "balance_starts"):
+        if isinstance(default[key], dict) and key not in ("datasets", "balance_starts", "reconstruction_starts"):
             result[key] = _merge(default[key], value, f"{path}{key}.")
         else:
             result[key] = deepcopy(value)
@@ -100,6 +100,9 @@ def validate_config(config):
     if not isinstance(config, dict):
         raise ValueError("配置须为对象")
     version = config.get("schema_version", 2)
+    if version == 4:
+        from .reconstruction_config import validate_reconstruction_config
+        return validate_reconstruction_config(config)
     if version not in (2, 3):
         raise ValueError("仅支持第一阶段配置版本2或3；旧配置不可静默转换")
     c = _merge(default_config() if version == 2 else balance_default_config(), config)
@@ -252,6 +255,9 @@ def config_hash(config):
 
 def summary(config):
     c = validate_config(config)
+    if c["schema_version"] == 4:
+        from .reconstruction_config import reconstruction_summary
+        return reconstruction_summary(c)
     if c["schema_version"] == 3:
         menu = c["coverage"]["balance"]["action_menu"]
         return {"research_stage": "coverage", "schema_version": 3,
