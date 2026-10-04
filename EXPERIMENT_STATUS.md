@@ -1,5 +1,11 @@
 # 实验状态与新窗口接手说明
 
+**S2-P17 SCA已按原ID修复接续（2026-10-04，北京时间23:30:50 API/SSH根核）：**训练V0/V1各400000、2/2及800000总交互完成，三共同评价3/3、4840初解完成。V0 SCA仍为`refine_sac_20261004_215930_e814197c`/`s2p17-v0-jan29-sca`，现evaluating、544/3960条方法记录；逐文件计数none182/A181/B181，已保存181/4840条最终B（含1条明确失败回退），SCA完成0/5来源，后四来源由原控制器依次接续。新worker80820/出生ticks772138443、server80715/ticks772131461与controller81152/ticks772166046均实际匹配，DQN/CUDA及单worker计时条件通过，controller phase=sca且last_error为空。
+
+原科学提交`0a4742a9a15af93478501497fac5cd36579fa075`及其源码/模型/初解不改。候选严格边界修正单独提交`57ddd9e30c54b9999c327ae5a9d5655a2d41ce01`，恢复/报告提交`c80acaeca867a448cd8ec8cecaad5cfc79d8597a`已部署到20424独立`recovery/c80…/repo`并经工作台API绑定原任务；API同时保留原来源、实际repair快照、299件和失败尝试备份及SHA证明。真实干净repair源码全量548项中545通过、3项Windows限定跳过；原299最终记录及99个B最高SI候选逐束复核无异常。23:30再核原299件SHA全部未变，scene_00033_r0失败B逐束等于原A、新增优化调用0，原失败精确调用/时间依旧缺失并单列下界，不以工程复算代填。主计时表/图只对三动作精确时间完整的场景汇总，失败终态仍纳入。
+
+本地完整修复代码保存在`codex/variable-beams-20261004`开发worktree；main期间另有第一阶段共享runtime改动，合并及所需整合验证安排在正式SCA计时结束后，避免并行测试争用。本轮报告应使用已冻结repair repo或开发worktree中的`report_results.py`，不能用main旧报告入口忽略来源链。正式双阶段结果、全量物理/计时审计、曲线和双端归档仍待交付，每小时跟进继续。[实际恢复验收](outputs/experiments/variable_beams_20261004/preflight/repair_live_acceptance_c80acae.json) · [548项回归](outputs/experiments/variable_beams_20261004/preflight/repair_full_c80acaeca867.json) · [99候选复算](outputs/experiments/variable_beams_20261004/preflight/highest_si_audit_20261004T150922Z.json) · [工作台恢复回执](outputs/experiments/variable_beams_20261004/preflight/repair_resume_api_c80acae.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。下方22:11故障未恢复为历史时点。
+
 **S1-02 A/B执行、共同考核及正式结果完成（2026-10-04，北京时间22:39:40 API/SSH实查）：**三训练X0四向/X1八方向/X4相邻双束各409600交互、1600更新及20验证节点，累计1228800/1228800（100%）；六方法Jan30共同考核各100/100、共600/600，完整600保留布局及300原终态独立复算通过。活跃训练/评价均0，GPU单点0%/4MiB（总23028MiB）；controller与归档watcher已完成其阶段并正常退出，不恢复旧PID。原科学e22、单seed51001、固定终点与全部预算未变。
 
 六法全部100/100双99.9%覆盖、严格双100%为92或93景，但主体均衡目标均0/100。四向搜索主体CV0.532496、均值带内26.60束、已记录合计11.538秒，可作当前参照；三PPO对同菜单搜索主体CV差+0.002633/+0.002730/−0.001187，双束PPO微小改善伴随64.096秒均值耗时（约5.46倍），未显示全面优势。PPO原终态与保留结果分别报告；原终态三组主体CV都差于对应搜索。全部100景保留分母，例外仅0–3束；初始聚类逐景计时缺失不补零，时间非完整端到端。本轮未发生真实训练并行，未来新实验按用户要求优先并行。
