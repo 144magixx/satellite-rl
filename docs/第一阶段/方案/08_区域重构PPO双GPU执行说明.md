@@ -94,3 +94,10 @@ Jan31新100景数据与逐文件SHA已经冻结，record SHA`e3ef7caea792c86b6fe
 20418 GPU瞬时0%、显存1342/23028MiB，20424为0%、4/24564MiB；尚未满载。05:14采样的P1进程CPU约100%单核心，提示当前有CPU侧采样开销，单点不能当完整性能剖析或持续GPU利用率。20424仍等待既有S2正式计时，未提交新S1科学任务；其放行后与P1并行做既定对照，不启动额外模型或热改冻结batch/采样机制。
 
 [训练现场](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/observe_20261004T211457.json) · [首次真实更新与资格核验](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/P1_initial_sampling_probe.json) · [前端训练截图](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/workbench_p1_training.png) · [任务已绑定的每小时跟进回读](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/automation_training_readback.json)。启动运维证据19项已在两实例独立目录逐SHA备份，属于启动归档，不能宣称最终权重/报告已交付。
+
+
+## 8 定时跟进文本编码修复
+
+2026-10-05的05:18心跳暴露自动化名称与早期正文已包含真实Unicode替换字符，不是仅终端显示异常。原名称11个、正文1403个，原配置完整备份；本轮用完整可读中文重写，经工作台应用工具保存后逐字段核对，并确认两者替换字符均0。每小时、目标对话及ACTIVE状态保留。后续需要经过终端传递中文配置时使用JSON ASCII转义或无损UTF-8通道，避免将损坏的历史字符串重新拼入正文。训练任务、控制器、科学源码与预算均未修改或重启。
+
+[修复前后与操作回执目录](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/heartbeat_20261005_0518/) · [精确回读](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/heartbeat_20261005_0518/automation_repair_readback.json)。05:22:16–17实际API/SSH核验P1为23552/262144、368更新，首个16384验证节点20/20的记录与SHA已核；这是中途进度，效果仍待共同考核。
