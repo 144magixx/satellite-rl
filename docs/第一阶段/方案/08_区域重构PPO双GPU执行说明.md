@@ -83,3 +83,14 @@ Jan12开发闸门必须保存20景完整起点/方法结果及独立复算，确
 05:06:27–28再次API/SSH核验六个原任务均completed、两端服务/源码/配置无差异，控制器attention为空，等待考核输入准备；活跃训练0，累计**0/262144（0%）**，两GPU均0%、显存各4MiB。新训练起点记录为572/576合格、4不合格，starts SHA`5b50576b5f943e2b538fdaa9e382a93dfa34444304080f4d2267f3d5ca779577`，训练任务另存完整资格与原因账，不照搬旧551数量。Jan31官方原始数据本地已完成、SHA`934a443c3669842a1a93f1c3fd7be2bc6dfdcd77c202dfedf00243027e56d424`，后台SFTP传输与远端DQN准备接续；这一时间点尚不将最终输入称已冻结。
 
 归档器PID23484只复制已完成任务；第一轮六任务及源码共208文件核验无差异，后续周期无错误。每小时`s1-03-ppo-gpu`保持ACTIVE且已更新科学源、调度恢复与观察入口并精确回读。所有PID都是本节记录时点，不作为下次核验的自动恢复依据。[启动验收](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/startup_acceptance.json) · [实际任务观测](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/observe_20261004T210628.json) · [配置精确回读](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/automation_startup_readback.json)。正式训练、模型效果、新考核与报告仍待后续，未提前结束跟进。
+
+
+## 7 P1已开始真实学习
+
+北京时间05:14:56–57实际API/SSH核验：唯一P1任务`train_ppo_20261005_051054_d2e8e76a`为training、**3072/262144（1.171875%）宏动作、48次参数更新**，训练完成0/1、活跃1。worker45214出生、DQN/CUDA、冻结e174源码和配置SHA均通过；65536机制闸门尚未到达，效果待验证。
+
+Jan31新100景数据与逐文件SHA已经冻结，record SHA`e3ef7caea792c86b6fe45348cbbe73f65ce6b021da942f2d45debce20e441291`、manifest SHA`f8a2d1bf70ba6c07815b3e0e622b69229edcd0eb0960503e18474f5cbc5a4e4e`，数据ID`coverage_scenes_20261005_050938_07548016`。共同起点任务`evaluate_ppo_20261005_050939_c90e9d14`已100/100完成，全部公共准备696/696，未额外生成考核场景。P1冻结资格表保留576行、572合格，SHA`744b115799dbfefef92b7847fae1f5e74a6cbe9eb6667b9d60fd40ccac150168`。
+
+20418 GPU瞬时0%、显存1342/23028MiB，20424为0%、4/24564MiB；尚未满载。05:14采样的P1进程CPU约100%单核心，提示当前有CPU侧采样开销，单点不能当完整性能剖析或持续GPU利用率。20424仍等待既有S2正式计时，未提交新S1科学任务；其放行后与P1并行做既定对照，不启动额外模型或热改冻结batch/采样机制。
+
+[训练现场](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/observe_20261004T211457.json) · [首次真实更新与资格核验](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/P1_initial_sampling_probe.json) · [前端训练截图](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/workbench_p1_training.png) · [任务已绑定的每小时跟进回读](../../../outputs/experiments/first_stage_s1_03_20261005/preflight/automation_training_readback.json)。启动运维证据19项已在两实例独立目录逐SHA备份，属于启动归档，不能宣称最终权重/报告已交付。
