@@ -28,6 +28,7 @@ except ImportError:  # Direct execution: python scripts/stage1_reconstruction/co
 ACTIVE = {"queued", "starting", "initializing", "preparing", "training", "running",
           "validating", "evaluating", "refining", "warmup"}
 S2_SCA_JOBS = ("V0_sca", "V1_sca", "H0_sca", "fixed_sca", "greedy_sca")
+TARGET_20418 = "u2024110224@10.160.17.102:20418"
 ROUTE_METHOD = {"prepare": "none", "R0": "none", "R1": "local_search",
                 "R2": "local_search", "R3": "local_search", "P1": "ppo"}
 GATES = {"development_min_valid_scenes": 16, "development_min_improved_scenes": 4,
@@ -99,13 +100,16 @@ def load_plan(path):
     raw = path.read_bytes()
     plan = json.loads(raw.decode("utf-8-sig"))
     required = {"science_commit", "config_template", "ports", "hostroot",
-                "local_output_root", "raw_inputs", "gates", "audit_commands", "s2_release"}
+                "local_output_root", "raw_inputs", "gates", "audit_commands", "s2_release",
+                "test_prepare_port"}
     if not isinstance(plan, dict) or not required <= set(plan):
         raise ValueError("S1-03 plan缺少冻结源码、配置、数据、闸门或S2放行信息")
     if not re.fullmatch(r"[0-9a-f]{40}", plan["science_commit"]):
         raise ValueError("science_commit须为完整40位Git提交")
     if plan["ports"] != [20418, 20424] or plan["hostroot"] != remote.REMOTE_BASE:
         raise ValueError("S1-03 plan执行端必须为批准的双实例归档")
+    if plan["test_prepare_port"] != 20418:
+        raise ValueError("本轮共同test初始化只允许20418执行一次")
     template = plan["config_template"]
     if (template.get("schema_version") != 4 or template.get("research_stage") != "coverage" or
             template.get("algorithm") != "ppo" or
@@ -120,9 +124,16 @@ def load_plan(path):
     for role, record in plan["raw_inputs"].items():
         if not isinstance(record, dict) or not isinstance(record.get("path"), str) or not record["path"]:
             raise ValueError(f"{role}原始输入路径缺失")
+        if role in ("train", "validation") and (
+                not re.fullmatch(r"[0-9a-f]{64}", record.get("sha256", "")) or
+                not isinstance(record.get("dates"), list) or not record["dates"] or
+                not all(isinstance(day, str) and day for day in record["dates"])):
+            raise ValueError(f"{role}须冻结原NPZ SHA与来源日期")
     test = plan["raw_inputs"]["test"]
-    if not all(test.get(key) for key in ("record_path", "manifest_path", "selection_sha256")):
-        raise ValueError("新独立考核须冻结record/manifest/selection SHA")
+    if not all(test.get(key) for key in ("record_path", "manifest_path",
+                                             "selection_contract_path", "selection_sha256",
+                                             "selected_times_sha256")):
+        raise ValueError("新独立考核须分别冻结record/manifest/选择合同/时刻SHA")
     if not all(key in plan["audit_commands"] for key in ("development", "mechanism", "formal")):
         raise ValueError("三项独立审计命令未配置")
     for mode, command in plan["audit_commands"].items():
@@ -157,6 +168,7 @@ class Controller:
                                   "s2_release": None, "test_release": None,
                                   "attention": None}
         self.state.setdefault("concurrency", {})
+        self._input_checks = set()
 
     def save(self):
         self.state["updated_utc"] = utcnow()
@@ -199,6 +211,8 @@ class Controller:
     def _dataset(self, role, port):
         key = f"{port}:{role}"
         source = self.plan["raw_inputs"][role]
+        if role in ("train", "validation"):
+            self._verify_raw_npz(role, port)
         name = f"S1-03-{self.plan_sha256[:12]}-{role}"
         catalog = self.api(port, "coverage/datasets")["datasets"]
         record = next((row for row in catalog if row.get("id") == self.state["datasets"].get(key)), None)
@@ -224,6 +238,45 @@ class Controller:
                                                        "count": record.get("count")}
         return True
 
+    def _verify_raw_npz(self, role, port):
+        key = f"{port}:{role}"
+        if key in self._input_checks:
+            if self.state["observed"].get("input_source_" + key, {}).get("input_source_sha256") != self.plan["raw_inputs"][role]["sha256"]:
+                raise Attention(f"{role}原NPZ来源SHA与已保存观察不一致")
+            return
+        source = self.plan["raw_inputs"][role]
+        code = f"""
+import hashlib,json
+from pathlib import Path
+p=Path({source['path']!r});record_path=p.parent/'record.json'
+def sha(path):
+ h=hashlib.sha256()
+ with path.open('rb') as stream:
+  for block in iter(lambda:stream.read(1024*1024),b''):h.update(block)
+ return h.hexdigest()
+if not p.is_file() or not record_path.is_file():
+ print(json.dumps({{'ready':False}}))
+else:
+ record=json.loads(record_path.read_text(encoding='utf-8-sig'))
+ print(json.dumps({{'ready':True,'input_source_sha256':sha(p),
+                    'record_sha256':sha(record_path),'record':record}},ensure_ascii=False))
+"""
+        observed = self.code(port, code, timeout=60)
+        record = observed.get("record") or {}
+        source_info = record.get("source") or {}
+        record_role = record.get("partition_role") or source_info.get("partition_role")
+        dates = record.get("dates") or source_info.get("source_dates")
+        if (not observed.get("ready") or observed.get("input_source_sha256") != source["sha256"] or
+                record_role != role or sorted(dates or []) != sorted(source["dates"]) or
+                (source.get("record_sha256") and observed.get("record_sha256") != source["record_sha256"])):
+            raise Attention(f"{role}原NPZ字节、record用途/日期或来源SHA不匹配")
+        self.state["observed"]["input_source_" + key] = {
+            "observed_utc": utcnow(), "path": source["path"],
+            "input_source_sha256": observed["input_source_sha256"],
+            "record_sha256": observed["record_sha256"],
+            "partition_role": record_role, "dates": sorted(dates)}
+        self._input_checks.add(key)
+
     def _job_config(self, label, route):
         config = deepcopy(self.plan["config_template"])
         config["name"] = f"S1-03 {label}"
@@ -237,17 +290,37 @@ class Controller:
         if label in self.state["concurrency"]:
             return
         other = 20424 if port == 20418 else 20418
-        system = self.api(port, "system")
-        sibling = self.api(other, "coverage/runs")["runs"]
-        self.state["concurrency"][label] = {
-            "observed_utc": utcnow(), "port": port,
-            "device": system.get("device"), "gpu_snapshot": system.get("gpu"),
-            "python": system.get("python"), "torch": system.get("torch"),
-            "cuda_build": system.get("cuda_build"),
-            "server_time": system.get("server_time"),
-            "other_instance_active": [{"run_id": row.get("run_id"), "stage": row.get("stage")}
-                                      for row in sibling if row.get("stage") in ACTIVE],
-        }
+        observation = {"observed_utc": utcnow(), "port": port}
+        try:
+            system = self.api(port, "system")
+            observation.update(device=system.get("device"), gpu_snapshot=system.get("gpu"),
+                               python=system.get("python"), torch=system.get("torch"),
+                               cuda_build=system.get("cuda_build"), server_time=system.get("server_time"))
+        except Attention as error:
+            observation["system_error"] = str(error)
+        try:
+            sibling = self.api(other, "coverage/runs")["runs"]
+            observation["other_instance_active"] = [
+                {"run_id": row.get("run_id"), "stage": row.get("stage")}
+                for row in sibling if row.get("stage") in ACTIVE]
+        except Attention as error:
+            observation["other_instance_error"] = str(error)
+        if label == "train_P1":
+            code = """
+import json,urllib.request
+try:
+ with urllib.request.urlopen('http://127.0.0.1:8781/api/runs',timeout=10) as response:
+  rows=json.load(response).get('runs',[])
+ print(json.dumps({'active':[{'run_id':r.get('run_id'),'stage':r.get('stage')}
+   for r in rows if r.get('stage') in ('queued','starting','initializing','preparing','training','running','validating','evaluating','refining','warmup')]}))
+except Exception as error:
+ print(json.dumps({'error':str(error)}))
+"""
+            try:
+                observation["s2_8781"] = self.code(20424, code, retry=1)
+            except Attention as error:
+                observation["s2_8781"] = {"error": str(error)}
+        self.state["concurrency"][label] = observation
 
     def _job(self, label, port, route, kind, role=None):
         request_id = f"s103_{self.plan_sha256[:16]}_{label}"
@@ -268,7 +341,9 @@ class Controller:
                     "verification" if role == "validation" else "formal",
                     "request_id": request_id}
             if route != "prepare":
-                body["start_run_ids"] = {r: self.state["jobs"][f"prepare_{r}"] for r in roles}
+                body["start_run_ids"] = {
+                    r: (self.state["imports"]["test_start_20424"] if r == "test" and port == 20424
+                        else self.state["jobs"][f"prepare_{r}"]) for r in roles}
             if kind == "evaluate" and route == "P1":
                 body["model_id"] = self.state["imports"]["P1_model_20424"]
             job = self.api(port, "coverage/runs", body, timeout=180, retry=3)
@@ -315,10 +390,11 @@ import hashlib,json
 from pathlib import Path
 record_path=Path({source['record_path']!r})
 manifest_path=Path({source['manifest_path']!r})
-if not record_path.is_file() or not manifest_path.is_file():
- print(json.dumps({{'ready':False,'reason':'test record or completion manifest absent'}}))
+contract_path=Path({source['selection_contract_path']!r})
+if not record_path.is_file() or not manifest_path.is_file() or not contract_path.is_file():
+ print(json.dumps({{'ready':False,'reason':'test record, completion manifest or selection contract absent'}}))
 else:
- rb=record_path.read_bytes(); mb=manifest_path.read_bytes()
+ rb=record_path.read_bytes(); mb=manifest_path.read_bytes();cb=contract_path.read_bytes()
  record=json.loads(rb.decode('utf-8-sig')); manifest=json.loads(mb.decode('utf-8-sig'))
  selected=record.get('source',{{}}).get('selected_times',[])
  selection_sha=hashlib.sha256(json.dumps(selected,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
@@ -333,8 +409,9 @@ else:
     for block in iter(lambda:stream.read(1024*1024),b''):h.update(block)
    if h.hexdigest()!=item.get('sha256'):files_ok=False;break
  print(json.dumps({{'ready':True,'record_sha256':hashlib.sha256(rb).hexdigest(),
-   'manifest_sha256':hashlib.sha256(mb).hexdigest(),'record':record,
-   'manifest':manifest,'selection_sha256':selection_sha,'scene_files_verified':files_ok}},ensure_ascii=False))
+   'manifest_sha256':hashlib.sha256(mb).hexdigest(),
+   'selection_contract_sha256':hashlib.sha256(cb).hexdigest(),'record':record,
+   'manifest':manifest,'selected_times_sha256':selection_sha,'scene_files_verified':files_ok}},ensure_ascii=False))
 """
         observed = self.code(20418, code, timeout=60)
         if not observed.get("ready"):
@@ -345,7 +422,8 @@ else:
                 manifest.get("status") == "prepared_not_imported_or_evaluated" and
                 manifest.get("count") == 100 and
                 manifest.get("staged_record_sha256") == observed["record_sha256"] and
-                observed["selection_sha256"] == source["selection_sha256"] and
+                observed["selection_contract_sha256"] == source["selection_sha256"] and
+                observed["selected_times_sha256"] == source["selected_times_sha256"] and
                 observed["scene_files_verified"] is True)
         if source.get("record_sha256") and observed["record_sha256"] != source["record_sha256"]:
             good = False
@@ -358,7 +436,8 @@ else:
         self.state["test_release"] = {"observed_utc": utcnow(),
                                        "record_sha256": observed["record_sha256"],
                                        "manifest_sha256": observed["manifest_sha256"],
-                                       "selection_sha256": observed["selection_sha256"],
+                                       "selection_contract_sha256": observed["selection_contract_sha256"],
+                                       "selected_times_sha256": observed["selected_times_sha256"],
                                        "scene_count": 100}
         return True
 
@@ -710,6 +789,55 @@ print(json.dumps({{'state':state,'pid':pid,'expected_start_time':expected,
                                        "source_run_id": source_run_id}
         return True
 
+    def _import_test_20424(self):
+        source_dataset_id = self.state["datasets"]["20418:test"]
+        source_run_id = self.state["jobs"]["prepare_test"]
+        source_rows = self.api(20418, "coverage/datasets")["datasets"]
+        source_dataset = next((row for row in source_rows if row.get("id") == source_dataset_id), None)
+        source_prepare = self.api(20418, "runs/" + source_run_id)
+        if (source_dataset is None or source_prepare["status"].get("stage") != "completed" or
+                source_prepare["job"].get("execution_target") != TARGET_20418 or
+                source_prepare["job"].get("reconstruction_route") != "prepare"):
+            raise Attention("20418共同test数据/起点未完成或任务归属不符")
+        dataset_sha = source_dataset["sha256"]
+        start_sha = source_prepare["artifacts"].get("reconstruction_starts_sha256")
+        if (not re.fullmatch(r"[0-9a-f]{64}", dataset_sha) or
+                not re.fullmatch(r"[0-9a-f]{64}", start_sha or "")):
+            raise Attention("20418共同test数据或起点缺少冻结SHA")
+        imported = self.api(20424, "coverage/datasets")["datasets"]
+        matches = [row for row in imported if row.get("source_dataset_id") == source_dataset_id and
+                   row.get("source_target") == TARGET_20418 and row.get("partition_role") == "test"]
+        if len(matches) > 1:
+            raise Attention("20424同一test数据存在多个跨实例导入记录")
+        dataset = matches[0] if matches else self.api(20424, "coverage/reconstruction/import-dataset", {
+            "source_target": "20418", "source_dataset_id": source_dataset_id,
+            "partition_role": "test"}, retry=1)
+        if (dataset.get("sha256") != dataset_sha or dataset.get("source_dataset_id") != source_dataset_id or
+                dataset.get("source_target") != TARGET_20418):
+            raise Attention("20424导入test数据与20418同源SHA不一致")
+        self.state["datasets"]["20424:test"] = dataset["id"]
+        self.state["observed"]["dataset_20424:test"] = {
+            "observed_utc": utcnow(), "sha256": dataset_sha,
+            "source_dataset_id": source_dataset_id, "source_target": TARGET_20418,
+            "count": dataset.get("count")}
+        starts = self.api(20424, "coverage/reconstruction/imports")["starts"]
+        matches = [row for row in starts if row.get("source_run_id") == source_run_id and
+                   row.get("source_target") == TARGET_20418 and row.get("partition_role") == "test"]
+        if len(matches) > 1:
+            raise Attention("20424同一test起点存在多个跨实例导入记录")
+        start = matches[0] if matches else self.api(20424, "coverage/reconstruction/import-start", {
+            "source_target": "20418", "source_run_id": source_run_id,
+            "partition_role": "test"}, retry=1)
+        if (start.get("sha256") != start_sha or start.get("dataset_sha256") != dataset_sha or
+                start.get("source_run_id") != source_run_id or start.get("source_target") != TARGET_20418):
+            raise Attention("20424导入test起点与20418共同初始化SHA不一致")
+        self.state["imports"]["test_start_20424"] = start["id"]
+        self.state["observed"]["test_start_20424"] = {
+            "observed_utc": utcnow(), "sha256": start_sha,
+            "dataset_sha256": dataset_sha, "source_run_id": source_run_id,
+            "source_target": TARGET_20418}
+        return True
+
     def _lane_20418(self):
         port = 20418
         self.state["phase"] = "preparing_development"
@@ -729,10 +857,12 @@ print(json.dumps({{'state':state,'pid':pid,'expected_start_time':expected,
         if not self._job("prepare_train", port, "prepare", "evaluate", "train"):
             self.state["phase"] = "preparing_train"
             return
-        if not (self.state.get("test_release") and self.state["datasets"].get("20424:test") and
-                self.state["jobs"].get("prepare_test") and
-                self.state["observed"].get("prepare_test", {}).get("stage") == "completed"):
+        if not self._test_source_ready():
             self.state["phase"] = "awaiting_frozen_independent_test"
+            return
+        self._dataset("test", port)
+        if not self._job("prepare_test", port, "prepare", "evaluate", "test"):
+            self.state["phase"] = "preparing_test_on_20418"
             return
         self.state["phase"] = "training"
         if not self._job("train_P1", port, "P1", "train"):
@@ -744,11 +874,10 @@ print(json.dumps({{'state':state,'pid':pid,'expected_start_time':expected,
         if not self._s2_released():
             self.state["observed"]["s2_waiting_utc"] = utcnow()
             return
-        if not self._test_source_ready():
+        if (not self.state.get("test_release") or
+                self.state["observed"].get("prepare_test", {}).get("stage") != "completed"):
             return
-        self._dataset("test", port)
-        if not self._job("prepare_test", port, "prepare", "evaluate", "test"):
-            return
+        self._import_test_20424()
         if ("development" not in self.state["audits"] or
                 self.state["observed"].get("prepare_train", {}).get("stage") != "completed"):
             return

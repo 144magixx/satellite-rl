@@ -24,7 +24,12 @@ def plan(root):
             "ports": [20418, 20424],
             "hostroot": "/home/u2024110224/first_stage_satellite_rl/s1_03",
             "local_output_root": str(root),
-            "raw_inputs": {role: {"path": "/raw/" + role} for role in ("train", "validation", "test")},
+            "raw_inputs": {"train": {"path": "/raw/train", "sha256": SHA,
+                                      "dates": ["2024-01-08", "2024-01-09"]},
+                           "validation": {"path": "/raw/validation", "sha256": SHA,
+                                          "dates": ["2024-01-12"]},
+                           "test": {"path": "/raw/test"}},
+            "test_prepare_port": 20418,
             "gates": deepcopy(GATES), "audit_commands": {},
             "s2_release": {"controller_manifest": "/s2/controller_manifest.json"}}
 
@@ -35,14 +40,21 @@ class MemoryController(Controller):
         self.datasets = {20418: [], 20424: []}
         self.jobs = {20418: [], 20424: []}
         self.models = []
+        self.imported_starts = []
         self.release = False
         self.test_ready = False
         self.post_count = {}
+
+    def code(self, *_args, **_kwargs):
+        return {"active": []}
 
     def _s2_released(self):
         if self.release:
             self.state["s2_release"] = {"mode": "verified_terminal"}
         return self.release
+
+    def _verify_raw_npz(self, role, port):
+        self.state["observed"][f"input_source_{port}:{role}"] = {"input_source_sha256": SHA}
 
     def _test_source_ready(self):
         if self.test_ready:
@@ -79,6 +91,20 @@ class MemoryController(Controller):
                    "sha256": SHA, "count": {"train": 576, "validation": 20, "test": 100}[role]}
             self.datasets[port].append(row)
             return row
+        if endpoint == "coverage/reconstruction/import-dataset":
+            row = {"id": "imported_test", "source_dataset_id": body["source_dataset_id"],
+                   "source_target": TARGET + "20418", "partition_role": "test",
+                   "sha256": SHA, "count": 100}
+            self.datasets[port].append(row)
+            return row
+        if endpoint == "coverage/reconstruction/imports" and body is None:
+            return {"starts": self.imported_starts, "models": self.models}
+        if endpoint == "coverage/reconstruction/import-start":
+            row = {"id": "imported_start_test", "source_run_id": body["source_run_id"],
+                   "source_target": TARGET + "20418", "partition_role": "test",
+                   "sha256": SHA, "dataset_sha256": SHA}
+            self.imported_starts.append(row)
+            return row
         if endpoint == "coverage/runs" and body is None:
             return {"runs": self.jobs[port]}
         if endpoint == "coverage/runs" and body is not None:
@@ -94,7 +120,8 @@ class MemoryController(Controller):
         if endpoint.startswith("runs/") and body is None:
             run_id = endpoint.split("/")[1]
             job = next(row for row in self.jobs[port] if row["run_id"] == run_id)
-            return {"job": job, "status": {"stage": job["stage"], "heartbeat_at": "verified"}}
+            return {"job": job, "status": {"stage": job["stage"], "heartbeat_at": "verified"},
+                    "artifacts": {"reconstruction_starts_sha256": SHA}}
         if endpoint == "coverage/models" and body is None:
             return {"models": self.models}
         if endpoint == "coverage/reconstruction/import-model":
@@ -106,6 +133,45 @@ class MemoryController(Controller):
 
 
 class ControllerTests(unittest.TestCase):
+    def test_test_contract_sha_is_distinct_from_selected_times_sha(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = plan(Path(temporary))
+            source["raw_inputs"]["test"].update(path="/raw/test", record_path="/raw/test/record.json",
+                                                manifest_path="/raw/test/manifest.json",
+                                                selection_contract_path="/raw/test/selection_contract.json",
+                                                selection_sha256="b" * 64,
+                                                selected_times_sha256="c" * 64)
+            controller = Controller(source, SHA, Path(temporary) / "state.json")
+            observed = {"ready": True, "record_sha256": SHA, "manifest_sha256": SHA,
+                        "selection_contract_sha256": "b" * 64,
+                        "selected_times_sha256": "c" * 64,
+                        "scene_files_verified": True,
+                        "record": {"path": "/raw/test", "count": 100},
+                        "manifest": {"status": "prepared_not_imported_or_evaluated",
+                                     "count": 100, "staged_record_sha256": SHA}}
+            controller.code = lambda *_args, **_kwargs: observed
+            self.assertTrue(controller._test_source_ready())
+            other = Controller(source, SHA, Path(temporary) / "other.json")
+            other.code = lambda *_args, **_kwargs: {**observed,
+                "selection_contract_sha256": "c" * 64}
+            with self.assertRaisesRegex(Attention, "选择SHA"):
+                other._test_source_ready()
+
+    def test_original_train_npz_sha_role_and_dates_are_checked(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = Controller(plan(Path(temporary)), SHA, Path(temporary) / "state.json")
+            controller.code = lambda *_args, **_kwargs: {
+                "ready": True, "input_source_sha256": SHA, "record_sha256": SHA,
+                "record": {"partition_role": "train", "dates": ["2024-01-08", "2024-01-09"]}}
+            controller._verify_raw_npz("train", 20418)
+            self.assertEqual(controller.state["observed"]["input_source_20418:train"]["input_source_sha256"], SHA)
+            other = Controller(plan(Path(temporary)), SHA, Path(temporary) / "other.json")
+            other.code = lambda *_args, **_kwargs: {
+                "ready": True, "input_source_sha256": SHA, "record_sha256": SHA,
+                "record": {"partition_role": "validation", "dates": ["2024-01-08"]}}
+            with self.assertRaisesRegex(Attention, "用途/日期"):
+                other._verify_raw_npz("train", 20418)
+
     def test_mechanism_gate_waits_for_same_worker_and_rejects_pid_reuse(self):
         with tempfile.TemporaryDirectory() as temporary:
             controller = Controller(plan(Path(temporary)), SHA, Path(temporary) / "state.json")
@@ -135,7 +201,8 @@ class ControllerTests(unittest.TestCase):
             source = plan(root)
             source["raw_inputs"]["test"].update(record_path="/raw/test/record.json",
                                                 manifest_path="/raw/test/manifest.json",
-                                                selection_sha256=SHA)
+                                                selection_contract_path="/raw/test/selection_contract.json",
+                                                selection_sha256=SHA, selected_times_sha256=SHA)
             source["audit_commands"] = {mode: {"argv": [remote.DQN, "/audit.py", "--context", "{audit_context_path}"],
                                                "script_sha256": SHA}
                                         for mode in ("development", "mechanism", "formal")}
@@ -189,14 +256,17 @@ class ControllerTests(unittest.TestCase):
             controller.tick()
             self.assertNotIn("train_P1", controller.state["jobs"])
             self.assertFalse(any(row["reconstruction_route"] == "P1" for row in controller.jobs[20418]))
-            controller.release = controller.test_ready = True
+            controller.test_ready = True
             controller.tick()
-            self.assertNotIn("train_P1", controller.state["jobs"])
+            self.assertIn("train_P1", controller.state["jobs"])
             self.assertEqual(controller.state["observed"]["prepare_test"]["stage"], "completed")
+            self.assertFalse(controller.jobs[20424])
+            controller.release = True
             controller.tick()
             self.assertEqual(controller.state["phase"], "awaiting_final_report")
-            self.assertEqual(len(controller.jobs[20418]), 7)  # 2 prepare + 4 development + P1 train
-            self.assertEqual(len(controller.jobs[20424]), 6)  # prepare + 4 baselines + P1 eval
+            self.assertEqual(len(controller.jobs[20418]), 8)  # 3 prepare + 4 development + P1 train
+            self.assertEqual(len(controller.jobs[20424]), 5)  # 4 baselines + P1 eval
+            self.assertEqual(controller.state["imports"]["test_start_20424"], "imported_start_test")
             self.assertEqual(controller.post_count["train_P1"], 1)
             self.assertEqual(controller.post_count["formal_P1"], 1)
             controller.tick()
