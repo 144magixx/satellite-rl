@@ -45,7 +45,8 @@ def call(argv):
  p=subprocess.run(argv,text=True,capture_output=True,timeout=120)
  if p.returncode: raise RuntimeError(p.stderr[-2000:])
  return p.stdout.strip()
-if not (repo/'.git').is_dir():
+fresh=not (repo/'.git').is_dir()
+if fresh:
  call(['git','-C',str(old),'cat-file','-e',{base!r}+'^{{commit}}'])
  call(['git','clone','--no-hardlinks','--no-checkout',str(old),str(repo)])
 current=call(['git','-C',str(repo),'rev-parse','HEAD'])
@@ -56,7 +57,7 @@ if current!={commit!r}:
   if p.exists():
    raw=(p/'stat').read_text();birth=int(raw[raw.rfind(')')+2:].split()[19])
    if birth==record.get('start_ticks'): raise RuntimeError('Cannot change source under an active S1-03 service')
- if call(['git','-C',str(repo),'status','--porcelain']):raise RuntimeError('Existing isolated repo has local modifications')
+ if not fresh and call(['git','-C',str(repo),'status','--porcelain']):raise RuntimeError('Existing isolated repo has local modifications')
  call(['git','-C',str(repo),'fetch',{incoming!r},{commit!r}])
  call(['git','-C',str(repo),'checkout','--detach',{commit!r}])
 actual=call(['git','-C',str(repo),'rev-parse','HEAD'])
