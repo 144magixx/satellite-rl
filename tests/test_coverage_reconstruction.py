@@ -9,7 +9,7 @@ import numpy as np
 from satellite_rl.coverage.geometry import satellite_rays_numpy, squared_ray_limit
 from satellite_rl.coverage.reconstruction import (
     ReconstructionAction, ReconstructionConfig, ReconstructionState,
-    action_candidates, apply_action, initial_state, state_metrics,
+    _geometry, action_candidates, apply_action, initial_state, state_metrics,
 )
 from satellite_rl.coverage.scenes import CoverageScene
 
@@ -91,6 +91,8 @@ class ReconstructionTests(unittest.TestCase):
 
     def test_impossible_union_rolls_back_and_spends_attempt(self):
         state = self._state(scene_fixture(impossible=True))
+        cache_before = state._distance_cache.copy()
+        calls_before = state.geometry_calls
         action = ReconstructionAction("merge_split", (0, 1, 2), 0)
         self.assertIn(action, action_candidates(state, self.config))
         changed, info, reward, _, _ = apply_action(state, action, self.config)
@@ -98,6 +100,9 @@ class ReconstructionTests(unittest.TestCase):
         self.assertEqual(info["reason"], "no_legal_center_for_group")
         self.assertTrue(np.array_equal(changed.centers, state.centers))
         self.assertTrue(np.array_equal(changed.assignment, state.assignment))
+        self.assertTrue(np.array_equal(changed._distance_cache, cache_before))
+        self.assertTrue(np.array_equal(state._distance_cache, cache_before))
+        self.assertEqual(state.geometry_calls, calls_before)
         self.assertEqual(changed.steps, 1)
         self.assertEqual(changed.attempts, 1)
         self.assertGreater(info["geometry_calls"], 0)
@@ -265,6 +270,42 @@ class ReconstructionTests(unittest.TestCase):
                                          action.template)
                     for action in action_candidates(state, self.config)}
         self.assertEqual(set(action_candidates(moved, self.config)), expected)
+
+    def test_accepted_geometry_cache_matches_restored_two_step_path(self):
+        scene = scene_fixture()
+        initial = self._state(scene)
+        first_action = ReconstructionAction("merge_split", (0, 1, 2), 0)
+        first, first_info, _, _, _ = apply_action(initial, first_action, self.config)
+        self.assertTrue(first_info["accepted"])
+        self.assertTrue(np.array_equal(first._distance_cache,
+                                       _geometry(scene, first.centers)))
+        restored = ReconstructionState.from_record(
+            scene, json.loads(json.dumps(first.to_record())), self.config)
+        second_action = ReconstructionAction("merge_split", (1, 2, 0), 0)
+        source_cache = first._distance_cache.copy()
+        direct, direct_info, direct_reward, direct_done, direct_metrics = apply_action(
+            first, second_action, self.config)
+        replay, replay_info, replay_reward, replay_done, replay_metrics = apply_action(
+            restored, second_action, self.config)
+        self.assertTrue(direct_info["accepted"])
+        self.assertEqual(direct_info["accepted"], replay_info["accepted"])
+        self.assertEqual(direct_info["reason"], replay_info["reason"])
+        self.assertTrue(np.array_equal(direct.centers, replay.centers))
+        self.assertTrue(np.array_equal(direct.assignment, replay.assignment))
+        self.assertTrue(np.array_equal(direct.loads, replay.loads))
+        self.assertTrue(np.array_equal(direct._distance_cache,
+                                       _geometry(scene, direct.centers)))
+        self.assertAlmostEqual(direct_reward, replay_reward)
+        self.assertEqual(direct_done, replay_done)
+        self.assertEqual(direct_metrics, replay_metrics)
+        for field in ("geometry_calls", "fit_candidate_checks",
+                      "assignment_candidate_checks", "ray_pair_checks", "attempts"):
+            self.assertEqual(getattr(direct, field), getattr(replay, field))
+        self.assertEqual(direct_info["geometry_calls"], replay_info["geometry_calls"])
+        self.assertTrue(np.array_equal(first._distance_cache, source_cache))
+        stopped, _, _, _, _ = apply_action(first, ReconstructionAction("stop"), self.config)
+        self.assertTrue(np.array_equal(stopped._distance_cache, source_cache))
+        self.assertTrue(np.array_equal(first._distance_cache, source_cache))
 
 
 if __name__ == "__main__":
