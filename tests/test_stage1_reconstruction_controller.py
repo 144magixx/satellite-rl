@@ -1,0 +1,230 @@
+"""Controller ordering and idempotence without SSH or scientific execution."""
+from copy import deepcopy
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+from scripts.stage1_reconstruction.controller import Attention, Controller, GATES, S2_SCA_JOBS, load_plan
+from scripts.stage1_reconstruction import remote
+
+
+SHA = "a" * 64
+TARGET = "u2024110224@10.160.17.102:"
+
+
+def plan(root):
+    return {"science_commit": "a" * 40,
+            "config_template": {"schema_version": 4, "research_stage": "coverage",
+                                "algorithm": "ppo", "name": "S1-03",
+                                "coverage": {"initialization": "cluster", "method": "none",
+                                             "reconstruction": {"route": "prepare"}},
+                                "training": {"seed": 51001, "total_steps": 262144,
+                                             "mechanism_gate_step": 65536}},
+            "ports": [20418, 20424],
+            "hostroot": "/home/u2024110224/first_stage_satellite_rl/s1_03",
+            "local_output_root": str(root),
+            "raw_inputs": {role: {"path": "/raw/" + role} for role in ("train", "validation", "test")},
+            "gates": deepcopy(GATES), "audit_commands": {},
+            "s2_release": {"controller_manifest": "/s2/controller_manifest.json"}}
+
+
+class MemoryController(Controller):
+    def __init__(self, root):
+        super().__init__(plan(root), SHA, root / "state.json")
+        self.datasets = {20418: [], 20424: []}
+        self.jobs = {20418: [], 20424: []}
+        self.models = []
+        self.release = False
+        self.test_ready = False
+        self.post_count = {}
+
+    def _s2_released(self):
+        if self.release:
+            self.state["s2_release"] = {"mode": "verified_terminal"}
+        return self.release
+
+    def _test_source_ready(self):
+        if self.test_ready:
+            self.state["test_release"] = {"record_sha256": SHA, "scene_count": 100}
+        return self.test_ready
+
+    def _run_audit(self, mode, port, checkpoint_sha=None):
+        if mode == "development":
+            self.assert_development_jobs()
+        if mode == "formal":
+            self.assert_formal_jobs()
+        proof = {"mode": mode, "passed": True, "audit_path": "/audit/" + mode,
+                 "audit_sha256": SHA}
+        self.state["audits"][mode] = proof
+        return proof
+
+    def assert_development_jobs(self):
+        assert all(f"dev_{route}" in self.state["jobs"] for route in ("R0", "R1", "R2", "R3"))
+
+    def assert_formal_jobs(self):
+        assert all(f"formal_{route}" in self.state["jobs"] for route in ("R0", "R1", "R2", "R3", "P1"))
+
+    def api(self, port, endpoint, body=None, **kwargs):
+        if endpoint == "system" and body is None:
+            return {"device": "fixture GPU", "gpu": {}, "python": "/dqn", "torch": "fixture",
+                    "cuda_build": "fixture", "server_time": "fixture UTC"}
+        if endpoint == "coverage/datasets" and body is None:
+            return {"datasets": self.datasets[port]}
+        if endpoint == "coverage/datasets/import":
+            role = body["partition_role"]
+            row = {"id": f"dataset_{port}_{role}", "name": body["name"],
+                   "source_path": body["path"], "partition_role": role,
+                   "research_stage": "coverage", "initialization": "cluster",
+                   "sha256": SHA, "count": {"train": 576, "validation": 20, "test": 100}[role]}
+            self.datasets[port].append(row)
+            return row
+        if endpoint == "coverage/runs" and body is None:
+            return {"runs": self.jobs[port]}
+        if endpoint == "coverage/runs" and body is not None:
+            label = body["config"]["name"].split()[-1]
+            self.post_count[label] = self.post_count.get(label, 0) + 1
+            job = {"run_id": "job_" + label, "kind": body["kind"],
+                   "request_id": body["request_id"], "git_commit": "a" * 40,
+                   "execution_target": TARGET + str(port),
+                   "reconstruction_route": body["config"]["coverage"]["reconstruction"]["route"],
+                   "stage": "completed"}
+            self.jobs[port].append(job)
+            return job
+        if endpoint.startswith("runs/") and body is None:
+            run_id = endpoint.split("/")[1]
+            job = next(row for row in self.jobs[port] if row["run_id"] == run_id)
+            return {"job": job, "status": {"stage": job["stage"], "heartbeat_at": "verified"}}
+        if endpoint == "coverage/models" and body is None:
+            return {"models": self.models}
+        if endpoint == "coverage/reconstruction/import-model":
+            row = {"id": "imported_P1", "source_run_id": body["source_run_id"],
+                   "source_target": TARGET + "20418", "sha256": SHA}
+            self.models.append(row)
+            return row
+        raise AssertionError((port, endpoint, body))
+
+
+class ControllerTests(unittest.TestCase):
+    def test_mechanism_gate_waits_for_same_worker_and_rejects_pid_reuse(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = Controller(plan(Path(temporary)), SHA, Path(temporary) / "state.json")
+            controller.state["jobs"]["train_P1"] = "train_P1"
+            controller.code = lambda *_args, **_kwargs: {"sha256": SHA}
+            controller._run_audit = lambda *_args, **_kwargs: {
+                "audit_path": "/archive/ops/audits/mechanism_audit.json", "audit_sha256": SHA}
+            requests = []
+            controller.api = lambda port, endpoint, body=None, **kwargs: requests.append((port, endpoint))
+            detail = {"status": {"stage": "stopped", "env_step": 65536,
+                                  "checkpoint_sha256": SHA}}
+            controller._worker_process = lambda *_args: {"state": "same_process_alive", "pid": 123}
+            self.assertFalse(controller._mechanism_gate("train_P1", detail))
+            self.assertFalse(requests)
+            controller._worker_process = lambda *_args: {"state": "pid_reused", "pid": 123}
+            with self.assertRaisesRegex(Attention, "PID"):
+                controller._mechanism_gate("train_P1", detail)
+            self.assertFalse(requests)
+            controller._worker_process = lambda *_args: {"state": "exited", "pid": 123}
+            self.assertFalse(controller._mechanism_gate("train_P1", detail))
+            self.assertEqual([name for _, name in requests],
+                             ["coverage/runs/train_P1/mechanism-gate", "runs/train_P1/resume"])
+
+    def test_plan_freezes_gate_values_and_audit_script_sha(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = plan(root)
+            source["raw_inputs"]["test"].update(record_path="/raw/test/record.json",
+                                                manifest_path="/raw/test/manifest.json",
+                                                selection_sha256=SHA)
+            source["audit_commands"] = {mode: {"argv": [remote.DQN, "/audit.py", "--context", "{audit_context_path}"],
+                                               "script_sha256": SHA}
+                                        for mode in ("development", "mechanism", "formal")}
+            path = root / "plan.json"
+            path.write_text(json.dumps(source), encoding="utf-8")
+            loaded, digest = load_plan(path)
+            self.assertEqual(loaded["gates"], GATES)
+            self.assertEqual(len(digest), 64)
+            source["gates"]["mechanism_step"] += 1
+            path.write_text(json.dumps(source), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "门槛"):
+                load_plan(path)
+            source["gates"] = deepcopy(GATES)
+            source["s2_release"]["allow_file"] = "/unverified/allow.json"
+            path.write_text(json.dumps(source), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "手工文件旁路"):
+                load_plan(path)
+
+    def test_audit_running_waits_and_completed_file_must_pass(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = plan(Path(temporary))
+            source["audit_commands"] = {"development": {"argv": ["/dqn", "/audit.py", "--context", "{audit_context_path}"],
+                                                         "script_sha256": SHA}}
+            controller = Controller(source, SHA, Path(temporary) / "state.json")
+            controller.state["jobs"].update({f"dev_{route}": f"job_{route}"
+                                             for route in ("R0", "R1", "R2", "R3")})
+            controller._write_audit_context = lambda *_args: None
+            controller._audit_process = lambda *_args: {"state": "running", "launch": {"pid": 123}}
+            self.assertIsNone(controller._run_audit("development", 20418))
+            self.assertNotIn("development", controller.state["audits"])
+            controller._audit_process = lambda mode, port, argv, path, context_sha, script_sha: {
+                "state": "completed", "exit": {"returncode": 0,
+                                               "context_sha256": context_sha,
+                                               "script_sha256": script_sha,
+                                               "preflight_path": "/audit/development_preflight.json",
+                                               "preflight_sha256": SHA}}
+            frozen_root = controller.archive[20418] + "/outputs/workbench/source_snapshots/" + "a" * 40
+            controller._read_remote_json = lambda _port, path: (
+                {"exists": True, "sha256": SHA,
+                 "value": {"source_root": frozen_root, "git_commit": "a" * 40,
+                           "ssh_port": 20418, "gpu": "RTX 4090 D",
+                           "package_file": frozen_root + "/src/satellite_rl/__init__.py"}}
+                if path.endswith("_preflight.json") else
+                {"exists": True, "sha256": SHA,
+                 "value": {"passed": True, "mode": "development", "plan_sha256": SHA}})
+            self.assertTrue(controller._run_audit("development", 20418)["passed"])
+
+    def test_two_lanes_wait_for_test_release_and_submit_each_job_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = MemoryController(Path(temporary))
+            controller.tick()
+            self.assertNotIn("train_P1", controller.state["jobs"])
+            self.assertFalse(any(row["reconstruction_route"] == "P1" for row in controller.jobs[20418]))
+            controller.release = controller.test_ready = True
+            controller.tick()
+            self.assertNotIn("train_P1", controller.state["jobs"])
+            self.assertEqual(controller.state["observed"]["prepare_test"]["stage"], "completed")
+            controller.tick()
+            self.assertEqual(controller.state["phase"], "awaiting_final_report")
+            self.assertEqual(len(controller.jobs[20418]), 7)  # 2 prepare + 4 development + P1 train
+            self.assertEqual(len(controller.jobs[20424]), 6)  # prepare + 4 baselines + P1 eval
+            self.assertEqual(controller.post_count["train_P1"], 1)
+            self.assertEqual(controller.post_count["formal_P1"], 1)
+            controller.tick()
+            self.assertEqual(controller.post_count["train_P1"], 1)
+            controller.state["jobs"].pop("dev_R1")
+            self.assertTrue(controller._job("dev_R1", 20418, "R1", "evaluate", "validation"))
+            self.assertEqual(controller.post_count["dev_R1"], 1)
+
+    def test_s2_release_requires_terminal_manifest_and_no_active_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = Controller(plan(Path(temporary)), SHA, Path(temporary) / "state.json")
+            completed = {key: {"run_id": key, "manifest_stage": "completed",
+                               "status_stage": "completed", "status_path": "/s2/" + key}
+                         for key in S2_SCA_JOBS}
+            snapshots = [
+                {"ready": True, "phase": "sca", "jobs": completed, "live": [], "api_error": None},
+                {"ready": True, "phase": "awaiting_report_and_archive", "jobs": completed,
+                 "live": [{"run_id": "other", "stage": "evaluating"}], "api_error": None},
+                {"ready": True, "phase": "awaiting_report_and_archive", "jobs": completed,
+                 "live": [], "api_error": None},
+            ]
+            controller.code = lambda *_args, **_kwargs: snapshots.pop(0)
+            self.assertFalse(controller._s2_released())
+            self.assertFalse(controller._s2_released())
+            self.assertTrue(controller._s2_released())
+            self.assertEqual(controller.state["s2_release"]["mode"],
+                             "S2_controller_terminal_and_live_API")
+
+
+if __name__ == "__main__":
+    unittest.main()
