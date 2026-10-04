@@ -2,12 +2,16 @@
 
 import json
 import hashlib
+import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+import numpy as np
+
 from scripts.variable_beams.report_results import (
     AuditError, _sgm, audit_beams, generate, load_manifest,
+    sha256_file, verify_reimported_files,
 )
 
 
@@ -97,6 +101,32 @@ class ReportAuditTests(unittest.TestCase):
             write_manifest()
             with self.assertRaisesRegex(AuditError, "用户确认"):
                 load_manifest(manifest, {})
+
+    def test_repacked_import_requires_source_sha_and_equal_arrays(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            old, new = root / "prepared.npz", root / "imported.npz"
+            np.savez_compressed(old, rate=np.array([[1.0]], dtype=np.float64))
+            np.savez_compressed(new, rate=np.array([[1.0]], dtype=np.float64))
+            with zipfile.ZipFile(new, "a") as archive:
+                archive.comment = b"workbench repack"
+            self.assertNotEqual(sha256_file(old), sha256_file(new))
+            metadata = {"beam_count": 1, "mother_scene_id": "m0",
+                        "load_multiplier": 0.75, "partition_role": "train",
+                        "selected_time_utc": "2024-01-08T00:00:00Z",
+                        "source_sha256": "s" * 64}
+            prepared = {"files": [{**metadata, "path": str(old), "sha256": sha256_file(old)}]}
+            imported = {"files": [{**metadata, "path": str(new), "sha256": sha256_file(new)}],
+                        "source": {"reimport": {"files": [{"sha256": sha256_file(old)}]}}}
+            verify_reimported_files(prepared, imported, {}, "train")
+            imported["source"]["reimport"]["files"][0]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(AuditError, "来源链"):
+                verify_reimported_files(prepared, imported, {}, "train")
+            imported["source"]["reimport"]["files"][0]["sha256"] = sha256_file(old)
+            np.savez_compressed(new, rate=np.array([[2.0]], dtype=np.float64))
+            imported["files"][0]["sha256"] = sha256_file(new)
+            with self.assertRaisesRegex(AuditError, "数组不等价"):
+                verify_reimported_files(prepared, imported, {}, "train")
 
 
 if __name__ == "__main__":
