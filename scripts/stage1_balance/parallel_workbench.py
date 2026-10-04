@@ -1,4 +1,4 @@
-"""S1-02 workbench launcher: two training workers or one evaluation worker.
+"""Workbench launcher: bounded parallel training or one evaluation worker.
 
 The HTTP API, frozen jobs, and scientific worker code are the existing
 workbench implementation.  Only this process's dispatch decision changes.
@@ -25,15 +25,18 @@ from satellite_rl.workbench.storage import read_json
 
 DEFAULT_ROOT = Path("/home/u2024110224/first_stage_satellite_rl/s1_02/20418")
 DEFAULT_PYTHON = Path("/home/u2024110224/first_stage_satellite_rl/envs/DQN/bin/python")
-POLICY = "stage1_two_train_exclusive_evaluation_v1"
+POLICY = "stage1_parallel_train_exclusive_evaluation_v2"
 MARKER = "satellite_rl.workbench.server"
 
 
 class ParallelCoverageScheduler(Scheduler):
     """Recheck live ownership at launch, after the base tick selects a queue."""
 
-    def __init__(self, store, python_executable=sys.executable):
-        super().__init__(store, python_executable=python_executable, max_workers=2)
+    def __init__(self, store, python_executable=sys.executable, max_training_workers=2):
+        if type(max_training_workers) is not int or not 1 <= max_training_workers <= 5:
+            raise ValueError("Training concurrency must be an integer from 1 to 5")
+        super().__init__(store, python_executable=python_executable,
+                         max_workers=max_training_workers)
 
     def _live_jobs(self):
         live = []
@@ -53,13 +56,13 @@ class ParallelCoverageScheduler(Scheduler):
         if any(active["run_id"] == job["run_id"] for active in live):
             return  # A still-running PID cannot be launched again after restart.
         if job["kind"] == "train":
-            if any(active["kind"] != "train" for active in live) or len(live) >= 2:
+            if any(active["kind"] != "train" for active in live) or len(live) >= self.max_workers:
                 return
         elif live:
             # Base tick inspects only as many queued jobs as free slots.  If
             # an older evaluation is blocked behind a live train, use the
             # spare slot for the oldest queued training job instead.
-            if len(live) < 2 and all(active["kind"] == "train" for active in live):
+            if len(live) < self.max_workers and all(active["kind"] == "train" for active in live):
                 for candidate, candidate_status in reversed(self.store.jobs()):
                     if candidate_status.get("stage") == "queued" and candidate["kind"] == "train":
                         if all(active["run_id"] != candidate["run_id"] for active in live):
@@ -92,6 +95,7 @@ def main(argv=None):
     parser.add_argument("--source-root", type=Path, default=Path.cwd())
     parser.add_argument("--port", type=int, default=8892)
     parser.add_argument("--python", type=Path, default=DEFAULT_PYTHON)
+    parser.add_argument("--max-training-workers", type=int, choices=range(1, 6), default=2)
     parser.add_argument("--server-marker", choices=(MARKER,), required=True)
     args = parser.parse_args(argv)
     archive = args.archive_root.resolve()
@@ -102,15 +106,17 @@ def main(argv=None):
     ops = archive / "ops"
     with exclusive_ops_lock(ops / "parallel_workbench.lock"):
         app = Application(archive, source_root=source, python_executable=python,
-                          max_workers=2)
-        app.scheduler = ParallelCoverageScheduler(app.store, python_executable=python)
+                          max_workers=args.max_training_workers)
+        app.scheduler = ParallelCoverageScheduler(
+            app.store, python_executable=python,
+            max_training_workers=args.max_training_workers)
         server = WorkbenchServer(("127.0.0.1", args.port), app)
         state = ops / "parallel_workbench_state.json"
         metadata = {"policy": POLICY, "status": "running", "pid": os.getpid(),
                     "process_start_time": process_start_time(os.getpid()),
                     "port": server.server_port, "archive_root": str(archive),
                     "source_root": str(source), "python": str(python),
-                    "max_training_workers": 2, "max_nontraining_workers": 1,
+                    "max_training_workers": args.max_training_workers, "max_nontraining_workers": 1,
                     "server_marker": args.server_marker,
                     "started_at": datetime.now(timezone.utc).isoformat()}
         atomic_json(state, metadata)

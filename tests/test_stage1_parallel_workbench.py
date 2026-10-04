@@ -1,4 +1,4 @@
-"""Dispatch safety for the external S1-02 two-train workbench launcher."""
+"""Dispatch safety for the external workbench's configurable training slots."""
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -68,6 +68,21 @@ class ParallelDispatchTests(unittest.TestCase):
     def test_two_evaluations_launch_only_first(self):
         self.job("eval_a", "evaluate", order=1)
         self.job("eval_b", "evaluate", order=2)
+        self.tick()
+        self.assertEqual(self.launched, ["eval_a"])
+
+    def test_configured_three_workers_fill_three_slots_but_not_four(self):
+        self.scheduler = MODULE.ParallelCoverageScheduler(self.store, max_training_workers=3)
+        for index in range(4):
+            self.job(f"train_{index}", "train", order=index)
+        self.tick()
+        self.assertEqual(self.launched, ["train_0", "train_1", "train_2"])
+
+    def test_parallel_limit_does_not_allow_evaluation_overlap(self):
+        self.scheduler = MODULE.ParallelCoverageScheduler(self.store, max_training_workers=3)
+        self.job("eval_a", "evaluate", order=0)
+        self.job("eval_b", "evaluate", order=1)
+        self.job("train_after", "train", order=2)
         self.tick()
         self.assertEqual(self.launched, ["eval_a"])
 
