@@ -155,7 +155,7 @@ def ensure_server(commit: str, mode: str) -> dict:
     if (Path(system.get("source_root", "")).resolve() != REPO
             or Path(system.get("archive_root", "")).resolve() != ARCHIVE
             or Path(system.get("package_file", "")).resolve() != REPO / "src/satellite_rl/__init__.py"
-            or Path(system.get("python", "")).resolve() != DQN
+            or Path(system.get("python", "")).resolve() != DQN.resolve()
             or system.get("cuda") is not True):
         raise RuntimeError("New workbench source/Python/CUDA/archive mismatch")
     receipt = {"status": "running_no_new_jobs", "checked_utc": now(),
