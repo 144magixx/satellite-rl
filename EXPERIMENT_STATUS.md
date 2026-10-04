@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**S1下一轮PPO重新设计仅为方案（2026-10-05）：**用户要求放弃旧做法重新设计，新增[第一阶段方案07](docs/第一阶段/方案/07_面向需求区域重构的PPO重新设计.md)。主推PPO主动决定需求区域合并/拆分/重划及跨区波束配额转移，由固定几何层原子落实；取消旧聚类身份与0.25°范围作为新算法默认，拟议新可达域同时供所有基线。主训练拟按原终态统一有界覆盖等级与连续负载目标，加入STOP，最好布局仅诊断；同一完整宏动作/重构器下规则、随机、搜索与PPO比较，先验可行性与动作改善闸门先于训练。候选单seed51001/一个新PPO总262144宏动作（含65536检查节点）、原Jan08/09训练与Jan12开发验证、新独立100景日期尚未冻结；均未授权执行、未产生新任务或权重。仅完成方案审查与文档引用检查，效果待验证；S1-02仍已交付/跟进PAUSED，本对话未操作S2-P17等其它实验，无SSH或新计算。
+
 **S2-P17用户重启后已按原ID续跑（2026-10-05，北京时间02:59:31 API/SSH根核）：**20424已可连接，DQN/CUDA12.1、原4090D、c80修复源码干净且包路径正确；V1暂停前1315件全部SHA不变，断点及关键文件与暂停前一致。经工作台普通resume恢复`refine_sac_20261005_014002_932212d0`，现evaluating1342/3960（目录1343条，顺序观测）、447条B；加V0完整1320条B，共1767/4840最终B，SCA来源完成1/5。训练2/2、800000交互及三共同评价4840初解仍完成，未重训/重评或重做首次failed299修复。新server226/ticks773410386、controller420/ticks773421630、worker354/ticks773420447实际匹配，controller phase=sca、last_error为空，单worker继续。每小时跟进已更新新身份、ACTIVE并精确回读。
 
 用户主动暂停的V1 scene_00146_r0 sca未提交尝试有callback下界至少571调用/1.4651551842689514秒，已备份原迭代日志；成功续算的时间不能声称包含此前中断计算或人工停机，该开销将在最终报告单列，与原V0失败B回退缺时分开。报告、全量审计与归档仍待完成。[恢复前核验](outputs/experiments/variable_beams_20261004/preflight/user_resume_preflight.json) · [实际续跑验收](outputs/experiments/variable_beams_20261004/preflight/user_resume_live.json) · [API与控制器](outputs/experiments/variable_beams_20261004/preflight/user_resume_api_and_controller.json) · [跟进配置回读](outputs/experiments/variable_beams_20261004/followup/user_resumed_verified_readback.json)。下方暂停/SSH不可用均为历史时点。
