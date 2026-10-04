@@ -538,7 +538,12 @@ class Application:
                     if readonly:
                         raise ValueError("历史实验为只读，本工作台不控制其他管理进程")
                     return (self.scheduler.request_stop(identifier) if action == "stop" else
-                            self.scheduler.resume(identifier, source_repair=body.get("source_repair")))
+                            self.scheduler.resume(
+                                identifier, source_repair=body.get("source_repair"),
+                                repair_validation_path=body.get("repair_validation_path"),
+                                repair_validation_sha256=body.get("repair_validation_sha256"),
+                                expected_origin_commit=body.get("expected_origin_commit"),
+                                expected_repair_commit=body.get("expected_repair_commit")))
                 if action == "upgrade" and method == "POST":
                     if readonly:
                         raise ValueError("历史实验为只读，不能升级")

@@ -8,7 +8,7 @@ from pathlib import Path
 from satellite_rl.power_refinement.config import (default_config, validate_config,
                                                   METHOD_LABELS, SI_PRIORITY_METHODS)
 
-from .storage import digest, model_input_files, validate_id
+from .storage import digest, model_input_files, read_json, validate_id
 
 
 G11_T0_RUN_ID = "train_sac_20261001_162126_33e89e95"
@@ -188,6 +188,36 @@ class PowerRefinementApplication:
         config.update(research_stage="power_refinement", power_refinement=controls,
                       name=f"S2-P17 · {source_job['name']} · {reference['group']} · 原分配与SCA")
         config["training"]["total_steps"] = reference["scene_count"] * reference["repeats"] * 3
+        repair_extra = {}
+        from .recovery import S2P17_FAILED_RUN
+        existing_repair = read_json(self.store.job_dir(S2P17_FAILED_RUN) / "job.json", {}).get("boundary_repair")
+        if existing_repair and body.get("repair_profile") is None:
+            raise ValueError("S2-P17后续SCA必须声明原科学提交和统一修复来源")
+        if body.get("repair_profile") is not None:
+            from .recovery import (S2P17_BOUNDARY_REPAIR_ID, S2P17_ORIGIN_COMMIT,
+                                   S2P17_FAILED_RUN)
+            failed_dir = self.store.job_dir(S2P17_FAILED_RUN)
+            repaired = read_json(failed_dir / "job.json", {})
+            completed = read_json(failed_dir / "status.json", {})
+            proof = repaired.get("boundary_repair") or {}
+            proof_path = Path(proof.get("archive_path", "")) / "repair_proof.json"
+            if (body.get("repair_profile") != S2P17_BOUNDARY_REPAIR_ID or
+                    body.get("scientific_origin_commit") != S2P17_ORIGIN_COMMIT or
+                    body.get("repair_reference_run_id") != S2P17_FAILED_RUN or
+                    completed.get("stage") != "completed" or
+                    proof.get("repair_id") != S2P17_BOUNDARY_REPAIR_ID or
+                    proof.get("origin_science_commit") != S2P17_ORIGIN_COMMIT or
+                    repaired.get("git_commit") != proof.get("repair_commit") or
+                    not proof_path.is_file() or
+                    digest(proof_path) != body.get("repair_proof_sha256")):
+                raise ValueError("S2-P17后续SCA缺已完成V0修复来源链")
+            repair_extra = {"scientific_origin_commit": S2P17_ORIGIN_COMMIT,
+                            "repair_profile": S2P17_BOUNDARY_REPAIR_ID,
+                            "repair_reference_run_id": S2P17_FAILED_RUN,
+                            "repair_proof_sha256": digest(proof_path)}
+        elif any(body.get(key) is not None for key in
+                 ("scientific_origin_commit", "repair_reference_run_id", "repair_proof_sha256")):
+            raise ValueError("S2-P17修复来源字段必须完整")
         return self.store.create_job(config, kind="refine", request_id=body.get("request_id"), extra={
             "research_stage": "power_refinement", "experiment_id": "S2-P17",
             "experiment_role": "formal", "name": config["name"],
@@ -198,6 +228,7 @@ class PowerRefinementApplication:
             "scene_path": dataset["path"], "initial_source": reference,
             "power_refinement": controls, "evaluation_units": config["training"]["total_steps"],
             "evaluation_units_label": "已保存初始分配/中间A/最终B；不新增初始动作",
+            **repair_extra,
         })
 
     def initial_sources(self):
