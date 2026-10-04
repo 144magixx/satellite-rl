@@ -828,6 +828,7 @@ def apply_action(state: ReconstructionState, action: ReconstructionAction,
                     next_state.centers = proposal.centers
                     next_state.assignment = proposal.assignment
                     next_state.loads = proposal.loads
+                    next_state._distance_cache = proposal._distance_cache
                     next_state._candidate_cache = None
                     accepted, reason = True, "accepted"
                 validate_time = perf_counter() - validate_start
