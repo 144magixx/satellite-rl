@@ -120,6 +120,20 @@ def _change(left, right, key):
     return None if a is None or b is None else b - a
 
 
+def _covered_user_count(row):
+    if row is None or row.get("final_associations") is None:
+        return None
+    association = row["final_associations"]
+    if len(association) != len(row["input"]["aircraft_ids"]):
+        raise ValueError(f"{row['scene_id']}: saved user association count differs from input")
+    return sum(int(beam >= 0) for beam in association)
+
+
+def _covered_user_change(left, right):
+    a, b = _covered_user_count(left), _covered_user_count(right)
+    return None if a is None or b is None else b - a
+
+
 def _describe(values):
     data = sorted(float(value) for value in values if value is not None and math.isfinite(float(value)))
     if not data:
@@ -148,6 +162,13 @@ def _comparison_direction(key, changes):
     return _direction(changes, higher_is_better=key in (
         "coverage_demand", "coverage_users", "subject_in_band_beams",
         "balanced_target_met", "coverage_100", "coverage_99_9", "feasible"))
+
+
+def _paired_direction(key, paired_rows, menu):
+    field = ("PPO_minus_search_covered_user_count" if key == "coverage_users"
+             else f"PPO_minus_search_{key}")
+    return _comparison_direction(key, (row[field] for row in paired_rows
+                                       if row["menu"] == menu))
 
 
 def _time_row(label, row, scene_index):
@@ -237,6 +258,9 @@ def analyze(results, *, expected_scenes=100, allow_partial=False, audit_path=Non
                 "raw_vs_best_same_layout_and_association":
                     (raw["final_positions"] == ppo["final_positions"] and
                      raw["final_associations"] == ppo["final_associations"]) if raw else None,
+                "raw_covered_user_count": _covered_user_count(raw),
+                "best_covered_user_count": _covered_user_count(ppo),
+                "best_minus_raw_covered_user_count": _covered_user_change(raw, ppo),
                 **{f"raw_{key}": _numeric(raw, key) if raw else None for key in COMPARE_FIELDS},
                 **{f"best_{key}": _numeric(ppo, key) for key in COMPARE_FIELDS},
                 **{f"best_minus_raw_{key}": _change(raw, ppo, key) if raw else None
@@ -246,6 +270,9 @@ def analyze(results, *, expected_scenes=100, allow_partial=False, audit_path=Non
                 "menu": menu, "scene_id": ppo["scene_id"],
                 "scene_sha256": ppo["scene_sha256"], "input_sha256": input_sha(ppo),
                 "PPO_status": ppo["status"], "search_status": search["status"],
+                "search_covered_user_count": _covered_user_count(search),
+                "PPO_covered_user_count": _covered_user_count(ppo),
+                "PPO_minus_search_covered_user_count": _covered_user_change(search, ppo),
                 **{f"PPO_minus_search_{key}": _change(search, ppo, key)
                    for key in COMPARE_FIELDS},
                 "PPO_minus_search_recorded_total_seconds":
@@ -277,10 +304,9 @@ def analyze(results, *, expected_scenes=100, allow_partial=False, audit_path=Non
             "PPO_minus_search": {key: {
                 "distribution": _describe(row[f"PPO_minus_search_{key}"] for row in paired
                                           if row["menu"] == menu),
-                "direction": _comparison_direction(
-                    key, (row[f"PPO_minus_search_{key}"] for row in paired
-                          if row["menu"] == menu)),
+                "direction": _paired_direction(key, paired, menu),
             } for key in COMPARE_FIELDS},
+            "coverage_users_direction_basis": "integer counts from final_associations; saved fractional deltas remain in the distribution",
             "recorded_total_seconds_delta": _describe(
                 row["PPO_minus_search_recorded_total_seconds"] for row in paired
                 if row["menu"] == menu),

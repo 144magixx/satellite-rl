@@ -28,6 +28,19 @@ class BalanceBSupplementTests(unittest.TestCase):
                              {"improved": 1, "equal": 1, "worse": 1,
                               "paired_valid_layout_scenes": 3})
 
+    def test_user_coverage_direction_uses_integer_associations_not_rounding_noise(self):
+        search = row()
+        ppo = copy.deepcopy(search)
+        search.update(final_associations=[0], metrics={"coverage_users": 1.0})
+        ppo.update(final_associations=[0], metrics={"coverage_users": 1.0 + 1.4e-8})
+        self.assertGreater(supplement._change(search, ppo, "coverage_users"), 0)
+        self.assertEqual(supplement._covered_user_change(search, ppo), 0)
+        paired = [{"menu": "X0", "PPO_minus_search_coverage_users": 1.4e-8,
+                   "PPO_minus_search_covered_user_count": 0}]
+        self.assertEqual(supplement._paired_direction("coverage_users", paired, "X0"),
+                         {"improved": 0, "equal": 1, "worse": 0,
+                          "paired_valid_layout_scenes": 1})
+
     def test_raw_view_is_separate_and_never_mutates_best_result(self):
         saved = row()
         saved.update(final_positions=[[1.0, 1.0]], final_associations=[0],
