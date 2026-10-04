@@ -322,9 +322,10 @@ def _reconcile(directory, checkpoint_step, last_validation_step=None):
                     row_step = int(row.get("env_step", row.get("step", 0)))
                     group = row.get("group")
                     uncommitted_evaluation = (last_validation_step is not None and
-                        name in ("traces", "evaluations") and
-                        ((group == "validation" and row_step > last_validation_step) or
-                         (group not in (None, "training", "validation"))))
+                        ((name in ("traces", "evaluations", "metrics", "count_metrics") and
+                          group == "validation" and row_step > last_validation_step) or
+                         (name in ("traces", "evaluations") and
+                          group not in (None, "training", "validation"))))
                     if row_step <= checkpoint_step and not uncommitted_evaluation:
                         stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
             replace_with_retry(temp, path)
@@ -447,7 +448,39 @@ def _validation_due(evaluation, progress, env_step):
     return extra_due or periodic_due
 
 
-def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step, ledger, scene_set=None):
+def _zero_validation_case(path, contract, result=None):
+    """Immutable S2-P17 validation@0 allocation, bound to the initial checkpoint."""
+    path = Path(path)
+    if path.exists():
+        try:
+            envelope = json.loads(path.read_text(encoding="utf-8"))
+            body = envelope["body"]
+            actual = hashlib.sha256(json.dumps(body, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+            if (envelope.get("sha256") != actual or body.get("contract") != contract or
+                    not isinstance(body.get("result"), dict)):
+                raise ValueError("S2-P17零步验证缓存SHA或冻结合同不一致")
+            saved = body["result"]
+            scene = saved.get("scene") or {}
+            if (saved.get("action_seed") != contract["action_seed"] or
+                    scene.get("source_sha256") != contract["source_scene_sha256"] or
+                    _sha256(scene["path"]) != scene.get("sha256") or
+                    not isinstance(saved.get("trace"), list) or not saved["trace"]):
+                raise ValueError("S2-P17零步验证缓存案例身份或归档场景损坏")
+            return saved
+        except (OSError, KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"S2-P17零步验证缓存损坏，拒绝重算：{path}") from error
+    if result is None:
+        return None
+    body = {"contract": contract, "result": _jsonable(result)}
+    digest = hashlib.sha256(json.dumps(body, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+    _atomic_json(path, {"body": body, "sha256": digest})
+    return body["result"]
+
+
+def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step, ledger,
+                    scene_set=None, zero_cache=None):
     from satellite_rl.workbench.environment import WorkbenchEnv
     files = None
     if scene_set is not None:
@@ -458,9 +491,38 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
             raise ValueError("冻结评价场景数量与配置不一致")
 
     results = []
+    if zero_cache is not None and (group != "validation" or env_step != 0 or
+                                   config["training"].get("beam_count_mode", "none") == "none" or
+                                   config["evaluation"]["repeats"] != 1):
+        raise ValueError("零步案例缓存仅支持S2-P17可变束数单动作验证")
     for index in range(count):
         seed = seed_base + index
         scene_path = Path(directory) / "scenes" / group / f"scene_{seed}.npz"
+        cache_contract = ({"checkpoint_sha256": zero_cache["checkpoint_sha256"],
+                           "config_hash": zero_cache["config_hash"],
+                           "scene_index": index, "source_scene_sha256": files[index][1],
+                           "action_seed": seed, "group": "validation", "env_step": 0}
+                          if zero_cache is not None else None)
+        cache_path = (Path(directory) / "validation_zero_cases" / f"scene_{index:05d}.json"
+                      if zero_cache is not None else None)
+        cached = _zero_validation_case(cache_path, cache_contract) if cache_path else None
+        if cached is not None:
+            result = cached
+            scene_ref = result["scene"]
+            for trace in result["trace"]:
+                _jsonl(Path(directory) / "traces.jsonl", trace)
+            _jsonl(Path(directory) / "evaluations.jsonl", {"env_step": 0, "group": group,
+                "scene_id": result["scene_id"], "action_seed": seed,
+                "metrics": result["metrics"], "beam_count": result["beam_count"],
+                "scene_metadata": result["scene_metadata"],
+                "inference_seconds": result["inference_seconds"],
+                "initial_preparation_seconds": result["initial_preparation_seconds"],
+                "initial_verification_seconds": result["initial_verification_seconds"],
+                "initial_allocation_seconds": result["initial_allocation_seconds"],
+                "beams_final": result["beams"], "service_timing": result["service_timing"],
+                "scene_sha256": scene_ref["sha256"]})
+            results.append(result)
+            continue
         with isolated_rng(seed):
             env = WorkbenchEnv(config)
             env.reset(seed=seed, scene=_load_scene(files[index][0]) if files is not None else None)
@@ -478,7 +540,7 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
                     env = WorkbenchEnv(config)
                     result = _evaluation_episode(env, agent, scene, f"{group}_{seed}_r{repeat}",
                                                  action_seed, config["evaluation"]["action_mode"],
-                                                 Path(directory) / "traces.jsonl",
+                                                 None if zero_cache is not None else Path(directory) / "traces.jsonl",
                                                  env_step, scene_sha256=scene_ref["sha256"], group=group,
                                                  scene_metadata=(scene_set["files"][index] if files is not None else None))
                 finally:
@@ -491,6 +553,10 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
             result.setdefault("initial_preparation_seconds", None)
             result.setdefault("initial_verification_seconds", None)
             result.setdefault("initial_allocation_seconds", None)
+            if zero_cache is not None:
+                result = _zero_validation_case(cache_path, cache_contract, result)
+                for trace in result["trace"]:
+                    _jsonl(Path(directory) / "traces.jsonl", trace)
             _jsonl(Path(directory) / "evaluations.jsonl", {"env_step": env_step, "group": group,
                                                             "scene_id": result["scene_id"],
                                                             "action_seed": action_seed,
@@ -646,10 +712,14 @@ def _training(directory, job, config, ledger, resume):
     def run_validation():
         save_progress("validating")
         ledger.flush()
+        zero_cache = ({"checkpoint_sha256": _sha256(checkpoint),
+                       "config_hash": config_hash(config)}
+                      if variable_mode != "none" and env_step == 0 else None)
         _, validation = _fixed_evaluate(config, agent, directory, "validation",
                                          config["evaluation"]["validation_count"],
                                          config["evaluation"]["validation_seed"], env_step, ledger,
-                                         scene_set=scene_sets.get("validation"))
+                                         scene_set=scene_sets.get("validation"),
+                                         zero_cache=zero_cache)
         progress["last_validation_step"] = env_step
         selection = validation.get("final_si_mean")
         if selection is not None and (progress["best_validation"] is None or selection > progress["best_validation"]):
@@ -669,6 +739,12 @@ def _training(directory, job, config, ledger, resume):
                  config_hash=config_hash(config), training_scene_order=order_provenance)
     last_saved_step = progress.get("last_checkpoint_step", env_step)
     if not resume:
+        if variable_mode != "none" and env_step == 0:
+            # A recoverable initial state must exist before the 144-scene node.
+            save_checkpoint(checkpoint, agent, progress, config,
+                            {**provenance, "boundary": "next_episode",
+                             "scene_order": scene_order.checkpoint_state(episode)})
+            ledger.status["checkpoint_step"] = 0
         if _validation_due(config["evaluation"], progress, env_step):
             run_validation()
         save_checkpoint(checkpoint, agent, progress, config,
@@ -676,6 +752,18 @@ def _training(directory, job, config, ledger, resume):
                          "scene_order": scene_order.checkpoint_state(episode)})
         ledger.status["checkpoint_step"] = env_step
         snapshot_record = snapshot_artifact(env_step)
+        _artifacts(directory, job, checkpoint=str(checkpoint),
+                   **({"learning_snapshots": snapshot_record} if snapshot_record else {}))
+    elif variable_mode != "none" and env_step == 0 and \
+            _validation_due(config["evaluation"], progress, env_step):
+        # The loaded checkpoint is the pre-validation state; finish node zero
+        # before entering the training loop, then commit its completed marker.
+        run_validation()
+        save_checkpoint(checkpoint, agent, progress, config,
+                        {**provenance, "boundary": "next_episode",
+                         "scene_order": scene_order.checkpoint_state(episode)})
+        ledger.status["checkpoint_step"] = 0
+        snapshot_record = snapshot_artifact(0)
         _artifacts(directory, job, checkpoint=str(checkpoint),
                    **({"learning_snapshots": snapshot_record} if snapshot_record else {}))
     while env_step < training["total_steps"]:
