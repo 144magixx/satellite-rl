@@ -43,6 +43,7 @@ METRICS = ("si", "sgm", "basic_fraction", "zero_capacity_fraction",
            "effective_carried_bps", "power_w", "complete_fraction")
 SCENE_FIELDS = ("sha256", "beam_count", "mother_scene_id", "load_multiplier",
                 "partition_role", "selected_time_utc", "source_sha256")
+SCENE_SEMANTIC_FIELDS = tuple(key for key in SCENE_FIELDS if key != "sha256")
 
 
 class AuditError(ValueError):
@@ -89,6 +90,31 @@ def canonical_hash(value):
 def same_scene(left, right):
     return isinstance(left, dict) and isinstance(right, dict) and all(
         left.get(key) == right.get(key) for key in SCENE_FIELDS)
+
+
+def verify_reimported_files(prepared, imported, inputs, role):
+    """Allow NPZ recompression only with exact source SHA and equal typed arrays."""
+    old_refs, new_refs = prepared.get("files"), imported.get("files")
+    require(isinstance(old_refs, list) and isinstance(new_refs, list) and
+            len(old_refs) == len(new_refs), f"{role}准备→导入场景数量不符")
+    source_files = ((imported.get("source") or {}).get("reimport") or {}).get("files")
+    require(isinstance(source_files, list) and
+            [item.get("sha256") for item in source_files] ==
+            [item.get("sha256") for item in old_refs],
+            f"{role}工作台重导入缺原NPZ逐SHA来源链")
+    for index, (old, new) in enumerate(zip(old_refs, new_refs)):
+        require(all(old.get(key) == new.get(key) for key in SCENE_SEMANTIC_FIELDS),
+                f"{role}准备→导入场景N/母景/负载/日期/来源语义错配：{index}")
+        old_path, new_path = Path(old["path"]), Path(new["path"])
+        old_sha, new_sha = sha256_file(old_path), sha256_file(new_path)
+        require(old_sha == old.get("sha256") and new_sha == new.get("sha256"),
+                f"{role}准备或导入NPZ文件SHA错误：{index}")
+        inputs[str(old_path.resolve())] = old_sha
+        inputs[str(new_path.resolve())] = new_sha
+        with np.load(old_path, allow_pickle=False) as left, np.load(new_path, allow_pickle=False) as right:
+            require(set(left.files) == set(right.files) and all(
+                left[key].dtype == right[key].dtype and np.array_equal(left[key], right[key])
+                for key in left.files), f"{role}准备→导入NPZ数组不等价：{index}")
 
 
 def verify_scene_files(refs, inputs, label):
@@ -262,9 +288,9 @@ def load_datasets(manifest, inputs):
                     f"{role}准备数据记录SHA不符")
             inputs[str(Path(source_path).resolve())] = source_digest
             prepared = json_file(source_path)
-            require(len(prepared.get("files", [])) == count and all(
-                same_scene(a, b) for a, b in zip(refs, prepared["files"])),
-                f"{role}准备→导入场景SHA/语义映射不一致")
+            require(len(prepared.get("files", [])) == count,
+                    f"{role}准备场景数量不符")
+            verify_reimported_files(prepared, record, inputs, role)
         seen_sha = set()
         for ref in refs:
             require(ref.get("partition_role") == role, f"{role}逐场景分区身份不符")
@@ -1002,13 +1028,16 @@ def write_report(path, manifest, records, pairs, timing_summary, physics_checked
               "分别取实测段，完整时间为共享初解和分段实测合计。公共初解与A只执行一次，",
               "各路线账上引用同一实测时间；无调整的none并非模型生成时间。",
               "逐N的单次动作、同场景重复动作合计的均值/中位/P95及原值见timing_summary.csv、timing_raw.csv。", "",
-              "| 编号＋实验组合 | N | 初解均时s | A求解均时s | B追加均时s | 完整均时/中位/P95s |",
-              "| --- | ---: | ---: | ---: | ---: | ---: |"]
+              "| 编号＋实验组合 | N | 初解均时s | 物理准备均时s | A求解均时s | A核验均时s | B追加均时s | B核验均时s | 完整均时/中位/P95s |",
+              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for row in timing_summary:
         lines.append(f"| {row['combination']} | {row['beam_count']} | "
                      f"{row['initial_allocation_seconds_mean']:.4f} | "
+                     f"{row['physics_setup_seconds_mean']:.4f} | "
                      f"{row['reference_optimizer_wall_seconds_mean']:.4f} | "
+                     f"{row['reference_verification_seconds_mean']:.4f} | "
                      f"{row['optimizer_wall_seconds_mean']:.4f} | "
+                     f"{row['verification_seconds_mean']:.4f} | "
                      f"{row['total_pipeline_seconds_mean']:.4f}/"
                      f"{row['total_pipeline_seconds_median']:.4f}/"
                      f"{row['total_pipeline_seconds_p95']:.4f} |")

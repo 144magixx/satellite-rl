@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -53,7 +53,8 @@ SOURCES = {"V0_sca": ("V0_eval", "model"), "V1_sca": ("V1_eval", "model"),
            "H0_sca": ("H0_eval", "model"), "fixed_sca": ("V0_eval", "fixed"),
            "greedy_sca": ("V0_eval", "greedy")}
 HELD_OUT = {60, 90, 140, 180}
-ACTIVE = {"starting", "initializing", "running", "validating", "evaluating", "queued", "stopping"}
+ACTIVE = {"queued", "starting", "initializing", "warmup", "training",
+          "running", "validating", "evaluating", "stopping"}
 ERROR = {"failed", "stopped", "cancelled", "interrupted", "invalid"}
 
 
@@ -109,6 +110,33 @@ def scope_contract(expected_sha: str) -> dict:
     return scope
 
 
+def validate_train_mother_times(files: list[dict], expected_mothers: int) -> None:
+    """Bind each training mother to one unique Jan08/09 UTC instant."""
+    mother_to_time = {}
+    time_to_mother = {}
+    for item in files:
+        mother = item.get("mother_scene_id")
+        raw_time = item.get("selected_time_utc")
+        if not isinstance(mother, str) or not mother or not isinstance(raw_time, str):
+            raise RuntimeError("训练母场景缺少身份或UTC时刻")
+        try:
+            observed = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise RuntimeError("训练母场景UTC时刻无效") from error
+        if (observed.tzinfo is None or observed.utcoffset() != timedelta(0)
+                or observed.date().isoformat() not in ("2024-01-08", "2024-01-09")):
+            raise RuntimeError("训练母场景时刻须为Jan08/09的UTC时刻")
+        instant = observed.astimezone(timezone.utc)
+        previous_time = mother_to_time.setdefault(mother, instant)
+        if previous_time != instant:
+            raise RuntimeError("同一训练母场景ID对应多个UTC时刻")
+        previous_mother = time_to_mother.setdefault(instant, mother)
+        if previous_mother != mother:
+            raise RuntimeError("不同训练母场景ID复用了同一UTC时刻")
+    if len(mother_to_time) != expected_mothers or len(time_to_mother) != expected_mothers:
+        raise RuntimeError("训练母场景身份与不重复UTC时刻数量不符")
+
+
 def source_record(path: Path, expected_sha: str, role: str, count: int) -> tuple[dict, list[str]]:
     if sha(path) != expected_sha:
         raise RuntimeError(f"{role} source record SHA differs")
@@ -150,6 +178,8 @@ def source_record(path: Path, expected_sha: str, role: str, count: int) -> tuple
             raise RuntimeError(f"{role} observation detail SHA differs")
     expected_mothers = count // (14 if role == "train" else 12 if role == "validation" else 22)
     expected_n = 7 if role == "train" else 6 if role == "validation" else 11
+    if role == "train":
+        validate_train_mother_times(record["files"], expected_mothers)
     if (len(mothers) != expected_mothers or len(groups) != expected_mothers * expected_n
             or any(loads != {0.75, 1.25} for loads in groups.values())):
         raise RuntimeError(f"{role} mother/N/load grid incomplete")

@@ -25,7 +25,7 @@ INPUT_ROOT = BASE + "/data/source_csv"
 OUTPUT_ROOT = BASE + "/data/prepared"
 OUTPUT_NAMES = {"train": "train", "validation": "validation_eligible12_v2", "test": "test"}
 G11_RECORDS = {
-    "train": "/home/u2024110224/second_stage_satellite_rl/g11/20424/archive/outputs/workbench/scenes/scenes_20261001_161621_17ceaa35/record.json",
+    "train": BASE + "/data/prepared/train_mothers_replaced576/record.json",
     "validation": "/home/u2024110224/second_stage_satellite_rl/g11/20424/archive/outputs/workbench/scenes/scenes_20261001_161628_819160d7/record.json",
 }
 FILES = {

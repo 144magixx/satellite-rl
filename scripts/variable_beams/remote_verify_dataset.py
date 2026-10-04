@@ -28,7 +28,11 @@ def verify(role: str) -> dict:
 import collections,datetime,hashlib,json,pathlib,numpy as np
 root=pathlib.Path({target!r});role={role!r}
 record_path=root/'record.json';record=json.loads(record_path.read_text())
-if record.get('count')!={count} or record['source'].get('experiment_id')!='S2-P17' or record['source'].get('partition_role')!=role:
+expected_dates={{'train':{{'2024-01-08','2024-01-09'}},
+ 'validation':{{'2024-01-12'}},'test':{{'2024-01-29'}}}}[role]
+if (record.get('count')!={count} or record['source'].get('experiment_id')!='S2-P17'
+ or record['source'].get('partition_role')!=role
+ or set(record['source'].get('source_dates',[]))!=expected_dates):
  raise RuntimeError('Record count or experiment/partition metadata differs')
 def sha(path):
  h=hashlib.sha256()

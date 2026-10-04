@@ -29,7 +29,8 @@ DEPS = Path("/home/u2024110224/third_stage_satellite_rl/s3_si_priority_20261003/
 LAUNCH = OPS / "workbench_8781_launch.json"
 THREAD_ENV = {name: "1" for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS",
                                       "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")}
-ACTIVE = {"starting", "initializing", "running", "evaluating", "validating", "stopping", "queued"}
+ACTIVE = {"queued", "starting", "initializing", "warmup", "training",
+          "running", "validating", "evaluating", "stopping"}
 
 
 def now() -> str:
