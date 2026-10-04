@@ -1,9 +1,12 @@
 """Controller ordering and idempotence without SSH or scientific execution."""
 from copy import deepcopy
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts.stage1_reconstruction.controller import Attention, Controller, GATES, S2_SCA_JOBS, load_plan
 from scripts.stage1_reconstruction import remote
@@ -279,7 +282,8 @@ class ControllerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             controller = Controller(plan(Path(temporary)), SHA, Path(temporary) / "state.json")
             completed = {key: {"run_id": key, "manifest_stage": "completed",
-                               "status_stage": "completed", "status_path": "/s2/" + key}
+                               "status_stage": "completed", "status_path": "/s2/" + key,
+                               "identity_ok": True}
                          for key in S2_SCA_JOBS}
             snapshots = [
                 {"ready": True, "phase": "sca", "jobs": completed, "live": [], "api_error": None},
@@ -294,6 +298,99 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(controller._s2_released())
             self.assertEqual(controller.state["s2_release"]["mode"],
                              "S2_controller_terminal_and_live_API")
+
+    def test_s2_completed_status_with_wrong_job_identity_does_not_release(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            controller = Controller(plan(Path(temporary)), SHA, Path(temporary) / "state.json")
+            completed = {key: {"run_id": key, "manifest_stage": "completed",
+                               "status_stage": "completed", "identity_ok": True}
+                         for key in S2_SCA_JOBS}
+            completed["H0_sca"]["identity_ok"] = False
+            controller.code = lambda *_args, **_kwargs: {
+                "ready": True, "phase": "awaiting_report_and_archive", "jobs": completed,
+                "identity_errors": ["H0_sca: status/job run_id differs"],
+                "live": [], "api_error": None}
+            self.assertFalse(controller._s2_released())
+            self.assertIn("identity mismatch", controller.state["observed"]["s2_release"]["blocked_reason"])
+
+    def test_s2_generated_probe_rejects_cross_job_status_path_and_run_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary) / "20424"
+            manifest_path = base / "ops" / "controller_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            archive = base / "archive"
+            jobs = {}
+            for key in S2_SCA_JOBS:
+                job_dir = archive / "outputs" / "workbench" / "jobs" / key
+                job_dir.mkdir(parents=True)
+                (job_dir / "status.json").write_text(json.dumps({"run_id": key, "stage": "completed"}))
+                (job_dir / "job.json").write_text(json.dumps({"run_id": key, "request_id": key + "_request"}))
+                jobs[key] = {"run_id": key, "request_id": key + "_request",
+                             "stage": "completed", "status_path": str(job_dir / "status.json")}
+            manifest = {"phase": "awaiting_report_and_archive", "experiment_id": "S2-P17",
+                        "target": {"archive": str(archive), "ssh_port": 20424,
+                                   "workbench_port": 8781}, "jobs": jobs}
+            source = plan(Path(temporary))
+            source["s2_release"]["controller_manifest"] = str(manifest_path)
+            controller = Controller(source, SHA, Path(temporary) / "state.json")
+
+            def execute_probe(_port, code, **_kwargs):
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    try:
+                        exec(compile(code, "s2_probe", "exec"), {})
+                    except SystemExit as exit_code:
+                        self.assertEqual(exit_code.code, 0)
+                return json.loads(output.getvalue())
+
+            controller.code = execute_probe
+            jobs["H0_sca"]["status_path"] = jobs["V0_sca"]["status_path"]
+            manifest_path.write_text(json.dumps(manifest))
+            self.assertFalse(controller._s2_released())
+            self.assertTrue(controller.state["observed"]["s2_release"]["identity_errors"])
+            jobs["H0_sca"]["status_path"] = str(archive / "outputs/workbench/jobs/H0_sca/status.json")
+            (archive / "outputs/workbench/jobs/H0_sca/status.json").write_text(json.dumps({
+                "run_id": "wrong_job", "stage": "completed"}))
+            manifest_path.write_text(json.dumps(manifest))
+            self.assertFalse(controller._s2_released())
+            self.assertTrue(controller.state["observed"]["s2_release"]["identity_errors"])
+
+    def test_s2_terminal_identity_with_8781_timeout_waits_without_attention(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary) / "20424"
+            manifest_path = base / "ops" / "controller_manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            archive = base / "archive"
+            jobs = {}
+            for key in S2_SCA_JOBS:
+                job_dir = archive / "outputs" / "workbench" / "jobs" / key
+                job_dir.mkdir(parents=True)
+                (job_dir / "status.json").write_text(json.dumps({"run_id": key, "stage": "completed"}))
+                (job_dir / "job.json").write_text(json.dumps({"run_id": key, "request_id": key + "_request"}))
+                jobs[key] = {"run_id": key, "request_id": key + "_request",
+                             "stage": "completed", "status_path": str(job_dir / "status.json")}
+            manifest_path.write_text(json.dumps({
+                "phase": "awaiting_report_and_archive", "experiment_id": "S2-P17",
+                "target": {"archive": str(archive), "ssh_port": 20424, "workbench_port": 8781},
+                "jobs": jobs}))
+            source = plan(Path(temporary))
+            source["s2_release"]["controller_manifest"] = str(manifest_path)
+            controller = Controller(source, SHA, Path(temporary) / "state.json")
+
+            def execute_probe(_port, code, **_kwargs):
+                output = io.StringIO()
+                with mock.patch("urllib.request.urlopen", side_effect=TimeoutError("8781 timed out")):
+                    with redirect_stdout(output):
+                        exec(compile(code, "s2_probe", "exec"), {})
+                return json.loads(output.getvalue())
+
+            controller.code = execute_probe
+            self.assertFalse(controller._s2_released())
+            observed = controller.state["observed"]["s2_release"]
+            self.assertEqual(observed["identity_errors"], [])
+            self.assertIn("timed out", observed["api_error"])
+            self.assertIn("keep 20424 queued", observed["blocked_reason"])
+            self.assertIsNone(controller.state["attention"])
 
     def test_unavailable_s2_dependency_keeps_peer_queued_without_halting_primary(self):
         with tempfile.TemporaryDirectory() as temporary:

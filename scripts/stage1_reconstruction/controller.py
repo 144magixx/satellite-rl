@@ -454,18 +454,41 @@ if not p.is_file():
  print(json.dumps({{'ready':False,'reason':'S2 controller manifest absent'}}))
 else:
  manifest=json.loads(p.read_text(encoding='utf-8-sig'))
+ archive=p.parent.parent/'archive'
+ target=manifest.get('target',{{}})
+ identity_errors=[]
+ if (target.get('archive')!=str(archive) or target.get('ssh_port')!=20424 or
+     target.get('workbench_port')!=8781 or manifest.get('experiment_id')!='S2-P17'):
+  identity_errors.append('manifest target/experiment identity differs')
  jobs={{}}
  for key in {list(S2_SCA_JOBS)!r}:
   entry=manifest.get('jobs',{{}}).get(key,{{}})
+  run_id=entry.get('run_id')
+  expected_dir=archive/'outputs/workbench/jobs'/run_id if isinstance(run_id,str) and run_id else None
+  expected_status=expected_dir/'status.json' if expected_dir is not None else None
+  expected_job=expected_dir/'job.json' if expected_dir is not None else None
   status_path=Path(entry.get('status_path') or '')
-  status=json.loads(status_path.read_text(encoding='utf-8-sig')) if status_path.is_file() else {{}}
+  path_ok=bool(expected_status is not None and
+      str(status_path)==str(expected_status) and
+      expected_status.resolve().is_relative_to(archive.resolve()))
+  if run_id and not path_ok:identity_errors.append(key+': status_path differs from workbench job directory')
+  status=json.loads(expected_status.read_text(encoding='utf-8-sig')) if path_ok and expected_status.is_file() else {{}}
+  job=json.loads(expected_job.read_text(encoding='utf-8-sig')) if path_ok and expected_job.is_file() else {{}}
+  observed_id=status.get('run_id') if status.get('run_id') else job.get('run_id')
+  id_ok=bool(run_id and observed_id==run_id and job.get('run_id')==run_id and
+             job.get('request_id')==entry.get('request_id'))
+  if run_id and not id_ok:identity_errors.append(key+': status/job run_id or request_id differs')
   jobs[key]={{'run_id':entry.get('run_id'),'manifest_stage':entry.get('stage'),
-             'status_stage':status.get('stage'),'status_path':str(status_path)}}
+             'status_stage':status.get('stage'),'status_path':str(status_path),
+             'status_run_id':status.get('run_id'),'job_run_id':job.get('run_id'),
+             'identity_ok':path_ok and id_ok}}
  if (manifest.get('phase')!='awaiting_report_and_archive' or
+     identity_errors or
      any(item['manifest_stage']!='completed' or item['status_stage']!='completed' or
          not item['run_id'] for item in jobs.values())):
   print(json.dumps({{'ready':True,'phase':manifest.get('phase'),'jobs':jobs,'live':[],
-   'api_error':None,'api_skipped':'S2 controller still has pending scientific work'}}));raise SystemExit(0)
+   'identity_errors':identity_errors,'api_error':None,
+   'api_skipped':'S2 controller pending or job identity unavailable'}}));raise SystemExit(0)
  try:
   with urllib.request.urlopen('http://127.0.0.1:8781/api/runs',timeout=10) as response:
    runs=json.load(response).get('runs',[])
@@ -475,7 +498,7 @@ else:
  except Exception as exc:
   live=[];error=str(exc)
  print(json.dumps({{'ready':True,'phase':manifest.get('phase'),'jobs':jobs,
-                    'live':live,'api_error':error}},ensure_ascii=False))
+                    'identity_errors':identity_errors,'live':live,'api_error':error}},ensure_ascii=False))
 """
         try:
             observed = self.code(20424, code)
@@ -488,13 +511,17 @@ else:
         self.state["observed"]["s2_release"] = {"observed_utc": utcnow(), **observed}
         if not observed.get("ready"):
             return False
+        if observed.get("identity_errors"):
+            self.state["observed"]["s2_release"]["blocked_reason"] = "S2 workbench job path or identity mismatch"
+            return False
         if observed.get("api_error"):
             self.state["observed"]["s2_release"]["blocked_reason"] = "S2 API unavailable; keep 20424 queued while 20418 continues"
             return False
         if observed.get("phase") != "awaiting_report_and_archive" or observed["live"]:
             return False
         jobs = observed["jobs"]
-        if any(jobs[key]["manifest_stage"] != "completed" or
+        if any(jobs[key].get("identity_ok") is not True or
+               jobs[key]["manifest_stage"] != "completed" or
                jobs[key]["status_stage"] != "completed" or
                not jobs[key]["run_id"] for key in S2_SCA_JOBS):
             return False
