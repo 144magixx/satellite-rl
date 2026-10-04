@@ -31,7 +31,8 @@ TIME_FIELDS = ("c1", "edge_preprocess", "repair", "assignment", "adjustment",
                "environment_setup", "policy_and_adjustment", "final_verification",
                "final_verification_and_record")
 COMPARE_FIELDS = ("coverage_demand", "coverage_users", "subject_cv", "load_cv",
-                  "subject_in_band_beams", "edge_beam_count", "balanced_target_met")
+                  "subject_in_band_beams", "edge_beam_count", "balanced_target_met",
+                  "coverage_100", "coverage_99_9", "feasible")
 RAW_FIELDS = {"metrics": "raw_terminal_metrics",
               "final_positions": "raw_terminal_positions",
               "final_associations": "raw_terminal_associations",
@@ -136,6 +137,19 @@ def _direction(changes, *, higher_is_better):
             "paired_valid_layout_scenes": len(oriented)}
 
 
+def _comparison_direction(key, changes):
+    # More/fewer certified edge beams is a condition, not an isolated win/loss.
+    if key == "edge_beam_count":
+        values = [value for value in changes if value is not None]
+        return {"increased": sum(value > 1e-10 for value in values),
+                "unchanged": sum(abs(value) <= 1e-10 for value in values),
+                "decreased": sum(value < -1e-10 for value in values),
+                "paired_valid_layout_scenes": len(values)}
+    return _direction(changes, higher_is_better=key in (
+        "coverage_demand", "coverage_users", "subject_in_band_beams",
+        "balanced_target_met", "coverage_100", "coverage_99_9", "feasible"))
+
+
 def _time_row(label, row, scene_index):
     diag = row.get("balance_diagnostics", {})
     stages = diag.get("stage_seconds", {})
@@ -213,7 +227,10 @@ def analyze(results, *, expected_scenes=100, allow_partial=False, audit_path=Non
                 "input_sha256": input_sha(ppo),
                 "PPO_adjustment_performed": ppo.get("PPO_adjustment_performed", raw is not None),
                 "raw_state_recorded": raw is not None,
-                "raw_status": raw["status"] if raw else None,
+                "raw_status": ppo.get("raw_terminal_status") if raw else None,
+                "raw_status_source": "saved_raw_terminal_status" if
+                    ppo.get("raw_terminal_status") is not None and raw else
+                    "not_recorded; do_not_copy_retained_best_status",
                 "best_status": ppo["status"],
                 "raw_layout_sha256": canonical_sha(raw["final_positions"]) if raw else None,
                 "best_layout_sha256": canonical_sha(ppo["final_positions"]) if ppo.get("final_positions") is not None else None,
@@ -260,11 +277,9 @@ def analyze(results, *, expected_scenes=100, allow_partial=False, audit_path=Non
             "PPO_minus_search": {key: {
                 "distribution": _describe(row[f"PPO_minus_search_{key}"] for row in paired
                                           if row["menu"] == menu),
-                "direction": _direction((row[f"PPO_minus_search_{key}"] for row in paired
-                                         if row["menu"] == menu),
-                                        higher_is_better=key in
-                                        ("coverage_demand", "coverage_users",
-                                         "subject_in_band_beams", "balanced_target_met")),
+                "direction": _comparison_direction(
+                    key, (row[f"PPO_minus_search_{key}"] for row in paired
+                          if row["menu"] == menu)),
             } for key in COMPARE_FIELDS},
             "recorded_total_seconds_delta": _describe(
                 row["PPO_minus_search_recorded_total_seconds"] for row in paired

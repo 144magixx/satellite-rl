@@ -16,6 +16,18 @@ def row(scene_id="scene-0", source_sha="source-0"):
 
 
 class BalanceBSupplementTests(unittest.TestCase):
+    def test_edge_beam_changes_are_not_reported_as_isolated_wins(self):
+        result = supplement._comparison_direction("edge_beam_count", [-1, 0, 1, None])
+        self.assertEqual(result, {"increased": 1, "unchanged": 1, "decreased": 1,
+                                  "paired_valid_layout_scenes": 3})
+        self.assertNotIn("improved", result)
+
+    def test_coverage_feasibility_flags_have_correct_direction(self):
+        for field in ("coverage_100", "coverage_99_9", "feasible"):
+            self.assertEqual(supplement._comparison_direction(field, [1, 0, -1]),
+                             {"improved": 1, "equal": 1, "worse": 1,
+                              "paired_valid_layout_scenes": 3})
+
     def test_raw_view_is_separate_and_never_mutates_best_result(self):
         saved = row()
         saved.update(final_positions=[[1.0, 1.0]], final_associations=[0],
