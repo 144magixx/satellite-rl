@@ -2,6 +2,8 @@
 
 import json
 import hashlib
+import math
+import statistics
 import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,12 +12,35 @@ import unittest
 import numpy as np
 
 from scripts.variable_beams.report_results import (
-    AuditError, _job_files_from_manifest, _sgm, audit_beams, generate, load_manifest,
+    AuditError, _job_files_from_manifest, _phase2_si_guard, _sgm, _si_mean,
+    audit_beams, generate, load_manifest,
     sha256_file, verify_reimported_files,
 )
 
 
 class ReportAuditTests(unittest.TestCase):
+    def test_physics_mean_boundary_keeps_exact_phase_two_floor(self):
+        # Five actual frozen V0 case beams show one-ulp divergence between the
+        # physics core's NumPy mean and scalar statistics.mean reduction.
+        capacity = [384935342.448761, 304259659.4552321, 252207741.62910038,
+                    282620805.2144457, 29317215.384013366]
+        demand = [384935341.58981586, 304259484.2001938, 303474756.1224158,
+                  282620804.40856856, 282441511.9048011]
+        mean, _ = _si_mean(capacity, demand)
+        self.assertEqual(mean, 0.7869731739699606)
+        self.assertNotEqual(mean, statistics.mean(
+            min(c / d, 1.0) for c, d in zip(capacity, demand)))
+        best = 0.9263774740938434
+        floor = best - 1e-8
+        self.assertTrue(_phase2_si_guard(best, best, floor,
+                                         0.9263773121791113, floor))
+        self.assertFalse(_phase2_si_guard(
+            best, best, floor, 0.9263773121791113,
+            math.nextafter(floor, -math.inf)))
+        raised = math.nextafter(best, math.inf)
+        self.assertFalse(_phase2_si_guard(
+            best, raised, raised - 1e-8, 0.9263773121791113, floor))
+
     def test_controller_job_path_is_a_file_and_siblings_share_one_run_directory(self):
         with TemporaryDirectory() as temporary:
             directory = Path(temporary) / "jobs" / "train_sac_example"

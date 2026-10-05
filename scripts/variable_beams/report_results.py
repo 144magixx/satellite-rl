@@ -154,6 +154,22 @@ def _sgm(capacity, demand, beta):
     return 1 - (1 - math.exp(-math.hypot(real, imag))) ** 3
 
 
+def _si_mean(capacities, demands):
+    """Match the frozen physical core's float64 vector division and mean."""
+    values = np.minimum(np.asarray(capacities, dtype=np.float64) /
+                        np.asarray(demands, dtype=np.float64), 1.0)
+    return float(values.mean()), float(values.sum())
+
+
+def _phase2_si_guard(best, best_feasible, locked_floor, a_si, b_si):
+    """Check the original inclusive SI floor, including a raised phase-two anchor."""
+    return (all(isinstance(value, (int, float)) and math.isfinite(value)
+                for value in (best, best_feasible, locked_floor)) and
+            best >= a_si - 1e-8 and best_feasible >= best and
+            locked_floor == best_feasible - 1e-8 and
+            b_si >= best - 1e-8 and b_si >= locked_floor)
+
+
 def audit_beams(beams, metrics, expected_n, *, continuous=False):
     """Independently recompute every terminal D/C/service/SI/SGM/resource field."""
     require(isinstance(beams, list) and len(beams) == expected_n, "终态目标束数量不完整")
@@ -198,14 +214,14 @@ def audit_beams(beams, metrics, expected_n, *, continuous=False):
     sgm = [_sgm(c, d, beta) for c, d in zip(capacities, demands)]
     for index, (beam, value) in enumerate(zip(beams, sgm)):
         close(beam.get("sgm"), value, f"第{index}束SGM", atol=1e-7)
-    si = [min(c / d, 1.0) for c, d in zip(capacities, demands)]
+    si_mean, si_total = _si_mean(capacities, demands)
     basic = sum(c >= 0.1 * d for c, d in zip(capacities, demands))
     zero = sum(c <= 0 for c in capacities)
     power_total = sum(powers)
     slots_total = sum(slot_counts)
     zero_slots = sum(count == 0 for count in slot_counts)
     require(power_total <= 3000 + 1e-6, "终态超过3000W总预算")
-    close(metrics.get("final_si_mean"), statistics.mean(si), "终态平均SI")
+    close(metrics.get("final_si_mean"), si_mean, "终态平均SI")
     close(metrics.get("final_sgm_mean"), statistics.mean(sgm), "终态平均SGM")
     close(metrics.get("power_w"), power_total, "终态总功率", atol=1e-4)
     if "allocated_slots" in metrics:
@@ -221,7 +237,7 @@ def audit_beams(beams, metrics, expected_n, *, continuous=False):
         close(metrics["effective_carried_bps"], sum(min(c, d) for c, d in zip(capacities, demands)),
               "有效承载总量", atol=1e-3)
     if "final_si_total" in metrics:
-        close(metrics["final_si_total"], sum(si), "SI总分")
+        close(metrics["final_si_total"], si_total, "SI总分")
     if "final_sgm_total" in metrics:
         close(metrics["final_sgm_total"], sum(sgm), "SGM总分")
     if "all_basic_met" in metrics:
@@ -232,14 +248,14 @@ def audit_beams(beams, metrics, expected_n, *, continuous=False):
         require(all(any(math.isclose(p, level, abs_tol=1e-6) for level in range(5, 51, 5))
                     for p, beam in zip(powers, beams) if beam["slots"]),
                 "第二阶段初解功率不在原5W档位")
-    return {"si": statistics.mean(si), "sgm": statistics.mean(sgm),
+    return {"si": si_mean, "sgm": statistics.mean(sgm),
             "basic_fraction": basic / expected_n, "zero_capacity_fraction": zero / expected_n,
             "effective_carried_bps": sum(min(c, d) for c, d in zip(capacities, demands)),
             "power_w": power_total, "slots_total": slots_total,
             "zero_slot_fraction": zero_slots / expected_n,
             "complete_fraction": float(metrics.get("complete", True)),
             "beam_count": expected_n, "basic_count": basic, "zero_count": zero,
-            "si_total": sum(si), "sgm_total": sum(sgm)}
+            "si_total": si_total, "sgm_total": sum(sgm)}
 
 
 def read_jsonl(path):
@@ -890,9 +906,10 @@ def load_refinements(jobs, test_refs, direct, inputs, manifest=None):
                             a["solver_evaluations"] + b["solver_evaluations"] <= 4000,
                             f"{role}最终B完整A+B容量调用账错误")
                     best = b["solver"].get("phase1_best_si_mean")
-                    require(isinstance(best, (int, float)) and math.isfinite(best) and
-                            best >= a["metrics"]["si"] - 1e-8 and
-                            b["metrics"]["si"] >= best - 1e-8,
+                    require(_phase2_si_guard(best,
+                                             b["solver"].get("best_feasible_si_mean"),
+                                             b["solver"].get("phase2_si_floor"),
+                                             a["metrics"]["si"], b["metrics"]["si"]),
                             f"{role}最终B最高SI候选或守护门槛错配")
                     close(b["timing"]["reference_optimizer_wall_seconds"],
                           a["timing"]["optimizer_wall_seconds"], "B路线引用A求解耗时", atol=1e-4)
