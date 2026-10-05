@@ -100,6 +100,9 @@ def load_r1_plan(path):
 
 
 class RerunController(old.Controller):
+    # Completed S2 catalogs can be large; a bounded read must not starve the peer.
+    S2_API_TIMEOUT = 30
+
     def __init__(self, plan, plan_sha256, state_path):
         super().__init__(plan, plan_sha256, state_path)
         self.state.setdefault("source_reuse", None)
