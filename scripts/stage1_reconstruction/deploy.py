@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from remote import DQN, HOST, LOCAL, PORTS, REMOTE_BASE, connect, run_code, save, upload_once
+from remote import DQN, HOST, LOCAL, PORTS, REMOTE_BASE, GROUPS, group_profile, connect, run_code, save, upload_once
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -20,12 +20,14 @@ def git(*args):
     return subprocess.check_output(["git", *args], cwd=REPOSITORY)
 
 
-def stage(client, port, commit):
-    root = f"{REMOTE_BASE}/{port}"
+def stage(client, port, commit, *, group="s1_03"):
+    profile = group_profile(group)
+    root = f"{profile['remote_base']}/{port}"
     if git("status", "--porcelain", "--", "src", "data", "pyproject.toml").strip():
         raise RuntimeError("Scientific source must be clean and committed")
     base = git("merge-base", commit, OLD_COMMIT).decode().strip()
-    bundle = LOCAL / "preflight" / ("source_" + commit + ".bundle")
+    bundle = profile["local"] / "preflight" / ("source_" + commit + ".bundle")
+    bundle.parent.mkdir(parents=True, exist_ok=True)
     if not bundle.is_file():
         if git("rev-parse", "HEAD").decode().strip() != commit:
             raise RuntimeError("Create a source bundle while the clean checkout is at the requested commit")
@@ -72,8 +74,9 @@ print(json.dumps({{'commit':actual,'repo':str(repo),'base':{base!r},'observed_ut
     return {"transfer": transfer, "source": result}
 
 
-def start(client, port, commit):
-    root, api_port = f"{REMOTE_BASE}/{port}", {20418:8894,20424:8895}[port]
+def start(client, port, commit, *, group="s1_03"):
+    profile = group_profile(group)
+    root, api_port = f"{profile['remote_base']}/{port}", profile["api_ports"][port]
     code = f"""
 import pathlib,subprocess,json,os,socket,time,datetime,hashlib
 root=pathlib.Path({root!r});repo=root/'repo';registry=root/'ops/current_workbench_service.json'
@@ -124,14 +127,16 @@ def main():
     parser.add_argument("mode", choices=("stage","start"))
     parser.add_argument("--port", type=int, choices=PORTS, required=True)
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--group", choices=GROUPS, default="s1_03")
     args=parser.parse_args()
     commit=git("rev-parse",args.commit).decode().strip()
     client=connect(args.port)
     try:
-        result=stage(client,args.port,commit) if args.mode=='stage' else start(client,args.port,commit)
+        result=(stage(client,args.port,commit,group=args.group) if args.mode=='stage'
+                else start(client,args.port,commit,group=args.group))
     finally:
         client.close()
-    path=LOCAL/'preflight'/f'{args.mode}_{args.port}_{commit[:12]}.json'
+    path=group_profile(args.group)['local']/'preflight'/f'{args.mode}_{args.port}_{commit[:12]}.json'
     save(path,result)
     print(json.dumps({'receipt':str(path),'result':result},ensure_ascii=False))
 

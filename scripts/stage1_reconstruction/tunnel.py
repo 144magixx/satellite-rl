@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
-from remote import connect
+from remote import connect, GROUPS, group_profile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from remote_stage1 import tunnel
@@ -13,8 +13,9 @@ from remote_stage1 import tunnel
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, choices=(20418,20424), required=True)
+    parser.add_argument('--group', choices=GROUPS, default='s1_03')
     args = parser.parse_args()
-    api_port = {20418:8894,20424:8895}[args.port]
+    api_port = group_profile(args.group)['api_ports'][args.port]
     client = connect(args.port)
     try:
         tunnel(client, SimpleNamespace(local_port=api_port, remote_port=api_port))
