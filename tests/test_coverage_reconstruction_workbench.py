@@ -3,17 +3,34 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 from satellite_rl.coverage.config import config_hash, validate_config
 from satellite_rl.coverage.reconstruction_config import reconstruction_default_config
-from satellite_rl.workbench.coverage import CoverageApplication
+from satellite_rl.workbench.coverage import CoverageApplication, _reconstruction_deployment
 from satellite_rl.workbench.service import Application
 from satellite_rl.workbench.storage import digest
 
 
 class ReconstructionWorkbenchTests(unittest.TestCase):
+    def test_archive_group_and_process_port_are_bound_without_body_override(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            parents = {"s1_03": root / "s1_03", "s1_03_r1": root / "s1_03_r1"}
+            store = SimpleNamespace(archive_root=parents["s1_03_r1"] / "20418")
+            with mock.patch("satellite_rl.workbench.coverage.RECONSTRUCTION_ARCHIVE_PARENTS", parents), \
+                 mock.patch.dict("os.environ", {"SATELLITE_RL_SSH_PORT": "20418"}):
+                self.assertEqual(_reconstruction_deployment(store), ("s1_03_r1", "20418"))
+                catalog = CoverageApplication(SimpleNamespace(store=store)).api("GET", ["catalog"], {}, {})
+                self.assertEqual(catalog["reconstruction_current_group"], "s1_03_r1")
+                self.assertEqual(catalog["reconstruction_source_groups"], ["s1_03", "s1_03_r1"])
+            with mock.patch("satellite_rl.workbench.coverage.RECONSTRUCTION_ARCHIVE_PARENTS", parents), \
+                 mock.patch.dict("os.environ", {"SATELLITE_RL_SSH_PORT": "20424"}):
+                with self.assertRaisesRegex(ValueError, "严格匹配"):
+                    _reconstruction_deployment(store)
+
     def test_schema4_rejects_unknown_budget_and_mismatched_provenance(self):
         config = reconstruction_default_config()
         self.assertEqual(validate_config(config)["schema_version"], 4)
@@ -73,6 +90,8 @@ class ReconstructionWorkbenchTests(unittest.TestCase):
                     "start_run_ids": start_ids, "request_id": "s103_train_fixture"}
             with mock.patch("satellite_rl.workbench.coverage._require_remote_dqn"), \
                  mock.patch("satellite_rl.workbench.coverage._reconstruction_target", return_value="fixture:20418"), \
+                 mock.patch("satellite_rl.workbench.coverage._reconstruction_deployment",
+                            return_value=("s1_03", "20418")), \
                  mock.patch.object(application.store, "freeze_source", return_value=(root, "fixture-commit")):
                 with self.assertRaisesRegex(ValueError, "执行目标"):
                     coverage.submit({**body, "execution_target": "fixture:20424"})
@@ -108,7 +127,8 @@ class ReconstructionWorkbenchTests(unittest.TestCase):
 
     def test_cross_instance_import_keeps_original_dataset_and_prepare_provenance(self):
         with tempfile.TemporaryDirectory() as temporary:
-            parent = Path(temporary) / "s1_03"
+            root = Path(temporary)
+            parent = root / "s1_03"
             source_app = Application(parent / "20424")
             target_app = Application(parent / "20418")
             source_id = "prepared_train"
@@ -131,6 +151,7 @@ class ReconstructionWorkbenchTests(unittest.TestCase):
                                                "partition_role": "train"}}
             (prepare_dir / "job.json").write_text(json.dumps({
                 "run_id": prepare_id, "research_stage": "coverage",
+                "archive_root": str(source_app.store.archive_root),
                 "execution_target": "u2024110224@10.160.17.102:20424"}))
             (prepare_dir / "status.json").write_text(json.dumps({"stage": "completed"}))
             (prepare_dir / "config.json").write_text(json.dumps(prepared))
@@ -148,6 +169,7 @@ class ReconstructionWorkbenchTests(unittest.TestCase):
                 "dataset_sha256": digest(scene), "source_run_id": prepare_id}}
             (train_dir / "job.json").write_text(json.dumps({
                 "run_id": train_id, "kind": "train", "research_stage": "coverage",
+                "archive_root": str(source_app.store.archive_root),
                 "execution_target": "u2024110224@10.160.17.102:20424",
                 "git_commit": "fixture-source"}))
             (train_dir / "status.json").write_text(json.dumps({"stage": "completed"}))
@@ -161,8 +183,11 @@ class ReconstructionWorkbenchTests(unittest.TestCase):
                 "source_commit": "fixture-source", "env_step": 262144,
                 "config_hash": config_hash(trained), "policy_sha256": digest(final / "policy.pt")}))
             coverage = CoverageApplication(target_app)
-            with mock.patch("satellite_rl.workbench.coverage.RECONSTRUCTION_ARCHIVE_PARENT", parent), \
+            with mock.patch("satellite_rl.workbench.coverage.RECONSTRUCTION_ARCHIVE_PARENTS",
+                            {"s1_03": parent, "s1_03_r1": root / "s1_03_r1"}), \
                  mock.patch("satellite_rl.workbench.coverage._require_remote_dqn"), \
+                 mock.patch("satellite_rl.workbench.coverage._reconstruction_deployment",
+                            return_value=("s1_03", "20418")), \
                  mock.patch("satellite_rl.workbench.coverage._reconstruction_target",
                             return_value="u2024110224@10.160.17.102:20418"):
                 imported_dataset = coverage.import_reconstruction_dataset({
@@ -181,6 +206,70 @@ class ReconstructionWorkbenchTests(unittest.TestCase):
             self.assertEqual(imported_model["sha256"], digest(final / "policy.pt"))
             self.assertEqual(imported_model["source_run_id"], train_id)
             self.assertIn(imported_model["id"], {row["id"] for row in coverage.models()})
+
+    def test_repair_group_imports_old_completed_start_on_same_port_and_freezes_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            old = Application(root / "s1_03" / "20418")
+            repaired = Application(root / "s1_03_r1" / "20418")
+            scene_dir = old.store.record_dir("scenes", "old_validation")
+            scene_dir.mkdir(parents=True)
+            scene = scene_dir / "inputs.npz"
+            scene.write_bytes(b"unchanged Jan12 aircraft dataset")
+            old_record = old.store.save_record("scenes", {
+                "id": "old_validation", "research_stage": "coverage",
+                "partition_role": "validation", "initialization": "cluster",
+                "cluster_iterations": 12, "dates": ["2024-01-12"], "count": 20,
+                "path": str(scene), "sha256": digest(scene)})
+            source_dir = old.store.job_dir("old_prepare_validation")
+            source_dir.mkdir()
+            starts_file = source_dir / "starts.jsonl"
+            starts_file.write_text('{"scene_id":"old Jan12"}\n')
+            prepared = reconstruction_default_config()
+            prepared["datasets"] = {"validation": old_record}
+            (source_dir / "job.json").write_text(json.dumps({
+                "run_id": "old_prepare_validation", "research_stage": "coverage",
+                "archive_root": str(old.store.archive_root),
+                "execution_target": "u2024110224@10.160.17.102:20418"}))
+            (source_dir / "status.json").write_text(json.dumps({"stage": "completed"}))
+            (source_dir / "config.json").write_text(json.dumps(prepared))
+            (source_dir / "artifacts.json").write_text(json.dumps({
+                "reconstruction_starts": str(starts_file),
+                "reconstruction_starts_sha256": digest(starts_file)}))
+            app = CoverageApplication(repaired)
+            parents = {"s1_03": root / "s1_03", "s1_03_r1": root / "s1_03_r1"}
+            with mock.patch("satellite_rl.workbench.coverage.RECONSTRUCTION_ARCHIVE_PARENTS", parents), \
+                 mock.patch("satellite_rl.workbench.coverage._require_remote_dqn"), \
+                 mock.patch("satellite_rl.workbench.coverage._reconstruction_deployment",
+                            return_value=("s1_03_r1", "20418")), \
+                 mock.patch("satellite_rl.workbench.coverage._reconstruction_target",
+                            return_value="u2024110224@10.160.17.102:20418"), \
+                 mock.patch.object(repaired.store, "freeze_source", return_value=(root, "fixture-commit")):
+                imported_data = app.import_reconstruction_dataset({
+                    "source_group": "s1_03", "source_target": "20418",
+                    "source_dataset_id": "old_validation", "partition_role": "validation"})
+                imported_start = app.import_reconstruction_start({
+                    "source_group": "s1_03", "source_target": "20418",
+                    "source_run_id": "old_prepare_validation", "partition_role": "validation"})
+                config = reconstruction_default_config()
+                config["coverage"]["reconstruction"]["route"] = "R1"
+                config["coverage"]["method"] = "local_search"
+                job = app.submit({"config": config, "kind": "evaluate",
+                    "dataset_role": "validation", "experiment_role": "verification",
+                    "dataset_ids": {"validation": imported_data["id"]},
+                    "start_run_ids": {"validation": imported_start["id"]},
+                    "request_id": "r1_reused_old_validation"})
+                with self.assertRaisesRegex(ValueError, "批准"):
+                    app.import_reconstruction_start({"source_group": "unknown",
+                        "source_target": "20418", "source_run_id": "old_prepare_validation",
+                        "partition_role": "validation"})
+            frozen = json.loads((repaired.store.job_dir(job["run_id"]) / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual(job["reconstruction_group"], "s1_03_r1")
+            self.assertEqual(job["variant"], "S1-03-R1:R1")
+            self.assertEqual(frozen["datasets"]["validation"]["sha256"], digest(scene))
+            self.assertEqual(frozen["reconstruction_starts"]["validation"]["sha256"], digest(starts_file))
+            self.assertEqual(frozen["reconstruction_starts"]["validation"]["source_group"], "s1_03")
+            self.assertEqual(imported_start["source_run_id"], "old_prepare_validation")
 
 
 if __name__ == "__main__":

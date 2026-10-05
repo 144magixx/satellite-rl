@@ -16,15 +16,25 @@ from satellite_rl.workbench.storage import digest, inside, new_id, now, read_jso
 from satellite_rl.training.run_monitor import atomic_json
 
 
-RECONSTRUCTION_ARCHIVE_PARENT = Path("/home/u2024110224/first_stage_satellite_rl/s1_03")
+RECONSTRUCTION_ARCHIVE_PARENTS = {
+    "s1_03": Path("/home/u2024110224/first_stage_satellite_rl/s1_03"),
+    "s1_03_r1": Path("/home/u2024110224/first_stage_satellite_rl/s1_03_r1"),
+}
+
+
+def _reconstruction_deployment(store):
+    archive = store.archive_root.resolve()
+    port = archive.name
+    group = next((name for name, parent in RECONSTRUCTION_ARCHIVE_PARENTS.items()
+                  if archive.parent == parent.resolve()), None)
+    if (group is None or port not in ("20418", "20424") or
+            os.environ.get("SATELLITE_RL_SSH_PORT") != port):
+        raise ValueError("S1-03/S1-03-R1实例归档目录与启动SSH端口须严格匹配20418或20424")
+    return group, port
 
 
 def _reconstruction_target(store):
-    archive = store.archive_root.resolve()
-    port = archive.name
-    if (archive.parent != RECONSTRUCTION_ARCHIVE_PARENT or port not in ("20418", "20424") or
-            os.environ.get("SATELLITE_RL_SSH_PORT") != port):
-        raise ValueError("S1-03实例目录和启动时固定SSH端口必须一致：20418或20424")
+    _, port = _reconstruction_deployment(store)
     return f"u2024110224@10.160.17.102:{port}"
 
 
@@ -107,7 +117,8 @@ class CoverageApplication:
                                  "path": str(path), "metadata": record["metadata"],
                                  "config": record["config"], "sha256": record["sha256"],
                                  "source_run_id": record["source_run_id"],
-                                 "source_target": record["source_target"]})
+                                 "source_target": record["source_target"],
+                                 "source_group": record.get("source_group")})
         return rows
 
     def import_dataset(self, body):
@@ -243,13 +254,20 @@ class CoverageApplication:
                                       for name in ("policy.pt", "model.json")])
         return self.store.create_job(config, kind=kind, request_id=body.get("request_id"), extra=extra)
 
-    def _reconstruction_source(self, source_target, source_run_id):
-        target = _reconstruction_target(self.store)
-        if source_target not in ("20418", "20424") or target.endswith(":" + source_target):
-            raise ValueError("只允许从另一已批准S1-03实例只读导入")
-        root = RECONSTRUCTION_ARCHIVE_PARENT / source_target
-        directory = root / "outputs" / "workbench" / "jobs" / validate_id(source_run_id)
-        return root, directory
+    def _reconstruction_source_root(self, source_group, source_target):
+        current_group, current_port = _reconstruction_deployment(self.store)
+        source_group = current_group if source_group is None else source_group
+        if (not isinstance(source_group, str) or source_group not in RECONSTRUCTION_ARCHIVE_PARENTS or
+                source_target not in ("20418", "20424") or
+                (source_group, source_target) == (current_group, current_port) or
+                (current_group == "s1_03" and source_group != "s1_03")):
+            raise ValueError("只允许从批准的不同S1-03归档实例只读导入")
+        return source_group, (RECONSTRUCTION_ARCHIVE_PARENTS[source_group] / source_target).resolve()
+
+    def _reconstruction_source(self, source_group, source_target, source_run_id):
+        source_group, root = self._reconstruction_source_root(source_group, source_target)
+        directory = inside(root / "outputs" / "workbench" / "jobs" / validate_id(source_run_id), root)
+        return source_group, root, directory
 
     def import_reconstruction_start(self, body):
         _require_remote_dqn()
@@ -257,12 +275,14 @@ class CoverageApplication:
         role = body.get("partition_role")
         if role not in ("train", "validation", "test"):
             raise ValueError("共同初始化导入须明确数据用途")
-        source_root, source_dir = self._reconstruction_source(body.get("source_target"), body.get("source_run_id"))
+        source_group, source_root, source_dir = self._reconstruction_source(
+            body.get("source_group"), body.get("source_target"), body.get("source_run_id"))
         job = read_json(source_dir / "job.json", {})
         status = read_json(source_dir / "status.json", {})
         config = read_json(source_dir / "config.json", {})
         artifacts = read_json(source_dir / "artifacts.json", {})
-        if (job.get("research_stage") != "coverage" or job.get("execution_target") !=
+        if (job.get("research_stage") != "coverage" or job.get("archive_root") != str(source_root) or
+                job.get("execution_target") !=
                 f"u2024110224@10.160.17.102:{body['source_target']}" or
                 status.get("stage") != "completed" or config.get("schema_version") != 4 or
                 config.get("coverage", {}).get("reconstruction", {}).get("route") != "prepare" or
@@ -284,7 +304,9 @@ class CoverageApplication:
             "name": f"{body['source_run_id']} · {role}", "path": str(destination),
             "sha256": sha, "dataset_sha256": config["datasets"][role]["sha256"],
             "partition_role": role, "source_run_id": body["source_run_id"],
-            "source_target": job["execution_target"], "import_target": target,
+            "source_group": source_group, "source_target": job["execution_target"],
+            "source_archive_root": str(source_root),
+            "import_target": target,
             "source_path": str(source), "created_at": now(),
             "source_config": config,
         })
@@ -293,11 +315,10 @@ class CoverageApplication:
         _require_remote_dqn()
         target = _reconstruction_target(self.store)
         source_target = body.get("source_target")
-        if source_target not in ("20418", "20424") or target.endswith(":" + source_target):
-            raise ValueError("只允许从另一已批准S1-03实例只读导入数据")
+        source_group, source_root = self._reconstruction_source_root(body.get("source_group"), source_target)
         source_id = validate_id(body.get("source_dataset_id"))
-        source_root = RECONSTRUCTION_ARCHIVE_PARENT / source_target
-        source_record_path = source_root / "outputs" / "workbench" / "scenes" / source_id / "record.json"
+        source_record_path = inside(source_root / "outputs" / "workbench" /
+                                    "scenes" / source_id / "record.json", source_root)
         source_record = read_json(source_record_path, {})
         role = body.get("partition_role")
         if (role not in ("train", "validation", "test") or
@@ -321,6 +342,8 @@ class CoverageApplication:
                   "path": str(destination), "source_path": str(source),
                   "source_record_sha256": digest(source_record_path),
                   "source_dataset_id": source_id,
+                  "source_group": source_group,
+                  "source_archive_root": str(source_root),
                   "source_target": f"u2024110224@10.160.17.102:{source_target}",
                   "import_target": target, "created_at": now()}
         return self.store.save_record("scenes", record)
@@ -328,14 +351,16 @@ class CoverageApplication:
     def import_reconstruction_model(self, body):
         _require_remote_dqn()
         target = _reconstruction_target(self.store)
-        _, source_dir = self._reconstruction_source(body.get("source_target"), body.get("source_run_id"))
+        source_group, source_root, source_dir = self._reconstruction_source(
+            body.get("source_group"), body.get("source_target"), body.get("source_run_id"))
         job = read_json(source_dir / "job.json", {})
         status = read_json(source_dir / "status.json", {})
         config = read_json(source_dir / "config.json", {})
-        source_model = inside(RECONSTRUCTION_ARCHIVE_PARENT / body["source_target"] /
+        source_model = inside(source_root /
                               "models" / "runs" / "workbench" / body["source_run_id"] / "final",
-                              RECONSTRUCTION_ARCHIVE_PARENT / body["source_target"])
-        if (job.get("research_stage") != "coverage" or job.get("execution_target") !=
+                              source_root)
+        if (job.get("research_stage") != "coverage" or job.get("archive_root") != str(source_root) or
+                job.get("execution_target") !=
                 f"u2024110224@10.160.17.102:{body['source_target']}" or
                 status.get("stage") != "completed" or config.get("schema_version") != 4 or
                 job.get("kind") != "train" or
@@ -365,6 +390,8 @@ class CoverageApplication:
             "name": f"{body['source_run_id']} · S1-03 PPO", "path": str(destination),
             "sha256": hashes["policy.pt"], "model_json_sha256": hashes["model.json"],
             "source_run_id": body["source_run_id"], "source_target": job["execution_target"],
+            "source_group": source_group,
+            "source_archive_root": str(source_root),
             "import_target": target, "source_path": str(source_model),
             "config": config, "metadata": metadata, "created_at": now(),
         })
@@ -380,6 +407,7 @@ class CoverageApplication:
             raise ValueError("S1-03工作台正式任务必须使用DQN/CUDA")
         _require_remote_dqn()
         target = _reconstruction_target(self.store)
+        current_group, _ = _reconstruction_deployment(self.store)
         if body.get("execution_target") not in (None, target):
             raise ValueError("执行目标由当前部署实例确定，不接受请求伪造")
         if kind == "train" and route != "P1":
@@ -415,6 +443,8 @@ class CoverageApplication:
                     sha = imported["sha256"]
                     source_target = imported["source_target"]
                     source_run_id = imported["source_run_id"]
+                    source_group = imported.get("source_group", current_group)
+                    source_archive_root = imported.get("source_archive_root")
                     source_dataset_sha = imported["dataset_sha256"]
                 else:
                     source_dir = self.store.job_dir(identifier)
@@ -428,6 +458,8 @@ class CoverageApplication:
                     sha = artifacts.get("reconstruction_starts_sha256")
                     source_target = target
                     source_run_id = identifier
+                    source_group = current_group
+                    source_archive_root = str(self.store.archive_root)
                     source_dataset_sha = source_config.get("datasets", {}).get(partition, {}).get("sha256")
                 expected_coverage = deepcopy(config["coverage"])
                 expected_coverage["method"] = "none"
@@ -439,10 +471,13 @@ class CoverageApplication:
                 starts[partition] = {"path": str(path), "sha256": sha,
                                      "dataset_sha256": datasets[partition]["sha256"],
                                      "source_run_id": source_run_id,
-                                     "source_target": source_target}
+                                     "source_target": source_target,
+                                     "source_group": source_group,
+                                     "source_archive_root": source_archive_root}
         config["reconstruction_starts"] = starts
         extra = {"research_stage": "coverage", "experiment_role": purpose,
-                 "variant": f"S1-03:{route}", "reconstruction_route": route,
+                 "variant": f"{'S1-03-R1' if current_group == 's1_03_r1' else 'S1-03'}:{route}",
+                 "reconstruction_group": current_group, "reconstruction_route": route,
                  "dataset_role": role if kind == "evaluate" else None,
                  "reconstruction_dataset_sha256": {r: v["sha256"] for r, v in datasets.items()},
                  "reconstruction_start_sources": starts, "execution_target": target}
@@ -460,6 +495,8 @@ class CoverageApplication:
                     raise ValueError("独立考核与模型训练/验证日期重叠")
             extra.update(model_path=model["path"], model_source_run_id=model.get("source_run_id", model["id"]),
                          model_source_target=model.get("source_target", target),
+                         model_source_group=model.get("source_group", current_group),
+                         model_source_archive_root=model.get("source_archive_root", str(self.store.archive_root)),
                          model_sha256=model["sha256"],
                          model_files=[{"path": str(Path(model["path"]) / name),
                                        "sha256": digest(Path(model["path"]) / name)}
@@ -511,9 +548,14 @@ class CoverageApplication:
 
     def api(self, method, parts, query, body):
         if parts == ["catalog"] and method == "GET":
+            current_group = next((name for name, parent in RECONSTRUCTION_ARCHIVE_PARENTS.items()
+                                  if self.store.archive_root.resolve().parent == parent.resolve()), None)
             return {"defaults": default_config(), "summary": summary(default_config()),
                     "balance_defaults": balance_default_config(),
                     "reconstruction_defaults": reconstruction_default_config(),
+                    "reconstruction_current_group": current_group,
+                    "reconstruction_source_groups": ["s1_03"] if current_group == "s1_03" else
+                    ["s1_03", "s1_03_r1"],
                     "reconstruction_routes": ["prepare", "R0", "R1", "R2", "R3", "P1"],
                     "balance_routes": ["prepare", "A0", "A1", "A2", "A3", "X0", "X1", "X2", "X3", "X4", "ppo"],
                     "action_menus": ["X0", "X1", "X2", "X3", "X4"],
