@@ -319,11 +319,11 @@ def plot_curves(output, episodes, updates, nodes, formal, formal_rows, paired_ro
     ax.legend()
     ax = axes[0, 1]
     ax.boxplot([[r["subject_cv"] for r in formal_rows if r["route"] == route]
-                for route in names], tick_labels=labels)
+                for route in names], labels=labels)
     ax.set_title("主体CV逐景分布（含未严格覆盖）")
     ax = axes[1, 0]
     ax.boxplot([[r["load_cv"] for r in formal_rows if r["route"] == route]
-                for route in names], tick_labels=labels)
+                for route in names], labels=labels)
     ax.set_title("全体100束CV逐景分布（含失败）")
     ax = axes[1, 1]
     ax.bar(labels, [formal["routes"][r]["subject_in_band_beams"]["mean"] for r in names],
