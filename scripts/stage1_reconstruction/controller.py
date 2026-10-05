@@ -152,6 +152,8 @@ def load_plan(path):
 
 
 class Controller:
+    S2_API_TIMEOUT = 10
+
     def __init__(self, plan, plan_sha256, state_path):
         self.plan = plan
         self.plan_sha256 = plan_sha256
@@ -495,7 +497,7 @@ else:
    'identity_errors':identity_errors,'api_error':None,
    'api_skipped':'S2 controller pending or job identity unavailable'}}));raise SystemExit(0)
  try:
-  with urllib.request.urlopen('http://127.0.0.1:8781/api/runs',timeout=10) as response:
+  with urllib.request.urlopen('http://127.0.0.1:8781/api/runs',timeout={self.S2_API_TIMEOUT}) as response:
    runs=json.load(response).get('runs',[])
   live=[{{'run_id':r.get('run_id'),'stage':r.get('stage')}} for r in runs
         if r.get('stage') in {sorted(ACTIVE)!r}]
