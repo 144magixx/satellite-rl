@@ -40,7 +40,8 @@ EVAL_JOB = {"V0": "V0_eval", "V1": "V1_eval", "H0": "H0_eval",
 SCA_JOB = {role: f"{role}_sca" for role in ROLES}
 REPEATS = {"V0": 3, "V1": 3, "H0": 3, "fixed": 1, "greedy": 1}
 METRICS = ("si", "sgm", "basic_fraction", "zero_capacity_fraction",
-           "effective_carried_bps", "power_w", "complete_fraction")
+           "effective_carried_bps", "power_w", "slots_total", "zero_slot_fraction",
+           "complete_fraction")
 SCENE_FIELDS = ("sha256", "beam_count", "mother_scene_id", "load_multiplier",
                 "partition_role", "selected_time_utc", "source_sha256")
 SCENE_SEMANTIC_FIELDS = tuple(key for key in SCENE_FIELDS if key != "sha256")
@@ -160,7 +161,7 @@ def audit_beams(beams, metrics, expected_n, *, continuous=False):
             "终态束顺序或身份错位")
     original = [beam.get("original_index") for beam in beams]
     require(len(set(original)) == expected_n, "原始波束身份重复")
-    demands, capacities, powers = [], [], []
+    demands, capacities, powers, slot_counts = [], [], [], []
     for beam in beams:
         demand = beam.get("required_bps")
         capacity = beam.get("capacity_bps")
@@ -180,11 +181,19 @@ def audit_beams(beams, metrics, expected_n, *, continuous=False):
         require(beam.get("basic_met") is (capacity >= 0.1 * demand), "逐束基本服务判断错误")
         slots = beam.get("slots")
         require(type(slots) is int and slots >= 0, "逐束频率槽数无效")
+        group, freq = beam.get("group"), beam.get("freq")
+        require(type(group) is int and 0 <= group < 8,
+                "逐束频率复用组无效")
+        require((freq is None or type(freq) is int and 0 <= freq < 100
+                 if slots == 0 else
+                 type(freq) is int and 0 <= freq < 100 and freq + slots <= 100),
+                "逐束频率槽起点或范围无效")
         if slots == 0:
             require(power <= 1e-8 and capacity <= 1e-3, "空槽束出现功率或容量")
         demands.append(demand)
         capacities.append(capacity)
         powers.append(power)
+        slot_counts.append(slots)
     beta = statistics.mean(demands)
     sgm = [_sgm(c, d, beta) for c, d in zip(capacities, demands)]
     for index, (beam, value) in enumerate(zip(beams, sgm)):
@@ -193,10 +202,18 @@ def audit_beams(beams, metrics, expected_n, *, continuous=False):
     basic = sum(c >= 0.1 * d for c, d in zip(capacities, demands))
     zero = sum(c <= 0 for c in capacities)
     power_total = sum(powers)
+    slots_total = sum(slot_counts)
+    zero_slots = sum(count == 0 for count in slot_counts)
     require(power_total <= 3000 + 1e-6, "终态超过3000W总预算")
     close(metrics.get("final_si_mean"), statistics.mean(si), "终态平均SI")
     close(metrics.get("final_sgm_mean"), statistics.mean(sgm), "终态平均SGM")
     close(metrics.get("power_w"), power_total, "终态总功率", atol=1e-4)
+    if "allocated_slots" in metrics:
+        require(metrics["allocated_slots"] == slots_total, "终态分配槽数与逐束结果不一致")
+    if "actual_slots" in metrics:
+        require(metrics["actual_slots"] == slots_total, "终态实际槽数与逐束结果不一致")
+    if "zero_slot_count" in metrics:
+        require(metrics["zero_slot_count"] == zero_slots, "终态零槽束数与逐束结果不一致")
     require(metrics.get("basic_met_count") == basic, "基本服务束数与逐束结果不一致")
     if "zero_capacity_count" in metrics:
         require(metrics["zero_capacity_count"] == zero, "零容量束数与逐束结果不一致")
@@ -218,7 +235,9 @@ def audit_beams(beams, metrics, expected_n, *, continuous=False):
     return {"si": statistics.mean(si), "sgm": statistics.mean(sgm),
             "basic_fraction": basic / expected_n, "zero_capacity_fraction": zero / expected_n,
             "effective_carried_bps": sum(min(c, d) for c, d in zip(capacities, demands)),
-            "power_w": power_total, "complete_fraction": float(metrics.get("complete", True)),
+            "power_w": power_total, "slots_total": slots_total,
+            "zero_slot_fraction": zero_slots / expected_n,
+            "complete_fraction": float(metrics.get("complete", True)),
             "beam_count": expected_n, "basic_count": basic, "zero_count": zero,
             "si_total": sum(si), "sgm_total": sum(sgm)}
 
@@ -350,6 +369,20 @@ def load_datasets(manifest, inputs):
     return records
 
 
+def _job_files_from_manifest(entry):
+    """Controller paths name files, not the job directory."""
+    job_path = Path(entry["job_path"]).resolve()
+    directory = job_path.parent
+    status_path = Path(entry["status_path"]).resolve()
+    result_path = Path(entry["results_path"]).resolve()
+    require(job_path.name == "job.json" and directory.name == entry["run_id"] and
+            directory.parent.name == "jobs" and
+            status_path == directory / "status.json" and
+            result_path == directory / "results.json",
+            "工作台任务文件路径与运行目录不一致")
+    return directory, job_path, status_path, directory / "config.json", result_path
+
+
 def load_jobs(manifest, datasets, inputs):
     jobs = {}
     unique_run_ids = set()
@@ -363,9 +396,7 @@ def load_jobs(manifest, datasets, inputs):
                 f"{name}未完成；拒绝完整报告")
         require(entry["run_id"] not in unique_run_ids, "正式任务ID重复")
         unique_run_ids.add(entry["run_id"])
-        directory = Path(entry["job_path"])
-        job_path, status_path = directory / "job.json", Path(entry["status_path"])
-        config_path, result_path = directory / "config.json", Path(entry["results_path"])
+        directory, job_path, status_path, config_path, result_path = _job_files_from_manifest(entry)
         for field, path in (("job_sha256", job_path), ("status_sha256", status_path),
                             ("config_sha256", config_path), ("results_sha256", result_path)):
             actual = sha256_file(path)
@@ -507,6 +538,8 @@ def _read_evaluation_case(path, contract_sha, scene_ref, seed, repeat, group, in
     recomputed = audit_beams(result.get("beams"), result.get("metrics") or {},
                              scene_ref["beam_count"])
     return {"metrics": recomputed, "beams_sha256": canonical_hash(result["beams"]),
+            "allocation_layout": [(beam["group"], beam["freq"], beam["slots"])
+                                  for beam in result["beams"]],
             "case_path": str(path), "case_sha256": file_sha,
             "initial_allocation_seconds": float(result["initial_allocation_seconds"]),
             "inference_seconds": float(result["inference_seconds"]),
@@ -740,6 +773,8 @@ def _read_refinement_case(path, role, method, ref, repeat, source_case, inputs,
               "最高SI候选与求解器best_feasible_si_mean")
         highest_sha = canonical_hash(highest_power)
     return {"metrics": recomputed, "beams_sha256": _fingerprint(row["beams"]),
+            "allocation_layout": [(beam["group"], beam["freq"], beam["slots"])
+                                  for beam in row["beams"]],
             "case_path": str(path), "case_sha256": file_sha,
             "solver_evaluations": count, "timing": timing,
             "source_commit": row.get("git_commit"), "failed_attempt_fallback": is_fallback,
@@ -828,6 +863,9 @@ def load_refinements(jobs, test_refs, direct, inputs, manifest=None):
                     stages[method] = stage
                     count += 1
                 raw, none, a, b = source, stages["none"], stages["sca"], stages["sca_si_lp"]
+                require(all(stage["allocation_layout"] == raw["allocation_layout"]
+                            for stage in (none, a, b)),
+                        f"{role} SCA固定的复用组/频率起点/槽数与初解不同")
                 for metric in ("si", "sgm", "power_w", "effective_carried_bps"):
                     close(none["metrics"][metric], raw["metrics"][metric],
                           f"{role}原分配none与第二阶段{metric}", atol=1e-4)
@@ -1362,7 +1400,9 @@ def render_figures(output, records, pairs, timing_summary, curves):
     for metric, title in (("si", "Demand satisfaction SI"), ("sgm", "Supply-demand match SGM"),
                           ("basic_fraction", "Basic-service fraction"),
                           ("covered_demand_fraction", "Covered demand fraction"),
-                          ("power_w", "Total power W")):
+                          ("power_w", "Total power W"),
+                          ("slots_total", "Allocated frequency slots across 8 groups"),
+                          ("zero_slot_fraction", "Zero-slot beam fraction")):
         fig, axes = plt.subplots(1, 2, figsize=(13, 4.5), sharey=True, constrained_layout=True)
         for ax, stage, label in zip(axes, ("direct", "final"), ("Stage 2 direct", "Final SCA B")):
             _line_by_n(ax, records, stage, metric)
@@ -1471,7 +1511,7 @@ def write_report(path, manifest, records, pairs, timing_summary, physics_checked
              "按每个衍生场景先平均3次模型动作，再按N、负载和20母快照汇总；基线每景只有一次。",
              "所有成绩均按该场景全部N个目标束计算，包含未服务束和后续干扰。不同奖励的训练回报不跨组排名。", "",
              "逐SHA验证了场景、冻结任务、初解case、SCA案例和源A引用。逐束独立复算D、C、",
-             "min(C,D)、C/D、SI、SGM、基本服务和总功率；未记录的字段不补零。",
+             "min(C,D)、C/D、SI、SGM、基本服务、总功率和8组复用下的分配槽数；未记录的字段不补零。",
              (f"物理链路容量全量复算：已核{physics_checked}/19360个终态。" if physics_checked == 19360 else
               "物理链路容量全量复算：未完成；本报告只能作为算术与来源审计后的阶段结果。"), "",
              "## 同N共同结果", "",
@@ -1484,6 +1524,18 @@ def write_report(path, manifest, records, pairs, timing_summary, physics_checked
                          f"{_n_average(records, role, 'final', n, 'si'):.6f} | "
                          f"{_n_average(records, role, 'direct', n, 'sgm'):.6f} | "
                          f"{_n_average(records, role, 'final', n, 'sgm'):.6f} |")
+    lines += ["", "## 频率槽与功率资源", "",
+              "槽数为8个复用组内逐束分配槽数之和，不是去重后的频率编号数；",
+              "每组均使用原100槽频率轴。SCA只调整功率，逐束复用组、起始频率和槽数与初解逐一核对。", "",
+              "| 编号＋实验组合 | N | 第二阶段功率 W | 最终B功率 W | 第二阶段槽数 | 最终B槽数 |",
+              "| --- | ---: | ---: | ---: | ---: | ---: |"]
+    for role in ROLES:
+        for n in N_VALUES:
+            lines.append(f"| {LABELS[role]} | {n} | "
+                         f"{_n_average(records, role, 'direct', n, 'power_w'):.3f} | "
+                         f"{_n_average(records, role, 'final', n, 'power_w'):.3f} | "
+                         f"{_n_average(records, role, 'direct', n, 'slots_total'):.3f} | "
+                         f"{_n_average(records, role, 'final', n, 'slots_total'):.3f} |")
     lines += ["", "同场景V1−V0的四个未见束数等权平均SI差：",
               f"第二阶段{direct_held:+.6f}、最终B{final_held:+.6f}；"
               f"100束最终SI差{n100_si:+.6f}、SGM差{n100_sgm:+.6f}。",
@@ -1554,6 +1606,8 @@ def write_report(path, manifest, records, pairs, timing_summary, physics_checked
               "![基本服务束比例](basic_fraction_by_n.png)",
               "![业务需求覆盖比例](covered_demand_fraction_by_n.png)",
               "![总功率](power_w_by_n.png)",
+              "![8组复用下的分配槽数](slots_total_by_n.png)",
+              "![零槽束比例](zero_slot_fraction_by_n.png)",
               "![逐场景配对SI差](paired_si_delta.png)",
               "![完整耗时](total_time_by_n.png)",
               "![训练原始回报与验证SI](training_validation.png)",
