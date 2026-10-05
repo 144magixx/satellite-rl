@@ -90,6 +90,12 @@ def run(jobdir, source, output):
         nonlocal max_gap
         scene = datasets[role][row['scene_id']]
         start = starts[role][row['scene_id']]
+        if role == 'train':
+            # Frozen runner records preloaded training initialization as 0,
+            # unlike validation, which carries the shared preparation time.
+            check(row['initialization_seconds'] == 0 and row['final_check_seconds'] == 0,
+                  'training preloaded timing convention')
+            start = dict(start, initialization_seconds=0.0)
         audit_row(scene,start,row,cfg['coverage'],expected_components=certificates[role][scene.scene_id])
         counts[role.replace('train','training')+'_terminal'] += 1
         max_gap = max(max_gap,audit_best(scene,start,row,cfg['coverage']['reconstruction']))
@@ -127,7 +133,8 @@ def run(jobdir, source, output):
               'best_terminal_max_quality_gap':max_gap,'episodes_sha256':sha(directory/'episodes.jsonl'),
               'runtime':{'python':sys.executable,'torch':torch.__version__,'cuda_available':torch.cuda.is_available(),
                          'package_file':satellite_rl.__file__},'elapsed_seconds':time.time()-started,
-              'metadata_note':{'completed_status_residual_stop_reason':status.get('stop_reason')}}
+              'metadata_note':{'completed_status_residual_stop_reason':status.get('stop_reason'),
+                               'training_timing':'preloaded initialization and final check recorded as zero by frozen runner; not full allocation timing'}}
     save(output,result)
     return result
 
