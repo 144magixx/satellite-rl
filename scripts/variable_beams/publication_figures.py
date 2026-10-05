@@ -3,7 +3,7 @@
 Usage on the approved 20424 analysis checkout::
 
     python -B scripts/variable_beams/publication_figures.py \
-      --audit-dir BASE/analysis/report_50cf4493f10a3c0b9e6c2fc8d4fc1941acfbe44e \
+      --audit-dir BASE/analysis/report_<audited-analysis-commit> \
       --output-dir BASE/analysis/publication_figures_<analysis-commit>
 
 The audit directory must already contain a successful artifact_manifest.json.
@@ -50,6 +50,10 @@ METRICS = {
     "covered_demand_fraction": ("Covered demand fraction", 1.0,
                                 "frozen scene coverage metadata"),
     "power_w": ("Total allocated power (W)", 1.0, "3000 W shared limit"),
+    "slots_total": ("Allocated slots summed across 8 reuse groups", 1.0,
+                    "sum of beam slot allocations; not unique spectrum width"),
+    "zero_slot_fraction": ("Zero-slot target-beam fraction", 1.0,
+                           "fraction of all target beams with no allocated slot"),
 }
 TRAINING_SEED = 51001
 SMOOTH_WINDOW = 30
@@ -146,7 +150,7 @@ def load_audit(audit_dir):
             receipt.get("highest_si_candidate_missing_count") == 1 and
             receipt.get("exact_total_time_missing_actions") == 2 and
             receipt.get("independent_user_pause_interruption_count") == 1,
-            "Full 50cf arithmetic/source/physical audit has not passed")
+            "Full S2-P17 arithmetic/source/physical audit has not passed")
     inputs = {str(receipt_path): receipt_sha}
     names = ("per_scene_means.csv", "by_n_load.csv", "timing_raw.csv",
              "timing_summary.csv", "interruptions.csv")
@@ -208,7 +212,8 @@ def terminal_points(tables):
     for field, (title, scale, meaning) in METRICS.items():
         if not all(field in row and row[field] not in (None, "")
                    for rows in aggregates.values() for row in rows):
-            if field in ("si", "sgm", "basic_fraction", "power_w"):
+            if field in ("si", "sgm", "basic_fraction", "power_w",
+                         "slots_total", "zero_slot_fraction"):
                 raise PublicationError(f"Required terminal metric missing: {field}")
             omissions.append({"metric": field, "reason": "not recorded in audited scene rows"})
             continue
@@ -223,8 +228,6 @@ def terminal_points(tables):
                             "metric": field, "metric_label": title,
                             "value": measured * scale, "unit_scale": scale,
                             "meaning": meaning})
-    omissions.append({"metric": "frequency_slots",
-                      "reason": "no frequency-slot summary in audited CSV; no raw-case reconstruction"})
     return plotted, omissions
 
 
@@ -552,8 +555,11 @@ def generate(audit_dir, output_dir):
             "demand multipliers. Raw training returns are faceted by actual N and use a "
             f"{SMOOTH_WINDOW}-episode moving mean within each N; seed {TRAINING_SEED}. "
             "Validation uses 24 allocations per N at each of 21 checkpoints.\n\n"
-            "Frequency-slot summaries are absent from the audited CSV and are deliberately "
-            "not plotted. Input and image SHA-256 hashes are in publication_manifest.json.\n",
+            "The slots_total plot sums all allocated beam slots across eight frequency-reuse "
+            "groups. It is not a count of unique positions on the 100-slot frequency axis "
+            "and must not be divided by 100 as a utilization rate. zero_slot_fraction is "
+            "the fraction of target beams allocated no slots. Input and image SHA-256 hashes "
+            "are in publication_manifest.json.\n",
             encoding="utf-8")
         outputs = {path.name: sha256_file(path) for path in sorted(stage.iterdir())
                    if path.is_file()}
@@ -566,6 +572,7 @@ def generate(audit_dir, output_dir):
                     "scientific_commit": receipt["scientific_commit"],
                     "repair_commit": (receipt.get("boundary_repair") or {}).get("repair_commit"),
                     "training_seed": TRAINING_SEED,
+                    "slots_total_semantics": "sum of allocated beam slots across 8 reuse groups; not unique 100-slot occupancy",
                     "training_smoothing_window_same_N_episodes": SMOOTH_WINDOW,
                     "terminal_mother_scenes_per_N_load": 20,
                     "terminal_scene_point_count": len(terminal),
