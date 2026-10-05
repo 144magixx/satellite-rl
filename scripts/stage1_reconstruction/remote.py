@@ -23,6 +23,23 @@ REMOTE_BASE = "/home/u2024110224/first_stage_satellite_rl/s1_03"
 LOCAL = Path("D:/paper/outputs/experiments/first_stage_s1_03_20261005")
 
 
+GROUPS = ("s1_03", "s1_03_r1")
+
+
+def group_profile(group="s1_03"):
+    """Explicitly separate the approved rerun from the frozen failed group."""
+    if group not in GROUPS:
+        raise ValueError("Unknown approved first-stage reconstruction group")
+    rerun = group == "s1_03_r1"
+    folder = "first_stage_" + group + "_20261005"
+    return {"group": group, "experiment_id": "S1-03-R1" if rerun else "S1-03",
+            "remote_base": "/home/u2024110224/first_stage_satellite_rl/" + group,
+            "local": Path("D:/paper/outputs/experiments") / folder,
+            "models": Path("D:/paper/models/runs") / folder,
+            "api_ports": {20418: 8896, 20424: 8897} if rerun else
+                         {20418: 8894, 20424: 8895}}
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -91,10 +108,10 @@ def upload_once(sftp, local, remote):
             "action": "verified_existing" if existing is not None else "uploaded_verified"}
 
 
-def api(client, port, endpoint, body=None, *, timeout=120):
+def api(client, port, endpoint, body=None, *, timeout=120, group="s1_03"):
     if port not in PORTS:
         raise ValueError("Unknown instance")
-    api_port = {20418: 8894, 20424: 8895}[port]
+    api_port = group_profile(group)["api_ports"][port]
     code = f"""
 import json, urllib.request, urllib.error
 body={body!r}
