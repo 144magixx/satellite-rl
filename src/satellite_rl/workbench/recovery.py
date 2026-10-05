@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 from copy import deepcopy
+import hashlib
+import json
 from pathlib import Path
 import re
 import shutil
@@ -17,6 +19,60 @@ WORKER_FILES = {"src/satellite_rl/workbench/runner.py", "src/satellite_rl/workbe
 CONTROL_FILES = {"src/satellite_rl/workbench/runtime.py", "src/satellite_rl/workbench/service.py",
                  "src/satellite_rl/workbench/recovery.py"}
 RETRY_MODULE = "satellite_rl.training.run_monitor"
+
+S2P17_BOUNDARY_REPAIR_ID = "sca_basic_threshold_exact_v1"
+S2P17_ORIGIN_COMMIT = "0a4742a9a15af93478501497fac5cd36579fa075"
+S2P17_FAILED_RUN = "refine_sac_20261004_215930_e814197c"
+S2P17_FAILED_REQUEST = "s2p17-v0-jan29-sca"
+S2P17_FAILED_CASE = "scene_00033_r0_sca_si_lp"
+S2P17_SOURCE_ALLOWLIST = {
+    "src/satellite_rl/power_refinement/priority.py",
+    "src/satellite_rl/power_refinement/runner.py",
+    "src/satellite_rl/workbench/recovery.py",
+    "src/satellite_rl/workbench/runtime.py",
+    "src/satellite_rl/workbench/service.py",
+    "src/satellite_rl/workbench/power_refinement.py",
+}
+
+
+def _canonical_sha(value):
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def verify_s2p17_boundary_chain(old_root, new_root, new_commit, validation):
+    """File-allowlisted behavior repair; never describe it as AST equivalence."""
+    old = verified_manifest(old_root, S2P17_ORIGIN_COMMIT)
+    new = verified_manifest(new_root, new_commit)
+    names = set(old["files"]) | set(new["files"])
+    changed = sorted(name for name in names if old["files"].get(name) != new["files"].get(name))
+    if (not {"src/satellite_rl/power_refinement/priority.py",
+             "src/satellite_rl/power_refinement/runner.py"}.issubset(changed)
+            or any(name not in S2P17_SOURCE_ALLOWLIST for name in changed)):
+        raise ValueError("S2-P17修复源码超出精确文件允许名单")
+    if (validation.get("format") != "s2p17_boundary_validation_v1"
+            or validation.get("repair_id") != S2P17_BOUNDARY_REPAIR_ID
+            or validation.get("origin_science_commit") != S2P17_ORIGIN_COMMIT
+            or validation.get("repair_commit") != new_commit
+            or validation.get("original_299_cases_verified") is not True
+            or validation.get("failed_B_fallback_to_A_verified") is not True
+            or validation.get("strict_final_guard_unchanged") is not True
+            or validation.get("candidate_boundary_consistent") is not True
+            or validation.get("tests_passed") is not True):
+        raise ValueError("S2-P17数值边界修复缺少完整工程验证回执")
+    return {"repair_id": S2P17_BOUNDARY_REPAIR_ID,
+            "origin_science_commit": S2P17_ORIGIN_COMMIT,
+            "repair_commit": new_commit,
+            "old_source_root": str(Path(old_root).resolve()),
+            "new_source_root": str(Path(new_root).resolve()),
+            "old_manifest_sha256": digest(Path(old_root) / "source_manifest.json"),
+            "new_manifest_sha256": digest(Path(new_root) / "source_manifest.json"),
+            "changed_files": changed,
+            "source_file_sha256_before": {name: old["files"].get(name) for name in changed},
+            "source_file_sha256_after": {name: new["files"].get(name) for name in changed},
+            "behavior_note": "Candidate basic-service boundary acceptance changed; final strict guard unchanged",
+            "ast_equivalent": False}
 
 
 def verified_manifest(root, commit):
@@ -176,4 +232,204 @@ def prepare_io_retry_recovery(store, job):
     updated.setdefault("original_git_commit", job["git_commit"])
     updated.setdefault("source_history", []).append(proof)
     updated.update(source_root=str(new_root), git_commit=new_commit, io_repair=proof)
+    return updated
+
+
+def prepare_s2p17_boundary_recovery(store, job, validation_path, validation_sha256,
+                                     expected_repair_commit):
+    """Prepare only the failed V0 SCA task; queueing remains Scheduler's job.
+
+    This is a behavior-changing boundary fix, not an I/O-equivalent source
+    replacement. Every previously committed case stays byte-for-byte intact.
+    """
+    import math
+    import json
+
+    directory = store.job_dir(job["run_id"])
+    previous = job.get("boundary_repair") or {}
+    if previous.get("repair_id") == S2P17_BOUNDARY_REPAIR_ID:
+        proof_path = Path(previous["archive_path"]) / "repair_proof.json"
+        fallback_path = directory / "failed_attempt_fallback.json"
+        if (job.get("run_id") != S2P17_FAILED_RUN or
+                job.get("scientific_origin_commit") != S2P17_ORIGIN_COMMIT or
+                job.get("git_commit") != expected_repair_commit or
+                previous.get("repair_commit") != expected_repair_commit or
+                job.get("source_root") != previous.get("new_source_root") or
+                read_json(proof_path) != previous or
+                digest(fallback_path) != previous.get("fallback_contract_sha256") or
+                digest(validation_path) != previous.get("validation_receipt_sha256")):
+            raise ValueError("先前S2-P17修复准备状态不一致，禁止覆盖")
+        verified_manifest(job["source_root"], expected_repair_commit)
+        return job
+    if (job.get("run_id") != S2P17_FAILED_RUN or
+            job.get("request_id") != S2P17_FAILED_REQUEST or
+            job.get("kind") != "refine" or job.get("experiment_id") != "S2-P17" or
+            job.get("git_commit") != S2P17_ORIGIN_COMMIT or
+            (job.get("initial_source") or {}).get("group") != "model"):
+        raise ValueError("此数值边界修复只允许原S2-P17 V0细调失败任务")
+    status = read_json(directory / "status.json", {})
+    failure = read_json(directory / "failure.json", {})
+    if (status.get("stage") != "failed" or status.get("env_step") != 299 or
+            status.get("budget_env_steps") != 3960 or
+            "SI优先结果新增严格基本服务跨下波束" not in failure.get("error", "")):
+        raise ValueError("S2-P17失败状态、299/3960预算或边界故障签名不符")
+    old_root = inside(job["source_root"], store.root / "source_snapshots")
+    verified_manifest(old_root, S2P17_ORIGIN_COMMIT)
+    validation_path = inside(validation_path, directory / "recoveries")
+    if digest(validation_path) != validation_sha256:
+        raise ValueError("S2-P17修复验证回执SHA不符")
+    validation = read_json(validation_path, {})
+    new_root, new_commit = store.freeze_source()
+    if new_commit != expected_repair_commit or new_commit == S2P17_ORIGIN_COMMIT:
+        raise ValueError("运行中的修复源码不是指定干净提交")
+    source_proof = verify_s2p17_boundary_chain(old_root, new_root, new_commit, validation)
+    case_dir = directory / "power_cases"
+    methods = ("none", "sca", "sca_si_lp")
+    expected_names = [f"scene_{index:05d}_r{repeat}_{method}.json"
+                      for index in range(440) for repeat in range(3) for method in methods][:299]
+    found_names = {path.name for path in case_dir.glob("*.json")}
+    if found_names != set(expected_names) or len(expected_names) != 299 or \
+            (case_dir / (S2P17_FAILED_CASE + ".json")).exists():
+        raise ValueError("已提交SCA案例不是连续299件，或失败B已被写入")
+    inventory = [{"name": name, "sha256": digest(case_dir / name)} for name in expected_names]
+    inventory_sha = _canonical_sha(inventory)
+    prior_manifest = read_json(directory / "refinement_manifest.json", {})
+    checkpoint = read_json(directory / "refinement_checkpoint.json", {})
+    a_path = case_dir / "scene_00033_r0_sca.json"
+    a_sha = digest(a_path)
+    a_case = read_json(a_path, {})
+    if (prior_manifest.get("budget_cases") != 3960 or
+            checkpoint.get("identity") != prior_manifest.get("identity") or
+            checkpoint.get("completed_cases") != 299 or
+            checkpoint.get("last_case_sha256") != a_sha or
+            Path(checkpoint.get("last_case", "")).resolve() != a_path.resolve() or
+            a_case.get("method") != "sca" or a_case.get("repeat") != 0):
+        raise ValueError("S2-P17细调manifest/299断点/A参照不一致")
+    iterations_source = directory / "power_iterations.jsonl"
+    callback_rows = []
+    with iterations_source.open(encoding="utf-8") as stream:
+        for line in stream:
+            row = json.loads(line)
+            if (row.get("method") == "sca_si_lp" and row.get("repeat") == 0 and
+                    row.get("scene_id") == a_case.get("scene_id")):
+                callback_rows.append(row)
+    last = callback_rows[-1] if callback_rows else {}
+    if (len(callback_rows) != 49 or last.get("evaluation") != 684 or
+            not math.isclose(float(last.get("elapsed_seconds", -1)),
+                             1.0373822273686528, rel_tol=0, abs_tol=1e-6)):
+        raise ValueError("失败B原接受回调下界与冻结日志不一致")
+    archive = inside(directory / "recoveries" /
+                     (S2P17_BOUNDARY_REPAIR_ID + "_" + new_commit[:12]), directory)
+    if archive.exists():
+        prior_proof = read_json(archive / "repair_proof.json", {})
+        prior_fallback = directory / "failed_attempt_fallback.json"
+        if (prior_proof.get("repair_id") != S2P17_BOUNDARY_REPAIR_ID or
+                prior_proof.get("repair_commit") != new_commit or
+                prior_proof.get("old_manifest_sha256") != source_proof["old_manifest_sha256"] or
+                prior_proof.get("new_manifest_sha256") != source_proof["new_manifest_sha256"] or
+                prior_proof.get("original_299_inventory_sha256") != inventory_sha or
+                prior_proof.get("original_A_case_sha256") != a_sha or
+                prior_proof.get("validation_receipt_sha256") != validation_sha256 or
+                not prior_fallback.is_file() or
+                digest(prior_fallback) != prior_proof.get("fallback_contract_sha256") or
+                digest(prior_proof.get("validation_receipt_path", "")) != validation_sha256 or
+                any(digest(archive / "original/power_cases" / item["name"]) != item["sha256"]
+                    for item in inventory)):
+            raise ValueError("修复证据目录为未完成或不同的API准备，保留现场并拒绝覆盖")
+        updated = deepcopy(job)
+        updated.setdefault("original_git_commit", S2P17_ORIGIN_COMMIT)
+        updated.setdefault("source_history", []).append(prior_proof)
+        updated.update(source_root=str(new_root), git_commit=new_commit,
+                       boundary_repair=prior_proof,
+                       failed_attempt_fallback_path=str(prior_fallback),
+                       scientific_origin_commit=S2P17_ORIGIN_COMMIT)
+        return updated
+    archive.mkdir(parents=True)
+    original = archive / "original"
+    copied = {}
+    for name in ("failure.json", "status.json", "job.json", "config.json",
+                 "worker.log", "power_iterations.jsonl", "events.jsonl",
+                 "refinement_manifest.json", "refinement_checkpoint.json"):
+        source = directory / name
+        if source.is_file():
+            target = original / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            checksum = digest(source)
+            if digest(target) != checksum:
+                raise RuntimeError("S2-P17恢复前证据副本SHA不符：" + name)
+            copied[name] = {"path": str(target), "sha256": checksum}
+    for name in expected_names:
+        source = case_dir / name
+        target = original / "power_cases" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        if digest(target) != digest(source):
+            raise RuntimeError("S2-P17原299件案例备份SHA不符")
+    for source in sorted((directory / "initial_allocations").glob("*.json")):
+        target = original / "initial_allocations" / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        if digest(target) != digest(source):
+            raise RuntimeError("S2-P17初解副本SHA不符")
+    validation_copy = original / "validation_receipt.json"
+    shutil.copy2(validation_path, validation_copy)
+    if digest(validation_copy) != validation_sha256:
+        raise RuntimeError("S2-P17验证回执证据副本SHA不符")
+    if not all(name in copied for name in ("failure.json", "status.json", "job.json",
+                                           "power_iterations.jsonl", "refinement_manifest.json",
+                                           "refinement_checkpoint.json")):
+        raise ValueError("S2-P17失败现场缺少必要原文件")
+    if digest(Path(copied["power_iterations.jsonl"]["path"])) != digest(iterations_source):
+        raise RuntimeError("冻结失败尝试日志在证据复制时改变")
+    contract = {
+        "repair_type": S2P17_BOUNDARY_REPAIR_ID,
+        "origin_science_commit": S2P17_ORIGIN_COMMIT,
+        "original_run_id": S2P17_FAILED_RUN,
+        "request_id": S2P17_FAILED_REQUEST,
+        "case_key": S2P17_FAILED_CASE,
+        "scene_sha": a_case["source_scene_sha256"],
+        "initial_sha": a_case["initial_allocation_sha256"],
+        "A_case_path": str(a_path), "A_case_sha256": a_sha,
+        "A_case_backup_path": str(original / "power_cases" / a_path.name),
+        "failure_path": copied["failure.json"]["path"],
+        "failure_sha256": copied["failure.json"]["sha256"],
+        "iterations_path": copied["power_iterations.jsonl"]["path"],
+        "iterations_sha256": copied["power_iterations.jsonl"]["sha256"],
+        "callback_lower_bounds": {"capacity_calls": 684,
+                                  "elapsed_seconds": 1.0373822273686528,
+                                  "accepted_callbacks": 49},
+        "unknown_exact_fields": ["original_attempt_capacity_calls",
+                                 "original_attempt_optimizer_wall_seconds"],
+        "missing_reason": "solver result not persisted after final guard failure",
+        "completed_prefix_case_count": 299,
+        "completed_prefix_inventory_sha256": inventory_sha,
+        "fallback": "failed_attempt_fallback_to_A",
+    }
+    fallback_path = directory / "failed_attempt_fallback.json"
+    if fallback_path.exists():
+        raise ValueError("失败回退合同已存在，禁止覆盖或再次准备")
+    atomic_json(fallback_path, contract)
+    fallback_sha = digest(fallback_path)
+    source_proof.update(at=now(), original_run_id=S2P17_FAILED_RUN,
+                        original_request_id=S2P17_FAILED_REQUEST,
+                        original_status_sha256=copied["status.json"]["sha256"],
+                        original_failure_sha256=copied["failure.json"]["sha256"],
+                        original_iterations_sha256=copied["power_iterations.jsonl"]["sha256"],
+                        original_299_inventory_sha256=inventory_sha,
+                        original_299_inventory=inventory,
+                        original_A_case_sha256=a_sha,
+                        archive_path=str(archive), backup_files=copied,
+                        fallback_contract_path=str(fallback_path),
+                        fallback_contract_sha256=fallback_sha,
+                        validation_receipt_path=str(validation_copy),
+                        validation_receipt_sha256=validation_sha256)
+    atomic_json(archive / "repair_proof.json", source_proof)
+    updated = deepcopy(job)
+    updated.setdefault("original_git_commit", S2P17_ORIGIN_COMMIT)
+    updated.setdefault("source_history", []).append(source_proof)
+    updated.update(source_root=str(new_root), git_commit=new_commit,
+                   boundary_repair=source_proof,
+                   failed_attempt_fallback_path=str(fallback_path),
+                   scientific_origin_commit=S2P17_ORIGIN_COMMIT)
     return updated

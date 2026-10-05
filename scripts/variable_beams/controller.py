@@ -27,6 +27,9 @@ from remote_server import ensure_server, proc_birth
 
 BASE = Path("/home/u2024110224/second_stage_satellite_rl/variable_beams_20261004/20424")
 REPO = BASE / "repo"
+ORIGIN_COMMIT = "0a4742a9a15af93478501497fac5cd36579fa075"
+REPAIR_ID = "sca_basic_threshold_exact_v1"
+FAILED_RUN = "refine_sac_20261004_215930_e814197c"
 ARCHIVE = BASE / "archive"
 OPS = BASE / "ops"
 PORT = 8781
@@ -186,16 +189,17 @@ def source_record(path: Path, expected_sha: str, role: str, count: int) -> tuple
     return record, ordered
 
 
-def validate_system(commit: str) -> dict:
-    head = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"],
+def validate_system(commit: str, runtime_repo: Path = REPO) -> dict:
+    runtime_repo = Path(runtime_repo).resolve()
+    head = subprocess.run(["git", "-C", str(runtime_repo), "rev-parse", "HEAD"],
                           capture_output=True, text=True, check=True).stdout.strip()
-    dirty = subprocess.run(["git", "-C", str(REPO), "status", "--porcelain"],
+    dirty = subprocess.run(["git", "-C", str(runtime_repo), "status", "--porcelain"],
                            capture_output=True, text=True, check=True).stdout.strip()
     system = api("GET", "/system")
     if (head != commit or dirty or system.get("cuda") is not True
-            or Path(system.get("source_root", "")).resolve() != REPO
+            or Path(system.get("source_root", "")).resolve() != runtime_repo
             or Path(system.get("archive_root", "")).resolve() != ARCHIVE
-            or Path(system.get("package_file", "")).resolve() != REPO / "src/satellite_rl/__init__.py"):
+            or Path(system.get("package_file", "")).resolve() != runtime_repo / "src/satellite_rl/__init__.py"):
         raise RuntimeError("Live workbench source/CUDA/archive differs from clean scientific commit")
     return system
 
@@ -407,14 +411,27 @@ def refresh_job(manifest: dict, key: str) -> dict:
         return entry
     detail = api("GET", "/runs/" + entry["run_id"])
     job, status = detail["job"], detail["status"]
+    origin = manifest["scientific_commit"]
+    repair = manifest.get("boundary_repair") or {}
+    expected_commit = (repair.get("repair_commit") if key.endswith("_sca") and repair else origin)
     if (job.get("run_id") != entry["run_id"] or job.get("request_id") != entry["request_id"]
-            or job.get("git_commit") != manifest["scientific_commit"]
+            or job.get("git_commit") != expected_commit
             or job.get("experiment_id") != "S2-P17"):
         raise RuntimeError(f"{key} workbench job identity/scientific source differs")
+    if key == "V0_sca" and repair:
+        proof = job.get("boundary_repair") or {}
+        if (job.get("run_id") != FAILED_RUN or proof.get("repair_id") != REPAIR_ID or
+                proof.get("origin_science_commit") != origin or
+                proof.get("repair_commit") != expected_commit or
+                proof.get("fallback_contract_sha256") != repair.get("fallback_contract_sha256")):
+            raise RuntimeError("V0同ID修复来源链与控制清单不一致")
+    elif key in REFINEMENTS and repair and (job.get("scientific_origin_commit") != origin or
+                                            job.get("repair_profile") != REPAIR_ID):
+        raise RuntimeError(f"{key}缺原科学提交与统一修复口径")
     root = ARCHIVE / "outputs/workbench/jobs" / entry["run_id"]
     source_manifest = Path(job["source_root"]) / "source_manifest.json"
     source_data = json.loads(source_manifest.read_text(encoding="utf-8"))
-    if source_data.get("git_commit") != manifest["scientific_commit"]:
+    if source_data.get("git_commit") != expected_commit:
         raise RuntimeError(f"{key} frozen job source commit differs")
     config_path, job_path, status_path = (root / name for name in ("config.json", "job.json", "status.json"))
     scene_role = "test" if entry["kind"] != "train" else "train"
@@ -566,6 +583,11 @@ def submit_refinement(manifest: dict, key: str) -> None:
         raise RuntimeError("SCA controls changed during workbench validation")
     body = {"source_run_id": source_run_id, "source_group": group,
             "config": controls, "request_id": REQUESTS[key]}
+    if manifest.get("boundary_repair"):
+        body.update(scientific_origin_commit=manifest["scientific_commit"],
+                    repair_profile=REPAIR_ID,
+                    repair_reference_run_id=FAILED_RUN,
+                    repair_proof_sha256=manifest["boundary_repair"]["repair_proof_sha256"])
     job = submit_job("/power-refinement/runs", body, REQUESTS[key], timeout=1800)
     if (job.get("experiment_id") != "S2-P17" or job.get("initial_source", {}).get("group") != group
             or job.get("initial_source", {}).get("run_id") != source_run_id
@@ -578,21 +600,74 @@ def submit_refinement(manifest: dict, key: str) -> None:
                  source_run_id=source_run_id, source_group=group)
 
 
-def check_server_mode(commit: str, required: str) -> None:
+def check_server_mode(commit: str, required: str, runtime_repo: Path = REPO,
+                      repair_switch_sha256: str | None = None) -> None:
     launch_path = OPS / "workbench_8781_launch.json"
     launch = json.loads(launch_path.read_text(encoding="utf-8"))
     limit = 2 if required == "training" else 1
     if (launch.get("commit") != commit or launch.get("max_workers") != limit
+            or Path(launch.get("repo", "")).resolve() != Path(runtime_repo).resolve()
+            or launch.get("repair_switch_contract_sha256") != repair_switch_sha256
             or proc_birth(launch.get("pid")) != launch.get("start_ticks")):
         raise RuntimeError("Current 20424 workbench PID/birth or worker limit differs")
 
 
-def step(commit: str, scope_sha: str) -> dict:
+def bind_boundary_repair(manifest: dict, runtime_commit: str, runtime_repo: Path,
+                         switch_sha: str | None, *, persist: bool = True) -> None:
+    if runtime_commit == manifest["scientific_commit"]:
+        if manifest.get("boundary_repair"):
+            raise RuntimeError("已修复任务不得退回原0a工作台源码")
+        return
+    expected_repo = BASE / "recovery" / runtime_commit / "repo"
+    if (manifest["scientific_commit"] != ORIGIN_COMMIT or
+            runtime_repo.resolve() != expected_repo.resolve() or not switch_sha):
+        raise RuntimeError("非原0a来源的控制器需要精确隔离修复repo/合同")
+    entry = manifest["jobs"]["V0_sca"]
+    if entry.get("run_id") != FAILED_RUN:
+        raise RuntimeError("修复控制器只能接原V0细调同ID任务")
+    job = json.loads(Path(entry["job_path"]).read_text(encoding="utf-8"))
+    proof = job.get("boundary_repair") or {}
+    proof_path = Path(proof.get("archive_path", "")) / "repair_proof.json"
+    if (job.get("scientific_origin_commit") != ORIGIN_COMMIT or
+            job.get("git_commit") != runtime_commit or
+            job.get("source_root") != proof.get("new_source_root") or
+            proof.get("repair_id") != REPAIR_ID or
+            proof.get("origin_science_commit") != ORIGIN_COMMIT or
+            proof.get("repair_commit") != runtime_commit or
+            not proof_path.is_file() or
+            json.loads(proof_path.read_text(encoding="utf-8")) != proof):
+        raise RuntimeError("V0同ID修复job缺来源/快照/证明")
+    from remote_server import _file_sha
+    switch_path = OPS / "recovery_switch_contract.json"
+    if not switch_path.is_file() or _file_sha(switch_path) != switch_sha:
+        raise RuntimeError("修复控制器切换合同SHA不符")
+    binding = {"repair_id": REPAIR_ID, "origin_science_commit": ORIGIN_COMMIT,
+               "repair_commit": runtime_commit, "runtime_repo": str(runtime_repo),
+               "repair_proof_path": str(proof_path),
+               "repair_proof_sha256": sha(proof_path),
+               "fallback_contract_sha256": proof["fallback_contract_sha256"],
+               "switch_contract_path": str(switch_path),
+               "switch_contract_sha256": switch_sha,
+               "failed_run_id": FAILED_RUN}
+    if manifest.get("boundary_repair") and manifest["boundary_repair"] != binding:
+        raise RuntimeError("控制器已有不同修复绑定，禁止替换")
+    manifest["boundary_repair"] = binding
+    manifest["last_error"] = None  # Historical failure stays in the source proof.
+    if persist:
+        atomic_json(MANIFEST, manifest)
+
+
+def step(commit: str, scope_sha: str, *, runtime_commit: str | None = None,
+         runtime_repo: Path = REPO, repair_switch_contract: Path | None = None,
+         repair_switch_sha256: str | None = None) -> dict:
     scope = scope_contract(scope_sha)
-    validate_system(commit)
+    runtime_commit = runtime_commit or commit
+    runtime_repo = Path(runtime_repo).resolve()
+    validate_system(runtime_commit, runtime_repo)
     manifest = load_manifest(commit, scope_sha, scope)
+    bind_boundary_repair(manifest, runtime_commit, runtime_repo, repair_switch_sha256)
     if not manifest["datasets"]:
-        check_server_mode(commit, "training")
+        check_server_mode(runtime_commit, "training", runtime_repo, repair_switch_sha256)
         sources = (("train", Path(scope["train_record_path"]), scope["train_record_sha256"],
                     scope["derived_scene_count"]),
                    ("validation", VALIDATION, VALIDATION_SHA, 144),
@@ -615,7 +690,7 @@ def step(commit: str, scope_sha: str) -> dict:
     if not manifest["source"].get("h0_model_id"):
         import_h0(manifest)
     if any(not manifest["jobs"][key]["run_id"] for key in ("V0_train", "V1_train")):
-        check_server_mode(commit, "training")
+        check_server_mode(runtime_commit, "training", runtime_repo, repair_switch_sha256)
         submit_training(manifest)
         return manifest
     for key in ("V0_train", "V1_train"):
@@ -633,8 +708,10 @@ def step(commit: str, scope_sha: str) -> dict:
         return manifest
     for key in ("V0_train", "V1_train"):
         final_model(manifest, key)
-    ensure_server(commit, "evaluation")
-    check_server_mode(commit, "evaluation")
+    ensure_server(runtime_commit, "evaluation", repo=runtime_repo,
+                  repair_switch_contract=repair_switch_contract,
+                  repair_switch_sha256=repair_switch_sha256)
+    check_server_mode(runtime_commit, "evaluation", runtime_repo, repair_switch_sha256)
     for key in EVALUATIONS:
         entry = manifest["jobs"][key]
         if not entry["run_id"]:
@@ -681,9 +758,15 @@ def step(commit: str, scope_sha: str) -> dict:
     return manifest
 
 
-def plan(commit: str, scope_sha: str) -> dict:
+def plan(commit: str, scope_sha: str, *, runtime_commit: str | None = None,
+         runtime_repo: Path = REPO, repair_switch_sha256: str | None = None) -> dict:
     scope = scope_contract(scope_sha)
-    system = validate_system(commit)
+    runtime_commit = runtime_commit or commit
+    system = validate_system(runtime_commit, runtime_repo)
+    manifest = load_manifest(commit, scope_sha, scope)
+    if runtime_commit != commit:
+        bind_boundary_repair(manifest, runtime_commit, Path(runtime_repo).resolve(),
+                             repair_switch_sha256, persist=False)
     sources = (("train", Path(scope["train_record_path"]), scope["train_record_sha256"],
                 scope["derived_scene_count"]),
                ("validation", VALIDATION, VALIDATION_SHA, 144),
@@ -696,8 +779,12 @@ def plan(commit: str, scope_sha: str) -> dict:
                         "ordered_npz_sha256": hashlib.sha256("".join(ordered).encode()).hexdigest()}
     if sha(T0 / "policy.pt") != T0_SHA or sha(T0 / "model.json") != T0_METADATA_SHA:
         raise RuntimeError("T0/H0 frozen endpoint differs")
-    return {"status": "ready_to_start_controller_no_jobs_created", "checked_utc": now(),
+    return {"status": ("ready_to_continue_repaired_controller_existing_jobs"
+                       if runtime_commit != commit else "ready_to_start_controller_no_jobs_created"),
+            "checked_utc": now(),
             "experiment_id": "S2-P17", "scientific_commit": commit,
+            "runtime_commit": runtime_commit, "runtime_repo": str(runtime_repo),
+            "repair_switch_contract_sha256": repair_switch_sha256,
             "scope_sha256": scope_sha, "decision": scope["decision"],
             "workbench_source_root": system.get("source_root"),
             "datasets": checks, "t0_policy_sha256": T0_SHA,
@@ -711,6 +798,10 @@ def plan(commit: str, scope_sha: str) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--runtime-commit")
+    parser.add_argument("--runtime-repo", type=Path, default=REPO)
+    parser.add_argument("--repair-switch-contract", type=Path)
+    parser.add_argument("--repair-switch-sha256")
     parser.add_argument("--scope-sha256", required=True)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--plan", action="store_true")
@@ -720,8 +811,16 @@ def main() -> None:
     if not re.fullmatch(r"[0-9a-f]{40}", args.commit.lower()):
         raise ValueError("Full scientific commit required")
     commit = args.commit.lower()
+    runtime_commit = (args.runtime_commit or commit).lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", runtime_commit):
+        raise ValueError("Full runtime commit required")
+    if runtime_commit != commit and (not args.repair_switch_contract or
+                                     not args.repair_switch_sha256):
+        raise ValueError("修复控制器须指定切换合同路径和SHA")
     if args.plan:
-        print(json.dumps(plan(commit, args.scope_sha256), ensure_ascii=False))
+        print(json.dumps(plan(commit, args.scope_sha256,
+            runtime_commit=runtime_commit, runtime_repo=args.runtime_repo,
+            repair_switch_sha256=args.repair_switch_sha256), ensure_ascii=False))
         return
     import fcntl
     OPS.mkdir(parents=True, exist_ok=True)
@@ -732,10 +831,14 @@ def main() -> None:
             raise RuntimeError("Another S2-P17 controller already owns the lock") from error
         while True:
             try:
-                manifest = step(commit, args.scope_sha256)
+                manifest = step(commit, args.scope_sha256,
+                    runtime_commit=runtime_commit, runtime_repo=args.runtime_repo,
+                    repair_switch_contract=args.repair_switch_contract,
+                    repair_switch_sha256=args.repair_switch_sha256)
             except BaseException as error:
                 failure = {"status": "controller_error_no_auto_resume", "checked_utc": now(),
                            "error": repr(error), "commit": commit,
+                           "runtime_commit": runtime_commit,
                            "scope_sha256": args.scope_sha256}
                 atomic_json(OPS / "controller_failure.json", failure)
                 raise
