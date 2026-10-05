@@ -322,6 +322,12 @@ except Exception as error:
                 observation["s2_8781"] = {"error": str(error)}
         self.state["concurrency"][label] = observation
 
+    def _start_reference(self, role, port):
+        """Return the frozen common start record; R1 may override this hook."""
+        return (self.state["imports"]["test_start_20424"]
+                if role == "test" and port == 20424 else
+                self.state["jobs"][f"prepare_{role}"])
+
     def _job(self, label, port, route, kind, role=None):
         request_id = f"s103_{self.plan_sha256[:16]}_{label}"
         run_id = self.state["jobs"].get(label)
@@ -342,8 +348,7 @@ except Exception as error:
                     "request_id": request_id}
             if route != "prepare":
                 body["start_run_ids"] = {
-                    r: (self.state["imports"]["test_start_20424"] if r == "test" and port == 20424
-                        else self.state["jobs"][f"prepare_{r}"]) for r in roles}
+                    r: self._start_reference(r, port) for r in roles}
             if kind == "evaluate" and route == "P1":
                 body["model_id"] = self.state["imports"]["P1_model_20424"]
             job = self.api(port, "coverage/runs", body, timeout=180, retry=3)
