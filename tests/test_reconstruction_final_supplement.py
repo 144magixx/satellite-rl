@@ -5,6 +5,8 @@ import unittest
 from unittest.mock import patch
 
 PATH = Path(__file__).resolve().parents[1] / 'scripts/stage1_reconstruction/audit_final_supplement.py'
+if not PATH.is_file():
+    PATH = Path(__file__).with_name('audit_final_supplement.py')
 spec = importlib.util.spec_from_file_location('supplement', PATH)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
