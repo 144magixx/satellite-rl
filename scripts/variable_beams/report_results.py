@@ -49,6 +49,14 @@ FAILED_RUN = "refine_sac_20261004_215930_e814197c"
 FAILED_CASE = "scene_00033_r0_sca_si_lp.json"
 FAILED_CALLS_LOWER_BOUND = 684
 FAILED_SECONDS_LOWER_BOUND = 1.0373822273686528
+INTERRUPTED_RUN = "refine_sac_20261005_014002_932212d0"
+INTERRUPTED_REQUEST = "s2p17-v1-jan29-sca"
+INTERRUPTED_SCENE_INDEX = 146
+INTERRUPTED_CASE = "scene_00146_r0_sca"
+INTERRUPTION_SCHEMA = "s2p17_user_pause_interruption_v1"
+INTERRUPTION_FILES = ("V1_status.json", "V1_refinement_checkpoint.json",
+                      "V1_refinement_manifest.json", "V1_power_iterations.jsonl",
+                      "V1_prefix_sha256.json", "V1_job.json", "user_pause.json")
 
 
 class AuditError(ValueError):
@@ -790,10 +798,10 @@ def load_refinements(jobs, test_refs, direct, inputs, manifest=None):
         job = jobs[name]["job"]
         case_dir = directory / "power_cases"
         manifest_path = directory / "refinement_manifest.json"
-        manifest = json_file(manifest_path)
-        require(manifest.get("budget_cases") == 440 * REPEATS[role] * 3,
+        refinement_manifest = json_file(manifest_path)
+        require(refinement_manifest.get("budget_cases") == 440 * REPEATS[role] * 3,
                 f"{name}细调案例预算不符")
-        require([sha for _, sha in manifest.get("scene_files", [])] ==
+        require([sha for _, sha in refinement_manifest.get("scene_files", [])] ==
                 [ref["sha256"] for ref in test_refs],
                 f"{name}细调冻结场景SHA清单不符")
         inputs[str(manifest_path.resolve())] = sha256_file(manifest_path)
@@ -862,6 +870,145 @@ def load_refinements(jobs, test_refs, direct, inputs, manifest=None):
     require(sum(role_case_counts.values()) == 14520 and len(refined) == 4840,
             "SCA任务记录不是14520或独立初解不是4840")
     return refined
+
+
+def load_interruption_ledger(path, controller_path, manifest, jobs, test_refs,
+                             direct, refined, inputs):
+    """Bind the separate V1 user-pause attempt to immutable pre-pause evidence."""
+    require(path is not None, "S2-P17修复版正式报告缺少V1主动暂停中断账本")
+    path = Path(path).resolve()
+    ledger_sha = sha256_file(path)
+    ledger = json_file(path)
+    inputs[str(path)] = ledger_sha
+    job = jobs["V1_sca"]["job"]
+    ref = test_refs[INTERRUPTED_SCENE_INDEX]
+    key = ("V1", ref["sha256"], 0)
+    stages = refined[key]
+    original = direct[key]
+    expected_snapshot = (Path(controller_path).resolve().parent /
+                         "user_resume_20261004T185523Z").resolve()
+    snapshot = Path(ledger.get("snapshot_dir", "")).resolve()
+    require(ledger.get("schema_version") == INTERRUPTION_SCHEMA and
+            ledger.get("experiment_id") == EXPERIMENT and
+            ledger.get("event") == "user_requested_pause" and
+            ledger.get("run_id") == INTERRUPTED_RUN == job.get("run_id") and
+            ledger.get("request_id") == INTERRUPTED_REQUEST == job.get("request_id") and
+            ledger.get("role") == "V1" and
+            ledger.get("scene_index") == INTERRUPTED_SCENE_INDEX and
+            ledger.get("repeat") == 0 and ledger.get("method") == "sca" and
+            ledger.get("scene_id") == "scene_0000146_r0" and
+            ledger.get("source_scene_sha256") == ref["sha256"] and
+            ledger.get("source_initial_case_sha256") == original["case_sha256"] and
+            ledger.get("initial_allocation_sha256") == original["beams_sha256"] and
+            ledger.get("origin_science_commit") == manifest["scientific_commit"] and
+            ledger.get("repair_commit") == manifest["boundary_repair"]["repair_commit"] and
+            snapshot == expected_snapshot and
+            isinstance(ledger.get("missing_reason"), str) and ledger["missing_reason"],
+            "V1主动暂停账本身份/场景/初解/来源不符")
+    hashes = ledger.get("files_sha256") or {}
+    require(set(hashes) == set(INTERRUPTION_FILES), "V1暂停账本缺原始证据文件SHA")
+    for name in INTERRUPTION_FILES:
+        evidence = snapshot / name
+        digest = sha256_file(evidence)
+        require(digest == hashes[name], f"V1暂停原始证据SHA不符：{name}")
+        inputs[str(evidence.resolve())] = digest
+    saved_job = json_file(snapshot / "V1_job.json")
+    status = json_file(snapshot / "V1_status.json")
+    checkpoint = json_file(snapshot / "V1_refinement_checkpoint.json")
+    paused_manifest = json_file(snapshot / "V1_refinement_manifest.json")
+    prefix = json_file(snapshot / "V1_prefix_sha256.json")
+    pause = json_file(snapshot / "user_pause.json")
+    none = stages["none"]
+    a = stages["sca"]
+    b = stages["sca_si_lp"]
+    expected_cases = {"none": none["case_sha256"], "sca": a["case_sha256"],
+                      "sca_si_lp": b["case_sha256"]}
+    expected_none_path = (jobs["V1_sca"]["directory"] / "power_cases" /
+                          f"scene_{INTERRUPTED_SCENE_INDEX:05d}_r0_none.json").resolve()
+    require(ledger.get("resumed_case_sha256") == expected_cases and
+            none["case_sha256"] == ledger.get("pre_pause_last_none_sha256") and
+            checkpoint.get("completed_cases") == status.get("env_step") == 1315 and
+            Path(checkpoint.get("last_case", "")).resolve() == expected_none_path and
+            checkpoint.get("last_case_sha256") == none["case_sha256"] and
+            len(prefix) == 1315 and
+            prefix.get(f"scene_{INTERRUPTED_SCENE_INDEX:05d}_r0_none.json") ==
+            none["case_sha256"] and
+            paused_manifest.get("identity") == checkpoint.get("identity") and
+            paused_manifest.get("budget_cases") == 3960 and
+            paused_manifest.get("scene_files", [])[INTERRUPTED_SCENE_INDEX][1] ==
+            ref["sha256"] and
+            saved_job.get("run_id") == job.get("run_id") and
+            saved_job.get("request_id") == job.get("request_id") and
+            saved_job.get("git_commit") == job.get("git_commit") and
+            saved_job.get("scientific_origin_commit") == manifest["scientific_commit"] and
+            status.get("run_id") == job.get("run_id") and
+            status.get("stage") == "stopped" and
+            status.get("scene_index") == INTERRUPTED_SCENE_INDEX and
+            status.get("repeat") == 0 and status.get("method") == "sca" and
+            (status.get("optimizer_progress") or {}).get("phase") == "si" and
+            any(item.get("run_id") == INTERRUPTED_RUN and
+                item.get("before_stage") == "evaluating"
+                for item in pause.get("stop_requests", [])) and
+            str(pause.get("reason", "")).startswith("User requested pause"),
+            "V1暂停前断点、原none与续跑案例来源不一致")
+    none_row = verified_json(none["case_path"], none["case_sha256"])
+    require(none_row.get("source_scene_sha256") == ref["sha256"] and
+            none_row.get("source_initial_case_sha256") == original["case_sha256"] and
+            none_row.get("initial_allocation_sha256") == original["beams_sha256"] and
+            b["reference_case_sha256"] == a["case_sha256"] and
+            b["reference_allocation_sha256"] == a["beams_sha256"] and
+            not any(stage["failed_attempt_fallback"] for stage in stages.values()),
+            "V1暂停原none/A/B链路不完整或混入V0失败B回退")
+    progress = status.get("optimizer_progress") or {}
+    callback_rows = [row for row in read_jsonl(snapshot / "V1_power_iterations.jsonl")
+                     if row.get("scene_id") == ledger["scene_id"] and
+                     row.get("repeat") == 0 and row.get("method") == "sca"]
+    require(callback_rows and all(row.get("case_identity") ==
+                                  ledger.get("interrupted_case_identity")
+                                  for row in callback_rows),
+            "V1原暂停尝试回调身份缺失")
+    last = callback_rows[-1]
+    bounds = ledger.get("callback_lower_bounds") or {}
+    require(type(bounds.get("capacity_calls")) is int and
+            bounds["capacity_calls"] >= 571 and
+            bounds["capacity_calls"] == progress.get("evaluation") == last.get("evaluation") and
+            last.get("phase") == "si" and
+            bounds.get("accepted_callbacks") == len(callback_rows) and
+            isinstance(bounds.get("elapsed_seconds"), (int, float)) and
+            bounds["elapsed_seconds"] >= 1.4651551842689514 and
+            math.isclose(bounds["elapsed_seconds"], progress.get("elapsed_seconds"),
+                         rel_tol=0, abs_tol=1e-12) and
+            math.isclose(bounds["elapsed_seconds"], last.get("elapsed_seconds"),
+                         rel_tol=0, abs_tol=1e-12),
+            "V1原暂停A试算调用/时间下界与原回调日志不符")
+    return {"ledger_path": str(path), "ledger_sha256": ledger_sha,
+            "snapshot_dir": str(snapshot), "run_id": job["run_id"],
+            "request_id": job["request_id"], "scene_index": INTERRUPTED_SCENE_INDEX,
+            "scene_sha256": ref["sha256"], "scene_id": ledger["scene_id"],
+            "repeat_index": 0, "method": "sca", "case_identity":
+                ledger["interrupted_case_identity"],
+            "saved_none_case_sha256": none["case_sha256"],
+            "successful_A_case_sha256": a["case_sha256"],
+            "successful_B_case_sha256": b["case_sha256"],
+            "original_A_capacity_calls_lower_bound": bounds["capacity_calls"],
+            "original_A_optimizer_seconds_lower_bound": bounds["elapsed_seconds"],
+            "original_A_capacity_calls_exact": None,
+            "original_A_optimizer_seconds_exact": None,
+            "successful_attempt_A_capacity_calls": a["solver_evaluations"],
+            "successful_attempt_B_capacity_calls": b["solver_evaluations"],
+            "successful_attempt_complete_route_calls":
+                b["complete_route_solver_evaluations"],
+            "cumulative_A_capacity_calls_exact": None,
+            "cumulative_A_capacity_calls_lower_bound":
+                a["solver_evaluations"] + bounds["capacity_calls"],
+            "cumulative_complete_route_calls_exact": None,
+            "cumulative_complete_route_calls_lower_bound":
+                b["complete_route_solver_evaluations"] + bounds["capacity_calls"],
+            "missing_reason": ledger["missing_reason"],
+            "original_status_sha256": hashes["V1_status.json"],
+            "original_checkpoint_sha256": hashes["V1_refinement_checkpoint.json"],
+            "original_iterations_sha256": hashes["V1_power_iterations.jsonl"],
+            "pre_pause_snapshot_sha256": canonical_hash(hashes)}
 
 
 def audit_physics(jobs, test_refs, direct, refined):
@@ -983,17 +1130,23 @@ def percentile_summary(values):
             "p95": float(np.percentile(array, 95))}
 
 
-def summarize_timing(test_refs, direct, refined):
+def summarize_timing(test_refs, direct, refined, interruptions=()):
     stages = ("initial_allocation_seconds", "physics_setup_seconds",
               "reference_optimizer_wall_seconds", "reference_verification_seconds",
               "optimizer_wall_seconds", "verification_seconds", "total_pipeline_seconds")
     raw_rows = []
+    interruption_by_action = {(row["scene_sha256"], row["repeat_index"]): row
+                              for row in interruptions}
+    require(len(interruption_by_action) == len(interruptions), "主动暂停中断账本重复")
     for role in ROLES:
         for ref in test_refs:
             for repeat in range(REPEATS[role]):
                 key = (role, ref["sha256"], repeat)
                 source, final = direct[key], refined[key]["sca_si_lp"]
                 fallback = final["failed_attempt_fallback"]
+                interruption = (interruption_by_action.get((ref["sha256"], repeat))
+                                if role == "V1" else None)
+                require(not (fallback and interruption), "V0失败B与V1主动暂停不能合并")
                 timing = final["timing"]
                 if fallback:
                     a_timing = refined[key]["sca"]["timing"]
@@ -1003,6 +1156,10 @@ def summarize_timing(test_refs, direct, refined):
                               "optimizer_wall_seconds": None,
                               "verification_seconds": None,
                               "total_pipeline_seconds": None}
+                successful_timing = timing if interruption else None
+                if interruption:
+                    timing = {**timing, "reference_optimizer_wall_seconds": None,
+                              "total_pipeline_seconds": None}
                 raw_rows.append({"role": role, "combination": LABELS[role],
                                  "scene_sha256": ref["sha256"],
                                  "mother_scene_id": ref["mother_scene_id"],
@@ -1011,19 +1168,66 @@ def summarize_timing(test_refs, direct, refined):
                                  "repeat_index": repeat,
                                  "initial_allocation_seconds": source["initial_allocation_seconds"],
                                  **{field: timing[field] for field in stages if field != "initial_allocation_seconds"},
-                                 "timing_missing_reason": ("原失败B已完成但未保存精确求解与全路线时间；"
-                                                           "仅有原callback下界" if fallback else None),
+                                 "timing_missing_reason": (
+                                     "原失败B已完成但未保存精确求解与全路线时间；仅有原callback下界"
+                                     if fallback else interruption["missing_reason"]
+                                     if interruption else None),
+                                 "timing_loss_kind": ("failed_B_fallback_to_A" if fallback else
+                                                      "user_pause_interrupted_A" if interruption else None),
                                  "original_B_calls_lower_bound":
                                      FAILED_CALLS_LOWER_BOUND if fallback else None,
                                  "original_B_optimizer_seconds_lower_bound":
                                      FAILED_SECONDS_LOWER_BOUND if fallback else None,
                                  "total_pipeline_seconds_lower_bound":
                                      (a_timing["total_pipeline_seconds"] +
-                                      FAILED_SECONDS_LOWER_BOUND if fallback else None),
+                                      FAILED_SECONDS_LOWER_BOUND if fallback else
+                                      successful_timing["total_pipeline_seconds"] +
+                                      interruption["original_A_optimizer_seconds_lower_bound"]
+                                      if interruption else None),
+                                 "original_A_calls_lower_bound": (
+                                     interruption["original_A_capacity_calls_lower_bound"]
+                                     if interruption else None),
+                                 "cumulative_A_calls_lower_bound": (
+                                     interruption["cumulative_A_capacity_calls_lower_bound"]
+                                     if interruption else None),
+                                 "cumulative_complete_route_calls_lower_bound": (
+                                     interruption["cumulative_complete_route_calls_lower_bound"]
+                                     if interruption else None),
+                                 "original_A_optimizer_seconds_lower_bound": (
+                                     interruption["original_A_optimizer_seconds_lower_bound"]
+                                     if interruption else None),
+                                 "cumulative_A_optimizer_seconds_lower_bound": (
+                                     successful_timing["reference_optimizer_wall_seconds"] +
+                                     interruption["original_A_optimizer_seconds_lower_bound"]
+                                     if interruption else None),
+                                 "successful_attempt_A_optimizer_seconds": (
+                                     successful_timing["reference_optimizer_wall_seconds"]
+                                     if interruption else None),
+                                 "successful_attempt_initial_allocation_seconds": (
+                                     source["initial_allocation_seconds"] if interruption else None),
+                                 "successful_attempt_physics_setup_seconds": (
+                                     successful_timing["physics_setup_seconds"]
+                                     if interruption else None),
+                                 "successful_attempt_A_verification_seconds": (
+                                     successful_timing["reference_verification_seconds"]
+                                     if interruption else None),
+                                 "successful_attempt_B_optimizer_seconds": (
+                                     successful_timing["optimizer_wall_seconds"]
+                                     if interruption else None),
+                                 "successful_attempt_B_verification_seconds": (
+                                     successful_timing["verification_seconds"]
+                                     if interruption else None),
+                                 "successful_attempt_total_pipeline_seconds": (
+                                     successful_timing["total_pipeline_seconds"]
+                                     if interruption else None),
+                                 "interruption_ledger_sha256": (
+                                     interruption["ledger_sha256"] if interruption else None),
                                  "repair_verification_seconds":
                                      final["repair_verification_seconds"] if fallback else None,
                                  "sca_source_commit": final["source_commit"]})
     require(len(raw_rows) == 4840, "完整耗时原始动作数量不符")
+    require(sum(row["timing_loss_kind"] == "user_pause_interrupted_A"
+                for row in raw_rows) == len(interruptions), "V1主动暂停案例未唯一进入缺时统计")
     groups = defaultdict(list)
     for row in raw_rows:
         groups[(row["role"], row["beam_count"])].append(row)
@@ -1240,7 +1444,8 @@ def _n_average(records, role, stage, n, metric):
     return statistics.mean(values)
 
 
-def write_report(path, manifest, records, pairs, timing_summary, physics_checked):
+def write_report(path, manifest, records, pairs, timing_summary, physics_checked,
+                 interruptions=()):
     direct_held = statistics.mean(_n_average(records, "V1", "direct", n, "si") -
                                   _n_average(records, "V0", "direct", n, "si")
                                   for n in HELD_OUT)
@@ -1333,6 +1538,17 @@ def write_report(path, manifest, records, pairs, timing_summary, physics_checked
                   "其完整时间和对应同场景三动作时间缺失，不能以恢复核验时间或其余动作代替。",
                   "本次候选判断修复可能改变边界行为，混合实现与缺时限制使实验不能称为无行为差异或完整计时交付。",
                   "各计时段的均值/中位/P95只针对完整样本，精确数量及单列下界见CSV。"]
+    if interruptions:
+        interruption = interruptions[0]
+        lines += ["", "## V1用户主动暂停的独立计时缺口", "",
+                  f"V1工作台任务`{interruption['run_id']}`在scene_00146_r0的A试算中按用户要求暂停；"
+                  f"原迭代日志SHA为`{interruption['original_iterations_sha256']}`。",
+                  f"原尝试至少{interruption['original_A_capacity_calls_lower_bound']}次容量调用、"
+                  f"{interruption['original_A_optimizer_seconds_lower_bound']:.9f}秒，精确调用数及耗时未保存。",
+                  "续跑成功的none/A/B终态与实测分段继续严格核验，且全部计入SI、SGM、约束和逐场景性能。",
+                  "timing_raw.csv保留成功尝试的A、B及其完整路线实测时间；另列原中断尝试下界。",
+                  "原A累计求解时间和该动作全程总耗时为null，仅列下界；该场景三动作时间",
+                  "不参与主时间表与曲线。此事与V0唯一失败B回退无关，详细证据见interruptions.csv。"]
     lines += ["", "## 图表", "",
               "![SI随束数变化](si_by_n.png)", "![SGM随束数变化](sgm_by_n.png)",
               "![基本服务束比例](basic_fraction_by_n.png)",
@@ -1353,14 +1569,19 @@ def write_report(path, manifest, records, pairs, timing_summary, physics_checked
     Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def generate(manifest_path, output_dir, *, skip_physics=False):
+def generate(manifest_path, output_dir, *, interruption_ledger=None, skip_physics=False):
     inputs = {}
     manifest = load_manifest(manifest_path, inputs)
+    require(bool(manifest.get("boundary_repair")) == bool(interruption_ledger),
+            "本轮S2-P17修复报告必须提供且仅提供V1主动暂停中断账本")
     datasets = load_datasets(manifest, inputs)
     jobs = load_jobs(manifest, datasets, inputs)
     refs = datasets["test"]["files"]
     direct = load_evaluations(jobs, refs, inputs)
     refined = load_refinements(jobs, refs, direct, inputs, manifest)
+    interruptions = ([load_interruption_ledger(interruption_ledger, manifest_path,
+                                               manifest, jobs, refs, direct, refined, inputs)]
+                     if interruption_ledger else [])
     candidate_hashes = {stages["sca_si_lp"]["case_path"]:
                         stages["sca_si_lp"]["highest_si_power_sha256"]
                         for stages in refined.values()}
@@ -1370,7 +1591,37 @@ def generate(manifest_path, output_dir, *, skip_physics=False):
             "最高SI候选SHA缺失数量与唯一失败B合同不符")
     curves = load_training_curves(jobs, inputs)
     records, by_n_load, pairs = summarize_common(refs, direct, refined)
-    timing_rows, timing_summary = summarize_timing(refs, direct, refined)
+    timing_rows, timing_summary = summarize_timing(refs, direct, refined, interruptions)
+    if interruptions:
+        require(sum(row["total_pipeline_seconds"] is None for row in timing_rows) == 2,
+                "V0失败B与V1主动暂停须各保留一条精确总耗时缺失")
+    interruption_rows = []
+    for interruption in interruptions:
+        measured = next(row for row in timing_rows
+                        if row["role"] == "V1" and
+                        row["scene_sha256"] == interruption["scene_sha256"] and
+                        row["repeat_index"] == interruption["repeat_index"])
+        interruption_rows.append({**interruption,
+            "successful_attempt_initial_allocation_seconds":
+                measured["successful_attempt_initial_allocation_seconds"],
+            "successful_attempt_physics_setup_seconds":
+                measured["successful_attempt_physics_setup_seconds"],
+            "successful_attempt_A_optimizer_seconds":
+                measured["successful_attempt_A_optimizer_seconds"],
+            "successful_attempt_A_verification_seconds":
+                measured["successful_attempt_A_verification_seconds"],
+            "successful_attempt_B_optimizer_seconds":
+                measured["successful_attempt_B_optimizer_seconds"],
+            "successful_attempt_B_verification_seconds":
+                measured["successful_attempt_B_verification_seconds"],
+            "successful_attempt_total_pipeline_seconds":
+                measured["successful_attempt_total_pipeline_seconds"],
+            "cumulative_A_optimizer_seconds_exact": None,
+            "cumulative_A_optimizer_seconds_lower_bound":
+                measured["cumulative_A_optimizer_seconds_lower_bound"],
+            "cumulative_total_pipeline_seconds_exact": None,
+            "cumulative_total_pipeline_seconds_lower_bound":
+                measured["total_pipeline_seconds_lower_bound"]})
     provenance_rows = [{"role": role, "scene_sha256": ref["sha256"],
                         "repeat_index": repeat, "method": method,
                         "case_sha256": refined[(role, ref["sha256"], repeat)][method]["case_sha256"],
@@ -1393,9 +1644,11 @@ def generate(manifest_path, output_dir, *, skip_physics=False):
         _write_csv(stage / "timing_raw.csv", timing_rows)
         _write_csv(stage / "timing_summary.csv", timing_summary)
         _write_csv(stage / "refinement_provenance.csv", provenance_rows)
+        if interruption_rows:
+            _write_csv(stage / "interruptions.csv", interruption_rows)
         figures = render_figures(stage, records, pairs, timing_summary, curves)
         write_report(stage / "report.md", manifest, records, pairs,
-                     timing_summary, physics_checked)
+                     timing_summary, physics_checked, interruptions)
         script_path = Path(__file__).resolve()
         inputs[str(script_path)] = sha256_file(script_path)
         outputs = {path.name: sha256_file(path) for path in sorted(stage.iterdir()) if path.is_file()}
@@ -1413,6 +1666,9 @@ def generate(manifest_path, output_dir, *, skip_physics=False):
                    "boundary_repair": manifest.get("boundary_repair"),
                    "exact_total_time_missing_actions": sum(
                        row["total_pipeline_seconds"] is None for row in timing_rows),
+                   "independent_user_pause_interruption_count": len(interruptions),
+                   "interruption_ledger_sha256": (interruptions[0]["ledger_sha256"]
+                                                  if interruptions else None),
                    "refinement_old_source_records": sum(
                        row["source_commit"] == manifest["scientific_commit"]
                        for row in provenance_rows),
@@ -1435,10 +1691,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--controller-manifest", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--interruption-ledger", type=Path,
+                        help="Required SHA-bound V1 user-pause ledger for this repaired S2-P17 report")
     parser.add_argument("--skip-physics", action="store_true",
                         help="Only for a marked incomplete arithmetic/source audit")
     args = parser.parse_args(argv)
     print(json.dumps(generate(args.controller_manifest, args.output_dir,
+                              interruption_ledger=args.interruption_ledger,
                               skip_physics=args.skip_physics), ensure_ascii=False))
 
 
