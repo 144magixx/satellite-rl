@@ -195,7 +195,9 @@ def optimize_priority(problem: FixedAllocationPhysics, reference_power,
         baseline_ratio = baseline_floor / problem.demand_bps
     # A beam already meeting 0.1D must never newly cross below it.  An
     # initially short beam retains the old 1e-8 ratio numerical tolerance.
-    was_met = reference_ratio >= 0.1
+    # Match the final strict verifier's capacity comparison.  Dividing first
+    # can round an exactly served 0.1D beam to 0.09999999999999999.
+    was_met = original.capacity_bps >= 0.1 * problem.demand_bps
     floor_ratio = np.where(was_met, 0.1,
                            np.maximum(reference_ratio, baseline_ratio) - tolerance)
     surrogate_floor = np.where(was_met,
@@ -229,7 +231,7 @@ def optimize_priority(problem: FixedAllocationPhysics, reference_power,
                 power.sum() > cap + 1e-7):
             return False
         ratio = ev.capacity_bps / problem.demand_bps
-        if np.any(ratio[was_met] < 0.1):
+        if np.any(ev.capacity_bps[was_met] < 0.1 * problem.demand_bps[was_met]):
             return False
         if np.any(ratio[~was_met] < floor_ratio[~was_met]):
             return False

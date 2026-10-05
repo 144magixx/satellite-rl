@@ -274,14 +274,27 @@ class Scheduler:
                 (directory / "stop.request").write_text(now(), encoding="utf-8")
             return read_json(directory / "status.json", {})
 
-    def resume(self, run_id, *, source_repair=None):
+    def resume(self, run_id, *, source_repair=None, repair_validation_path=None,
+               repair_validation_sha256=None, expected_origin_commit=None,
+               expected_repair_commit=None):
         with self.lock:
-            if source_repair not in (None, "atomic_io_retry_v1"):
+            from .recovery import (S2P17_BOUNDARY_REPAIR_ID, S2P17_ORIGIN_COMMIT,
+                                   S2P17_FAILED_RUN)
+            if source_repair not in (None, "atomic_io_retry_v1", S2P17_BOUNDARY_REPAIR_ID):
                 raise ValueError("不支持的恢复源码修复类型")
             directory = self.store.job_dir(run_id)
             job = read_json(directory / "job.json")
             status = read_json(directory / "status.json", {})
             config = read_json(directory / "config.json", {})
+            if (source_repair == S2P17_BOUNDARY_REPAIR_ID and
+                    status.get("stage") == "queued" and job and job.get("resume") is True and
+                    job.get("run_id") == S2P17_FAILED_RUN and
+                    expected_origin_commit == S2P17_ORIGIN_COMMIT and
+                    (job.get("boundary_repair") or {}).get("repair_commit") ==
+                    expected_repair_commit and
+                    (job.get("boundary_repair") or {}).get("validation_receipt_sha256") ==
+                    repair_validation_sha256):
+                return status  # Unknown API outcome: the same job is already queued.
             saved_evaluation = bool(job and job.get("kind") == "evaluate" and job.get("experiment_id") == "S2-P17")
             resumable_balance_eval = bool(job and job.get("kind") == "evaluate" and
                                           config.get("research_stage") == "coverage" and
@@ -306,9 +319,20 @@ class Scheduler:
                 partial_name = "starts.partial.jsonl" if route == "prepare" else "results.partial.jsonl"
                 if not (directory / partial_name).is_file():
                     raise ValueError("没有可恢复的S1-03逐场景记录；评价不能伪重跑")
-            if (job["kind"] == "refine" or saved_evaluation or resumable_balance_eval or
-                    resumable_reconstruction_eval) and source_repair is not None:
+            boundary_repair = source_repair == S2P17_BOUNDARY_REPAIR_ID
+            if source_repair is not None and (
+                    (job["kind"] == "refine" and not boundary_repair) or
+                    saved_evaluation or resumable_balance_eval or resumable_reconstruction_eval):
                 raise ValueError("功率优化按冻结源码及完整场景记录恢复，不支持训练源码替换")
+            if boundary_repair and (job.get("run_id") != S2P17_FAILED_RUN or
+                    expected_origin_commit != S2P17_ORIGIN_COMMIT or
+                    not repair_validation_path or not repair_validation_sha256 or
+                    not expected_repair_commit):
+                raise ValueError("S2-P17边界修复缺少精确任务/原提交/新提交/验证回执")
+            if not boundary_repair and any(value is not None for value in
+                    (repair_validation_path, repair_validation_sha256,
+                     expected_origin_commit, expected_repair_commit)):
+                raise ValueError("普通恢复不能携带S2-P17修复参数")
             if (config.get("research_stage") == "coverage" and config.get("schema_version") == 4 and
                     job["kind"] == "train" and status.get("stop_reason") == "mechanism_gate_pending"):
                 from satellite_rl.workbench.storage import digest
@@ -329,7 +353,12 @@ class Scheduler:
                     raise ValueError("S1-03机制闸门缺少与当前断点一致的工作台审计证明；保持停止状态")
             if pid_alive(status.get("pid")):
                 raise ValueError("进程仍在运行，不能重复启动")
-            if source_repair is not None:
+            if boundary_repair:
+                from .recovery import prepare_s2p17_boundary_recovery
+                job = prepare_s2p17_boundary_recovery(
+                    self.store, job, repair_validation_path,
+                    repair_validation_sha256, expected_repair_commit)
+            elif source_repair is not None:
                 from .recovery import prepare_io_retry_recovery
                 job = prepare_io_retry_recovery(self.store, job)
             (directory / "stop.request").unlink(missing_ok=True)
@@ -343,13 +372,31 @@ class Scheduler:
             fields = {"stage": "queued", "queue_reason": reason, "pid": None,
                       "error": None, "traceback": None, "failure_path": None,
                       "exit_code": None, "exit_hex": None}
-            if source_repair is not None:
+            if boundary_repair:
+                proof = job["boundary_repair"]
+                fields.update(queue_reason="S2-P17原0a源码保留；按已核验数值边界修复快照继续同ID细调",
+                              previous_failure_archive=proof["archive_path"],
+                              source_repair=source_repair,
+                              scientific_origin_commit=proof["origin_science_commit"],
+                              repair_commit=proof["repair_commit"],
+                              repair_profile=proof["repair_id"],
+                              failed_attempt_fallback_sha256=proof["fallback_contract_sha256"])
+            elif source_repair is not None:
                 proof = job["io_repair"]
                 fields.update(queue_reason="使用已核验的原子I/O重试修复，从正常断点恢复",
                               env_step=proof["checkpoint_step"], update_step=proof["checkpoint_update_step"],
                               previous_failure_archive=proof["archive_path"],
                               source_repair=source_repair)
             self._status(directory, status, **fields)
+            if boundary_repair:
+                with (directory / "events.jsonl").open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps({"time": now(),
+                        "message": "S2-P17数值边界修复：原科学0a保留，实际worker使用已核验repair快照；第300条失败B按原A回退",
+                        "origin_science_commit": proof["origin_science_commit"],
+                        "repair_commit": proof["repair_commit"],
+                        "repair_profile": proof["repair_id"],
+                        "fallback_contract_sha256": proof["fallback_contract_sha256"]},
+                        ensure_ascii=False) + "\n")
             return read_json(directory / "status.json")
 
     def upgrade(self, run_id, *, upgrade_type, receipt_path):

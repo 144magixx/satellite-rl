@@ -31,6 +31,71 @@ def _verify_saved_initial(initial, frozen_initial, source_reference):
         raise ValueError("本任务初解副本与冻结第二阶段原始case不一致")
 
 
+_FAILED_B_REPAIR = {
+    "repair_type": "sca_basic_threshold_exact_v1",
+    "origin_science_commit": "0a4742a9a15af93478501497fac5cd36579fa075",
+    "original_run_id": "refine_sac_20261004_215930_e814197c",
+    "request_id": "s2p17-v0-jan29-sca",
+    "case_key": "scene_00033_r0_sca_si_lp",
+    "scene_sha": "d7b8af50073632dcaeaa69b9af229feb4859d74a3e17f17f7b16cf092f3c0e8d",
+    "initial_sha": "9fd3d48531cbdd5e29d63ae0cc24f2bdeb491e6996009c740a147b80c49d4e35",
+    "A_case_sha256": "55398b6907276b949373712dbb3aa7da6388e96958e20b7a3ed857e6dcf170c9",
+    "failure_sha256": "7fbacd63da943f4539df73dd8fd014552b9f0ae1c2646d363557ee710b8a9a41",
+    "iterations_sha256": "ad3f1c46e2488d96180aea8d228bc431f85c25f587dbc25e0699b7fd4e00812e",
+}
+
+
+def _failed_attempt_contract(directory, job):
+    """Read only the one approved, SHA-bound failed B attempt."""
+    path = Path(directory) / "failed_attempt_fallback.json"
+    if not path.exists():
+        if job.get("boundary_repair") or job.get("failed_attempt_fallback_path"):
+            raise ValueError("修复任务缺少已绑定的失败B回退合同")
+        return None
+    contract = _read_json(path)
+    if not isinstance(contract, dict):
+        raise ValueError("失败B回退合同损坏")
+    if any(contract.get(key) != value for key, value in _FAILED_B_REPAIR.items()):
+        raise ValueError("失败B回退合同与唯一批准案例不符")
+    repair = job.get("boundary_repair") or {}
+    if (job.get("run_id") != contract["original_run_id"] or
+            job.get("request_id") != contract["request_id"] or
+            job.get("scientific_origin_commit") != contract["origin_science_commit"] or
+            job.get("original_git_commit") != contract["origin_science_commit"] or
+            job.get("git_commit") != repair.get("repair_commit") or
+            job.get("source_root") != repair.get("new_source_root") or
+            repair.get("origin_science_commit") != contract["origin_science_commit"] or
+            job.get("experiment_id") != "S2-P17"):
+        raise ValueError("失败B回退合同与原工作台任务不符")
+    if (repair.get("fallback_contract_sha256") != _sha256(path) or
+            Path(job.get("failed_attempt_fallback_path", "")).resolve() != path.resolve() or
+            _sha256(Path(job["source_root"]) / "source_manifest.json") !=
+            repair.get("new_manifest_sha256")):
+        raise ValueError("工作台任务未绑定失败B回退合同SHA")
+    recovery_root = (Path(directory) / "recoveries").resolve()
+    for field, digest in (("failure_path", "failure_sha256"),
+                          ("iterations_path", "iterations_sha256")):
+        evidence = Path(contract[field]).resolve(strict=True)
+        if not evidence.is_relative_to(recovery_root) or _sha256(evidence) != contract[digest]:
+            raise ValueError("失败B原始尝试证据路径或SHA不符")
+    a_path = Path(contract["A_case_path"]).resolve(strict=True)
+    expected_a = (Path(directory) / "power_cases/scene_00033_r0_sca.json").resolve()
+    if a_path != expected_a or _sha256(a_path) != contract["A_case_sha256"]:
+        raise ValueError("失败B回退所依赖的A案例SHA不符")
+    bounds = contract.get("callback_lower_bounds") or {}
+    if (bounds.get("capacity_calls") != 684 or bounds.get("accepted_callbacks") != 49 or
+            not np.isclose(bounds.get("elapsed_seconds", -1), 1.0373822273686528,
+                           rtol=0, atol=1e-12)):
+        raise ValueError("失败B原始尝试下界与保留日志不符")
+    if (set(contract.get("unknown_exact_fields", [])) !=
+            {"original_attempt_capacity_calls", "original_attempt_optimizer_wall_seconds"}
+            or not contract.get("missing_reason") or
+            contract.get("fallback") != "failed_attempt_fallback_to_A" or
+            contract.get("completed_prefix_case_count") != 299):
+        raise ValueError("失败B调用/计时缺失或299案例前缀合同不完整")
+    return {"path": str(path), "sha256": _sha256(path), "content": contract}
+
+
 def _optimizer_seed(base, scene_index, repeat, method):
     """Disjoint scene/repeat/method streams for the supported repeat range."""
     if (type(base) is not int or not 0 <= base < 2**32
@@ -175,9 +240,11 @@ def _summaries(rows):
             summary[key] = float(np.mean([np.mean([r["metrics"][key] for r in selected
                                                   if r["source_scene_sha256"] == scene])
                                          for scene in scenes]))
-        durations = [r["solver"]["elapsed_seconds"] for r in selected]
-        summary.update(mean_solver_seconds=float(np.mean(durations)),
-                       p95_solver_seconds=float(np.percentile(durations, 95)),
+        durations = [r["solver"].get("elapsed_seconds") for r in selected
+                     if isinstance(r["solver"].get("elapsed_seconds"), (int, float))]
+        summary.update(mean_solver_seconds=float(np.mean(durations)) if durations else None,
+                       p95_solver_seconds=float(np.percentile(durations, 95)) if durations else None,
+                       missing_solver_seconds_count=len(selected) - len(durations),
                        fallback_count=sum(bool(r["solver"].get("fallback_used")) for r in selected),
                        nonconverged_count=sum(not r["solver"].get("converged", False)
                                               for r in selected),
@@ -212,6 +279,19 @@ def finalize_results(directory, job, config, rows):
                       "solver_evaluations": row["solver"]["evaluations"],
                       "reference_solver_evaluations": row.get("reference_solver_evaluations"),
                       "complete_route_solver_evaluations": row.get("complete_route_solver_evaluations"),
+                      "complete_route_solver_evaluations_lower_bound":
+                          row.get("complete_route_solver_evaluations_lower_bound"),
+                      "original_failed_attempt_capacity_calls_lower_bound":
+                          (row.get("failed_attempt_fallback") or {}).get(
+                              "original_attempt_capacity_calls_lower_bound"),
+                      "original_failed_attempt_optimizer_seconds_lower_bound":
+                          (row.get("failed_attempt_fallback") or {}).get(
+                              "original_attempt_optimizer_seconds_lower_bound"),
+                      "original_failed_attempt_exact_cost_unknown":
+                          (row.get("failed_attempt_fallback") or {}).get(
+                              "original_attempt_exact_cost_unknown"),
+                      "failed_attempt_contract_sha256":
+                          (row.get("failed_attempt_fallback") or {}).get("contract_sha256"),
                       "phase1_best_si_mean": row["solver"].get("phase1_best_si_mean"),
                       "best_feasible_si_mean": row["solver"].get("best_feasible_si_mean"),
                       "locked_si_floor": row["solver"].get("phase2_si_floor"),
@@ -275,6 +355,11 @@ def finalize_results(directory, job, config, rows):
         }})
     from satellite_rl.power_refinement.reporting import write_report
     write_report(directory, rows, summaries, config)
+    if any(item.get("missing_solver_seconds_count", 0) for item in summaries.values()):
+        with (directory / "power_report.md").open("a", encoding="utf-8") as stream:
+            stream.write("\n失败尝试回退案例的原B求解精确调用数和耗时未保存；"
+                         "原日志记录的下界在结果案例及CSV中单列，缺项不补零。"
+                         "已完成案例的求解耗时统计只包含有完整实测的案例。\n")
     artifacts = {p.name: {"path": str(p), "sha256": _sha256(p)} for p in
                  [directory / name for name in ("results.json", "power_results.csv", "power_beams.csv",
                                                 "power_cases.jsonl", "power_scene_times.csv", "power_report.md")]
@@ -294,6 +379,7 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
 
     directory = Path(directory)
     options = config["power_refinement"]
+    failed_fallback = _failed_attempt_contract(directory, job)
     for reference in job["model_files"]:
         if _sha256(reference["path"]) != reference["sha256"]:
             raise ValueError("冻结模型SHA不一致")
@@ -313,6 +399,12 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
     # Scheduler resume flags are operational state, not scientific identity.
     job_identity = {k: job.get(k) for k in
         ("run_id", "git_commit", "source_root", "model_files", "model_config", "scene_sets")}
+    if job.get("boundary_repair"):
+        # Source migration changes execution provenance, not the scientific
+        # task/case identity used by the first 299 committed results.
+        proof = job["boundary_repair"]
+        job_identity["git_commit"] = proof["origin_science_commit"]
+        job_identity["source_root"] = proof["old_source_root"]
     if saved is not None:
         job_identity["initial_source"] = job["initial_source"]
     if options["methods"] == list(SI_PRIORITY_METHODS):
@@ -420,6 +512,19 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                     reference_case_sha = _sha256(reference_path)
                 case_identity = _fingerprint([initial_identity, allocation_sha, method, options]
                                              + ([reference_sha, reference_case_sha] if reference else []))
+                case_key = f"scene_{index:05d}_r{repeat}_{method}"
+                repair_this_case = (failed_fallback is not None and
+                                    case_key == _FAILED_B_REPAIR["case_key"])
+                if repair_this_case:
+                    contract = failed_fallback["content"]
+                    if (len(rows) != contract["completed_prefix_case_count"] or
+                            source_sha != contract["scene_sha"] or
+                            allocation_sha != contract["initial_sha"] or
+                            reference_case_sha != contract["A_case_sha256"] or
+                            Path(contract["A_case_path"]).resolve() != reference_path.resolve()):
+                        raise ValueError("失败B回退不对应原299案例、场景、初解或A参照")
+                    if contract.get("case_identity") not in (None, case_identity):
+                        raise ValueError("失败B回退案例身份改变")
                 row = _read_json(case_path)
                 if row is None and case_path.exists():
                     raise ValueError("已保存优化记录损坏，原文件保留")
@@ -432,7 +537,27 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                     if reference is not None and (row.get("reference_allocation_sha256") != reference_sha
                                                   or row.get("reference_case_sha256") != reference_case_sha):
                         raise ValueError("已保存SI优先结果的公共SCA来源不一致")
-                    if reference is not None:
+                    row_repair = row.get("failed_attempt_fallback")
+                    if row_repair is not None:
+                        if (not repair_this_case or
+                                row_repair.get("contract_sha256") != failed_fallback["sha256"] or
+                                row["solver"].get("termination_reason") != "failed_attempt_fallback_to_A" or
+                                row["solver"].get("evaluations", "unexpected") is not None or
+                                row["solver"].get("elapsed_seconds", "unexpected") is not None or
+                                row["solver"].get("additional_optimizer_calls") != 0 or
+                                row_repair.get("additional_optimizer_calls") != 0 or
+                                row_repair.get("original_attempt_capacity_calls_lower_bound") !=
+                                    contract["callback_lower_bounds"]["capacity_calls"] or
+                                not np.isclose(
+                                    row_repair.get("original_attempt_optimizer_seconds_lower_bound", -1),
+                                    contract["callback_lower_bounds"]["elapsed_seconds"],
+                                    rtol=0, atol=1e-12) or
+                                row_repair.get("original_attempt_exact_cost_unknown") is not True or
+                                row.get("git_commit") != job["git_commit"] or
+                                "timing" in row or
+                                _fingerprint(row["beams"]) != reference_sha):
+                            raise ValueError("已保存失败B回退案例与冻结A或合同不一致")
+                    if reference is not None and row_repair is None:
                         _priority_solver_contract(row["solver"], reference, options)
                     restored = problem.evaluate([beam["power_w"] for beam in row["beams"]])
                     if not np.allclose(restored.capacity_bps, [b["rate_bps"] for b in row["beams"]],
@@ -440,8 +565,10 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                         raise ValueError("已保存优化结果容量与物理复算不一致")
                     restored_metrics = verify_solution(initial, row["beams"], cap, options,
                         reference=reference,
-                        phase1_best_si=row["solver"].get("phase1_best_si_mean") if reference else None,
-                        locked_si_floor=row["solver"].get("phase2_si_floor") if reference else None)
+                        phase1_best_si=(row["solver"].get("phase1_best_si_mean")
+                                        if reference and row_repair is None else None),
+                        locked_si_floor=(row["solver"].get("phase2_si_floor")
+                                         if reference and row_repair is None else None))
                     for key, value in restored_metrics.items():
                         if key not in row["metrics"] or not np.isclose(row["metrics"][key], value,
                                                                        rtol=1e-10, atol=1e-9):
@@ -484,16 +611,41 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                     solve_options["baseline_service_floor_bps"] = np.minimum(
                         np.asarray([beam["rate_bps"] for beam in initial["beams"]], dtype=float),
                         0.1 * problem.demand_bps)
-                solver_started = time.perf_counter()
-                if reference is None:
-                    solved = optimize_power(problem, p0, method=method, options=solve_options,
-                                            callback=callback, stop_requested=stop_requested)
+                if repair_this_case:
+                    # The original B attempt reached the final guard but did
+                    # not persist its power vector or exact cost.  Reuse the
+                    # already audited A allocation without another optimizer
+                    # call; never report the missing original cost as zero.
+                    solved = {"method": method,
+                              "power_w": [beam["power_w"] for beam in reference["beams"]],
+                              "evaluations": None, "elapsed_seconds": None,
+                              "termination_reason": "failed_attempt_fallback_to_A",
+                              "fallback_used": True, "converged": False,
+                              "history": [],
+                              "convergence_scope": "original_failed_attempt_not_certified",
+                              "phase1_best_si_mean": None,
+                              "best_feasible_si_mean": None,
+                              "phase2_si_floor": None,
+                              "additional_optimizer_calls": 0,
+                              "original_attempt_capacity_calls_lower_bound":
+                                  contract["callback_lower_bounds"]["capacity_calls"],
+                              "original_attempt_optimizer_seconds_lower_bound":
+                                  contract["callback_lower_bounds"]["elapsed_seconds"],
+                              "original_attempt_capacity_calls_exact": None,
+                              "original_attempt_optimizer_seconds_exact": None,
+                              "original_attempt_missing_reason": contract["missing_reason"]}
+                    solver_wall = None
                 else:
-                    solved = optimize_priority(problem,
-                        np.asarray([beam["power_w"] for beam in reference["beams"]], dtype=float),
-                        method=method, options=solve_options, callback=callback,
-                        stop_requested=stop_requested)
-                solver_wall = time.perf_counter() - solver_started
+                    solver_started = time.perf_counter()
+                    if reference is None:
+                        solved = optimize_power(problem, p0, method=method, options=solve_options,
+                                                callback=callback, stop_requested=stop_requested)
+                    else:
+                        solved = optimize_priority(problem,
+                            np.asarray([beam["power_w"] for beam in reference["beams"]], dtype=float),
+                            method=method, options=solve_options, callback=callback,
+                            stop_requested=stop_requested)
+                    solver_wall = time.perf_counter() - solver_started
                 if stop_requested():
                     _status(directory, job, stage="stopped", env_step=len(rows), budget_env_steps=budget)
                     return None
@@ -502,16 +654,18 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                 evaluated = problem.evaluate(power)
                 beams = _beam_rows(initial, evaluated, power)
                 phase1_best_si = (_priority_solver_contract(solved, reference, options)[0]
-                                  if reference is not None else None)
+                                  if reference is not None and not repair_this_case else None)
                 metrics = verify_solution(initial, beams, cap, options,
                                           reference=reference, phase1_best_si=phase1_best_si,
                                           locked_si_floor=solved.get("phase2_si_floor") if reference else None)
                 from satellite_rl.power_refinement.timing import build_timing
-                timing = build_timing(initial["inference_seconds"], initial["physics_setup_seconds"],
-                                      solver_wall, callback_seconds, time.perf_counter() - verify_started,
-                                      **({"reference_optimizer": reference["timing"]["optimizer_wall_seconds"],
-                                          "reference_verification": reference["timing"]["verification_seconds"]}
-                                         if reference is not None else {}))
+                verification_seconds = time.perf_counter() - verify_started
+                timing = (None if repair_this_case else
+                          build_timing(initial["inference_seconds"], initial["physics_setup_seconds"],
+                                       solver_wall, callback_seconds, verification_seconds,
+                                       **({"reference_optimizer": reference["timing"]["optimizer_wall_seconds"],
+                                           "reference_verification": reference["timing"]["verification_seconds"]}
+                                          if reference is not None else {})))
                 row = {"identity": case_identity, "run_id": job["run_id"],
                        "git_commit": job["git_commit"],
                        "source_model_sha256": next(ref["sha256"] for ref in job["model_files"]
@@ -519,7 +673,7 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                        "scene_id": initial["scene_id"],
                        "source_scene_sha256": source_sha, "source_scene_path": str(source),
                        "repeat": repeat, "method": method, "power_budget_mode": options["power_budget_mode"],
-                       "optimizer_seed": optimizer_seed, "timing": timing,
+                       "optimizer_seed": optimizer_seed,
                        "initial_allocation_sha256": allocation_sha, "initial_path": str(initial_path),
                        "initial_metrics": initial["metrics"], "metrics": metrics,
                        "beams": beams, "solver": clean_json(solved),
@@ -528,6 +682,23 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                        "beam_count": len(initial["beams"]),
                        "scene_metadata": initial.get("scene_metadata"),
                        "service_timing": "after_power_refinement_all_interference"}
+                if timing is not None:
+                    row["timing"] = timing
+                else:
+                    row["failed_attempt_fallback"] = {
+                        "repair_type": contract["repair_type"],
+                        "contract_path": failed_fallback["path"],
+                        "contract_sha256": failed_fallback["sha256"],
+                        "source_A_case_sha256": reference_case_sha,
+                        "original_attempt_capacity_calls_lower_bound":
+                            contract["callback_lower_bounds"]["capacity_calls"],
+                        "original_attempt_optimizer_seconds_lower_bound":
+                            contract["callback_lower_bounds"]["elapsed_seconds"],
+                        "original_attempt_exact_cost_unknown": True,
+                        "additional_optimizer_calls": 0,
+                        "missing_reason": contract["missing_reason"],
+                    }
+                    row["repair_verification_seconds"] = verification_seconds
                 if job.get("initial_source"):
                     source_group = job["initial_source"]["group"]
                     row.update(initial_source_group=source_group,
@@ -548,8 +719,12 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                                best_feasible_si_mean=solved.get("best_feasible_si_mean"),
                                locked_si_floor=solved.get("phase2_si_floor"),
                                reference_solver_evaluations=reference["solver"]["evaluations"],
-                               complete_route_solver_evaluations=(
+                               complete_route_solver_evaluations=(None if repair_this_case else
                                    reference["solver"]["evaluations"] + solved["evaluations"]),
+                               complete_route_solver_evaluations_lower_bound=(
+                                   reference["solver"]["evaluations"] +
+                                   contract["callback_lower_bounds"]["capacity_calls"]
+                                   if repair_this_case else None),
                                complete_route_capacity_budget=2 * options["maxeval"],
                                complete_route_optimizer_time_budget_seconds=2 * options["max_time_seconds"],
                                reference_sgm_rule="legacy_sca_protection",

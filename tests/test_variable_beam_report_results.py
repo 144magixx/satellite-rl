@@ -10,12 +10,29 @@ import unittest
 import numpy as np
 
 from scripts.variable_beams.report_results import (
-    AuditError, _sgm, audit_beams, generate, load_manifest,
+    AuditError, _job_files_from_manifest, _sgm, audit_beams, generate, load_manifest,
     sha256_file, verify_reimported_files,
 )
 
 
 class ReportAuditTests(unittest.TestCase):
+    def test_controller_job_path_is_a_file_and_siblings_share_one_run_directory(self):
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "jobs" / "train_sac_example"
+            entry = {"run_id": directory.name,
+                     "job_path": str(directory / "job.json"),
+                     "status_path": str(directory / "status.json"),
+                     "results_path": str(directory / "results.json")}
+            paths = _job_files_from_manifest(entry)
+            self.assertEqual(paths[0], directory.resolve())
+            self.assertEqual(paths[1], directory.resolve() / "job.json")
+            self.assertEqual(paths[3], directory.resolve() / "config.json")
+            with self.assertRaisesRegex(AuditError, "路径"):
+                _job_files_from_manifest({**entry, "job_path": str(directory)})
+            with self.assertRaisesRegex(AuditError, "路径"):
+                _job_files_from_manifest({**entry,
+                    "status_path": str(directory.parent / "other" / "status.json")})
+
     def test_recompute_two_beam_terminal_and_reject_modified_ratio(self):
         demands = [100.0, 200.0]
         capacities = [50.0, 300.0]
@@ -28,14 +45,25 @@ class ReportAuditTests(unittest.TestCase):
                           "capacity_demand_ratio": capacity / demand,
                           "si": min(capacity / demand, 1.0),
                           "sgm": _sgm(capacity, demand, beta),
-                          "basic_met": True, "slots": 1,
+                          "basic_met": True, "group": index, "freq": 10,
+                          "slots": 1,
                           "power_w": [5.0, 10.0][index]})
         metrics = {"final_si_mean": 0.75,
                    "final_sgm_mean": sum(beam["sgm"] for beam in beams) / 2,
                    "final_si_total": 1.5, "basic_met_count": 2,
                    "zero_capacity_count": 0, "power_w": 15.0,
+                   "allocated_slots": 2, "zero_slot_count": 0,
                    "complete": True}
-        self.assertAlmostEqual(audit_beams(beams, metrics, 2)["effective_carried_bps"], 250.0)
+        audited = audit_beams(beams, metrics, 2)
+        self.assertAlmostEqual(audited["effective_carried_bps"], 250.0)
+        self.assertEqual(audited["slots_total"], 2)
+        self.assertEqual(audited["zero_slot_fraction"], 0)
+        with self.assertRaisesRegex(AuditError, "槽数"):
+            audit_beams(beams, {**metrics, "allocated_slots": 3}, 2)
+        beams[0]["freq"] = 100
+        with self.assertRaisesRegex(AuditError, "频率槽起点"):
+            audit_beams(beams, metrics, 2)
+        beams[0]["freq"] = 10
         beams[0]["capacity_demand_ratio"] = 1.0
         with self.assertRaisesRegex(AuditError, "C/D"):
             audit_beams(beams, metrics, 2)

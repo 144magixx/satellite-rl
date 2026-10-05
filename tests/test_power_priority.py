@@ -124,6 +124,39 @@ class PriorityTests(unittest.TestCase):
         self.assertGreaterEqual(final.capacity_bps[0] / problem.demand_bps[0], 0.1)
         self.assertEqual(result["power_w"][2], 0.0)
 
+    def test_exact_basic_capacity_cannot_be_classified_as_unserved_by_ratio(self):
+        demand = np.array([85713565.69823673, 100.0])
+        threshold = 8571356.569823673
+        self.assertEqual(threshold, 0.1 * demand[0])
+        self.assertLess(threshold / demand[0], 0.1)
+        problem = problem_two(demand, 0.0)
+
+        def evaluate(power, with_jacobian=False):
+            lowered = power[0] > 1.0
+            capacity = np.array([threshold - 0.428565913811326 if lowered else threshold,
+                                 80.0 if lowered else 50.0])
+            si = float(np.minimum(capacity / demand, 1.0).mean())
+            jac = np.zeros((2, 2)) if with_jacobian else None
+            grad = np.zeros(2) if with_jacobian else None
+            return PhysicalEvaluation(capacity, si, 0.5,
+                                      np.minimum(capacity / demand, 1.0),
+                                      np.full(2, 0.5), jac, grad, grad)
+
+        problem.evaluate = evaluate
+        initial = np.array([1.0, 1.0])
+        candidate = np.array([2.0, 2.0])
+        self.assertGreater(problem.evaluate(candidate).si, problem.evaluate(initial).si)
+        for method, proposal in (("sca_si_lp", "_proposal_lp"),
+                                 ("sca_si_lb", "_proposal_lb")):
+            with self.subTest(method=method), patch(
+                    f"satellite_rl.power_refinement.priority.{proposal}",
+                    return_value=(candidate, "boundary fixture")):
+                result = optimize_priority(problem, initial, method=method,
+                                           options={"power_cap_w": 10.0, "maxiter": 1,
+                                                    "maxeval": 20, "time_limit_seconds": 5.0})
+                np.testing.assert_array_equal(result["power_w"], initial)
+                self.assertTrue(result["fallback_used"])
+
     def test_t0_floor_does_not_gain_another_tolerance_after_a(self):
         problem = FixedAllocationPhysics(
             np.array([25e6, 25e6]), np.array([0, 2]),
