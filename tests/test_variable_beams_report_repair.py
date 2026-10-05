@@ -219,6 +219,8 @@ class RepairReportTests(unittest.TestCase):
         interruption = {"scene_sha256": paused_scene["sha256"], "repeat_index": 0,
                         "original_A_optimizer_seconds_lower_bound": 1.4651551842689514,
                         "original_A_capacity_calls_lower_bound": 571,
+                        "cumulative_A_capacity_calls_lower_bound": 900 + 571,
+                        "cumulative_complete_route_calls_lower_bound": 1700 + 571,
                         "missing_reason": "user pause before A persisted",
                         "ledger_sha256": "l" * 64}
         raw, summary = summarize_timing(refs, direct, refined, [interruption])
@@ -250,6 +252,8 @@ class RepairReportTests(unittest.TestCase):
         self.assertIsNone(paused["total_pipeline_seconds"])
         self.assertEqual(paused["successful_attempt_A_optimizer_seconds"], 0.2)
         self.assertEqual(paused["successful_attempt_total_pipeline_seconds"], 2.0)
+        self.assertEqual(paused["cumulative_A_calls_lower_bound"], 1471)
+        self.assertEqual(paused["cumulative_complete_route_calls_lower_bound"], 2271)
         self.assertGreater(paused["total_pipeline_seconds_lower_bound"], 3.46)
 
 
