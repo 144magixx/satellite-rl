@@ -31,6 +31,34 @@ def audit_best(scene, start, row, cfg):
     return best['quality'] - row['metrics']['quality']
 
 
+def formal_best(jobdir, output):
+    from satellite_rl.coverage.scenes import load_dataset
+    directory = Path(jobdir)
+    cfg = read(directory/'config.json')
+    result = read(directory/'results.json')
+    rows_path = Path(result['rows_path'])
+    check(sha(rows_path) == result['rows_sha256'], 'formal raw SHA')
+    rows = jsonl(rows_path)
+    role = next(iter(cfg['datasets']))
+    data, initial = cfg['datasets'][role], cfg['reconstruction_starts'][role]
+    check(sha(data['path']) == data['sha256'] and sha(initial['path']) == initial['sha256'], 'formal inputs SHA')
+    scenes = {s.scene_id:s for s in load_dataset(data['path'],'cluster',cfg['coverage']).scenes}
+    starts = {r['scene_id']:r for r in jsonl(initial['path'])}
+    check(len(rows) == 100 and {r['scene_id'] for r in rows} == set(scenes), 'formal 100 unique scenes')
+    pairs = []
+    for row in rows:
+        gap = audit_best(scenes[row['scene_id']],starts[row['scene_id']],row,cfg['coverage']['reconstruction'])
+        pairs.append({'scene_id':row['scene_id'],'terminal_quality':row['metrics']['quality'],
+                      'best_quality':row['best_quality_diagnostic'],'best_minus_terminal':gap})
+    result = {'passed':True,'scope':'Jan31 P1 diagnostic best only; original terminals covered by formal audit',
+              'run_id':read(directory/'job.json')['run_id'],'count':len(rows),'pairs':pairs,
+              'raw_sha256':sha(rows_path),'positive_gap_count':sum(p['best_minus_terminal'] > 1e-8 for p in pairs),
+              'mean_gap':sum(p['best_minus_terminal'] for p in pairs)/len(pairs),
+              'max_gap':max(p['best_minus_terminal'] for p in pairs)}
+    save(output,result)
+    return result
+
+
 def run(jobdir, source, output):
     import torch
     from satellite_rl.coverage.reconstruction_ppo import RelationPolicy
@@ -142,7 +170,9 @@ def run(jobdir, source, output):
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('--job-dir',required=True)
-    p.add_argument('--science',required=True)
+    p.add_argument('--science')
+    p.add_argument('--formal-best-only',action='store_true')
     p.add_argument('--output',required=True)
     a = p.parse_args()
-    print(json.dumps(run(a.job_dir,a.science,a.output),ensure_ascii=False))
+    print(json.dumps(formal_best(a.job_dir,a.output) if a.formal_best_only else
+                     run(a.job_dir,a.science,a.output),ensure_ascii=False))
