@@ -27,6 +27,17 @@ LOCAL = Path("D:/paper/outputs/experiments/first_stage_s1_03_20261005")
 MODELS = Path("D:/paper/models/runs/first_stage_s1_03_20261005")
 STATE = LOCAL / "archive_state.json"
 LEDGER = LOCAL / "archive_ledger.jsonl"
+GROUP = "s1_03"
+
+
+def configure_group(group):
+    global GROUP, LOCAL, MODELS, STATE, LEDGER
+    profile = remote.group_profile(group)
+    GROUP = group
+    LOCAL, MODELS = profile["local"], profile["models"]
+    STATE, LEDGER = LOCAL / "archive_state.json", LOCAL / "archive_ledger.jsonl"
+
+
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 LABEL_PORT = {"prepare_validation": 20418, "prepare_train": 20418,
@@ -107,8 +118,9 @@ def verified_inputs():
     plan = json.loads(raw.decode("utf-8-sig"))
     controller = read(control_path)
     plan_sha = hashlib.sha256(raw).hexdigest()
-    if (plan.get("experiment_id") != "S1-03" or
-            plan.get("hostroot") != remote.REMOTE_BASE or
+    profile = remote.group_profile(GROUP)
+    if (plan.get("experiment_id") != profile["experiment_id"] or
+            plan.get("hostroot") != profile["remote_base"] or
             plan.get("ports") != [20418, 20424] or
             not COMMIT.fullmatch(plan.get("science_commit", "")) or
             not isinstance(controller, dict) or
@@ -131,7 +143,7 @@ def verified_inputs():
 def archive_root(port):
     if port not in (20418, 20424):
         raise ValueError("Only authorized S1-03 instances can be archived")
-    return f"{remote.REMOTE_BASE}/{port}"
+    return f"{remote.group_profile(GROUP)['remote_base']}/{port}"
 
 
 def remote_json(sftp, path):
@@ -193,7 +205,7 @@ import hashlib,json
 from pathlib import Path
 roots={roots!r};out=[]
 for item in roots:
- p=Path(item['path']);scope=Path({remote.REMOTE_BASE!r})/str(item['port'])
+ p=Path(item['path']);scope=Path({remote.group_profile(GROUP)['remote_base']!r})/str(item['port'])
  if not p.resolve().is_relative_to(scope.resolve()):raise RuntimeError('S1-03 path escape')
  if not p.exists():
   if item.get('required',True):raise FileNotFoundError(str(p))
@@ -500,7 +512,9 @@ def main(argv=None):
     mode.add_argument("--once", action="store_true")
     mode.add_argument("--daemon", action="store_true")
     parser.add_argument("--interval-seconds", type=int, default=90)
+    parser.add_argument("--group", choices=remote.GROUPS, default="s1_03")
     args = parser.parse_args(argv)
+    configure_group(args.group)
     if not 60 <= args.interval_seconds <= 120:
         raise ValueError("S1-03 archive interval must be 60–120 seconds")
     with single_lock(LOCAL / "archive.lock"):

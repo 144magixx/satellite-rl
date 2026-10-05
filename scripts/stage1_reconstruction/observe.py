@@ -1,15 +1,17 @@
 """One bounded API/SSH observation of S1-03; never schedules or changes jobs."""
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
-from remote import LOCAL, PORTS, REMOTE_BASE, connect, run_code, save, now
+from remote import LOCAL, PORTS, REMOTE_BASE, GROUPS, group_profile, connect, run_code, save, now
 
 
-def observe(port):
-    root = f"{REMOTE_BASE}/{port}"
-    api_port = {20418: 8894, 20424: 8895}[port]
+def observe(port, *, group="s1_03"):
+    profile = group_profile(group)
+    root = f"{profile['remote_base']}/{port}"
+    api_port = profile["api_ports"][port]
     code = f"""
 import pathlib,datetime,json,hashlib,subprocess,urllib.request,os
 root=pathlib.Path({root!r});began=datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -90,23 +92,28 @@ print(json.dumps({{'target':'u2024110224@10.160.17.102:{port}','observed_utc':be
 
 
 def main():
-    previous_path = LOCAL / 'preflight/observe_latest.json'
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--group', choices=GROUPS, default='s1_03')
+    args = parser.parse_args()
+    profile = group_profile(args.group)
+    local = profile['local']
+    previous_path = local / 'preflight/observe_latest.json'
     previous = json.loads(previous_path.read_text(encoding='utf-8')) if previous_path.is_file() else {}
-    result = {'experiment_id':'S1-03','local_started_utc':now(),'hosts':{}}
+    result = {'experiment_id':profile['experiment_id'],'local_started_utc':now(),'hosts':{}}
     for port in PORTS:
         try:
-            result['hosts'][str(port)] = observe(port)
+            result['hosts'][str(port)] = observe(port, group=args.group)
         except Exception as error:
             last = previous.get('hosts',{}).get(str(port),{})
             result['hosts'][str(port)] = {'error':str(error),
                 'last_valid_observed_utc':last.get('observed_utc',last.get('last_valid_observed_utc')),
                 'missing_this_round':['API tasks','server/worker identity','source/config SHA','GPU/VRAM']}
-    for label,path in [('controller',LOCAL/'controller_state.json'),
-                       ('source_bridge',LOCAL/'preflight/source_bridge_state.json'),
-                       ('archive',LOCAL/'archive_state.json')]:
+    for label,path in [('controller',local/'controller_state.json'),
+                       ('source_bridge',local/'preflight/source_bridge_state.json'),
+                       ('archive',local/'archive_state.json')]:
         result[label] = json.loads(path.read_text(encoding='utf-8-sig')) if path.is_file() else None
     stamp=now().replace(':','').replace('-','').split('.')[0]
-    path=LOCAL/'preflight'/('observe_'+stamp+'.json')
+    path=local/'preflight'/('observe_'+stamp+'.json')
     save(path,result);save(previous_path,result)
     print(json.dumps({'snapshot':str(path),'hosts':{port:{
         'observed_utc':value.get('observed_utc'),'gpu':value.get('gpu'),

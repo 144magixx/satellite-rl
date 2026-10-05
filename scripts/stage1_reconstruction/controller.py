@@ -152,6 +152,8 @@ def load_plan(path):
 
 
 class Controller:
+    S2_API_TIMEOUT = 10
+
     def __init__(self, plan, plan_sha256, state_path):
         self.plan = plan
         self.plan_sha256 = plan_sha256
@@ -322,6 +324,12 @@ except Exception as error:
                 observation["s2_8781"] = {"error": str(error)}
         self.state["concurrency"][label] = observation
 
+    def _start_reference(self, role, port):
+        """Return the frozen common start record; R1 may override this hook."""
+        return (self.state["imports"]["test_start_20424"]
+                if role == "test" and port == 20424 else
+                self.state["jobs"][f"prepare_{role}"])
+
     def _job(self, label, port, route, kind, role=None):
         request_id = f"s103_{self.plan_sha256[:16]}_{label}"
         run_id = self.state["jobs"].get(label)
@@ -342,8 +350,7 @@ except Exception as error:
                     "request_id": request_id}
             if route != "prepare":
                 body["start_run_ids"] = {
-                    r: (self.state["imports"]["test_start_20424"] if r == "test" and port == 20424
-                        else self.state["jobs"][f"prepare_{r}"]) for r in roles}
+                    r: self._start_reference(r, port) for r in roles}
             if kind == "evaluate" and route == "P1":
                 body["model_id"] = self.state["imports"]["P1_model_20424"]
             job = self.api(port, "coverage/runs", body, timeout=180, retry=3)
@@ -490,7 +497,7 @@ else:
    'identity_errors':identity_errors,'api_error':None,
    'api_skipped':'S2 controller pending or job identity unavailable'}}));raise SystemExit(0)
  try:
-  with urllib.request.urlopen('http://127.0.0.1:8781/api/runs',timeout=10) as response:
+  with urllib.request.urlopen('http://127.0.0.1:8781/api/runs',timeout={self.S2_API_TIMEOUT}) as response:
    runs=json.load(response).get('runs',[])
   live=[{{'run_id':r.get('run_id'),'stage':r.get('stage')}} for r in runs
         if r.get('stage') in {sorted(ACTIVE)!r}]
