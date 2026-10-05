@@ -153,12 +153,13 @@ def load_audit(audit_dir):
             receipt.get("independent_user_pause_interruption_count") == 1,
             "Full S2-P17 arithmetic/source/physical audit has not passed")
     inputs = {str(receipt_path): receipt_sha}
-    names = ("per_scene_means.csv", "by_n_load.csv", "timing_raw.csv",
-             "timing_summary.csv", "interruptions.csv")
+    names = ("per_scene_means.csv", "by_n_load.csv", "paired_v1_minus_v0.csv",
+             "timing_raw.csv", "timing_summary.csv", "interruptions.csv")
     tables = {name: read_csv(_verified_output(audit_dir, receipt, name, inputs))
               for name in names}
     require(len(tables["per_scene_means.csv"]) == 4400 and
             len(tables["by_n_load.csv"]) == 220 and
+            len(tables["paired_v1_minus_v0.csv"]) == 880 and
             len(tables["timing_raw.csv"]) == 4840 and
             len(tables["timing_summary.csv"]) == 55 and
             len(tables["interruptions.csv"]) == 1,
@@ -293,6 +294,65 @@ def timing_points(tables):
             {"failed_B_fallback_to_A", "user_pause_interrupted_A"},
             "Two distinct timing gaps were not preserved")
     return points
+
+
+def paired_distribution_points(tables):
+    """Keep every V1−V0 paired mother point and audit both metric differences."""
+    scenes = {}
+    for row in tables["per_scene_means.csv"]:
+        if row["role"] not in ("V0", "V1"):
+            continue
+        key = (row["role"], row["stage"], row["scene_sha256"])
+        require(key not in scenes, f"Duplicate paired source scene: {key}")
+        scenes[key] = row
+    require(len(scenes) == 2 * 2 * 440, "V0/V1 paired scene sources incomplete")
+    paired = defaultdict(list)
+    seen = set()
+    for row in tables["paired_v1_minus_v0.csv"]:
+        stage = row["stage"]
+        n = integer(row["beam_count"], "paired N")
+        load = number(row["load_multiplier"], "paired load")
+        sha, mother = row["scene_sha256"], row["mother_scene_id"]
+        key = stage, sha
+        require(stage in STAGES and n in N_VALUES and load in LOADS and
+                key not in seen, f"Invalid/duplicate paired scene: {key}")
+        seen.add(key)
+        base = scenes[("V0", stage, sha)]
+        candidate = scenes[("V1", stage, sha)]
+        for source in (base, candidate):
+            require(source["mother_scene_id"] == mother and
+                    integer(source["beam_count"], "source N") == n and
+                    number(source["load_multiplier"], "source load") == load,
+                    "Paired scene identity differs from audited terminal table")
+        for metric in ("si", "sgm"):
+            delta = number(candidate[metric], f"V1 {metric}") - number(base[metric], f"V0 {metric}")
+            close(delta, number(row[f"{metric}_delta_V1_minus_V0"],
+                                f"audited paired {metric}"),
+                  f"{stage}/{sha}/{metric}", atol=1e-12)
+            paired[(metric, stage, load, n)].append({
+                "metric": metric, "stage": stage, "load_multiplier": load,
+                "beam_count": n, "mother_scene_id": mother,
+                "scene_sha256": sha, "delta_V1_minus_V0": delta,
+                "audited_pair_delta": number(row[f"{metric}_delta_V1_minus_V0"],
+                                             f"audited paired {metric}")})
+    require(len(seen) == 880 and len(paired) == 2 * 2 * 2 * len(N_VALUES),
+            "Paired stage/load/N matrix incomplete")
+    points, means = [], []
+    for (metric, stage, load, n), rows in sorted(paired.items()):
+        mothers = sorted({row["mother_scene_id"] for row in rows})
+        require(len(rows) == len(mothers) == 20,
+                f"Paired mother count differs for {metric}/{stage}/{load}/N={n}")
+        order = {mother: index for index, mother in enumerate(mothers)}
+        for row in rows:
+            points.append({**row, "deterministic_x_offset":
+                           (order[row["mother_scene_id"]] - 9.5) * 0.06})
+        means.append({"metric": metric, "stage": stage, "load_multiplier": load,
+                      "beam_count": n, "mother_count": 20,
+                      "mean_delta_V1_minus_V0": statistics.mean(
+                          row["delta_V1_minus_V0"] for row in rows)})
+    require(len(points) == 1760 and len(means) == 88,
+            "Every audited SI/SGM paired point must be retained")
+    return points, means
 
 
 def _input_path(receipt, path, inputs):
@@ -462,6 +522,55 @@ def plot_timing(stage, points):
     return [name]
 
 
+def plot_paired_distributions(stage, points, means):
+    plt = configure_plotting()
+    figures = []
+    for metric, label in (("si", "Demand satisfaction SI"),
+                          ("sgm", "Supply-demand match SGM")):
+        fig, axes = plt.subplots(2, 2, figsize=(13.6, 8.4), sharex=True,
+                                 sharey=True)
+        fig.subplots_adjust(left=0.09, right=0.98, top=0.84, bottom=0.17,
+                            wspace=0.15, hspace=0.34)
+        for row_index, load in enumerate(LOADS):
+            for col_index, stage_name in enumerate(STAGES):
+                ax = axes[row_index, col_index]
+                selected = [row for row in points if row["metric"] == metric and
+                            row["stage"] == stage_name and row["load_multiplier"] == load]
+                averages = sorted((row for row in means if row["metric"] == metric and
+                                   row["stage"] == stage_name and
+                                   row["load_multiplier"] == load),
+                                  key=lambda row: row["beam_count"])
+                require(len(selected) == 20 * len(N_VALUES) and
+                        [row["beam_count"] for row in averages] == list(N_VALUES),
+                        f"Paired distribution figure incomplete: {metric}/{stage_name}/{load}")
+                ax.scatter([row["beam_count"] + row["deterministic_x_offset"]
+                            for row in selected],
+                           [row["delta_V1_minus_V0"] for row in selected],
+                           s=12, color="#386cb0", alpha=0.45,
+                           linewidths=0, label="20 paired mother points per N")
+                ax.plot(N_VALUES, [row["mean_delta_V1_minus_V0"] for row in averages],
+                        color="#df742b", marker="D", markersize=4, linewidth=1.4,
+                        label="20-mother paired mean")
+                ax.axhline(0, color="#343434", linewidth=0.8)
+                ax.set_title(f"Load ×{load:g} · " +
+                             ("Stage 2 direct" if stage_name == "direct" else "Final SCA B"))
+                ax.set_ylabel(f"V1−V0 {label}")
+                ax.grid(alpha=0.22)
+                if row_index == 1:
+                    ax.set_xlabel("Number of target beams N")
+        handles, legend_labels = axes[0, 0].get_legend_handles_labels()
+        fig.legend(handles[:2], legend_labels[:2], loc="lower center",
+                   bbox_to_anchor=(0.5, 0.025), ncol=2, fontsize=8)
+        fig.suptitle(f"Paired V1 ({LABELS['V1']}) minus V0 ({LABELS['V0']}) · {label}\n"
+                     "All 20 mother points retained per N×load; derived N/load values share mothers",
+                     y=0.98, fontsize=10)
+        name = f"paired_v1_minus_v0_{metric}_distribution_by_n_load.png"
+        fig.savefig(stage / name)
+        plt.close(fig)
+        figures.append(name)
+    return figures
+
+
 def plot_training(stage, episodes):
     plt = configure_plotting()
     from matplotlib.lines import Line2D
@@ -606,11 +715,12 @@ def plot_validation(stage, validation):
                 require([row["env_step"] for row in selected] ==
                         list(range(0, 400001, 20000)),
                         f"Missing validation series: {role}/{metric}/N={n}")
-                ax.plot([row["env_step"] for row in selected],
+                ax.plot([row["env_step"] / 1000 for row in selected],
                         [row["value"] for row in selected], color=COLORS[role],
                         marker=".", linewidth=1.2, label=LABELS[role])
             ax.set_title(f"N={n}; 24 allocations per checkpoint")
-            ax.set_xlabel("Training interactions")
+            ax.set_xlim(0, 400)
+            ax.set_xlabel("Training interactions (thousands)")
             ax.set_ylabel(name_text)
             ax.grid(alpha=0.25)
         handles, labels = axes[0, 0].get_legend_handles_labels()
@@ -631,6 +741,7 @@ def generate(audit_dir, output_dir):
     receipt, tables, controller, inputs, audited_script = load_audit(audit_dir)
     terminal, omissions = terminal_points(tables)
     timing = timing_points(tables)
+    paired_points, paired_means = paired_distribution_points(tables)
     episodes, validation, panels = training_points(receipt, controller, inputs)
     buckets = training_bucket_points(episodes)
     script = Path(__file__).resolve()
@@ -641,10 +752,13 @@ def generate(audit_dir, output_dir):
         stage = Path(temporary)
         write_csv(stage / "terminal_figure_points.csv", terminal)
         write_csv(stage / "time_figure_points.csv", timing)
+        write_csv(stage / "paired_distribution_points.csv", paired_points)
+        write_csv(stage / "paired_distribution_means.csv", paired_means)
         write_csv(stage / "training_panel_counts.csv", panels)
         write_csv(stage / "training_v1_bucket_episode_counts.csv", buckets)
         write_csv(stage / "validation_figure_points.csv", validation)
         figures = (plot_terminal(stage, terminal, omissions) + plot_timing(stage, timing) +
+                   plot_paired_distributions(stage, paired_points, paired_means) +
                    plot_training(stage, episodes) +
                    plot_training_bucket_counts(stage, buckets) +
                    plot_validation(stage, validation))
@@ -654,6 +768,11 @@ def generate(audit_dir, output_dir):
             "Each terminal point represents 20 distinct mother scenes at one N and load; "
             "model actions were averaged within each derived scene in the audit. "
             "Both original and final terminal results retain the V0 failed-B fallback.\n\n"
+            "The paired SI and SGM distribution figures keep every V1−V0 point for the "
+            "same mother scene at each N, load and stage. Their horizontal offsets are "
+            "deterministic display adjustments only. Values across N and loads reuse the "
+            "same 20 mothers and are not independent source samples. Paired deltas were "
+            "cross-checked against the audited per-scene means and paired CSV.\n\n"
             "Time points use only scenes with every repeated action timed. The V0 failed-B "
             "and V1 user-pause actions remain in performance results and are excluded with "
             "their whole scenes from main time curves. The separate load panels do not mix "
@@ -690,6 +809,8 @@ def generate(audit_dir, output_dir):
                     "training_actual_N_panel_count": len([row for row in panels if row["role"] == "V1"]),
                     "terminal_mother_scenes_per_N_load": 20,
                     "terminal_scene_point_count": len(terminal),
+                    "paired_distribution_point_count": len(paired_points),
+                    "paired_distribution_mean_count": len(paired_means),
                     "timing_panel_point_count": len(timing),
                     "raw_episode_count": len(episodes),
                     "validation_point_count": len(validation),
