@@ -59,6 +59,46 @@ def formal_best(jobdir, output):
     return result
 
 
+def contract_counts(jobdirs, output):
+    import numpy as np
+    records = []
+    for jobdir in jobdirs:
+        directory = Path(jobdir)
+        cfg = read(directory/'config.json')
+        result = read(directory/'results.json')
+        path = Path(result['rows_path'])
+        check(sha(path) == result['rows_sha256'], 'contract raw SHA')
+        role = next(iter(cfg['datasets']))
+        initial = cfg['reconstruction_starts'][role]
+        check(sha(initial['path']) == initial['sha256'], 'contract initial SHA')
+        starts = {r['scene_id']:r for r in jsonl(initial['path'])}
+        for row in jsonl(path):
+            ids = set(starts[row['scene_id']]['state']['edge_beam_ids'])
+            users = row['users']
+            assigned = [u for u in users if u['assigned_beam'] is not None]
+            loads = np.bincount([u['assigned_beam'] for u in assigned],
+                                weights=[u['demand_bps'] for u in assigned],minlength=100)
+            check(np.allclose(loads,row['beam_load_demand_bps'],rtol=1e-12,atol=1e-5), 'contract ownership demand')
+            subject = np.array([i not in ids for i in range(100)])
+            mean = float(loads[subject].mean())
+            count = int(np.count_nonzero(np.abs(loads/mean - 1) <= cfg['coverage']['reconstruction']['range_tolerance'] + 1e-12))
+            frozen = row['metrics']['subject_in_band_beams']
+            check(int(np.count_nonzero((np.abs(loads/mean-1) <= cfg['coverage']['reconstruction']['range_tolerance']+1e-12)&subject)) == frozen,
+                  'frozen subject count reproduction')
+            target = (row['metrics']['coverage_100'] and not row['metrics']['empty_beams']
+                      and len(starts[row['scene_id']]['state']['edge_regions']) <= cfg['coverage']['reconstruction']['max_edge_beams']
+                      and row['metrics']['subject_cv'] <= cfg['coverage']['reconstruction']['subject_cv_target']
+                      and count >= cfg['coverage']['reconstruction']['min_subject_beams_in_range'])
+            records.append({'route':row['route'],'scene_id':row['scene_id'],'frozen_subject_count':frozen,
+                            'contract_all100_count':count,'count_difference':count-frozen,
+                            'frozen_target_met':row['metrics']['target_met'],'contract_target_met':bool(target)})
+    result = {'passed':True,'scope':'derived all100 versus frozen non-edge in-band count from original ownership demand; no inference',
+              'count':len(records),'difference_count':sum(r['count_difference'] != 0 for r in records),
+              'target_difference_count':sum(r['frozen_target_met'] != r['contract_target_met'] for r in records),'rows':records}
+    save(output,result)
+    return result
+
+
 def run(jobdir, source, output):
     import torch
     from satellite_rl.coverage.reconstruction_ppo import RelationPolicy
