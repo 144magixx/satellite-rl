@@ -38,6 +38,7 @@ def collect() -> dict:
                 "heartbeat_at": status.get("heartbeat_at"),
                 "git_commit": (detail.get("job") or {}).get("git_commit"),
                 "source_root": (detail.get("job") or {}).get("source_root"),
+                "directory": detail.get("path"),
             })
         host = ops18.remote_python(
             "import json,subprocess\n"
@@ -54,12 +55,49 @@ def collect() -> dict:
     return instances
 
 
+def arm_configs(port_runs: dict) -> dict:
+    """Read each arm's frozen configuration to confirm its treatment is in place."""
+    body_template = (
+        "import json,pathlib\n"
+        "path=pathlib.Path(@DIR@)/'config.json'\n"
+        "config=json.loads(path.read_text(encoding='utf-8-sig'))\n"
+        "print(json.dumps({'experiment':config.get('experiment'),\n"
+        " 'preset':config['reward'].get('preset'),\n"
+        " 'shaping':config['reward'].get('shaping'),\n"
+        " 'progress_strata':config['training'].get('progress_strata'),\n"
+        " 'gamma':config['training'].get('gamma'),\n"
+        " 'gamma_schedule':config['training'].get('gamma_schedule'),\n"
+        " 'layout':config['network'].get('transformer_layout'),\n"
+        " 'context_beam_count':config['network'].get('context_beam_count'),\n"
+        " 'readout_mode':config['network'].get('readout_mode'),\n"
+        " 'conditioning':config['network'].get('beam_count_conditioning'),\n"
+        " 'context_level':config['state'].get('context_level'),\n"
+        " 'features':len(config['state'].get('features') or []),\n"
+        " 'total_steps':config['training'].get('total_steps')},ensure_ascii=False))\n"
+    )
+    out = {}
+    for arm, (port, directory) in port_runs.items():
+        body = body_template.replace("@DIR@", repr(directory))
+        result = ops18.remote_python(body, port, timeout=180)
+        out[arm] = (json.loads(result["stdout"].strip().splitlines()[-1])
+                    if result["exit_code"] == 0 else {"error": result["stderr"][-200:]})
+    return out
+
+
 def main() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8-sig"))
     live = collect()
+    directories = {}
+    for port, data in live.items():
+        for job in data["jobs"]:
+            if job["stage"] != "training" or not job.get("directory"):
+                continue
+            directories[job["request_id"].split("-")[1].upper()] = (int(port), job["directory"])
     manifest["status"] = "pilot_training_running"
     manifest["updated_utc"] = ops18.utc_now()
+    configs = arm_configs(directories) if directories else {}
     manifest["pilot"] = {
+        "arm_configs": configs,
         "steps_per_arm": 100000,
         "arms": {"V2": "20418", "G0": "20418", "V3": "20424"},
         "failed_startup_attempts": [
