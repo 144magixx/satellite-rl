@@ -31,9 +31,18 @@ def git(source: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def local_hashes() -> dict:
+def _normalized_sha(data: bytes) -> str:
+    """Hash file content with line endings normalised to LF.
+
+    The Windows checkout stores CRLF while the remote checkout stores LF; the
+    source content is identical, so the comparison must not depend on that.
+    """
     import hashlib
-    return {key: hashlib.sha256((Path("D:/paper") / rel).read_bytes()).hexdigest()
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def local_hashes() -> dict:
+    return {key: _normalized_sha((Path("D:/paper") / rel).read_bytes())
             for key, rel in CHECK_FILES.items()}
 
 
@@ -73,7 +82,8 @@ def main() -> None:
             "steps['checkout']=run(['git','-C',str(repo),'checkout','--quiet',commit])\n"
             "steps['head']=run(['git','-C',str(repo),'rev-parse','HEAD'])\n"
             "steps['dirty']=run(['git','-C',str(repo),'status','--porcelain'])\n"
-            "hashes={k:hashlib.sha256((repo/v).read_bytes()).hexdigest() for k,v in files.items()}\n"
+            "hashes={k:hashlib.sha256((repo/v).read_bytes().replace(b'\\r\\n', b'\\n')).hexdigest()"
+            " for k,v in files.items()}\n"
             "print(json.dumps({'steps':steps,'hashes':hashes},ensure_ascii=False))\n"
         )
         result = ops18.remote_python(body, port, timeout=600)
