@@ -1,0 +1,187 @@
+{
+  "checked_utc": "2026-10-06T02:29:28.753885+00:00",
+  "source": "outputs/experiments/variable_beams_20261004/analysis/summary_ef62040e88f1/analysis_summary.json",
+  "source_keys": [
+    "v0_v1_comparison",
+    "greedy_final_vs_learning_by_n"
+  ],
+  "note": "S2-P17（报告13）的冻结逐 N 最终结果，作为 S2-P18 试点/终点的绝对锚点；S2-P18 试点跑的是 144 景验证集（含 N=120/160），与其不同场景集，只作量级锚点。",
+  "by_n": [
+    {
+      "beam_count": 50,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": 0.011015928981725764,
+      "greedy_minus_learning_sgm_mean": 0.014807348141996579,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 50,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": 0.01061327834953718,
+      "greedy_minus_learning_sgm_mean": 0.011928725528175366,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 60,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": -0.00573509305420683,
+      "greedy_minus_learning_sgm_mean": -0.0033605800790958984,
+      "greedy_higher_si": false,
+      "greedy_higher_sgm": false
+    },
+    {
+      "beam_count": 60,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": -0.001145147730102436,
+      "greedy_minus_learning_sgm_mean": 0.000675279098006909,
+      "greedy_higher_si": false,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 75,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": -0.008179020776197254,
+      "greedy_minus_learning_sgm_mean": -0.009160090666671006,
+      "greedy_higher_si": false,
+      "greedy_higher_sgm": false
+    },
+    {
+      "beam_count": 75,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": -0.0058229246015194525,
+      "greedy_minus_learning_sgm_mean": -0.007108134303869029,
+      "greedy_higher_si": false,
+      "greedy_higher_sgm": false
+    },
+    {
+      "beam_count": 90,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": -0.004006960758413336,
+      "greedy_minus_learning_sgm_mean": -0.007553286501333911,
+      "greedy_higher_si": false,
+      "greedy_higher_sgm": false
+    },
+    {
+      "beam_count": 90,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": -0.002145632118313201,
+      "greedy_minus_learning_sgm_mean": -0.005028773597668401,
+      "greedy_higher_si": false,
+      "greedy_higher_sgm": false
+    },
+    {
+      "beam_count": 100,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": -0.005028225643919693,
+      "greedy_minus_learning_sgm_mean": -0.009226605702263968,
+      "greedy_higher_si": false,
+      "greedy_higher_sgm": false
+    },
+    {
+      "beam_count": 100,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": -0.006951958405362224,
+      "greedy_minus_learning_sgm_mean": -0.0105486202781927,
+      "greedy_higher_si": false,
+      "greedy_higher_sgm": false
+    },
+    {
+      "beam_count": 125,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": 0.015254070309805301,
+      "greedy_minus_learning_sgm_mean": 0.010041094065726619,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 125,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": 0.015182043094565834,
+      "greedy_minus_learning_sgm_mean": 0.012191285832936938,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 140,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": 0.02646348551010058,
+      "greedy_minus_learning_sgm_mean": 0.021958167261103778,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 140,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": 0.019145433090287822,
+      "greedy_minus_learning_sgm_mean": 0.016532840056329157,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 150,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": 0.031716822321407934,
+      "greedy_minus_learning_sgm_mean": 0.027284863842854,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 150,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": 0.018740416264545257,
+      "greedy_minus_learning_sgm_mean": 0.015585584354366633,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 175,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": 0.04434482163901665,
+      "greedy_minus_learning_sgm_mean": 0.040365994198749755,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 175,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": 0.03513190380440001,
+      "greedy_minus_learning_sgm_mean": 0.03269667285004463,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 180,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": 0.04595100085422654,
+      "greedy_minus_learning_sgm_mean": 0.04156649733888362,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 180,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": 0.0356677728213024,
+      "greedy_minus_learning_sgm_mean": 0.0329074190240739,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 200,
+      "learning_role": "V0",
+      "greedy_minus_learning_si_mean": 0.05874445665259609,
+      "greedy_minus_learning_sgm_mean": 0.054764978816032706,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    },
+    {
+      "beam_count": 200,
+      "learning_role": "V1",
+      "greedy_minus_learning_si_mean": 0.04494860495287534,
+      "greedy_minus_learning_sgm_mean": 0.04353686515052402,
+      "greedy_higher_si": true,
+      "greedy_higher_sgm": true
+    }
+  ]
+}

@@ -1,0 +1,406 @@
+{
+  "checked_utc": "2026-10-06T02:44:28.392479+00:00",
+  "V2": {
+    "port": 20418,
+    "run_id": "train_sac_20261006_084454_365eff71",
+    "stage": "training",
+    "env_step": 90150,
+    "evaluation_rows": 720,
+    "per_n_si": {
+      "50": 0.855453,
+      "80": 0.869893,
+      "100": 0.875031,
+      "120": 0.87126,
+      "160": 0.861706,
+      "200": 0.861769
+    },
+    "per_n_sgm": {
+      "50": 0.616674,
+      "80": 0.604509,
+      "100": 0.589645,
+      "120": 0.57211,
+      "160": 0.538139,
+      "200": 0.503484
+    },
+    "per_group": {
+      "N=50|load=0.75": {
+        "scenes": 60,
+        "si": 0.895941,
+        "sgm": 0.603021,
+        "slots_total": null,
+        "power_w": 1435.916667,
+        "carried_bps": 19066619309.91196,
+        "basic_met": 49.833333
+      },
+      "N=50|load=1.25": {
+        "scenes": 60,
+        "si": 0.814966,
+        "sgm": 0.630327,
+        "slots_total": null,
+        "power_w": 1499.0,
+        "carried_bps": 21370190356.533405,
+        "basic_met": 49.016667
+      },
+      "N=80|load=0.75": {
+        "scenes": 60,
+        "si": 0.894508,
+        "sgm": 0.567903,
+        "slots_total": null,
+        "power_w": 2191.666667,
+        "carried_bps": 24449600346.546543,
+        "basic_met": 79.65
+      },
+      "N=80|load=1.25": {
+        "scenes": 60,
+        "si": 0.845278,
+        "sgm": 0.641114,
+        "slots_total": null,
+        "power_w": 2354.166667,
+        "carried_bps": 28692869935.99223,
+        "basic_met": 79.066667
+      },
+      "N=100|load=0.75": {
+        "scenes": 60,
+        "si": 0.900007,
+        "sgm": 0.545394,
+        "slots_total": null,
+        "power_w": 2622.0,
+        "carried_bps": 26769673737.963642,
+        "basic_met": 99.566667
+      },
+      "N=100|load=1.25": {
+        "scenes": 60,
+        "si": 0.850054,
+        "sgm": 0.633895,
+        "slots_total": null,
+        "power_w": 2821.5,
+        "carried_bps": 31189706622.362373,
+        "basic_met": 99.066667
+      },
+      "N=120|load=0.75": {
+        "scenes": 60,
+        "si": 0.897701,
+        "sgm": 0.52423,
+        "slots_total": null,
+        "power_w": 2794.583333,
+        "carried_bps": 27667420111.424294,
+        "basic_met": 119.283333
+      },
+      "N=120|load=1.25": {
+        "scenes": 60,
+        "si": 0.84482,
+        "sgm": 0.619989,
+        "slots_total": null,
+        "power_w": 2918.083333,
+        "carried_bps": 32295687947.738503,
+        "basic_met": 118.783333
+      },
+      "N=160|load=0.75": {
+        "scenes": 60,
+        "si": 0.890162,
+        "sgm": 0.483809,
+        "slots_total": null,
+        "power_w": 2882.916667,
+        "carried_bps": 30260207659.7012,
+        "basic_met": 158.783333
+      },
+      "N=160|load=1.25": {
+        "scenes": 60,
+        "si": 0.833251,
+        "sgm": 0.59247,
+        "slots_total": null,
+        "power_w": 2984.916667,
+        "carried_bps": 33877618770.85738,
+        "basic_met": 158.716667
+      },
+      "N=200|load=0.75": {
+        "scenes": 60,
+        "si": 0.891944,
+        "sgm": 0.441211,
+        "slots_total": null,
+        "power_w": 2987.916667,
+        "carried_bps": 32933295967.94424,
+        "basic_met": 199.016667
+      },
+      "N=200|load=1.25": {
+        "scenes": 60,
+        "si": 0.831595,
+        "sgm": 0.565757,
+        "slots_total": null,
+        "power_w": 2996.916667,
+        "carried_bps": 35473311533.112724,
+        "basic_met": 197.85
+      }
+    }
+  },
+  "G0": {
+    "port": 20418,
+    "run_id": "train_sac_20261006_092142_142c6953",
+    "stage": "training",
+    "env_step": 38850,
+    "evaluation_rows": 288,
+    "per_n_si": {
+      "50": 0.82499,
+      "80": 0.86263,
+      "100": 0.870924,
+      "120": 0.877058,
+      "160": 0.882662,
+      "200": 0.885196
+    },
+    "per_n_sgm": {
+      "50": 0.401934,
+      "80": 0.41702,
+      "100": 0.42474,
+      "120": 0.427933,
+      "160": 0.439101,
+      "200": 0.436362
+    },
+    "per_group": {
+      "N=50|load=0.75": {
+        "scenes": 24,
+        "si": 0.863395,
+        "sgm": 0.372767,
+        "slots_total": null,
+        "power_w": 1794.583333,
+        "carried_bps": 24238423683.866634,
+        "basic_met": 49.333333
+      },
+      "N=50|load=1.25": {
+        "scenes": 24,
+        "si": 0.786586,
+        "sgm": 0.431102,
+        "slots_total": null,
+        "power_w": 1818.125,
+        "carried_bps": 25790725340.47404,
+        "basic_met": 48.416667
+      },
+      "N=80|load=0.75": {
+        "scenes": 24,
+        "si": 0.900134,
+        "sgm": 0.377524,
+        "slots_total": null,
+        "power_w": 2608.958333,
+        "carried_bps": 32087010507.520397,
+        "basic_met": 79.541667
+      },
+      "N=80|load=1.25": {
+        "scenes": 24,
+        "si": 0.825126,
+        "sgm": 0.456516,
+        "slots_total": null,
+        "power_w": 2596.041667,
+        "carried_bps": 33260939472.88919,
+        "basic_met": 78.708333
+      },
+      "N=100|load=0.75": {
+        "scenes": 24,
+        "si": 0.901776,
+        "sgm": 0.369227,
+        "slots_total": null,
+        "power_w": 2908.125,
+        "carried_bps": 34267960146.62154,
+        "basic_met": 99.416667
+      },
+      "N=100|load=1.25": {
+        "scenes": 24,
+        "si": 0.840072,
+        "sgm": 0.480253,
+        "slots_total": null,
+        "power_w": 2876.041667,
+        "carried_bps": 36137319868.96934,
+        "basic_met": 98.375
+      },
+      "N=120|load=0.75": {
+        "scenes": 24,
+        "si": 0.910402,
+        "sgm": 0.369239,
+        "slots_total": null,
+        "power_w": 2999.583333,
+        "carried_bps": 36382711082.30812,
+        "basic_met": 119.625
+      },
+      "N=120|load=1.25": {
+        "scenes": 24,
+        "si": 0.843714,
+        "sgm": 0.486627,
+        "slots_total": null,
+        "power_w": 2999.375,
+        "carried_bps": 37415850255.96492,
+        "basic_met": 118.041667
+      },
+      "N=160|load=0.75": {
+        "scenes": 24,
+        "si": 0.91542,
+        "sgm": 0.368229,
+        "slots_total": null,
+        "power_w": 3000.0,
+        "carried_bps": 38142743138.49551,
+        "basic_met": 158.958333
+      },
+      "N=160|load=1.25": {
+        "scenes": 24,
+        "si": 0.849904,
+        "sgm": 0.509973,
+        "slots_total": null,
+        "power_w": 3000.0,
+        "carried_bps": 38366625364.195854,
+        "basic_met": 157.166667
+      },
+      "N=200|load=0.75": {
+        "scenes": 24,
+        "si": 0.921534,
+        "sgm": 0.360132,
+        "slots_total": null,
+        "power_w": 3000.0,
+        "carried_bps": 39731683903.6619,
+        "basic_met": 198.916667
+      },
+      "N=200|load=1.25": {
+        "scenes": 24,
+        "si": 0.848858,
+        "sgm": 0.512593,
+        "slots_total": null,
+        "power_w": 3000.0,
+        "carried_bps": 39501865276.381004,
+        "basic_met": 197.416667
+      }
+    }
+  },
+  "V3": {
+    "port": 20424,
+    "run_id": "train_sac_20261006_084726_c004cd09",
+    "stage": "completed",
+    "env_step": 100000,
+    "evaluation_rows": 864,
+    "per_n_si": {
+      "50": 0.85521,
+      "80": 0.861609,
+      "100": 0.865268,
+      "120": 0.865327,
+      "160": 0.858769,
+      "200": 0.853312
+    },
+    "per_n_sgm": {
+      "50": 0.651734,
+      "80": 0.626744,
+      "100": 0.621921,
+      "120": 0.604417,
+      "160": 0.576426,
+      "200": 0.542028
+    },
+    "per_group": {
+      "N=50|load=0.75": {
+        "scenes": 72,
+        "si": 0.883013,
+        "sgm": 0.633522,
+        "slots_total": null,
+        "power_w": 1456.736111,
+        "carried_bps": 17405707424.765232,
+        "basic_met": 49.763889
+      },
+      "N=50|load=1.25": {
+        "scenes": 72,
+        "si": 0.827407,
+        "sgm": 0.669947,
+        "slots_total": null,
+        "power_w": 1607.777778,
+        "carried_bps": 21327731458.05313,
+        "basic_met": 48.791667
+      },
+      "N=80|load=0.75": {
+        "scenes": 72,
+        "si": 0.886875,
+        "sgm": 0.596606,
+        "slots_total": null,
+        "power_w": 2076.875,
+        "carried_bps": 22354494674.990807,
+        "basic_met": 79.444444
+      },
+      "N=80|load=1.25": {
+        "scenes": 72,
+        "si": 0.836343,
+        "sgm": 0.656881,
+        "slots_total": null,
+        "power_w": 2369.583333,
+        "carried_bps": 27169866659.703087,
+        "basic_met": 78.777778
+      },
+      "N=100|load=0.75": {
+        "scenes": 72,
+        "si": 0.88941,
+        "sgm": 0.586543,
+        "slots_total": null,
+        "power_w": 2344.513889,
+        "carried_bps": 24163240731.968403,
+        "basic_met": 99.472222
+      },
+      "N=100|load=1.25": {
+        "scenes": 72,
+        "si": 0.841125,
+        "sgm": 0.657299,
+        "slots_total": null,
+        "power_w": 2692.638889,
+        "carried_bps": 28951997872.808414,
+        "basic_met": 98.861111
+      },
+      "N=120|load=0.75": {
+        "scenes": 72,
+        "si": 0.895048,
+        "sgm": 0.561386,
+        "slots_total": null,
+        "power_w": 2484.027778,
+        "carried_bps": 25378426064.65686,
+        "basic_met": 119.444444
+      },
+      "N=120|load=1.25": {
+        "scenes": 72,
+        "si": 0.835606,
+        "sgm": 0.647448,
+        "slots_total": null,
+        "power_w": 2727.708333,
+        "carried_bps": 29938810161.80721,
+        "basic_met": 118.375
+      },
+      "N=160|load=0.75": {
+        "scenes": 72,
+        "si": 0.883806,
+        "sgm": 0.522336,
+        "slots_total": null,
+        "power_w": 2547.777778,
+        "carried_bps": 26750219344.55157,
+        "basic_met": 158.875
+      },
+      "N=160|load=1.25": {
+        "scenes": 72,
+        "si": 0.833733,
+        "sgm": 0.630516,
+        "slots_total": null,
+        "power_w": 2738.125,
+        "carried_bps": 31875752824.13182,
+        "basic_met": 158.652778
+      },
+      "N=200|load=0.75": {
+        "scenes": 72,
+        "si": 0.881096,
+        "sgm": 0.489356,
+        "slots_total": null,
+        "power_w": 2592.5,
+        "carried_bps": 27950452706.00985,
+        "basic_met": 198.375
+      },
+      "N=200|load=1.25": {
+        "scenes": 72,
+        "si": 0.825529,
+        "sgm": 0.5947,
+        "slots_total": null,
+        "power_w": 2787.708333,
+        "carried_bps": 32836682208.212273,
+        "basic_met": 198.027778
+      }
+    }
+  },
+  "reference": {
+    "v1_final_si_at_100": 0.9342,
+    "note": "V1 的 40 万步终态；试点臂为 10 万步，绝对比较只作参考"
+  }
+}

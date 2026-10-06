@@ -1,0 +1,303 @@
+{
+  "experiment_id": "S2-P18",
+  "title": "可变束数泛化第二轮（V2/V3/G0 三臂机制验证）",
+  "created_utc": "2026-10-05T23:49:39.6950930Z",
+  "plan": "docs/第二阶段/方案/18_可变束数泛化第二轮改进方案.md",
+  "status": "stage2_extension_running",
+  "budget": {
+    "arms": 3,
+    "stage1_steps_per_arm": 100000,
+    "stage1_total": 300000,
+    "stage2_cap": 900000,
+    "total_cap": 1200000,
+    "seed": 51001
+  },
+  "arms": {
+    "V2": "奖励吞吐/频谱项＋power_pressure修正＋组号可见＋进度分层采样",
+    "V3": "状态同V2，加折扣按回合长度＋跨束势能整形",
+    "G0": "beam_context支持任意N＋注意力池化读出＋N条件化"
+  },
+  "instances": {
+    "20418": {
+      "ssh_port": 20418,
+      "api_port": 8898,
+      "root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418",
+      "planned_arms": [
+        "V2",
+        "G0"
+      ]
+    },
+    "20424": {
+      "ssh_port": 20424,
+      "api_port": 8899,
+      "root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20424",
+      "planned_arms": [
+        "V3"
+      ]
+    }
+  },
+  "reused_inputs": {
+    "train": "scenes_20261004_133711_dec915dc (8064, S2-P17冻结)",
+    "validation": "scenes_20261004_133835_f0592bee (144)",
+    "test": "scenes_20261004_133838_d7476a54 (440)"
+  },
+  "jobs": {},
+  "updated_utc": "2026-10-06T02:56:01.304554+00:00",
+  "pilot": {
+    "arm_configs": {
+      "V2": {
+        "experiment": {
+          "id": "S2-P18",
+          "arm": "V2"
+        },
+        "preset": "legacy_repaired_throughput",
+        "shaping": {
+          "w_throughput": 1.0,
+          "w_spectrum": 0.5,
+          "w_shape": 0.0,
+          "throughput_reference": "mean_demand"
+        },
+        "progress_strata": 4,
+        "gamma": 0.99,
+        "gamma_schedule": {
+          "mode": "none",
+          "default": 0.99,
+          "by_beam_count": []
+        },
+        "layout": "tsac_14_variable_context",
+        "context_beam_count": "fixed_100",
+        "readout_mode": "first_token",
+        "conditioning": "none",
+        "context_level": "none",
+        "features": 13,
+        "total_steps": 100000
+      }
+    },
+    "steps_per_arm": 100000,
+    "arms": {
+      "V2": "20418",
+      "G0": "20418",
+      "V3": "20424"
+    },
+    "failed_startup_attempts": [
+      {
+        "request_id": "s2p18-g0-pilot-100000-51001",
+        "run_id": "train_sac_20261006_084610_6dedc438",
+        "error": "State width 2396 differs from declared 4046",
+        "cause": "逐束实体观测按实际束数变宽，网络输入宽度不恒定"
+      },
+      {
+        "request_id": "s2p18-g0-pilot-100000-51001-retry1",
+        "run_id": "train_sac_20261006_090235_3ba9329b",
+        "error": "逐束实体档位必须在选择动作时给出真实束数",
+        "cause": "Policy 包装器与第0步验证路径未转发真实束数"
+      },
+      {
+        "request_id": "s2p18-g0-pilot-100000-51001-retry2",
+        "run_id": "train_sac_20261006_090857_f00f4b97",
+        "error": "观测中的归一化束数无效：0.0",
+        "cause": "回放采样试图从自然布局观测还原束数，该布局没有此标量"
+      }
+    ],
+    "live": {
+      "20418": {
+        "jobs": [
+          {
+            "request_id": "s2p18-g0-pilot-100000-51001-retry3",
+            "run_id": "train_sac_20261006_092142_142c6953",
+            "kind": "train",
+            "stage": "validating",
+            "env_step": 40000,
+            "budget_env_steps": 100000,
+            "update_step": 38001,
+            "episode": 343,
+            "steps_per_second": 8.03414932455675,
+            "beam_bucket_episodes": {
+              "anchor_100": 86,
+              "lower": 86,
+              "middle": 86,
+              "upper": 85
+            },
+            "replay_sampled_by_bucket": {
+              "anchor_100": 2432064,
+              "lower": 2432064,
+              "middle": 2432064,
+              "upper": 2432064
+            },
+            "error": null,
+            "heartbeat_at": "2026-10-06T02:45:58.383410+00:00",
+            "git_commit": "fb14e36506bf118f62e7f1cf1fa75949f7985954",
+            "source_root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/source_snapshots/fb14e36506bf118f62e7f1cf1fa75949f7985954",
+            "directory": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/jobs/train_sac_20261006_092142_142c6953"
+          },
+          {
+            "request_id": "s2p18-g0-pilot-100000-51001-retry2",
+            "run_id": "train_sac_20261006_090857_f00f4b97",
+            "kind": "train",
+            "stage": "failed",
+            "env_step": 1950,
+            "budget_env_steps": 100000,
+            "update_step": 0,
+            "episode": 19,
+            "steps_per_second": 8.436979015321366,
+            "beam_bucket_episodes": {
+              "anchor_100": 5,
+              "lower": 5,
+              "middle": 5,
+              "upper": 4
+            },
+            "replay_sampled_by_bucket": {
+              "anchor_100": 0,
+              "lower": 0,
+              "middle": 0,
+              "upper": 0
+            },
+            "error": "观测中的归一化束数无效：0.0",
+            "heartbeat_at": "2026-10-06T01:14:05.484640+00:00",
+            "git_commit": "6468ead7057689d5bd87381c930f616a015e3feb",
+            "source_root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/source_snapshots/6468ead7057689d5bd87381c930f616a015e3feb",
+            "directory": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/jobs/train_sac_20261006_090857_f00f4b97"
+          },
+          {
+            "request_id": "s2p18-g0-pilot-100000-51001-retry1",
+            "run_id": "train_sac_20261006_090235_3ba9329b",
+            "kind": "train",
+            "stage": "failed",
+            "env_step": 0,
+            "budget_env_steps": 100000,
+            "update_step": 0,
+            "episode": 0,
+            "steps_per_second": 0.0,
+            "beam_bucket_episodes": {},
+            "replay_sampled_by_bucket": {
+              "anchor_100": 0,
+              "lower": 0,
+              "middle": 0,
+              "upper": 0
+            },
+            "error": "逐束实体档位必须在选择动作时给出真实束数",
+            "heartbeat_at": "2026-10-06T01:03:52.208235+00:00",
+            "git_commit": "f7ba7b7582da80f665089ac9325aaf49b611febe",
+            "source_root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/source_snapshots/f7ba7b7582da80f665089ac9325aaf49b611febe",
+            "directory": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/jobs/train_sac_20261006_090235_3ba9329b"
+          },
+          {
+            "request_id": "s2p18-g0-pilot-100000-51001",
+            "run_id": "train_sac_20261006_084610_6dedc438",
+            "kind": "train",
+            "stage": "failed",
+            "env_step": 0,
+            "budget_env_steps": 100000,
+            "update_step": 0,
+            "episode": 0,
+            "steps_per_second": 0.0,
+            "beam_bucket_episodes": {},
+            "replay_sampled_by_bucket": {
+              "anchor_100": 0,
+              "lower": 0,
+              "middle": 0,
+              "upper": 0
+            },
+            "error": "State width 2396 differs from declared 4046",
+            "heartbeat_at": "2026-10-06T00:47:22.884696+00:00",
+            "git_commit": "0070cb49f850296eb2f88e988d35a3149f24f696",
+            "source_root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/source_snapshots/0070cb49f850296eb2f88e988d35a3149f24f696",
+            "directory": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/jobs/train_sac_20261006_084610_6dedc438"
+          },
+          {
+            "request_id": "s2p18-v2-pilot-100000-51001",
+            "run_id": "train_sac_20261006_084454_365eff71",
+            "kind": "train",
+            "stage": "training",
+            "env_step": 93650,
+            "budget_env_steps": 100000,
+            "update_step": 91651,
+            "episode": 792,
+            "steps_per_second": 12.963734945157896,
+            "beam_bucket_episodes": {
+              "anchor_100": 198,
+              "lower": 198,
+              "middle": 198,
+              "upper": 198
+            },
+            "replay_sampled_by_bucket": {
+              "anchor_100": 5865664,
+              "lower": 5865664,
+              "middle": 5865664,
+              "upper": 5865664
+            },
+            "error": null,
+            "heartbeat_at": "2026-10-06T02:46:20.880269+00:00",
+            "git_commit": "0070cb49f850296eb2f88e988d35a3149f24f696",
+            "source_root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/source_snapshots/0070cb49f850296eb2f88e988d35a3149f24f696",
+            "directory": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/jobs/train_sac_20261006_084454_365eff71"
+          }
+        ],
+        "host": {
+          "gpu": "41 %, 2173 MiB",
+          "apps": "2881772, 668 MiB\n2940182, 1490 MiB"
+        }
+      },
+      "20424": {
+        "jobs": [
+          {
+            "request_id": "s2p18-v3-pilot-100000-51001",
+            "run_id": "train_sac_20261006_084726_c004cd09",
+            "kind": "train",
+            "stage": "completed",
+            "env_step": 100000,
+            "budget_env_steps": 100000,
+            "update_step": 98001,
+            "episode": 852,
+            "steps_per_second": 15.460509797293405,
+            "beam_bucket_episodes": {
+              "anchor_100": 213,
+              "lower": 213,
+              "middle": 213,
+              "upper": 213
+            },
+            "replay_sampled_by_bucket": {
+              "anchor_100": 6272064,
+              "lower": 6272064,
+              "middle": 6272064,
+              "upper": 6272064
+            },
+            "error": null,
+            "heartbeat_at": "2026-10-06T02:36:19.194584+00:00",
+            "git_commit": "0070cb49f850296eb2f88e988d35a3149f24f696",
+            "source_root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20424/archive/outputs/workbench/source_snapshots/0070cb49f850296eb2f88e988d35a3149f24f696",
+            "directory": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20424/archive/outputs/workbench/jobs/train_sac_20261006_084726_c004cd09"
+          }
+        ],
+        "host": {
+          "gpu": "0 %, 1 MiB",
+          "apps": ""
+        }
+      }
+    }
+  },
+  "stage2": {
+    "budget_target_steps": 400000,
+    "V3": {
+      "run_id": "train_sac_20261006_084726_c004cd09",
+      "port": 20424,
+      "pilot_steps": 100000,
+      "state": "extension_running",
+      "retarget_receipt": "preflight/retarget_train_sac_20261006_084726_c004cd09_400000.json",
+      "snapshot_retired": "preflight/retire_snapshot_train_sac_20261006_084726_c004cd09_100000.json",
+      "note": "同ID断点续跑；配置只改总步数；原断点与试点快照均改名保留并记录SHA"
+    },
+    "V2": {
+      "run_id": "train_sac_20261006_084454_365eff71",
+      "port": 20418,
+      "pilot_steps": 100000,
+      "state": "pilot_finishing"
+    },
+    "G0": {
+      "run_id": "train_sac_20261006_092142_142c6953",
+      "port": 20418,
+      "pilot_steps": 100000,
+      "state": "pilot_training"
+    }
+  }
+}
