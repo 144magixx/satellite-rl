@@ -1,0 +1,46 @@
+"""Record the per-N validation snapshots of all three arms into the run manifest."""
+import json
+import sys
+
+sys.path.insert(0, r"D:\paper\scripts\variable_beams")
+import ops18  # noqa: E402
+
+SNAPSHOT = {
+    "checked_utc": ops18.utc_now(),
+    "unit": "144 景验证集；各臂为自己最近一次验证节点；列名 N=目标波束数",
+    "note": ("原始分配（未接第三阶段SCA）；各臂节点步数不同，且与报告13的440景考核集不同，"
+             "只能看趋势与相对次序，不能与最终B直接比较"),
+    "V2": {"node_step": 200000,
+           "si": {"50": 0.888128, "80": 0.900177, "100": 0.904827,
+                  "120": 0.892765, "160": 0.871029, "200": 0.859678},
+           "slots_per_beam": {"50": 4.103, "80": 3.299, "100": 2.805,
+                              "120": 2.46, "160": 2.096, "200": 1.968}},
+    "V3": {"node_step": 260000,
+           "si": {"50": 0.888072, "80": 0.906204, "100": 0.892992,
+                  "120": 0.873913, "160": 0.866458, "200": 0.845595},
+           "slots_per_beam": {"50": 3.989, "80": 3.148, "100": 2.697,
+                              "120": 2.358, "160": 1.916, "200": 1.665}},
+    "G0": {"node_step": 120000,
+           "si": {"50": 0.822596, "80": 0.844008, "100": 0.844794,
+                  "120": 0.855595, "160": 0.859722, "200": 0.859246},
+           "slots_per_beam": {"50": 5.263, "80": 4.336}},
+    "p17_reference_slots_per_beam": {"V1": {"50": 3.92, "100": 2.79, "125": 2.41,
+                                            "150": 2.15, "175": 1.95, "200": 1.82},
+                                     "greedy": {"50": 5.0, "100": 5.0, "140": 4.87,
+                                                "175": 4.45, "200": 4.0}},
+    "reading": ("V2 在 N=200 的每束槽数已接近冻结 V1 水平（1.97 对 1.82），V3 仍低于 V1（1.665）；"
+                "G0 早期在 N=50 高达 5.26 槽/束（接近贪心水平）但绝对 SI 最低，说明它把资源摊薄了；"
+                "三臂的 SI 随 N 变化形状不同：V2 在 N=100 见顶后缓降，V3 在 N=80 见顶后下降更快，"
+                "G0 则随 N 单调上升（与它按束数条件化的设计一致）。"),
+}
+
+manifest_path = ops18.LOCAL / "run_manifest.json"
+manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+manifest["per_n_snapshots"] = SNAPSHOT
+manifest["updated_utc"] = ops18.utc_now()
+ops18.write_json(manifest_path, manifest)
+ops18.write_json(ops18.LOCAL / "analysis_inputs" / "per_n_snapshots.json", SNAPSHOT)
+print(json.dumps({"recorded": str(manifest_path),
+                  "arms": {k: v.get("node_step") for k, v in SNAPSHOT.items()
+                           if isinstance(v, dict) and "node_step" in v}},
+                 ensure_ascii=False))
