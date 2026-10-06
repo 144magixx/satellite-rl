@@ -29,24 +29,22 @@ def require_commit(value: str) -> str:
     return value
 
 
-def plan(source: Path, commit: str) -> dict:
+def plan(source: Path, commit: str | None) -> dict:
+    """Preflight both instances; the frozen commit is HEAD of a clean tree.
+
+    The driver scripts live in the same repository as the science code, so a
+    driver fix moves HEAD. What must stay invariant is that the deployed tree is
+    a clean commit with nothing uncommitted, and that the commit is recorded.
+    """
     source = source.resolve()
-    if git(source, "rev-parse", "HEAD") != commit:
+    head = git(source, "rev-parse", "HEAD")
+    if commit is None:
+        commit = head
+    if head != commit:
         raise RuntimeError("正式源码 HEAD 与指定提交不符")
     dirty = git(source, "status", "--porcelain")
-    # Ops-only fixups committed on top of the frozen science commit are allowed,
-    # but only for the two S2-P18 driver scripts and only when nothing else is
-    # dirty: the deployed scientific tree must stay byte-identical.
-    allowed = {"scripts/variable_beams/deploy18.py", "scripts/variable_beams/submit18.py",
-               "scripts/variable_beams/ops18.py", "scripts/variable_beams/import18.py",
-               "scripts/variable_beams/stop18.py"}
-    blocking = []
-    for line in dirty.splitlines():
-        path = line[3:].strip().strip('"')
-        if path not in allowed:
-            blocking.append(line)
-    if blocking:
-        raise RuntimeError("正式源码工作区不干净：" + " | ".join(blocking)[:400])
+    if dirty:
+        raise RuntimeError("正式源码工作区不干净：" + dirty[:400])
     report = {"scientific_commit": commit, "source_repo": str(source), "instances": {}}
     for port in ops18.PORTS:
         info = ops18.instance(port)
@@ -191,17 +189,19 @@ print(json.dumps({{"status":"serving","pid":process.pid,"api_port":api_port,
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--commit", required=True)
+    parser.add_argument("--commit", help="默认使用工作区当前 HEAD（必须干净）")
     parser.add_argument("--action", choices=("plan", "deploy", "serve"), required=True)
     parser.add_argument("--source", default="D:/paper")
     args = parser.parse_args()
-    commit = require_commit(args.commit)
+    commit = require_commit(args.commit) if args.commit else None
     source = Path(args.source)
     if args.action == "plan":
         output = plan(source, commit)
     elif args.action == "deploy":
         output = deploy(source, commit)
     else:
+        if commit is None:
+            commit = git(source, "rev-parse", "HEAD")
         output = serve(commit)
     print(json.dumps(output, ensure_ascii=False, indent=2))
 
