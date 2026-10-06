@@ -11,6 +11,7 @@ import threading
 import time
 
 from satellite_rl.training.run_monitor import atomic_json
+from .experiments import is_variable_beam_experiment
 from .storage import now, read_json
 
 TERMINAL = {"completed", "failed", "stopped", "cancelled", "interrupted"}
@@ -295,7 +296,8 @@ class Scheduler:
                     (job.get("boundary_repair") or {}).get("validation_receipt_sha256") ==
                     repair_validation_sha256):
                 return status  # Unknown API outcome: the same job is already queued.
-            saved_evaluation = bool(job and job.get("kind") == "evaluate" and job.get("experiment_id") == "S2-P17")
+            saved_evaluation = bool(job and job.get("kind") == "evaluate" and
+                                    is_variable_beam_experiment(job.get("experiment_id")))
             resumable_balance_eval = bool(job and job.get("kind") == "evaluate" and
                                           config.get("research_stage") == "coverage" and
                                           config.get("schema_version") == 3)

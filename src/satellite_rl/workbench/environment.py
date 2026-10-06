@@ -11,7 +11,9 @@ import numpy as np
 
 from satellite_rl.envs import satellite as legacy
 from satellite_rl.envs.regions import get_profile, profile_metadata, geo_distances_km, validate_locations
-from satellite_rl.workbench.config import FEATURES, config_summary, validate_config
+from satellite_rl.state_layouts import natural_shapes
+from satellite_rl.workbench.config import (FEATURES, config_summary, natural_state_width,
+                                           validate_config)
 
 
 SCENE_KEYS = ("beam_location", "beam_G_Tx_max", "UE_G_Rx_max", "distances", "rate", "noise_temperature")
@@ -232,7 +234,8 @@ class WorkbenchEnv:
         all_ratios = np.zeros(env.beam_num, dtype=np.float64)
         all_ratios[:count] = ratios
         return dict(count=count, rates=rates.copy(), demands=demands.copy(), ratios=ratios,
-                    si=float(ratios.sum()), basic=float(np.minimum(rates / demands / env.basic_fraction, 1).sum()) if count else 0.0,
+                    si=float(ratios.sum()), mean_si=float(ratios.mean()) if count else 0.0,
+                    basic=float(np.minimum(rates / demands / env.basic_fraction, 1).sum()) if count else 0.0,
                     sgm=float(_sgm(rates, demands, beta).sum()), throughput=float(rates.sum()) / 1e9,
                     useful_throughput=float(np.minimum(rates, demands).sum()) / 1e9,
                     jain=_jain(all_ratios), min_si=float(all_ratios.min()),
@@ -250,25 +253,41 @@ class WorkbenchEnv:
         group = idx % 8
         free = occupancy[group] == 0
         longest = max((len(x) for x in np.split(free, np.where(np.diff(free.astype(int)) != 0)[0] + 1) if len(x) and x[0]), default=0)
+        power_budget = self.config["environment"]["power_budget_w"]
+        # S2-P18 修正2：原来的 30 W 是 3000W/100束写死的“每束参考功率”，N≠100 时
+        # 系统性低估大束数的资源紧张程度（方案18 第 2.4 节）。这里改成随束数变化的
+        # 公平份额 budget/N；N=100 时 3000/100 与原来的 30 是同一个浮点数，因此
+        # 100 束逐位不变。这是纠正参考量，不是新增信息。
+        power_reference_w = power_budget / count
+        # 当前组剩余预留义务：与掩码 action_mask 的 remaining_group 同一口径，
+        # 即包含当前束在内、本复用组还需要处理多少束。
+        count_remaining = count - idx
+        group_remaining = len(range(idx, count, 8))
+        # 剩余合法槽上限：与掩码 max_slots 同一口径，先数本组未被占用的位置，
+        # 再扣掉为同组其余波束各预留的 1 槽；负值表示当前束已无槽可分。
+        group_free_slots = float(np.count_nonzero(~(np.asarray(occupancy[group]) > 0)))
+        slots_available = max(0.0, group_free_slots - (group_remaining - 1))
         definitions = {
-            "progress": [idx / count], "remaining_count": [(count - idx) / count],
+            "progress": [idx / count], "remaining_count": [count_remaining / count],
             "group": [group / 7],
-            "power_per_remaining": [(self.config["environment"]["power_budget_w"] - env.total_power) / max(1, count - idx) / 30],
+            "power_per_remaining": [(power_budget - env.total_power) / max(1, count_remaining) / 30],
             "served_shortfall": [float((1 - ratios).mean()) if len(ratios) else 0],
             "served_met": [float(np.mean(ratios >= 1)) if len(ratios) else 0],
             "served_min": [float(ratios.min()) if len(ratios) else 0],
             "other_occupancy": occupancy[[g for g in range(8) if g != group]].reshape(-1),
             "longest_free": [longest / 100],
             "previous_actual_action": self._previous_actual_action,
+            "group_remaining_obligation": [group_remaining / count],
+            "remaining_slot_limit": [slots_available / 100],
         }
-        power_left = self.config["environment"]["power_budget_w"] - env.total_power
+        power_left = power_budget - env.total_power
         if power_left < -1e-7 and "power_pressure" in self.config["state"]["features"]:
             raise RuntimeError("剩余功率为负，资源账错误")
-        remaining = count - idx
+        remaining = count_remaining
         definitions.update(
             beam_count_normalized=[count / 200],
             remaining_beams_normalized=[remaining / 200],
-            power_pressure=[power_left / (power_left + 30 * remaining) if remaining else 0],
+            power_pressure=[power_left / (power_left + power_reference_w * remaining) if remaining else 0],
         )
         if self.config["state"]["demand_visibility"] == "known":
             demands = self._scene["rate"].reshape(-1)
@@ -283,24 +302,40 @@ class WorkbenchEnv:
             level = self.config["state"]["context_level"]
             definitions["natural_global_context"] = context["global_context"][:3 if level == "compact" else 10]
             if "natural_beam_context" in features:
-                definitions["natural_beam_context"] = context["beam_context"][:, :, :5 if level == "layout" else 11]
+                beam_rows = context["beam_context"]
+                beam_width = context["beam_width"]
+                definitions["natural_beam_context"] = (
+                    beam_rows[:, :, :beam_width] if beam_rows.ndim == 3
+                    else beam_rows[:, :beam_width])
             if "natural_resource_context" in features:
                 definitions["natural_resource_context"] = context["resource_context"][:, :204 if level == "full" else 4]
         for fid in self.config["state"]["features"]:
             value = np.asarray(base[fid] if fid in base else definitions[fid], dtype=np.float32).reshape(-1)
             parts.append(value)
         state = np.concatenate(parts)
-        if state.size != self.summary["state_dim"] or not np.isfinite(state).all():
+        if state.size != self.state_width(count) or not np.isfinite(state).all():
             raise ValueError("状态维度或数值无效")
         return state
+
+    def state_width(self, count):
+        """本场景实际观测宽度：仅“按实际束数构造”的对照臂随 N 变化。"""
+        return natural_state_width(self.config, count)
 
     def _structured_context(self, definitions, ratios):
         """Build four visibility levels from information available before the action."""
         env = self.raw_env
         idx, count = env.beam_idx, env.beam_num
         level = self.config["state"]["context_level"]
+        # S2-P18 手段G：可选按场景实际束数构造逐束字段（context_beam_count="actual"）。
+        # 默认档位仍用固定 (10,10,11) 的 100 束布局，所以既有对照逐位不变。
+        actual_count = self.config["network"].get("context_beam_count", "fixed_100") == "actual"
+        beam_width = 5 if level == "layout" else 11
+        # 逐束编码档位按实际束数构造；默认档位保持历史 (10,10,11) 的 100 束布局。
+        beam_rows = count if actual_count else 100
         global_context = np.zeros(10, dtype=np.float32)
-        beam_context = np.zeros((10, 10, 11), dtype=np.float32)
+        # 注意：这里始终按 11 通道分配，实际写入观测时再按档位截取到 beam_width 列，
+        # 与历史实现（layout 档取前 5 列）保持一致。
+        beam_context = np.zeros((beam_rows, 11), dtype=np.float32)
         resource_context = np.zeros((8, 204), dtype=np.float32)
 
         global_context[:3] = (definitions["beta"][0], definitions["progress"][0],
@@ -335,17 +370,17 @@ class WorkbenchEnv:
             locations = self._scene["beam_location"]
             lat_min, lat_max = self.region_profile.latitude_bounds_deg
             lon_min, lon_max = self.region_profile.longitude_bounds_deg
-            rows = beam_context.reshape(count, 11)
-            rows[:, 0] = 2 * (locations[:, 0] - (lat_max + lat_min) / 2) / (lat_max - lat_min)
-            rows[:, 1] = 2 * (locations[:, 1] - (lon_max + lon_min) / 2) / (lon_max - lon_min)
+            rows = beam_context.reshape(beam_rows, 11)[:, :beam_width]
+            rows[:count, 0] = 2 * (locations[:, 0] - (lat_max + lat_min) / 2) / (lat_max - lat_min)
+            rows[:count, 1] = 2 * (locations[:, 1] - (lon_max + lon_min) / 2) / (lon_max - lon_min)
             rate_mean = (legacy.rate_min + legacy.rate_max - legacy.rate_step) / 2 * 1e6
             demands = self._scene["rate"].reshape(-1)
-            rows[:, 2] = demands / rate_mean
-            rows[:, 3] = np.arange(count) % 8 / 7
-            rows[:, 4] = np.arange(count) / (count - 1)
+            rows[:count, 2] = demands / rate_mean
+            rows[:count, 3] = np.arange(count) % 8 / 7
+            rows[:count, 4] = np.arange(count) / (count - 1)
 
         if level == "full":
-            rows = beam_context.reshape(count, 11)
+            rows = beam_context.reshape(beam_rows, 11)[:, :beam_width]
             rows[:idx, 5] = 1
             rates = np.maximum(np.asarray(env.beam_bps, dtype=np.float64), 0)
             rows[:idx, 9] = rates / 6e8
@@ -371,6 +406,7 @@ class WorkbenchEnv:
                     resource_context[polarization::2, 104:204] = normalized
         return {"global_context": global_context,
                 "beam_context": beam_context,
+                "beam_width": beam_width,
                 "resource_context": resource_context}
 
     def _project(self, requested):
@@ -527,6 +563,27 @@ class WorkbenchEnv:
                                 out=int(raw_info["out"]), occupy=int(raw_info["occupy"])))
         return state, result[0], bool(done), info
 
+    def _throughput_reference_gbps(self):
+        """ΔΣmin(C,D) 的归一化参考量（方案18 第 3 节手段A）。
+
+        默认取“全场景平均每束需求”除以 1e9。选择理由：该参考量就是逐束满足率的
+        分母自身的平均，于是归一化后的项恰好等于“本步新增的有效承载相当于多少束
+        的平均需求”，与 N 无关、与场景负载同尺度，权重可以直接读成"每多做满一束
+        业务值多少分"。也可切换为场景总需求（总量口径）或固定数值 Gbps。
+        """
+        shaping = self.config["reward"].get("shaping", {})
+        mode = shaping.get("throughput_reference", "mean_demand")
+        if isinstance(mode, (int, float)) and not isinstance(mode, bool):
+            if mode <= 0:
+                raise ValueError("吞吐归一化参考量必须是正数")
+            return float(mode)
+        demands = self._scene["rate"].reshape(-1)
+        if mode == "mean_demand":
+            return float(demands.mean()) / 1e9
+        if mode == "total_demand":
+            return float(demands.sum()) / 1e9
+        raise ValueError(f"未知吞吐归一化参考量: {mode!r}")
+
     def _reward(self, before, after, info, legacy_reward, requested, actual, done):
         preset = self.config["reward"]["preset"]
         if preset != "custom":
@@ -555,8 +612,12 @@ class WorkbenchEnv:
             if abs(residual) > 1e-10:
                 components["legacy_residual"] = residual
                 weights["legacy_residual"] = 1.0
-            return total, {key: dict(raw=value, scaled=value, weighted=value * weights[key], timing="step")
-                           for key, value in components.items()}
+            if preset == "legacy_repaired_throughput":
+                self._add_throughput_terms(components, weights, before, after, info, actual)
+                total += sum(value * weights[key] for key, value in components.items()
+                             if key in ("throughput_delta", "spectrum_occupancy"))
+            total += self._shape_reward(components, weights, before, after)
+            return total, self._components(components, weights, preset)
         budget = self.config["environment"]["power_budget_w"]
         this_rate = max(0.0, _float(self.raw_env.beam_bps[-1]))
         demand = _float(info["required_rate"])
@@ -600,7 +661,79 @@ class WorkbenchEnv:
             weighted = entry["weight"] * scaled
             terms[entry["id"]] = dict(raw=value, scaled=scaled, weighted=weighted, timing=entry["timing"])
             total += weighted
+        total += self._shape_reward(components=None, weights=None, before=before, after=after,
+                                    extra=terms)
         return float(total), terms
+
+    @staticmethod
+    def _components(components, weights, preset):
+        return {key: dict(raw=value, scaled=value, weighted=value * weights[key], timing="step",
+                          preset=preset, enable="legacy_repaired")
+                for key, value in components.items()}
+
+    def _add_throughput_terms(self, components, weights, before, after, info, actual):
+        """S2-P18 手段A：在保留原四项的前提下追加“用起频谱/多做业务量”的正项。
+
+        默认权重为 0，只有把 preset 设为 ``legacy_repaired_throughput`` 并显式给出
+        正权重时才生效，因此 ``legacy_repaired`` 的返回奖励逐位不变。两项都只读取
+        本步已经发生的结果，不改变物理、动作可行性或终态统计：
+
+        - ``throughput_delta``：本步有效承载增量 ΔΣmin(C,D)，除以参考量。参考量默认
+          取“全场景平均每束需求”，见 :meth:`_throughput_reference_gbps` 的说明。
+        - ``spectrum_occupancy``：本步实际占用槽数 / 当前组可用槽数。分母取
+          ``该组100个位置 − 同组其余波束各预留1槽``，与动作掩码的可行槽口径一致；
+          这样“把空槽用起来”与“给后续束留出义务”在同一个尺度上比较。
+        """
+        shaping = self.config["reward"].get("shaping", {})
+        w_throughput = float(shaping.get("w_throughput", 0))
+        w_spectrum = float(shaping.get("w_spectrum", 0))
+        if w_throughput:
+            reference = self._throughput_reference_gbps()
+            components["throughput_delta"] = (
+                after["useful_throughput"] - before["useful_throughput"]) / reference
+            weights["throughput_delta"] = w_throughput
+        if w_spectrum:
+            group = int(info["group"])
+            remaining_group = len(range(self.raw_env.beam_idx, self.raw_env.beam_num, 8))
+            available = 100.0 - (remaining_group - 1)
+            if available <= 0:
+                raise RuntimeError("当前组可用槽上限非正，资源账错误")
+            components["spectrum_occupancy"] = float(actual["slots"]) / available
+            weights["spectrum_occupancy"] = w_spectrum
+
+    def _shape_reward(self, components, weights, before, after, extra=None):
+        """S2-P18 手段F：跨束势能型奖励整形（potential-based shaping）。
+
+        势函数（只依赖状态，不依赖动作）：
+
+            Φ(s) = mean_i min(C_i / D_i, 1)
+
+        其中 i 取该场景全部目标波束，未服务束的 C_i 记 0；C_i 取每步干扰更新后的
+        逐束链路容量 ``raw_env.beam_bps``，D_i 为场景需求。均值的分母固定为场景束数
+        N，所以 Φ 的量纲是“平均需求满足率”，与 N 无关。
+
+        整形项为 ``w_shape × (γ·Φ(s') − Φ(s))``，γ 取算法实际使用的折扣。这是标准的
+        势能型整形（Ng、Harada 与 Russell，1999）：对任意折扣与任意 MDP，回报中该
+        差分沿轨迹求和后只剩端点势函数 ``γ^(T-1)·Φ(s_T) − Φ(s_0)``，与策略无关，
+        因此最优策略集合不变。实现层面该性质由“只读状态、不读动作、只按相邻状态
+        差分相加”保证，并由 ``tests/test_s2p18_arms.py`` 的确定性小例核对。
+        """
+        weight = float(self.config["reward"].get("shaping", {}).get("w_shape", 0))
+        if not weight:
+            return 0.0
+        gamma = float(self.train_gamma())
+        term = gamma * float(after["mean_si"]) - float(before["mean_si"])
+        if extra is not None:
+            extra["cross_beam_potential"] = dict(raw=term, scaled=term, weighted=weight * term,
+                                                 timing="step")
+        else:
+            components["cross_beam_potential"] = term
+            weights["cross_beam_potential"] = weight
+        return weight * term
+
+    def train_gamma(self):
+        """当前回合实际使用的折扣；由 runner 按束数日程写入。"""
+        return float(getattr(self, "_effective_gamma", self.config["training"]["gamma"]))
 
     def _all_ratios(self):
         rates = np.zeros(self.raw_env.beam_num, dtype=np.float64)

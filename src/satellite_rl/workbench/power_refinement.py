@@ -8,6 +8,7 @@ from pathlib import Path
 from satellite_rl.power_refinement.config import (default_config, validate_config,
                                                   METHOD_LABELS, SI_PRIORITY_METHODS)
 
+from .experiments import is_variable_beam_experiment
 from .storage import digest, model_input_files, read_json, validate_id
 
 
@@ -177,22 +178,23 @@ class PowerRefinementApplication:
         from .refinement_sources import prepare_source
         from satellite_rl.power_refinement.config import VARIABLE_BEAM_METHODS
         source_job, model_config, dataset, reference = prepare_source(self.app, body)
+        source_experiment = source_job.get("experiment_id")
         controls = validate_config(body.get("config", {}))
         if (controls["methods"] != list(VARIABLE_BEAM_METHODS)
                 or controls["power_budget_mode"] != "total"
                 or controls["action_mode"] != reference["action_mode"]
                 or controls["repeats"] != reference["repeats"]
                 or controls["action_seed"] != reference["action_seed"]):
-            raise ValueError("S2-P17须保留原动作次数/种子及总3000W的原分配+A+B路线")
+            raise ValueError(f"{source_experiment}须保留原动作次数/种子及总3000W的原分配+A+B路线")
         config = deepcopy(model_config)
         config.update(research_stage="power_refinement", power_refinement=controls,
-                      name=f"S2-P17 · {source_job['name']} · {reference['group']} · 原分配与SCA")
+                      name=f"{source_experiment} · {source_job['name']} · {reference['group']} · 原分配与SCA")
         config["training"]["total_steps"] = reference["scene_count"] * reference["repeats"] * 3
         repair_extra = {}
         from .recovery import S2P17_FAILED_RUN
         existing_repair = read_json(self.store.job_dir(S2P17_FAILED_RUN) / "job.json", {}).get("boundary_repair")
         if existing_repair and body.get("repair_profile") is None:
-            raise ValueError("S2-P17后续SCA必须声明原科学提交和统一修复来源")
+            raise ValueError(f"{source_experiment}后续SCA必须声明原科学提交和统一修复来源")
         if body.get("repair_profile") is not None:
             from .recovery import (S2P17_BOUNDARY_REPAIR_ID, S2P17_ORIGIN_COMMIT,
                                    S2P17_FAILED_RUN)
@@ -219,7 +221,7 @@ class PowerRefinementApplication:
                  ("scientific_origin_commit", "repair_reference_run_id", "repair_proof_sha256")):
             raise ValueError("S2-P17修复来源字段必须完整")
         return self.store.create_job(config, kind="refine", request_id=body.get("request_id"), extra={
-            "research_stage": "power_refinement", "experiment_id": "S2-P17",
+            "research_stage": "power_refinement", "experiment_id": source_experiment,
             "experiment_role": "formal", "name": config["name"],
             "model_id": source_job["model_id"], "model_path": source_job["model_path"],
             "model_files": source_job["model_files"], "model_config": model_config,
@@ -234,7 +236,7 @@ class PowerRefinementApplication:
     def initial_sources(self):
         rows = []
         for job, status in self.store.jobs():
-            if (job.get("kind") == "evaluate" and job.get("experiment_id") == "S2-P17"
+            if (job.get("kind") == "evaluate" and is_variable_beam_experiment(job.get("experiment_id"))
                     and status.get("stage") == "completed"):
                 for group in ["model", *job.get("baselines", [])]:
                     rows.append({"id": job["run_id"] + ":" + group,

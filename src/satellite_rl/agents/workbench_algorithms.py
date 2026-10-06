@@ -19,6 +19,7 @@ from satellite_rl.agents.workbench_networks import (ConditionalPolicyNetwork, Jo
                                                     MultiHeadNetwork, ScalarNetwork,
                                                     TemporalMultiHeadNetwork)
 from satellite_rl.agents.sequence_replay import SequenceReplay
+from satellite_rl.workbench.config import resolve_gamma
 
 
 HEADS = ("frequency", "slots", "power")
@@ -26,6 +27,27 @@ HEADS = ("frequency", "slots", "power")
 
 def _state_tensor(states, device):
     return torch.as_tensor(np.asarray(states, dtype=np.float32), device=device)
+
+
+def pad_states(states, device):
+    """S2-P18 逐束编码：同一批次里不同场景的观测宽度可以不同 (N×11+…)。
+
+    这里只在**批次拼装**时右侧补零到本批最大宽度，并记录每个样本的有效宽度，
+    由编码器按 ``lengths`` 计算真实束数、屏蔽补零位置。观测本身仍然按实际束数
+    构造、不填充到 100，补零不参与池化与统计。
+
+    返回 ``(padded, lengths)``；所有样本等宽时 ``lengths`` 仍逐样本给出宽度，
+    调用方据此保持同一套前向路径。空批次返回空张量。
+    """
+    widths = [np.asarray(state, dtype=np.float32).reshape(-1).shape[0] for state in states]
+    if not widths:
+        return torch.zeros((0, 0), dtype=torch.float32, device=device), torch.zeros(0, dtype=torch.long, device=device)
+    width = max(widths)
+    padded = np.zeros((len(states), width), dtype=np.float32)
+    for row, state in enumerate(states):
+        flat = np.asarray(state, dtype=np.float32).reshape(-1)
+        padded[row, :flat.shape[0]] = flat
+    return torch.as_tensor(padded, device=device), torch.as_tensor(widths, dtype=torch.long, device=device)
 
 
 def _joint_q(heads):
@@ -134,10 +156,15 @@ def generalized_advantages(rewards, values, dones, last_value, gamma, gae_lambda
 
 
 class Replay:
-    def __init__(self, capacity, seed, bucket_mode="none"):
+    def __init__(self, capacity, seed, bucket_mode="none", progress_strata=1):
         if bucket_mode not in ("none", "fixed_100", "mixed_four_buckets"):
             raise ValueError("Unknown replay bucket mode")
+        if not isinstance(progress_strata, int) or isinstance(progress_strata, bool) or not 1 <= progress_strata <= 8:
+            raise ValueError("进度分层段数须为1至8的整数")
         self.bucket_mode = bucket_mode
+        # S2-P18 手段E：在数量桶之上再加“回合内进度分位”分层。默认 1 段，
+        # 即旧采样行为逐位不变（每批只在数量桶之间等分）。
+        self.progress_strata = progress_strata
         self.capacity = capacity
         self.rows = (deque(maxlen=capacity) if bucket_mode == "none" else [])
         self.rng = random.Random(seed)
@@ -149,21 +176,39 @@ class Replay:
         self.bucket_positions = ({name: {} for name in self.bucket_indices}
                                  if self.bucket_indices is not None else None)
         self.slot_buckets = []
+        # 每条转移的进度段（0..progress_strata-1）；progress_strata==1 时保持空表，
+        # 旧断点的状态字典因此可以原样加载。
+        self.slot_segments = []
+        self.segment_indices = ({key: [[] for _ in range(progress_strata)] for key in (self.bucket_indices or {})}
+                                if self.bucket_indices is not None and progress_strata > 1 else None)
         self.sampled_by_bucket = {key: 0 for key in (self.bucket_indices or {})}
         self.replacement_draws = {key: 0 for key in (self.bucket_indices or {})}
+        self.sampled_by_stratum = {}
+        self.replacement_draws_by_stratum = {}
+
+    def _stratum(self, bucket, segment):
+        return f"{bucket}|p{segment}"
 
     def __len__(self):
         return len(self.rows)
 
     def add(self, state, action, reward, next_state, done, action_mask=None, next_action_mask=None,
-            bucket=None):
+            bucket=None, progress_segment=None):
         row = (np.asarray(state, dtype=np.float32).copy(),
                tuple(int(x) for x in action), float(reward),
                np.asarray(next_state, dtype=np.float32).copy(), bool(done))
         row = row if action_mask is None else row + (action_mask, next_action_mask)
+        if self.segment_indices is not None:
+            if progress_segment is None or not 0 <= int(progress_segment) < self.progress_strata:
+                raise ValueError("进度分层采样要求每条转移给出有效的回合内进度段")
+            progress_segment = int(progress_segment)
+        elif progress_segment is not None:
+            raise ValueError("进度分层采样未启用")
         if self.bucket_mode == "none":
             if bucket is not None:
                 raise ValueError("Legacy replay does not accept a bucket")
+            if progress_segment is not None:
+                raise ValueError("Legacy replay does not stratify by progress")
             self.rows.append(row)
             return
         if bucket not in self.bucket_indices:
@@ -177,6 +222,8 @@ class Replay:
             if old_position < len(members):
                 members[old_position] = last_index
                 self.bucket_positions[old_bucket][last_index] = old_position
+            if self.segment_indices is not None:
+                self._remove_segment(old_bucket, self.slot_segments[index], index)
             self.rows[index] = row
             self.slot_buckets[index] = bucket
         else:
@@ -184,31 +231,63 @@ class Replay:
             self.slot_buckets.append(bucket)
         self.bucket_positions[bucket][index] = len(self.bucket_indices[bucket])
         self.bucket_indices[bucket].append(index)
+        if self.segment_indices is not None:
+            self._insert_segment(bucket, progress_segment, index)
         self.next_position = (index + 1) % self.capacity
+
+    def _insert_segment(self, bucket, segment, index):
+        if len(self.slot_segments) <= index:
+            self.slot_segments.append(segment)
+        else:
+            self.slot_segments[index] = segment
+        self.segment_indices[bucket][segment].append(index)
+
+    def _remove_segment(self, bucket, segment, index):
+        members = self.segment_indices[bucket][segment]
+        position = members.index(index)
+        members.pop(position)
 
     def sample(self, count, device, action_dims=None):
         if self.bucket_mode == "none":
             rows = self.rng.sample(self.rows, count)
         else:
-            if count % len(self.bucket_indices):
-                raise ValueError("Batch size must divide evenly across replay buckets")
-            per_bucket = count // len(self.bucket_indices)
+            strata = self.progress_strata if self.segment_indices is not None else 1
+            grid = len(self.bucket_indices) * strata
+            if count % grid:
+                raise ValueError("Batch size must divide evenly across replay buckets and progress strata")
+            per_cell = count // grid
             indices = []
-            for bucket, members in self.bucket_indices.items():
-                if not members:
-                    raise ValueError("Every active replay bucket needs a real transition")
-                chosen = (self.rng.sample(members, per_bucket) if len(members) >= per_bucket
-                          else self.rng.choices(members, k=per_bucket))
-                indices.extend(chosen)
-                self.sampled_by_bucket[bucket] += per_bucket
-                if len(members) < per_bucket:
-                    self.replacement_draws[bucket] += per_bucket - len(set(chosen))
+            for bucket in self.bucket_indices:
+                drawn_total = 0
+                for segment in range(strata):
+                    members = (self.segment_indices[bucket][segment] if self.segment_indices is not None
+                               else self.bucket_indices[bucket])
+                    if not members:
+                        raise ValueError(f"Every active replay stratum needs a real transition: "
+                                         f"bucket={bucket}, segment={segment}, strata={strata}")
+                    chosen = (self.rng.sample(members, per_cell) if len(members) >= per_cell
+                              else self.rng.choices(members, k=per_cell))
+                    indices.extend(chosen)
+                    self.sampled_by_bucket[bucket] += per_cell
+                    drawn = per_cell - len(set(chosen)) if len(members) < per_cell else 0
+                    drawn_total += drawn
+                    if self.segment_indices is not None:
+                        key = self._stratum(bucket, segment)
+                        self.sampled_by_stratum[key] = self.sampled_by_stratum.get(key, 0) + per_cell
+                        if drawn:
+                            self.replacement_draws_by_stratum[key] = (
+                                self.replacement_draws_by_stratum.get(key, 0) + drawn)
+                # 桶级有放回次数保持历史口径：整桶所有分层的合计。
+                self.replacement_draws[bucket] += drawn_total
             self.rng.shuffle(indices)
             rows = [self.rows[index] for index in indices]
         states, actions, rewards, next_states, dones = zip(*(row[:5] for row in rows))
-        result = (_state_tensor(states, device), torch.as_tensor(actions, dtype=torch.long, device=device),
+        state_tensor, lengths = pad_states(states, device)
+        next_state_tensor, next_lengths = pad_states(next_states, device)
+        result = (state_tensor, torch.as_tensor(actions, dtype=torch.long, device=device),
                   torch.as_tensor(rewards, dtype=torch.float32, device=device),
-                  _state_tensor(next_states, device), torch.as_tensor(dones, dtype=torch.float32, device=device))
+                  next_state_tensor, torch.as_tensor(dones, dtype=torch.float32, device=device),
+                  lengths, next_lengths)
         if action_dims is None:
             return result
         if any(len(row) != 7 for row in rows):
@@ -219,18 +298,28 @@ class Replay:
     def state_dict(self):
         if self.bucket_mode == "none":
             return {"rows": list(self.rows), "rng": self.rng.getstate(), "capacity": self.rows.maxlen}
-        return {"rows": list(self.rows), "rng": self.rng.getstate(), "capacity": self.capacity,
+        data = {"rows": list(self.rows), "rng": self.rng.getstate(), "capacity": self.capacity,
                 "bucket_mode": self.bucket_mode, "next_position": self.next_position,
                 "slot_buckets": list(self.slot_buckets),
                 "bucket_indices": {key: list(value) for key, value in self.bucket_indices.items()},
                 "sampled_by_bucket": dict(self.sampled_by_bucket),
                 "replacement_draws": dict(self.replacement_draws)}
+        if self.segment_indices is not None:
+            data["progress_strata"] = self.progress_strata
+            data["slot_segments"] = list(self.slot_segments)
+            data["sampled_by_stratum"] = dict(self.sampled_by_stratum)
+            data["replacement_draws_by_stratum"] = dict(self.replacement_draws_by_stratum)
+        return data
 
     def load_state_dict(self, data):
         if data["capacity"] != self.capacity:
             raise ValueError("Replay capacity changed")
         if data.get("bucket_mode", "none") != self.bucket_mode:
             raise ValueError("Replay bucket mode changed")
+        # 旧断点没有进度分层字段：按原方式加载，只补空的分层计数。
+        saved_strata = data.get("progress_strata")
+        if saved_strata is not None and int(saved_strata) != self.progress_strata:
+            raise ValueError("Replay progress strata changed")
         if self.bucket_mode == "none":
             self.rows = deque(data["rows"], maxlen=self.capacity)
         else:
@@ -257,6 +346,31 @@ class Replay:
             self.next_position = position
             self.sampled_by_bucket = dict(data["sampled_by_bucket"])
             self.replacement_draws = dict(data["replacement_draws"])
+            if self.segment_indices is not None:
+                saved_segments = data.get("slot_segments")
+                if saved_segments is not None:
+                    if len(saved_segments) != len(rows):
+                        raise ValueError("Replay progress segment ring length mismatch")
+                    self.slot_segments = [int(value) for value in saved_segments]
+                    self.segment_indices = {key: [[] for _ in range(self.progress_strata)]
+                                            for key in self.bucket_indices}
+                    for index, (bucket, segment) in enumerate(zip(buckets, self.slot_segments)):
+                        if not 0 <= segment < self.progress_strata:
+                            raise ValueError("Checkpoint replay progress segment out of range")
+                        self.segment_indices[bucket][segment].append(index)
+                    self.sampled_by_stratum = dict(data.get("sampled_by_stratum", {}))
+                    self.replacement_draws_by_stratum = dict(data.get("replacement_draws_by_stratum", {}))
+                else:
+                    # 旧断点：按桶内顺序均匀回填进度段；这一映射只影响“旧断点继续训练”
+                    # 的分层配额，不改变已保存的转移本身。
+                    self.slot_segments = [0] * len(rows)
+                    self.segment_indices = {key: [[] for _ in range(self.progress_strata)]
+                                            for key in self.bucket_indices}
+                    for index, bucket in enumerate(buckets):
+                        members = self.bucket_indices[bucket]
+                        segment = members.index(index) * self.progress_strata // max(1, len(members))
+                        self.slot_segments[index] = segment
+                        self.segment_indices[bucket][segment].append(index)
         self.rng.setstate(data["rng"])
 
     @property
@@ -282,6 +396,14 @@ class WorkbenchAgent:
         if self.algorithm == "ppo" and config["network"]["dropout"]:
             raise ValueError("PPO does not support dropout: action and update probabilities must match")
         self.action_dims = tuple(action_dims)
+        self.progress_strata = int(self.train.get("progress_strata", 1))
+        self.variable_width = (config["network"].get("context_beam_count", "fixed_100") == "actual")
+        if self.variable_width and (config["network"].get("kind") != "transformer" or
+                                    config["network"].get("temporal_mode", "none") != "none"):
+            raise ValueError("逐束实体编码（按实际束数）暂不支持跨波束记忆模式")
+        if self.variable_width and (self.algorithm != "sac" or
+                                    self.action_mask_mode != "joint_feasible"):
+            raise ValueError("本轮逐束实体编码仅支持 SAC＋联合可行动作掩码")
         self.temporal_mode = config["network"].get("temporal_mode", "none")
         self.temporal_window = int(config["network"].get("temporal_window", 16))
         self.temporal_enabled = self.temporal_mode in ("gru", "causal_transformer")
@@ -336,7 +458,8 @@ class WorkbenchAgent:
             self.replay = (SequenceReplay(self.train["replay_capacity"], self.train["seed"] + 41,
                                           self.temporal_window) if self.temporal_enabled else
                            Replay(self.train["replay_capacity"], self.train["seed"] + 41,
-                                  self.train.get("beam_count_mode", "none")))
+                                  self.train.get("beam_count_mode", "none"),
+                                  self.progress_strata))
         elif self.algorithm == "ppo":
             self.actor = MultiHeadNetwork(config, state_dim, action_dims).to(self.device)
             self.value = ScalarNetwork(config, state_dim).to(self.device)
@@ -358,7 +481,17 @@ class WorkbenchAgent:
         if self.temporal_enabled:
             self.online_history.clear()
 
-    def _sac_actor_logits(self, states):
+    def _net(self, module, states, lengths=None):
+        """统一网络调用：逐束实体编码模式下传入本批有效宽度与填充掩码。
+
+        其他布局的 ``Encoder.forward`` 只接受状态张量，因此这里只在变宽模式下追加
+        第二、三个参数，旧路径的调用与返回值逐位不变。
+        """
+        if not self.variable_width:
+            return module(states)
+        return module(states, lengths=lengths)
+
+    def _sac_actor_logits(self, states, lengths=None):
         """Match action-time probabilities even when the actor has dropout."""
         if self.temporal_enabled:
             # Temporal modes require dropout=0. cuDNN GRU backward cannot run
@@ -367,7 +500,7 @@ class WorkbenchAgent:
         was_training = self.actor.training
         self.actor.eval()
         try:
-            return self.actor(states)
+            return self._net(self.actor, states, lengths)
         finally:
             self.actor.train(was_training)
 
@@ -460,14 +593,15 @@ class WorkbenchAgent:
                 if self.algorithm == "ppo":
                     value_was_training = self.value.training
                     self.value.eval()
-                    self.last_action_info["value"] = float(self.value(x).item())
+                    self.last_action_info["value"] = float(self._net(self.value, x).item())
                     self.value.train(value_was_training)
                     self.last_action_info["action"] = action
         net.train(was_training)
         return action
 
     def observe(self, state, action, reward, next_state, done,
-                action_mask=None, next_action_mask=None, actual_action=None, replay_bucket=None):
+                action_mask=None, next_action_mask=None, actual_action=None, replay_bucket=None,
+                progress_segment=None):
         if self.action_mask_mode == "joint_feasible":
             action_mask = copy_action_mask(action_mask, self.action_dims)
             if next_action_mask is None:
@@ -487,7 +621,7 @@ class WorkbenchAgent:
                                 action_mask, next_action_mask, actual_action)
             else:
                 self.replay.add(state, chosen, reward, next_state, done, action_mask, next_action_mask,
-                                bucket=replay_bucket)
+                                bucket=replay_bucket, progress_segment=progress_segment)
             return
         if action_mask is not None or next_action_mask is not None:
             raise ValueError("action_mask supplied while masking is disabled")
@@ -498,16 +632,23 @@ class WorkbenchAgent:
                                  float(reward), np.asarray(next_state, dtype=np.float32).copy(), bool(done),
                                  self.last_action_info["log_prob"], self.last_action_info["value"]))
         else:
-            self.replay.add(state, action, reward, next_state, done, bucket=replay_bucket)
+            self.replay.add(state, action, reward, next_state, done, bucket=replay_bucket,
+                            progress_segment=progress_segment)
 
     def ready(self, env_step, done=False):
         if self.algorithm == "ppo":
             return len(self.rollout) >= self.train["rollout_steps"] or (done and bool(self.rollout))
         buckets_ready = (not self.replay.bucket_indices or
                          all(self.replay.bucket_indices.values()))
-        return (env_step >= self.train["warmup_steps"] and buckets_ready and
+        strata_ready = (self.replay.segment_indices is None or
+                        all(all(cell for cell in bucket) for bucket in self.replay.segment_indices.values()))
+        return (env_step >= self.train["warmup_steps"] and buckets_ready and strata_ready and
                 len(self.replay) >= self.train["batch_size"] and
                 env_step % self.train["update_every"] == 0)
+
+    def gamma_for(self, beam_count=None):
+        """S2-P18 手段D：当前回合实际使用的折扣。"""
+        return resolve_gamma(self.train, beam_count)
 
     def update(self):
         if self.algorithm == "sac":
@@ -519,7 +660,8 @@ class WorkbenchAgent:
     def _update_sac(self):
         if self.action_mask_mode == "joint_feasible":
             return self._update_masked_sac()
-        s, a, r, ns, d = self.replay.sample(self.train["batch_size"], self.device)
+        s, a, r, ns, d, lengths, next_lengths = self.replay.sample(
+            self.train["batch_size"], self.device)
         gamma = self.train["gamma"]
         alpha = self.log_alpha.exp().detach()
         with torch.no_grad():
@@ -588,7 +730,7 @@ class WorkbenchAgent:
             return self._update_temporal_sac()
         if self.sac_policy_structure != "factorized" or self.sac_critic_structure != "additive":
             return self._update_joint_action_sac()
-        s, a, r, ns, d, current_masks, next_masks = self.replay.sample(
+        s, a, r, ns, d, lengths, next_lengths, current_masks, next_masks = self.replay.sample(
             self.train["batch_size"], self.device, self.action_dims)
         current_fl, current_power = current_masks
         next_fl, next_power = next_masks
@@ -599,15 +741,16 @@ class WorkbenchAgent:
             if active.any():
                 (next_prob_fl, next_prob_power, _, _, next_entropy_fl,
                  next_entropy_power, _, _) = masked_policy(
-                    self._sac_actor_logits(ns[active]), next_fl[active], next_power[active])
-                next_min_q = torch.minimum(_joint_q(self.target1(ns[active])),
-                                           _joint_q(self.target2(ns[active])))
+                    self._sac_actor_logits(ns[active], next_lengths[active]),
+                    next_fl[active], next_power[active])
+                next_min_q = torch.minimum(_joint_q(self._net(self.target1, ns[active], next_lengths[active])),
+                                           _joint_q(self._net(self.target2, ns[active], next_lengths[active])))
                 next_expected_q = torch.einsum("bfl,bp,bflp->b", next_prob_fl,
                                                next_prob_power, next_min_q)
                 target[active] += self.train["gamma"] * (
                     next_expected_q + alpha * (next_entropy_fl + next_entropy_power))
-        q1 = _gather(self.critic1(s), a)
-        q2 = _gather(self.critic2(s), a)
+        q1 = _gather(self._net(self.critic1, s, lengths), a)
+        q2 = _gather(self._net(self.critic2, s, lengths), a)
         loss1, loss2 = F.mse_loss(q1, target), F.mse_loss(q2, target)
         _finite_loss(loss1 + loss2)
         self.critic1_opt.zero_grad(set_to_none=True)
@@ -620,9 +763,10 @@ class WorkbenchAgent:
         self.critic2_opt.step()
         (prob_fl, prob_power, _, _, entropy_fl, entropy_power,
          entropy_frequency, entropy_slots) = masked_policy(
-             self._sac_actor_logits(s), current_fl, current_power)
+             self._sac_actor_logits(s, lengths), current_fl, current_power)
         with torch.no_grad():
-            min_q_actor = torch.minimum(_joint_q(self.critic1(s)), _joint_q(self.critic2(s)))
+            min_q_actor = torch.minimum(_joint_q(self._net(self.critic1, s, lengths)),
+                                        _joint_q(self._net(self.critic2, s, lengths)))
         expected_q_actor = torch.einsum("bfl,bp,bflp->b", prob_fl, prob_power, min_q_actor)
         entropy_actor = entropy_fl + entropy_power
         actor_loss = -(expected_q_actor + alpha * entropy_actor).mean()
@@ -665,8 +809,8 @@ class WorkbenchAgent:
                              "critic_2_grad_norm": grad2,
                              **({"alpha_update_applied": 0} if self.alpha_mode == "fixed" else {})})
 
-    def _masked_joint_distribution(self, states, frequency_slots, power):
-        logits = self._sac_actor_logits(states)
+    def _masked_joint_distribution(self, states, frequency_slots, power, lengths=None):
+        logits = self._sac_actor_logits(states, lengths)
         if self.sac_policy_structure == "conditional":
             parts = conditional_masked_policy(logits, frequency_slots, power)
             fl, conditional_power = parts[:2]
@@ -677,16 +821,21 @@ class WorkbenchAgent:
             joint = fl.unsqueeze(-1) * power_probability[:, None, None, :]
         return joint, parts[4] + parts[5], parts[4], parts[5], parts[6], parts[7]
 
-    def _critic_table(self, critic, states):
-        values = critic(states)
+    def _critic_table(self, critic, states, lengths=None):
+        values = self._net(critic, states, lengths)
         return values if self.sac_critic_structure == "joint" else _joint_q(values)
 
     def _update_temporal_sac(self):
         return self._update_joint_action_sac()
 
     def _update_joint_action_sac(self):
-        s, a, r, ns, d, current_masks, next_masks = self.replay.sample(
-            self.train["batch_size"], self.device, self.action_dims)
+        batch = self.replay.sample(self.train["batch_size"], self.device, self.action_dims)
+        if len(batch) == 7:
+            # 跨波束记忆使用 SequenceReplay：没有变宽状态的长度字段。
+            s, a, r, ns, d, current_masks, next_masks = batch
+            lengths = next_lengths = None
+        else:
+            s, a, r, ns, d, lengths, next_lengths, current_masks, next_masks = batch
         current_fl, current_power = current_masks
         next_fl, next_power = next_masks
         alpha = self.log_alpha.exp().detach()
@@ -696,14 +845,15 @@ class WorkbenchAgent:
             if active.any():
                 active_next = ((ns[0][active], ns[1][active]) if self.temporal_enabled
                                else ns[active])
+                active_lengths = None if self.temporal_enabled else next_lengths[active]
                 next_prob, next_entropy, *_ = self._masked_joint_distribution(
-                    active_next, next_fl[active], next_power[active])
-                next_min_q = torch.minimum(self._critic_table(self.target1, active_next),
-                                           self._critic_table(self.target2, active_next))
+                    active_next, next_fl[active], next_power[active], active_lengths)
+                next_min_q = torch.minimum(self._critic_table(self.target1, active_next, active_lengths),
+                                           self._critic_table(self.target2, active_next, active_lengths))
                 target[active] += self.train["gamma"] * (
                     (next_prob * next_min_q).sum((1, 2, 3)) + alpha * next_entropy)
-        q1_table = self._critic_table(self.critic1, s)
-        q2_table = self._critic_table(self.critic2, s)
+        q1_table = self._critic_table(self.critic1, s, lengths)
+        q2_table = self._critic_table(self.critic2, s, lengths)
         batch_index = torch.arange(a.shape[0], device=self.device)
         q1 = q1_table[batch_index, a[:, 0], a[:, 1], a[:, 2]]
         q2 = q2_table[batch_index, a[:, 0], a[:, 1], a[:, 2]]
@@ -718,10 +868,10 @@ class WorkbenchAgent:
         grad2 = _grad_norm(self.critic2, self.train["gradient_clip"])
         self.critic2_opt.step()
         probability, entropy, entropy_fl, entropy_power, entropy_frequency, entropy_slots = (
-            self._masked_joint_distribution(s, current_fl, current_power))
+            self._masked_joint_distribution(s, current_fl, current_power, lengths))
         with torch.no_grad():
-            min_q = torch.minimum(self._critic_table(self.critic1, s),
-                                  self._critic_table(self.critic2, s))
+            min_q = torch.minimum(self._critic_table(self.critic1, s, lengths),
+                                  self._critic_table(self.critic2, s, lengths))
         actor_loss = -((probability * min_q).sum((1, 2, 3)) + alpha * entropy).mean()
         _finite_loss(actor_loss)
         self.actor_opt.zero_grad(set_to_none=True)
@@ -766,11 +916,11 @@ class WorkbenchAgent:
                              **({"alpha_update_applied": 0} if self.alpha_mode == "fixed" else {})})
 
     def _update_dqn(self):
-        s, a, r, ns, d = self.replay.sample(self.train["batch_size"], self.device)
-        current = _gather(self.online(s), a)
+        s, a, r, ns, d, lengths, next_lengths = self.replay.sample(self.train["batch_size"], self.device)
+        current = _gather(self._net(self.online, s, lengths), a)
         with torch.no_grad():
-            next_actions = torch.stack([q.argmax(1) for q in self.online(ns)], 1)
-            next_q = _gather(self.target(ns), next_actions)
+            next_actions = torch.stack([q.argmax(1) for q in self._net(self.online, ns, next_lengths)], 1)
+            next_q = _gather(self._net(self.target, ns, next_lengths), next_actions)
             target = r + self.train["gamma"] * (1 - d) * next_q
         loss = F.smooth_l1_loss(current, target)
         _finite_loss(loss)
@@ -792,7 +942,9 @@ class WorkbenchAgent:
         rows = self.rollout
         states, actions, rewards, next_states, dones, old_logp, old_values = zip(*rows)
         with torch.no_grad():
-            last_value = 0.0 if dones[-1] else float(self.value(_state_tensor(next_states[-1], self.device).reshape(1, -1)))
+            width_n = np.asarray(next_states[-1], dtype=np.float32).reshape(-1).shape[0]
+            last_value = 0.0 if dones[-1] else float(self._net(
+                self.value, _state_tensor(next_states[-1], self.device).reshape(1, -1), width_n).item())
         advantages = generalized_advantages(rewards, old_values, dones, last_value,
                                             self.train["gamma"], self.train["gae_lambda"])
         returns = advantages + np.asarray(old_values, dtype=np.float32)
@@ -804,14 +956,14 @@ class WorkbenchAgent:
         ret = torch.as_tensor(returns, device=self.device)
         metrics = {}
         for _ in range(self.train["ppo_epochs"]):
-            dists = [torch.distributions.Categorical(logits=logits) for logits in self.actor(s)]
+            dists = [torch.distributions.Categorical(logits=logits) for logits in self._net(self.actor, s)]
             logp = sum(dist.log_prob(a[:, i]) for i, dist in enumerate(dists))
             entropy_heads = [dist.entropy() for dist in dists]
             entropy = sum(entropy_heads)
             ratio = torch.exp(logp - logp0)
             clipped = torch.clamp(ratio, 1 - self.train["clip_ratio"], 1 + self.train["clip_ratio"])
             actor_loss = -(torch.minimum(ratio * adv, clipped * adv)).mean() - self.train["entropy_coef"] * entropy.mean()
-            value_pred = self.value(s)
+            value_pred = self._net(self.value, s)
             value_loss = F.mse_loss(value_pred, ret) * self.train["value_coef"]
             _finite_loss(actor_loss + value_loss)
             self.actor_opt.zero_grad(set_to_none=True)

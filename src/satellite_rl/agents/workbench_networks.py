@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import torch
 from torch import nn
-from satellite_rl.state_layouts import natural_dim, natural_shapes, natural_token_count
+from satellite_rl.state_layouts import (S2P18_VARIABLE_FEATURES, natural_dim, natural_shapes,
+                                        natural_token_count)
 
 
 def _activation(name):
@@ -21,6 +22,11 @@ class Encoder(nn.Module):
         self.transformer_layout = spec.get("transformer_layout", "scalar_tokens")
         self.previous_actual_action = "previous_actual_action" in config.get("state", {}).get("features", [])
         self.graph_mode = spec.get("graph_mode", "none")
+        # 逐束实体编码的只读标记：只有自然布局的 actual 档会置真，其余一律为假，
+        # 这样 forward 的统一分支可以直接查询而无需按 kind 分支判断。
+        self.actual_count = False
+        self.beam_rows = 0
+        self.max_beam_count = 0
         if self.graph_mode != "none":
             from satellite_rl.agents.graph_encoder import GraphEncoder
             self.graph = GraphEncoder(config, state_dim, self.graph_mode)
@@ -54,19 +60,50 @@ class Encoder(nn.Module):
             self.output_dim = width * bins
         elif kind == "transformer":
             embed = spec["embedding_dim"]
+            self.readout_mode = spec.get("readout_mode", "first_token")
+            self.beam_count_conditioning = spec.get("beam_count_conditioning", "none")
+            self.context_beam_count = spec.get("context_beam_count", "fixed_100")
+            if self.readout_mode not in ("first_token", "attention_pooling"):
+                raise ValueError(f"Unsupported readout mode: {self.readout_mode}")
+            if self.beam_count_conditioning not in ("none", "film"):
+                raise ValueError(f"Unsupported beam-count conditioning: {self.beam_count_conditioning}")
+            if self.context_beam_count not in ("fixed_100", "actual"):
+                raise ValueError(f"Unsupported context beam count mode: {self.context_beam_count}")
             if self.transformer_layout == "scalar_tokens":
                 self.input_projection = nn.Linear(1, embed)
                 self.position = nn.Parameter(torch.zeros(1, state_dim, embed))
             elif self.transformer_layout in ("tsac_13_tokens", "tsac_14_context", "tsac_14_variable_context", "tsac_32_context", "tsac_natural_context"):
                 expected_dim = {"tsac_13_tokens": 204, "tsac_14_context": 207,
-                                "tsac_14_variable_context": 210,
+                                "tsac_14_variable_context": (
+                                    213 if config.get("state", {}).get("features")
+                                    == list(S2P18_VARIABLE_FEATURES) else 210),
                                 "tsac_32_context": 2946}.get(self.transformer_layout)
                 if self.transformer_layout == "tsac_natural_context":
                     self.natural_level = config["state"]["context_level"]
                     self.natural_shapes = natural_shapes(self.natural_level)
-                    expected_dim = natural_dim(self.natural_level) + (4 if self.previous_actual_action else 0)
+                    expected_dim = natural_dim(self.natural_level) + (
+                        4 if self.previous_actual_action else 0)
+                    self.actual_count = (self.context_beam_count == "actual"
+                                         and "natural_beam_context" in self.natural_shapes)
+                    if self.actual_count:
+                        # 逐束实体编码（S2-P18 手段G）：逐束字段只含真实实体，观测宽度
+                        # 随场景实际束数 N 变化，不填充到 100；配置期的状态维数上界用
+                        # environment.beam_count_max，实际维数由场景束数决定。
+                        self.max_beam_count = int(config["environment"].get("beam_count_max", 100))
+                        rows = self.max_beam_count
+                        expected_dim += ((rows - 100)
+                                         * self.natural_shapes["natural_beam_context"][-1])
+                    else:
+                        rows = self.natural_shapes.get("natural_beam_context", [10, 10, 5])[0]
+                        self.max_beam_count = 100
+                else:
+                    self.actual_count = False
+                    rows = 10
+                    self.beam_rows = 100
+                    self.max_beam_count = 100
                 if state_dim != expected_dim:
                     raise ValueError(f"T-SAC {self.transformer_layout} layout requires the ordered {expected_dim}-dimensional state")
+                self.beam_rows = rows
                 self.geo_embed = nn.Linear(2, embed)
                 self.rate_embed = nn.Linear(1, embed)
                 self.power_embed = nn.Linear(1, embed)
@@ -101,12 +138,44 @@ class Encoder(nn.Module):
                     if "natural_global_context" in self.natural_shapes:
                         self.global_embed = nn.Linear(self.natural_shapes["natural_global_context"][0], embed)
                     if "natural_beam_context" in self.natural_shapes:
-                        self.beam_embed = nn.Linear(10 * self.natural_shapes["natural_beam_context"][-1], embed)
+                        if self.actual_count:
+                            # 逐束实体编码：每个实体行共享一个投影，参数形状只与“每实体
+                            # 通道数”有关，行数不进参数，因此同一份权重可用于任意 N。
+                            self.beam_embed = nn.Linear(
+                                self.natural_shapes["natural_beam_context"][-1], embed)
+                            self.beam_embed_features = self.natural_shapes["natural_beam_context"][-1]
+                        else:
+                            # 固定 100 束档位：状态里逐束块是 (100, 每段通道数)，
+                            # 拼接后按展平宽度做一次投影（与历史行为一致）。
+                            self.beam_embed_features = 100 * self.natural_shapes["natural_beam_context"][-1]
+                            self.beam_embed = nn.Linear(self.beam_embed_features, embed)
                     if "natural_resource_context" in self.natural_shapes:
                         self.resource_embed = nn.Linear(self.natural_shapes["natural_resource_context"][-1], embed)
-                extra = natural_token_count(self.natural_level) - 13
-                if extra:
-                    self.extra_pos_embed = nn.Parameter(torch.zeros(1, extra, embed))
+                if self.actual_count:
+                    # 位置参数按束数上界一次分配；每个场景只用前 N 行，不因 N 大小
+                    # 改变参数形状，所以同一份权重可用于任意 N 而无需重新初始化。
+                    pos_slots = (self.natural_shapes["natural_beam_context"][-1] * self.max_beam_count
+                                 + self.natural_shapes["natural_resource_context"][0]
+                                 if "natural_resource_context" in self.natural_shapes
+                                 else self.natural_shapes["natural_beam_context"][-1] * self.max_beam_count)
+                else:
+                    pos_slots = natural_token_count(self.natural_level) - 13
+                self.pos_slots = pos_slots
+                if pos_slots:
+                    self.extra_pos_embed = nn.Parameter(torch.zeros(1, pos_slots, embed))
+                if self.actual_count and self.readout_mode == "attention_pooling":
+                    # 注意力池化读出：一个可学习的可加性打分向量（无额外参数形状），
+                    # 对逐束实体令牌做掩码加权平均。该参数只在池化模式下创建，
+                    # 因此 first_token 模式的参数与初始化顺序逐位不变。
+                    with torch.random.fork_rng(devices=[]):
+                        self.pool_query = nn.Linear(embed, 1)
+                if self.beam_count_conditioning == "film":
+                    # N 条件调制（FiLM）：把场景实际束数作为条件，对读出结果做
+                    # 逐通道缩放与平移，使同一套权重按规模调整内部表示。
+                    with torch.random.fork_rng(devices=[]):
+                        self.film = nn.Linear(1, 2 * embed)
+                        nn.init.zeros_(self.film.weight)
+                        nn.init.zeros_(self.film.bias)
                 if self.previous_actual_action:
                     with torch.random.fork_rng(devices=[]):
                         self.previous_action_embed = nn.Linear(4, embed)
@@ -115,8 +184,50 @@ class Encoder(nn.Module):
         else:
             raise ValueError(f"Unsupported network: {kind}")
 
-    def forward(self, states):
-        if states.ndim != 2 or states.shape[1] != self.state_dim:
+    def _resolve_lengths(self, states, lengths):
+        """逐束实体编码的“有效令牌长度”与单样本实际状态宽度。
+
+        返回 ``(lengths, actual_width)``：``lengths`` 是长度张量，``actual_width`` 是
+        单个样本未填充时的状态宽度。``lengths`` 为整数时表示单样本（不填充）。
+        """
+        if lengths is None:
+            return None, self.state_dim
+        if torch.is_tensor(lengths):
+            return lengths.reshape(-1), int(lengths.max().item())
+        return torch.as_tensor([int(lengths)], device=states.device), int(lengths)
+
+    def _beam_count(self, states, actual_width):
+        """从状态里取出“当前是第几束”（即处理序号 idx+1）。
+
+        逐束实体的第 5 个通道是 ``i/(N−1)``，所以由实体行数即可得到序号的还原比例；
+        已处理束在实体里是连续前缀（layout 档第 5 通道、full 档第 6 通道为 1），
+        它们的个数就是当前处理序号 idx。该标量同时用于 N 条件调制与规模统计。
+        """
+        if not self.actual_count:
+            return None
+        width = self.natural_shapes["natural_beam_context"][-1]
+        served_channel = 5 if width == 11 else 4
+        offset = 204
+        if "natural_global_context" in self.natural_shapes:
+            offset += self.natural_shapes["natural_global_context"][0]
+        trailing = 4 * self.previous_actual_action
+        if "natural_resource_context" in self.natural_shapes:
+            trailing += 8 * self.natural_shapes["natural_resource_context"][0]
+        count = (states.shape[1] - offset - trailing) // width
+        served = states[:, offset + served_channel:offset + count * width:width] > 0.5
+        index = served.to(torch.int64).sum(dim=1)
+        position = torch.round(
+            states[:, offset + 4:offset + count * width:width] * max(count - 1, 1)).long()
+        gathered = position.gather(1, index.clamp(max=count - 1).reshape(-1, 1)).reshape(-1)
+        return (gathered.to(states.dtype) + 1.0).clamp(min=1.0, max=float(self.max_beam_count))
+
+    def forward(self, states, lengths=None):
+        if states.ndim != 2:
+            raise ValueError(f"State must be [batch,width], got {tuple(states.shape)}")
+        resolved, actual_width = self._resolve_lengths(states, lengths)
+        if actual_width != states.shape[1]:
+            raise ValueError(f"State width {states.shape[1]} differs from declared {actual_width}")
+        if not self.actual_count and states.shape[1] != self.state_dim:
             raise ValueError(f"State shape must be [batch,{self.state_dim}], got {tuple(states.shape)}")
         if self.graph_mode != "none":
             return self.graph(states)
@@ -136,6 +247,9 @@ class Encoder(nn.Module):
             self.power_embed(states[:, 3:4]).unsqueeze(1),
             self.slot_embed(slot_features),
         ), dim=1) + self.pos_embed
+        padding_mask = None
+        entity_start = 13
+        entity_count = 0
         if self.transformer_layout in ("tsac_14_context", "tsac_14_variable_context"):
             context_width = 6 if self.transformer_layout == "tsac_14_variable_context" else 3
             context = self.context_embed(states[:, 204:204 + context_width]).unsqueeze(1) + self.context_pos_embed
@@ -150,26 +264,112 @@ class Encoder(nn.Module):
         elif self.transformer_layout == "tsac_natural_context":
             offset = 204
             parts = []
+            extra_count = 0
+            entity_tokens = None
             if "natural_global_context" in self.natural_shapes:
                 width = self.natural_shapes["natural_global_context"][0]
                 parts.append(self.global_embed(states[:, offset:offset + width]).unsqueeze(1))
                 offset += width
+                extra_count += 1
             if "natural_beam_context" in self.natural_shapes:
-                width = 100 * self.natural_shapes["natural_beam_context"][-1]
-                parts.append(self.beam_embed(states[:, offset:offset + width].reshape(batch, 10, width // 10)))
-                offset += width
+                # 观测里的逐束字段是 [实体数, 通道数]：通道数取本档声明宽度，
+                # 行数在逐束编码档位下由状态宽度反推（不填充到 100）。
+                width = self.natural_shapes["natural_beam_context"][-1]
+                trailing = 4 * self.previous_actual_action
+                if "natural_resource_context" in self.natural_shapes:
+                    resource = self.natural_shapes["natural_resource_context"]
+                    trailing += resource[0] * resource[-1]
+                available = states.shape[1] - offset - trailing
+                if available < 0:
+                    raise ValueError("逐束字段宽度与状态维数不一致")
+                if self.actual_count:
+                    # 逐束实体编码档位：行数由状态宽度反推，先按“每实体通道数”
+                    # 切成单实体令牌，再对每个实体做同一个投影。
+                    rows, remainder = divmod(available, width)
+                    if remainder:
+                        raise ValueError("逐束字段宽度与状态维数不一致")
+                    if not 1 <= rows <= self.max_beam_count:
+                        raise ValueError(f"实际束数 {rows} 超出 1–{self.max_beam_count}")
+                    entity_count = rows
+                    block = states[:, offset:offset + rows * width].reshape(batch, rows, width)
+                    entity_tokens = self.beam_embed(block)
+                else:
+                    # 固定档位：逐束信息按展平块整体投影（与历史实现一致）。
+                    if available != self.beam_embed_features:
+                        raise ValueError("逐束字段宽度与状态维数不一致")
+                    entity_count = 10
+                    block = states[:, offset:offset + available]
+                    parts.append(self.beam_embed(block).unsqueeze(1))
+                    extra_count += 1
+                offset += available
             if "natural_resource_context" in self.natural_shapes:
                 width = 8 * self.natural_shapes["natural_resource_context"][-1]
                 parts.append(self.resource_embed(states[:, offset:offset + width].reshape(batch, 8, width // 8)))
                 offset += width
+                extra_count += 8
             if parts:
-                tokens = torch.cat((tokens, torch.cat(parts, dim=1) + self.extra_pos_embed), dim=1)
+                extra = torch.cat(parts, dim=1) + self.extra_pos_embed[:, :extra_count]
+                tokens = torch.cat((tokens, extra), dim=1)
+            if self.actual_count and entity_tokens is not None:
+                # 合并顺序：13 个基础令牌 + 1 个全局 + N 个逐束实体 + 8 个资源组。
+                # 实体块不带位置参数：位置参数会把实体顺序写进注意力结果，而逐束
+                # 实体本身无序，加了会破坏置换一致性。
+                entity_start = tokens.shape[1]
+                tokens = torch.cat((tokens, entity_tokens), dim=1)
             if self.previous_actual_action:
                 previous = (self.previous_action_embed(states[:, -4:]).unsqueeze(1) +
                             self.previous_action_pos)
                 tokens = torch.cat((tokens, previous), dim=1)
-        encoded = self.net(tokens.permute(1, 0, 2)).permute(1, 0, 2)
-        return encoded[:, 0]
+            if self.actual_count:
+                # 单样本调用（无批次填充）时所有实体都有效：等价于“每样本有效令牌长度
+                # 等于实体数”。批量采样时由调用方传入真实长度，用于屏蔽批内填充。
+                lengths = (torch.full((states.shape[0],), entity_count, device=states.device,
+                                      dtype=torch.long) if resolved is None
+                           else (resolved if torch.is_tensor(resolved) else resolved.reshape(-1)))
+                entity_positions = torch.arange(tokens.shape[1], device=states.device)[None, :]
+                padding_mask = ~((entity_positions >= entity_start)
+                                 & (entity_positions < entity_start + entity_count)
+                                 & (entity_positions - entity_start < lengths[:, None]))
+                # 用零替换被屏蔽的令牌，避免位置参数读出非有限值。
+                tokens = tokens.masked_fill(padding_mask.unsqueeze(-1), 0.0)
+        sequence = tokens.permute(1, 0, 2)
+        # 上一次前向实际喂给骨干的令牌数与实体数（只读诊断，供前端/测试核对，
+        # 不影响任何计算）。
+        self.last_token_count = int(sequence.shape[0])
+        self.last_entity_count = int(entity_count)
+        if padding_mask is None:
+            encoded = self.net(sequence)
+        else:
+            # 直接调用底层 forward：某些 PyTorch 版本在注册了 forward pre-hook
+            # （例如结构追踪）时无法用关键字传 src_key_padding_mask，这里绕开
+            # hook 派发，行为与 TransformerEncoder.forward 完全一致。
+            encoded = type(self.net).forward(
+                self.net, sequence, None, padding_mask.to(torch.bool))
+        encoded = encoded.permute(1, 0, 2)
+        result = encoded[:, 0]
+        if self.transformer_layout == "tsac_natural_context" and self.actual_count and entity_count:
+            if self.readout_mode == "attention_pooling":
+                # 注意力池化读出：对“逐束实体令牌”做掩码加权平均，权重由每个实体自身
+                # 的可学习打分决定（本档每实体 5 个通道）。因为打分逐实体独立、聚合是
+                # 对实体的求和，读出对实体顺序严格不变（等变性由构造保证）；公开的
+                # 基础令牌不参与池化，只由 first_token 通道提供全局上下文。
+                entity = tokens[:, entity_start:entity_start + entity_count]
+                query = self.pool_query.weight.reshape(-1)
+                scale = float(query.shape[0] * max(entity_count, 1)) ** 0.5
+                scores = (entity * query).sum(-1) / scale
+                valid = ((torch.arange(entity_count, device=states.device)[None, :]
+                          < lengths[:, None]) if padding_mask is not None
+                         else torch.ones(1, entity_count, dtype=torch.bool, device=states.device))
+                scores = scores.masked_fill(~valid, float("-inf"))
+                weights = scores.softmax(dim=-1)
+                if not bool(torch.isfinite(weights).all()):
+                    raise ValueError("注意力池化的有效实体为空，无法计算读出")
+                result = torch.einsum("bn,bnd->bd", weights, entity)
+            if self.beam_count_conditioning == "film":
+                count = self._beam_count(states, actual_width).reshape(-1, 1)
+                scale, shift = self.film(count / float(self.max_beam_count)).chunk(2, dim=-1)
+                result = result * (1.0 + scale) + shift
+        return result
 
 
 class MultiHeadNetwork(nn.Module):
@@ -178,8 +378,8 @@ class MultiHeadNetwork(nn.Module):
         self.encoder = Encoder(config, state_dim)
         self.heads = nn.ModuleList([nn.Linear(self.encoder.output_dim, int(dim)) for dim in action_dims])
 
-    def forward(self, states):
-        x = self.encoder(states)
+    def forward(self, states, lengths=None):
+        x = self.encoder(states, lengths=lengths)
         return tuple(head(x) for head in self.heads)
 
 
@@ -253,8 +453,8 @@ class ConditionalPolicyNetwork(nn.Module):
         self.conditional_power = nn.Linear(self.encoder.output_dim,
                                            action_dims[0] * action_dims[1] * action_dims[2])
 
-    def forward(self, states):
-        encoded = self.encoder(states)
+    def forward(self, states, lengths=None):
+        encoded = self.encoder(states, lengths=lengths)
         batch = states.shape[0]
         return (self.frequency_slots(encoded).reshape(batch, *self.action_dims[:2]),
                 self.conditional_power(encoded).reshape(batch, *self.action_dims))
@@ -270,8 +470,9 @@ class JointQNetwork(nn.Module):
         self.joint_q = nn.Linear(self.encoder.output_dim,
                                  action_dims[0] * action_dims[1] * action_dims[2])
 
-    def forward(self, states):
-        return self.joint_q(self.encoder(states)).reshape(states.shape[0], *self.action_dims)
+    def forward(self, states, lengths=None):
+        return (self.joint_q(self.encoder(states, lengths=lengths))
+                .reshape(states.shape[0], *self.action_dims))
 
 
 class ScalarNetwork(nn.Module):
@@ -280,8 +481,8 @@ class ScalarNetwork(nn.Module):
         self.encoder = Encoder(config, state_dim)
         self.head = nn.Linear(self.encoder.output_dim, 1)
 
-    def forward(self, states):
-        return self.head(self.encoder(states)).squeeze(-1)
+    def forward(self, states, lengths=None):
+        return self.head(self.encoder(states, lengths=lengths)).squeeze(-1)
 
 
 def _model_description(config, state_dim, action_dims):
@@ -358,6 +559,12 @@ def _model_description(config, state_dim, action_dims):
         variant = f"workbench_{algorithm}_transformer_tsac_32_context_v1"
     elif config["network"]["kind"] == "transformer" and layout == "tsac_natural_context":
         variant = f"workbench_{algorithm}_transformer_tsac_natural_context_{config['state']['context_level']}_v1"
+        if config["network"].get("context_beam_count", "fixed_100") == "actual":
+            variant += "_actual_beams"
+        if config["network"].get("readout_mode", "first_token") != "first_token":
+            variant += "_" + config["network"]["readout_mode"]
+        if config["network"].get("beam_count_conditioning", "none") != "none":
+            variant += "_" + config["network"]["beam_count_conditioning"]
     if algorithm == "sac" and (policy_structure != "factorized" or critic_structure != "additive"):
         variant += f"_{policy_structure}_{critic_structure}"
     if temporal_mode != "none":
@@ -389,7 +596,9 @@ def _trace_layers(model, state_dim):
     layout = getattr(spatial, "transformer_layout", None)
     tsac_layout = layout in ("tsac_13_tokens", "tsac_14_context", "tsac_14_variable_context", "tsac_32_context", "tsac_natural_context")
     token_count = (natural_token_count(spatial.natural_level) +
-                   (1 if spatial.previous_actual_action else 0)
+                   (1 if spatial.previous_actual_action else 0) +
+                   ((getattr(spatial, "beam_rows", 100) - 100)
+                    if getattr(spatial, "actual_count", False) else 0)
                    if layout == "tsac_natural_context"
                    else {"tsac_14_context": 14, "tsac_14_variable_context": 14, "tsac_32_context": 32}.get(layout, 13))
 
