@@ -80,9 +80,10 @@ print(json.dumps({{"gpu":run(["nvidia-smi","--query-gpu=name,uuid,memory.total,m
     return report
 
 
-def deploy(source: Path, commit: str) -> dict:
+def deploy(source: Path, commit: str | None) -> dict:
     source = source.resolve()
     preflight = plan(source, commit)
+    commit = preflight["scientific_commit"]
     bundle = ops18.LOCAL / f"s2p18_{commit}.bundle"
     bundle.parent.mkdir(parents=True, exist_ok=True)
     if not bundle.is_file():
