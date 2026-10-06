@@ -31,15 +31,23 @@ def state(port: int, run_id: str) -> dict:
     return detail.get("status") or {}
 
 
-def submit(arm: str, port: int, mode: str) -> dict:
-    """Submit either the 440-scene assessment or the SCA refinement for one arm."""
+def submit(arm: str, port: int, mode: str, steps: int) -> dict:
+    """Submit via the guarded driver and read its receipt file.
+
+    Parsing the driver's stdout proved unreliable here (it came back empty), so the
+    outcome is taken from the receipt the driver writes; the return code is still
+    reported when no receipt appears.
+    """
     result = subprocess.run([PY, DRIVER, "--arm", arm, "--port", str(port), f"--{mode}", "--execute"],
                             capture_output=True, text=True)
-    text = (result.stdout or "").strip()
-    try:
-        return json.loads(text[text.index("{"):]) if "{" in text else {"raw": text}
-    except Exception:
-        return {"raw": text[-600:], "stderr": (result.stderr or "")[-300:]}
+    receipt = Path(r"D:\paper\outputs\experiments\variable_beams_s2p18_20261006\preflight") / \
+        f"submit_{arm}_{mode}_{steps}_{port}.json"
+    if receipt.is_file():
+        data = json.loads(receipt.read_text(encoding="utf-8-sig"))
+        data["receipt"] = str(receipt)
+        return data
+    return {"status": "no_receipt", "returncode": result.returncode,
+            "stdout_tail": (result.stdout or "")[-400:], "stderr_tail": (result.stderr or "")[-400:]}
 
 
 def assessment_state(arm: str, port: int) -> dict:
@@ -79,14 +87,14 @@ def main() -> None:
                 return
             if stage == "completed" and step == budget == 400000:
                 print(f"{arm} 已到40万步终点，提交440景考核", flush=True)
-                print(json.dumps(submit(arm, port, "evaluate"), ensure_ascii=False), flush=True)
+                print(json.dumps(submit(arm, port, "evaluate", 440), ensure_ascii=False), flush=True)
                 done.add(arm)
             if arm in done:
                 # 考核完成后立刻串接统一SCA；SCA以已完成的考核为冻结初解来源。
                 assessment = assessment_state(arm, port)
                 if assessment.get("stage") == "completed" and arm not in refined:
                     print(f"{arm} 考核完成，提交统一SCA", flush=True)
-                    print(json.dumps(submit(arm, port, "sca"), ensure_ascii=False), flush=True)
+                    print(json.dumps(submit(arm, port, "sca", 440), ensure_ascii=False), flush=True)
                     refined.add(arm)
                 elif assessment.get("error"):
                     print(f"{arm} 考核出错：{assessment['error']}", flush=True)

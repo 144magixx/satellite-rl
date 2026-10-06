@@ -390,8 +390,9 @@ def main() -> None:
         result = submit_evaluation(port, args.arm, execute=args.execute, tag=args.tag)
     else:
         result = submit(port, args.arm, args.steps, execute=args.execute, tag=args.tag)
-    receipt = LOCAL / "preflight" / f"submit_{args.arm}_{args.steps}_{port}.json"
-    ops18.write_json(receipt, result)
+    mode = "sca" if args.sca else ("evaluate" if args.evaluate else "train")
+    receipt = LOCAL / "preflight" / f"submit_{args.arm}_{mode}_{args.steps}_{port}.json"
+    ops18.write_json(receipt, {"mode": mode, "port": port, "arm": args.arm, **result})
     print(json.dumps({key: value for key, value in result.items() if key != "config"},
                      ensure_ascii=False, indent=2))
 
