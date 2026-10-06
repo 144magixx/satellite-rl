@@ -95,6 +95,12 @@ def config_hash(config):
         semantic["network"].pop("readout_mode", None)
     if semantic["network"].get("beam_count_conditioning", "none") == "none":
         semantic["network"].pop("beam_count_conditioning", None)
+    # S2-P18：实验臂身份只在真正声明时进入语义哈希。未声明臂的配置（包括所有
+    # 改动前冻结的 V0/V1、T0 与欧洲对照配置）保持原来的 config_hash，旧断点与
+    # 旧模型仍可原样加载；一旦声明臂，哈希随臂变化，权重不会被误认为兼容。
+    experiment = semantic.get("experiment") or {}
+    if not experiment.get("arm"):
+        semantic.pop("experiment", None)
     semantic["reward"] = dict(config["reward"])
     shaping = semantic["reward"].get("shaping")
     if (not any(shaping.get(key, 0) for key in ("w_throughput", "w_spectrum", "w_shape"))

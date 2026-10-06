@@ -26,11 +26,28 @@ LOCAL = ops18.LOCAL
 SEED = 51001
 STEPS_PILOT = 100000
 STEPS_FULL = 400000
-SCENE_RECORDS = {
+SCENE_NAMES = {
     "train": "scenes_20261004_133711_dec915dc",
     "validation": "scenes_20261004_133835_f0592bee",
     "test": "scenes_20261004_133838_d7476a54",
 }
+
+
+def scene_records(port: int) -> dict:
+    """Resolve each instance's own imported record IDs for the shared frozen inputs."""
+    available = {item.get("name"): item for item in ops18.api(port, "/scenes", timeout=60).get("scenes", [])}
+    resolved = {}
+    for role, name in SCENE_NAMES.items():
+        item = available.get(name)
+        if item is None:
+            raise RuntimeError(f"{port} 尚未导入 {role} 场景（{name}）")
+        if int(item.get("count", 0)) != EXPECTED_COUNT[role]:
+            raise RuntimeError(f"{port} {role} 场景数不符：{item.get('count')} != {EXPECTED_COUNT[role]}")
+        resolved[role] = {"id": item.get("id"), "name": name, "count": item.get("count")}
+    return resolved
+
+
+EXPECTED_COUNT = {"train": 8064, "validation": 144, "test": 440}
 
 # Approved 2026-10-06 placement: both cards busy with training only, so no
 # non-learning timing runs concurrently on either host.
@@ -40,6 +57,13 @@ S2P18_FEATURES = [
     "beam", "power", "interference", "occupancy", "beta", "progress",
     "remaining_demand", "beam_count_normalized", "remaining_beams_normalized",
     "power_pressure", "group", "group_remaining_obligation", "remaining_slot_limit",
+]
+
+# The natural per-beam layout exposes exactly the fields of its context level,
+# in a fixed order; "full" adds the global, per-beam and per-group blocks.
+NATURAL_FULL_FEATURES = [
+    "beam", "power", "interference", "occupancy",
+    "natural_global_context", "natural_beam_context", "natural_resource_context",
 ]
 
 BASE_OVERRIDES = {
@@ -142,8 +166,12 @@ ARM_OVERRIDES = {
     "G0": {
         # per-beam set encoding: the natural per-beam layout is mandatory here
         # (actual-count beam context, attention pooling readout, size
-        # conditioning); reward stays the frozen original.
-        "state": {"context_level": "full", "demand_visibility": "known"},
+        # conditioning); reward stays the frozen original. The natural layout
+        # requires the exact field order of the requested context level, so the
+        # level's own field list is written explicitly instead of inheriting the
+        # preset's "none"-level list.
+        "state": {"context_level": "full", "demand_visibility": "known",
+                  "features": list(NATURAL_FULL_FEATURES)},
         "network": {"kind": "transformer", "transformer_layout": "tsac_natural_context",
                     "embedding_dim": 128, "num_heads": 8, "num_layers": 2,
                     "feedforward_dim": 512, "activation": "relu", "dropout": 0,
@@ -217,20 +245,27 @@ def build_config(port: int, arm: str, steps: int) -> dict:
 
 def submit(port: int, arm: str, steps: int, *, execute: bool) -> dict:
     request_id = f"s2p18-{arm.lower()}-pilot-{steps}-51001"
+    records = scene_records(port)
     config = build_config(port, arm, steps)
+    # The arm identity is written into the frozen configuration: the validator
+    # only permits the registered per-arm differences when the config declares
+    # which arm it is, and the hash then changes with the arm.
+    config["experiment"] = {"id": "S2-P18", "arm": arm}
     validated = ops18.api(port, "/validate", config, method="POST").get("config")
     if not isinstance(validated, dict):
         raise RuntimeError("工作台未返回校验后的配置")
     missing = verify_overrides(validated, ARM_OVERRIDES[arm])
     report = {"port": port, "arm": arm, "request_id": request_id, "steps": steps,
+              "scene_records": records,
               "overrides_not_carried": missing,
               "state_dim": (validated.get("state") or {}).get("state_dim"),
+              "config_hash": (validated.get("metadata") or {}).get("config_hash"),
               "config": validated}
     if missing:
         raise RuntimeError(f"以下配置键未被后台接受：{missing}")
     body = {"config": validated, "request_id": request_id,
-            "scenes": {"train": SCENE_RECORDS["train"],
-                       "validation": SCENE_RECORDS["validation"]}}
+            "scenes": {"train": records["train"]["id"],
+                       "validation": records["validation"]["id"]}}
     if not execute:
         return {"status": "plan_only", **report}
     job = ops18.api(port, "/runs", body, method="POST", timeout=300)

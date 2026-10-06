@@ -44,6 +44,10 @@ FEATURES = [
 
 
 VARIABLE_BEAM_REWARD_PRESETS = ("legacy_repaired", "legacy_repaired_throughput")
+# S2-P18（方案18 第二版）登记在案的实验臂与训练预算。臂身份写入配置后，校验器
+# 才允许该臂声明的那几处差异；未声明臂的配置仍按 V0/V1 冻结方案逐项校验。
+VARIABLE_BEAM_ARMS = ("V2", "V3", "G0")
+VARIABLE_BEAM_STEP_BUDGETS = (100000, 400000)
 
 
 def variable_beam_features(profile="legacy_210"):
@@ -177,6 +181,9 @@ PRESETS = [
 def default_config():
     return deepcopy(dict(
         schema_version=1, name="新实验", algorithm="sac",
+        # S2-P18：实验臂身份必须由配置显式声明，校验器据此允许该臂声明的差异；
+        # 未声明时（空串）完全按原冻结方案校验，默认配置语义不变。
+        experiment=dict(id="", arm=""),
         network=dict(kind="mlp", transformer_layout="scalar_tokens",
                      hidden_sizes=[256, 256], activation="relu", dropout=0,
                      cnn_channels=[16, 32], kernel_size=3, embedding_dim=64,
@@ -478,8 +485,13 @@ def validate_config(raw):
         if c["state"]["demand_visibility"] != "known" or c["state"]["features"] != expected_features:
             raise ValueError("自然状态布局要求本档实际开放的状态特征及规范顺序")
         allowed_presets = ("legacy_repaired", "legacy_repaired_throughput")
+        # 已登记的 S2-P18 臂（G0）把自然逐束布局用于可变束数四桶抽样，因此对该臂
+        # 额外允许 variable_beams 场景顺序；未声明臂的配置仍要求每轮打乱。
+        allowed_orders = (("shuffle_each_cycle", "variable_beams")
+                          if c["experiment"]["arm"] in VARIABLE_BEAM_ARMS
+                          else ("shuffle_each_cycle",))
         if n["dropout"] != 0 or c["reward"]["preset"] not in allowed_presets or \
-                c["training"]["scene_order"] != "shuffle_each_cycle":
+                c["training"]["scene_order"] not in allowed_orders:
             raise ValueError("自然状态对照固定旧奖励、dropout=0与每轮打乱场景")
     elif c["state"]["context_level"] != "none" or any(fid in c["state"]["features"] for fid in ("global_context", "beam_context", "resource_context", "natural_global_context", "natural_beam_context", "natural_resource_context")):
         raise ValueError("状态信息档位与分档特征仅适用于32令牌布局，旧布局使用none")
@@ -582,20 +594,47 @@ def validate_config(raw):
     elif (t["scene_order"] != "variable_beams" or e["profile"] != "europe_v1"
           or e["beam_count_max"] != 200 or t["beam_count_min"] != 50
           or t["beam_count_max"] != 200 or held_out != [60, 90, 140, 180]
-          or n["transformer_layout"] != "tsac_14_variable_context"
           or e["action_mask"] != "joint_feasible" or e["action_mode"] != "legacy_clip"
           or e["power_budget_w"] != 3000 or e["power_levels_w"] != [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
           or n["sac_policy_structure"] != "factorized" or n["sac_critic_structure"] != "additive"
           or n["dropout"] != 0
           or r["preset"] not in VARIABLE_BEAM_REWARD_PRESETS
           or t["alpha_mode"] != "fixed" or t["fixed_alpha"] != 0.01
-          or t["seed"] != 51001 or t["total_steps"] != 400000
+          or t["seed"] != 51001
+          or t["total_steps"] not in VARIABLE_BEAM_STEP_BUDGETS
           or t["batch_size"] != 256 or t["replay_capacity"] != 20000 or t["warmup_steps"] != 2000
           or t["update_every"] != 1 or t["gradient_steps"] != 1 or t["checkpoint_interval"] != 10000
           or n["embedding_dim"] != 128 or n["num_heads"] != 8 or n["num_layers"] != 2
           or n["feedforward_dim"] != 512 or t["gamma"] != 0.99 or t["tau"] != 0.005
           or t["actor_lr"] != 1e-5 or t["critic_lr"] != 1e-4 or t["gradient_clip"] != 10):
         raise ValueError("V0/V1配置必须与已批准的欧洲可变束数方案一致")
+    # S2-P18 三条机制臂（方案18 第二版）需要与 V0/V1 不同的、但同样冻结的取值：
+    # 试点预算 10 万步、逐束布局/读出/条件化、进度分层与折扣日程、奖励整形的
+    # 非零权重。除这些「臂自身声明的差异」外，其余条件仍与 V0/V1 完全一致，
+    # 并且只允许登记在案的取值集合，不做任意放宽。
+    if c["experiment"]["arm"]:
+        arm = c["experiment"]["arm"]
+        if arm not in VARIABLE_BEAM_ARMS:
+            raise ValueError("未知的S2-P18实验臂")
+        if t["total_steps"] not in VARIABLE_BEAM_STEP_BUDGETS:
+            raise ValueError("S2-P18臂的训练预算不在已批准集合内")
+        if n["transformer_layout"] not in ("tsac_14_variable_context", "tsac_natural_context"):
+            raise ValueError("S2-P18臂只允许可变束数布局或自然逐束布局")
+        if (n["readout_mode"] != "first_token" or n["beam_count_conditioning"] != "none"
+                or n["context_beam_count"] == "actual"):
+            if (n["transformer_layout"] != "tsac_natural_context"
+                    or c["state"]["context_level"] not in ("layout", "full")
+                    or n["context_beam_count"] != "actual"):
+                raise ValueError("逐束读出与条件化要求自然布局的 layout/full 档与实际束数上下文")
+        if r["shaping"]["w_throughput"] < 0 or r["shaping"]["w_spectrum"] < 0 or r["shaping"]["w_shape"] < 0:
+            raise ValueError("S2-P18奖励整形权重不得为负")
+        if not 0 <= t["progress_strata"] <= 16:
+            raise ValueError("进度分层段数超出允许范围")
+        # 自然逐束布局原本只配「每轮打乱场景」；本轮 G0 臂把它用于可变束数四桶
+        # 抽样，因此对该臂额外允许 variable_beams 顺序，其余条件不变。
+        if (n["transformer_layout"] == "tsac_natural_context"
+                and t["scene_order"] not in ("shuffle_each_cycle", "variable_beams")):
+            raise ValueError("S2-P18自然布局臂只允许每轮打乱或可变束数四桶场景顺序")
     for key in ("actor_lr", "critic_lr", "alpha_lr", "tau", "initial_alpha", "gradient_clip"):
         _number(t[key], key, 0, strictly=True)
     if t["tau"] > 1:

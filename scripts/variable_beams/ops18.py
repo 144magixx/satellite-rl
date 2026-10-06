@@ -147,19 +147,30 @@ def upload(local: Path, remote: str, port: int) -> dict:
 
 def api(port: int, endpoint: str, body: dict | None = None, method: str = "GET",
         timeout: int = 120) -> dict:
-    """Call the instance-local workbench API through a loopback python client."""
+    """Call the instance-local workbench API through a loopback python client.
+
+    HTTP errors carry the workbench's JSON error body, which is what the caller
+    needs to see; surface it instead of a bare urllib traceback.
+    """
     api_port = API_PORTS[port]
     payload = json.dumps(body, ensure_ascii=False) if body is not None else None
     code = f'''
-import json,urllib.request
+import json,urllib.error,urllib.request
 data={payload!r}
 data=None if data is None else data.encode("utf-8")
 request=urllib.request.Request("http://127.0.0.1:{api_port}/api{endpoint}",data=data,
  method={method!r},headers={{"Content-Type":"application/json","Cache-Control":"no-cache"}})
-with urllib.request.urlopen(request,timeout={timeout}) as response:
- print(response.read().decode("utf-8"))
+try:
+ with urllib.request.urlopen(request,timeout={timeout}) as response:
+  print(response.read().decode("utf-8"))
+except urllib.error.HTTPError as error:
+ detail=error.read().decode("utf-8","replace")
+ print(json.dumps({{"__http_error__":error.code,"detail":detail}},ensure_ascii=False))
 '''
     result = remote_python(code, port, timeout=timeout + 30)
     if result["exit_code"]:
         raise RuntimeError(f"API {endpoint} failed: {result['stderr'][-800:]}")
-    return json.loads(result["stdout"].strip().splitlines()[-1])
+    parsed = json.loads(result["stdout"].strip().splitlines()[-1])
+    if isinstance(parsed, dict) and "__http_error__" in parsed:
+        raise RuntimeError(f"API {endpoint} HTTP {parsed['__http_error__']}: {parsed['detail'][:900]}")
+    return parsed

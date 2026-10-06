@@ -160,6 +160,8 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         historical["network"].pop("context_beam_count", None)
         historical["network"].pop("readout_mode", None)
         historical["network"].pop("beam_count_conditioning", None)
+        # S2-P18 的臂身份同样只在真正声明时进入语义哈希。
+        historical.pop("experiment", None)
         historical.pop("telemetry", None)
         expected = hashlib.sha256(json.dumps(historical, ensure_ascii=False, sort_keys=True,
                                             separators=(",", ":")).encode("utf-8")).hexdigest()
