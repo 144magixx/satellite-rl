@@ -3,7 +3,7 @@
   "title": "可变束数泛化第二轮（V2/V3/G0 三臂机制验证）",
   "created_utc": "2026-10-05T23:49:39.6950930Z",
   "plan": "docs/第二阶段/方案/18_可变束数泛化第二轮改进方案.md",
-  "status": "two_arms_extension_one_pilot",
+  "status": "pilot_training_running",
   "budget": {
     "arms": 3,
     "stage1_steps_per_arm": 100000,
@@ -42,9 +42,36 @@
     "test": "scenes_20261004_133838_d7476a54 (440)"
   },
   "jobs": {},
-  "updated_utc": "2026-10-06T04:58:30.714169+00:00",
+  "updated_utc": "2026-10-06T05:27:00.726374+00:00",
   "pilot": {
     "arm_configs": {
+      "G0": {
+        "experiment": {
+          "id": "S2-P18",
+          "arm": "G0"
+        },
+        "preset": "legacy_repaired",
+        "shaping": {
+          "w_throughput": 0,
+          "w_spectrum": 0,
+          "w_shape": 0,
+          "throughput_reference": "mean_demand"
+        },
+        "progress_strata": 4,
+        "gamma": 0.99,
+        "gamma_schedule": {
+          "mode": "none",
+          "default": 0.99,
+          "by_beam_count": []
+        },
+        "layout": "tsac_natural_context",
+        "context_beam_count": "actual",
+        "readout_mode": "attention_pooling",
+        "conditioning": "film",
+        "context_level": "full",
+        "features": 7,
+        "total_steps": 400000
+      },
       "V2": {
         "experiment": {
           "id": "S2-P18",
@@ -70,7 +97,43 @@
         "conditioning": "none",
         "context_level": "none",
         "features": 13,
-        "total_steps": 100000
+        "total_steps": 400000
+      },
+      "V3": {
+        "experiment": {
+          "id": "S2-P18",
+          "arm": "V3"
+        },
+        "preset": "legacy_repaired",
+        "shaping": {
+          "w_throughput": 0,
+          "w_spectrum": 0,
+          "w_shape": 0.05,
+          "throughput_reference": "mean_demand"
+        },
+        "progress_strata": 4,
+        "gamma": 0.99,
+        "gamma_schedule": {
+          "mode": "by_beam_count",
+          "default": 0.999,
+          "by_beam_count": [
+            {
+              "max_beam_count": 100,
+              "gamma": 0.99
+            },
+            {
+              "max_beam_count": 200,
+              "gamma": 0.999
+            }
+          ]
+        },
+        "layout": "tsac_14_variable_context",
+        "context_beam_count": "fixed_100",
+        "readout_mode": "first_token",
+        "conditioning": "none",
+        "context_level": "none",
+        "features": 13,
+        "total_steps": 400000
       }
     },
     "steps_per_arm": 100000,
@@ -106,26 +169,26 @@
             "request_id": "s2p18-g0-pilot-100000-51001-retry3",
             "run_id": "train_sac_20261006_092142_142c6953",
             "kind": "train",
-            "stage": "validating",
-            "env_step": 40000,
-            "budget_env_steps": 100000,
-            "update_step": 38001,
-            "episode": 343,
-            "steps_per_second": 8.03414932455675,
+            "stage": "training",
+            "env_step": 109650,
+            "budget_env_steps": 400000,
+            "update_step": 107651,
+            "episode": 931,
+            "steps_per_second": 7.993794075958228,
             "beam_bucket_episodes": {
-              "anchor_100": 86,
-              "lower": 86,
-              "middle": 86,
-              "upper": 85
+              "anchor_100": 233,
+              "lower": 233,
+              "middle": 233,
+              "upper": 232
             },
             "replay_sampled_by_bucket": {
-              "anchor_100": 2432064,
-              "lower": 2432064,
-              "middle": 2432064,
-              "upper": 2432064
+              "anchor_100": 6889664,
+              "lower": 6889664,
+              "middle": 6889664,
+              "upper": 6889664
             },
             "error": null,
-            "heartbeat_at": "2026-10-06T02:45:58.383410+00:00",
+            "heartbeat_at": "2026-10-06T05:26:23.396861+00:00",
             "git_commit": "fb14e36506bf118f62e7f1cf1fa75949f7985954",
             "source_root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/source_snapshots/fb14e36506bf118f62e7f1cf1fa75949f7985954",
             "directory": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/jobs/train_sac_20261006_092142_142c6953"
@@ -209,33 +272,33 @@
             "run_id": "train_sac_20261006_084454_365eff71",
             "kind": "train",
             "stage": "training",
-            "env_step": 93650,
-            "budget_env_steps": 100000,
-            "update_step": 91651,
-            "episode": 792,
-            "steps_per_second": 12.963734945157896,
+            "env_step": 204100,
+            "budget_env_steps": 400000,
+            "update_step": 202101,
+            "episode": 1726,
+            "steps_per_second": 11.721722139680132,
             "beam_bucket_episodes": {
-              "anchor_100": 198,
-              "lower": 198,
-              "middle": 198,
-              "upper": 198
+              "anchor_100": 432,
+              "lower": 432,
+              "middle": 431,
+              "upper": 431
             },
             "replay_sampled_by_bucket": {
-              "anchor_100": 5865664,
-              "lower": 5865664,
-              "middle": 5865664,
-              "upper": 5865664
+              "anchor_100": 12934464,
+              "lower": 12934464,
+              "middle": 12934464,
+              "upper": 12934464
             },
             "error": null,
-            "heartbeat_at": "2026-10-06T02:46:20.880269+00:00",
+            "heartbeat_at": "2026-10-06T05:26:44.152283+00:00",
             "git_commit": "0070cb49f850296eb2f88e988d35a3149f24f696",
             "source_root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/source_snapshots/0070cb49f850296eb2f88e988d35a3149f24f696",
             "directory": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20418/archive/outputs/workbench/jobs/train_sac_20261006_084454_365eff71"
           }
         ],
         "host": {
-          "gpu": "41 %, 2173 MiB",
-          "apps": "2881772, 668 MiB\n2940182, 1490 MiB"
+          "gpu": "81 %, 2177 MiB",
+          "apps": "3164248, 668 MiB\n3400615, 1494 MiB"
         }
       },
       "20424": {
@@ -244,34 +307,34 @@
             "request_id": "s2p18-v3-pilot-100000-51001",
             "run_id": "train_sac_20261006_084726_c004cd09",
             "kind": "train",
-            "stage": "completed",
-            "env_step": 100000,
-            "budget_env_steps": 100000,
-            "update_step": 98001,
-            "episode": 852,
-            "steps_per_second": 15.460509797293405,
+            "stage": "training",
+            "env_step": 242350,
+            "budget_env_steps": 400000,
+            "update_step": 240351,
+            "episode": 2052,
+            "steps_per_second": 15.463759081523667,
             "beam_bucket_episodes": {
-              "anchor_100": 213,
-              "lower": 213,
-              "middle": 213,
-              "upper": 213
+              "anchor_100": 513,
+              "lower": 513,
+              "middle": 513,
+              "upper": 513
             },
             "replay_sampled_by_bucket": {
-              "anchor_100": 6272064,
-              "lower": 6272064,
-              "middle": 6272064,
-              "upper": 6272064
+              "anchor_100": 15382464,
+              "lower": 15382464,
+              "middle": 15382464,
+              "upper": 15382464
             },
             "error": null,
-            "heartbeat_at": "2026-10-06T02:36:19.194584+00:00",
+            "heartbeat_at": "2026-10-06T05:26:56.623056+00:00",
             "git_commit": "0070cb49f850296eb2f88e988d35a3149f24f696",
             "source_root": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20424/archive/outputs/workbench/source_snapshots/0070cb49f850296eb2f88e988d35a3149f24f696",
             "directory": "/home/u2024110224/second_stage_satellite_rl/variable_beams_s2p18/20424/archive/outputs/workbench/jobs/train_sac_20261006_084726_c004cd09"
           }
         ],
         "host": {
-          "gpu": "0 %, 1 MiB",
-          "apps": ""
+          "gpu": "16 %, 678 MiB",
+          "apps": "3154715, 668 MiB"
         }
       }
     }
