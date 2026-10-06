@@ -23,16 +23,24 @@ import ops18  # noqa: E402
 METHODS = ("V2", "V3", "G0", "fixed", "greedy")
 RUN_PREFIX = "s2p18-"
 
+# Field names taken from ``WorkbenchEnvironment.metrics`` (the authoritative
+# producer) rather than guessed. ``carried`` is derived from the saved per-beam
+# rows: the环境 metric is total throughput, while the plan's "有效承载" is
+# Σmin(C_i, D_i), which must be computed from the beam rows.
 CANDIDATE_METRICS = {
-    "si": ("final_si_mean", "si_mean", "mean_si"),
-    "sgm": ("final_sgm_mean", "sgm_mean", "mean_sgm"),
-    "basic": ("basic_fraction", "basic_met_fraction", "basic_service_fraction"),
-    "slots": ("actual_slots", "allocated_slots", "slots_total"),
-    "power": ("power_w", "total_power_w"),
-    "carried": ("effective_carried_bps", "throughput_bps", "total_rate_bps"),
-    "carried_useful": ("useful_carried_bps", "min_carried_bps"),
-    "jain": ("jain", "jain_index"),
-    "complete": ("complete", "complete_fraction"),
+    "si": ("final_si_mean",),
+    "si_total": ("final_si_total",),
+    "sgm": ("final_sgm_mean",),
+    "basic_met": ("basic_met_count",),
+    "slots": ("actual_slots",),
+    "requested_slots": ("requested_slots",),
+    "power": ("power_w",),
+    "throughput_bps": ("throughput_bps",),
+    "zero_capacity": ("zero_capacity_count",),
+    "jain": ("jain",),
+    "clipped": ("clipped_count",),
+    "complete": ("complete",),
+    "overload": ("overload",),
 }
 
 FETCH_RESULTS = r'''
@@ -57,6 +65,50 @@ if path.is_file():
     out["summary"]=data.get("summary")
 print(json.dumps(out,ensure_ascii=False)[:12000])
 '''
+
+
+def pick(metrics: dict, name: str):
+    """Read one metric by its authoritative name, tolerating missing fields."""
+    for key in CANDIDATE_METRICS[name]:
+        value = metrics.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def effective_carried(beams) -> float | None:
+    """Σmin(C_i, D_i) from the saved per-beam rows.
+
+    ``throughput_bps`` is ΣC_i, so the plan's "有效承载" estimate is recomputed
+    from ``beam_service_fields``' own ``effective_served_bps``. Missing fields are
+    reported as None instead of being approximated.
+    """
+    if not beams:
+        return None
+    total = 0.0
+    for beam in beams:
+        value = beam.get("effective_served_bps")
+        if value is None:
+            capacity = beam.get("capacity_bps", beam.get("rate_bps"))
+            demand = beam.get("required_bps")
+            if not isinstance(capacity, (int, float)) or not isinstance(demand, (int, float)):
+                return None
+            value = min(float(capacity), float(demand))
+        total += float(value)
+    return total
+
+
+def per_beam_min_ratio(beams) -> float | None:
+    """逐束 C/D 的最小值与 5% 分位，用于 G3 的尾部判据。"""
+    if not beams:
+        return None
+    ratios = [float(beam["capacity_demand_ratio"]) for beam in beams
+              if isinstance(beam.get("capacity_demand_ratio"), (int, float))]
+    if not ratios:
+        return None
+    ratios.sort()
+    index = max(0, min(len(ratios) - 1, int(0.05 * (len(ratios) - 1))))
+    return {"min": ratios[0], "p05": ratios[index], "n": len(ratios)}
 
 
 def run_index(port: int) -> list:
