@@ -264,8 +264,8 @@ def submit(port: int, arm: str, steps: int, *, execute: bool) -> dict:
     if missing:
         raise RuntimeError(f"以下配置键未被后台接受：{missing}")
     body = {"config": validated, "request_id": request_id,
-            "scenes": {"train": records["train"]["id"],
-                       "validation": records["validation"]["id"]}}
+            "scene_id": records["train"]["id"],
+            "validation_scene_id": records["validation"]["id"]}
     if not execute:
         return {"status": "plan_only", **report}
     job = ops18.api(port, "/runs", body, method="POST", timeout=300)
