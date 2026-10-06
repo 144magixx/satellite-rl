@@ -7,7 +7,8 @@ import unittest
 import numpy as np
 import torch
 
-from satellite_rl.agents.workbench_algorithms import Replay, WorkbenchAgent
+from satellite_rl.agents.workbench_algorithms import (Replay, WorkbenchAgent,
+                                                      beam_count_from_state)
 from satellite_rl.agents.workbench_networks import Encoder, MultiHeadNetwork
 from satellite_rl.envs.satellite import BeamInfo
 from satellite_rl.state_layouts import (S2P18_VARIABLE_FEATURES,
@@ -480,42 +481,52 @@ class EntityEncoderTests(unittest.TestCase):
             with self.subTest(count=count):
                 config = entity_layout_config(count=count)
                 env, state = self._state(count, config)
-                # 状态宽度只含实际实体：204 基础 + 10 全局 + count×5 逐束 + 8×4 资源。
-                self.assertEqual(state.shape[0], 246 + count * 5)
+                # 观测宽度固定：204 基础 + 10 全局 + 束数上限×5 逐束 + 8×4 资源，
+                # 逐束行按实际束数写入、其余补零（网络输入宽度必须恒定）。
+                limit = int(config["environment"]["beam_count_max"])
+                self.assertEqual(state.shape[0], 246 + limit * 5)
                 self.assertEqual(env.state_width(count), state.shape[0])
                 self.assertEqual(natural_shapes_actual_count("layout", count)["natural_beam_context"],
                                  [count, 5])
                 model = MultiHeadNetwork(config, config_summary(config)["state_dim"], (100, 10, 10))
-                tokens, heads = self._token_count(model, state)
-                # 13 基础令牌 + 1 全局 + count 逐束 + 8 资源。
-                self.assertEqual(tokens, (22 + count, 1, 64))
+                tokens, heads = self._token_count(
+                    model, state.reshape(1, -1))
+                # 13 基础令牌 + 1 全局 + 上限行逐束实体 + 8 资源。
+                self.assertEqual(tokens, (22 + limit, 1, 64))
                 self.assertEqual([tuple(head.shape) for head in heads], [(1, 100), (1, 10), (1, 10)])
                 self.assertTrue(all(torch.isfinite(head).all() for head in heads))
-        # 观测不按 100 填充：不同 N 的状态宽度必须不同。
-        widths = {count: self._state(count, entity_layout_config(count=count))[1].shape[0]
+        # 观测固定为束数上限宽度，不同 N 的宽度相同（补零不改变网络输入形状）。
+        widths = {count: self._state(count, entity_layout_config(count=200))[1].shape[0]
                   for count in (50, 100, 200)}
-        self.assertEqual(len(set(widths.values())), 3)
+        self.assertEqual(len(set(widths.values())), 1)
 
     def test_placeholder_rows_do_not_enter_pooling_or_statistics(self):
         config = entity_layout_config(count=200)
         env, state = self._state(120, config)
-        _, state_2 = self._state(2, entity_layout_config(count=2), seed=9)
-        self.assertNotEqual(state.shape, state_2.shape)
-        model = MultiHeadNetwork(entity_layout_config(count=200),
-                                 config_summary(entity_layout_config(count=200))["state_dim"],
-                                 (100, 10, 10))
+        limit = int(config["environment"]["beam_count_max"])
+        # 自然布局不含「归一化束数」标量；真实束数由环境给出（训练时 runner 传入）。
+        count = int(env.raw_env.beam_num)
+        self.assertEqual(count, 120)
+        model = MultiHeadNetwork(config, config_summary(config)["state_dim"], (100, 10, 10))
         padded = torch.as_tensor(state, dtype=torch.float32).reshape(1, -1)
-        lengths = torch.tensor([state.shape[0]])
+        lengths = torch.tensor([count])
         with torch.no_grad():
             reference = model.encoder(padded, lengths)
             noisy = padded.clone()
             # 把“不存在”的位置填成非零数值：只要掩码正确，读出必须完全不变。
-            noisy[:, state.shape[0]:] = 1234.5
+            entity_start = 204 + 10
+            noisy[:, entity_start + count * 5:] = 1234.5
             torch.testing.assert_close(reference, model.encoder(noisy, lengths), rtol=0, atol=1e-6)
-            mixed, mixed_lengths = self._pad_two(state, state_2)
-            first, second = model.encoder(mixed, mixed_lengths)[0], model.encoder(mixed, mixed_lengths)[1]
-            torch.testing.assert_close(first, reference[0], rtol=0, atol=1e-6)
-            self.assertFalse(torch.allclose(first, second))
+            # 同一固定宽度下，不同真实束数的两个样本共用一次批前向：较短的那个
+            # 必须与单独前向一致（掩码按 lengths 生效，不受同批更长样本影响）。
+            _, state_short = self._state(50, entity_layout_config(count=200), seed=7)
+            batch = torch.stack((padded[0], torch.as_tensor(state_short, dtype=torch.float32)))
+            batch_lengths = torch.tensor([count, 50])
+            batched = model.encoder(batch, batch_lengths)
+            short_alone = model.encoder(
+                torch.as_tensor(state_short, dtype=torch.float32).reshape(1, -1), torch.tensor([50]))
+            torch.testing.assert_close(batched[1:2], short_alone, rtol=0, atol=1e-6)
+            self.assertFalse(torch.allclose(batched[0], batched[1]))
 
     @staticmethod
     def _pad_two(left, right):

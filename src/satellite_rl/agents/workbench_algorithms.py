@@ -29,25 +29,50 @@ def _state_tensor(states, device):
     return torch.as_tensor(np.asarray(states, dtype=np.float32), device=device)
 
 
-def pad_states(states, device):
-    """S2-P18 逐束编码：同一批次里不同场景的观测宽度可以不同 (N×11+…)。
+def pad_states(states, device, *, padded_width=None):
+    """S2-P18 逐束编码：观测宽度恒定，批次只需要拼装。
 
-    这里只在**批次拼装**时右侧补零到本批最大宽度，并记录每个样本的有效宽度，
-    由编码器按 ``lengths`` 计算真实束数、屏蔽补零位置。观测本身仍然按实际束数
-    构造、不填充到 100，补零不参与池化与统计。
+    ``padded_width`` 给定时（逐束实体档位），观测本身已按场景束数上限补零，因此
+    这里只做批张量拼装，并把每个样本的**真实束数**作为有效长度返回（由观测里的
+    ``beam_count_normalized`` 还原，不依赖被补零的实体行）。编码器据此屏蔽补零
+    实体，且只对真实实体做池化。未给定时保持历史行为：右侧补零到本批最大宽度并
+    把有效宽度作为长度返回。
 
-    返回 ``(padded, lengths)``；所有样本等宽时 ``lengths`` 仍逐样本给出宽度，
-    调用方据此保持同一套前向路径。空批次返回空张量。
+    返回 ``(padded, lengths)``。空批次返回空张量。
     """
     widths = [np.asarray(state, dtype=np.float32).reshape(-1).shape[0] for state in states]
     if not widths:
         return torch.zeros((0, 0), dtype=torch.float32, device=device), torch.zeros(0, dtype=torch.long, device=device)
-    width = max(widths)
+    width = int(padded_width) if padded_width else max(widths)
+    if any(value > width for value in widths):
+        raise ValueError("样本观测宽度超过补零宽度")
     padded = np.zeros((len(states), width), dtype=np.float32)
+    lengths = []
     for row, state in enumerate(states):
         flat = np.asarray(state, dtype=np.float32).reshape(-1)
         padded[row, :flat.shape[0]] = flat
-    return torch.as_tensor(padded, device=device), torch.as_tensor(widths, dtype=torch.long, device=device)
+        lengths.append(beam_count_from_state(flat) if padded_width else flat.shape[0])
+    return (torch.as_tensor(padded, device=device),
+            torch.as_tensor(lengths, dtype=torch.long, device=device))
+
+
+def beam_count_from_state(state) -> int:
+    """从扁平观测还原真实束数。
+
+    可变束数状态前 204 项是基础块（beam 3、power 1、interference 100、occupancy 100），
+    随后按 ``state_layouts.VARIABLE_BEAM_FEATURES`` 的顺序排列标量：
+    204 beta、205 progress、206 remaining_demand、207 beam_count_normalized（=N/200）、
+    208 remaining_beams_normalized、209 power_pressure，再往后是 S2-P18 新增标量。
+    因此真实束数由第 207 项反推，与逐束实体是否补零无关。
+    """
+    flat = np.asarray(state, dtype=np.float32).reshape(-1)
+    if flat.shape[0] < 208:
+        raise ValueError("观测过短，无法还原束数")
+    normalized = float(flat[207])
+    count = int(round(normalized * 200))
+    if not 1 <= count <= 200:
+        raise ValueError(f"观测中的归一化束数无效：{normalized}")
+    return count
 
 
 def _joint_q(heads):
@@ -156,7 +181,11 @@ def generalized_advantages(rewards, values, dones, last_value, gamma, gae_lambda
 
 
 class Replay:
-    def __init__(self, capacity, seed, bucket_mode="none", progress_strata=1):
+    def __init__(self, capacity, seed, bucket_mode="none", progress_strata=1,
+                 padded_width=None):
+        # 逐束实体档位：观测固定为补零宽度，采样时不需要按批再补齐，长度按每个
+        # 样本的真实束数给出（由观测内归一化束数还原）。None 表示历史行为。
+        self.padded_width = int(padded_width) if padded_width else None
         if bucket_mode not in ("none", "fixed_100", "mixed_four_buckets"):
             raise ValueError("Unknown replay bucket mode")
         if not isinstance(progress_strata, int) or isinstance(progress_strata, bool) or not 1 <= progress_strata <= 8:
@@ -282,8 +311,8 @@ class Replay:
             self.rng.shuffle(indices)
             rows = [self.rows[index] for index in indices]
         states, actions, rewards, next_states, dones = zip(*(row[:5] for row in rows))
-        state_tensor, lengths = pad_states(states, device)
-        next_state_tensor, next_lengths = pad_states(next_states, device)
+        state_tensor, lengths = pad_states(states, device, padded_width=self.padded_width)
+        next_state_tensor, next_lengths = pad_states(next_states, device, padded_width=self.padded_width)
         result = (state_tensor, torch.as_tensor(actions, dtype=torch.long, device=device),
                   torch.as_tensor(rewards, dtype=torch.float32, device=device),
                   next_state_tensor, torch.as_tensor(dones, dtype=torch.float32, device=device),
@@ -459,7 +488,8 @@ class WorkbenchAgent:
                                           self.temporal_window) if self.temporal_enabled else
                            Replay(self.train["replay_capacity"], self.train["seed"] + 41,
                                   self.train.get("beam_count_mode", "none"),
-                                  self.progress_strata))
+                                  self.progress_strata,
+                                  padded_width=state_dim if self.variable_width else None))
         elif self.algorithm == "ppo":
             self.actor = MultiHeadNetwork(config, state_dim, action_dims).to(self.device)
             self.value = ScalarNetwork(config, state_dim).to(self.device)
@@ -504,7 +534,14 @@ class WorkbenchAgent:
         finally:
             self.actor.train(was_training)
 
-    def act(self, state, deterministic=False, env_step=None, action_mask=None):
+    def act(self, state, deterministic=False, env_step=None, action_mask=None,
+            beam_entity_count=None):
+        """按当前观测选择一个动作。
+
+        ``beam_entity_count``：逐束实体档位下本场景的真实束数。观测按场景束数上限
+        补零，因此必须显式给出真实束数，编码器才会只对真实实体做注意力池化、并把
+        补零行排除在读出与 N 条件调制之外（占位不参与池化与统计）。
+        """
         if self.action_mask_mode == "joint_feasible":
             action_mask = copy_action_mask(action_mask, self.action_dims)
         elif action_mask is not None:
@@ -514,11 +551,16 @@ class WorkbenchAgent:
         net.eval()
         with torch.no_grad():
             x = _state_tensor(state, self.device).reshape(1, -1)
+            lengths = None
+            if self.variable_width:
+                if beam_entity_count is None:
+                    raise ValueError("逐束实体档位必须在选择动作时给出真实束数")
+                lengths = int(beam_entity_count)
             if self.temporal_enabled:
                 self.online_history.append(np.asarray(state, dtype=np.float32).copy())
                 sequence = _state_tensor(list(self.online_history), self.device).unsqueeze(0)
                 x = (sequence, torch.as_tensor([len(self.online_history)], device=self.device))
-            heads = net(x)
+            heads = net(x) if lengths is None else self._net(net, x, lengths)
             if self.algorithm == "dqn":
                 epsilon = 0.0 if deterministic else self.train["eps_end"]
                 if not deterministic and env_step is not None:

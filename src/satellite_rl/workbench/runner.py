@@ -842,6 +842,12 @@ def _training(directory, job, config, ledger, resume):
                                        int(env.raw_env.beam_idx / env.raw_env.beam_num
                                            * replay.progress_strata))
             policy_options = {"action_mask": mask} if mask is not None else {}
+            if getattr(agent, "variable_width", False):
+                # 逐束实体档位：观测按束数上限补零，必须把真实束数传给编码器，
+                # 否则补零行会参与注意力池化与 N 条件调制。
+                if beam_count_for_gamma is None:
+                    raise RuntimeError("逐束实体档位缺少真实束数")
+                policy_options["beam_entity_count"] = int(beam_count_for_gamma)
             action = agent.act(state, env_step=env_step, **policy_options)
             next_state, reward, done, info = env.step(action)
             if not np.isfinite(reward) or not np.isfinite(next_state).all():

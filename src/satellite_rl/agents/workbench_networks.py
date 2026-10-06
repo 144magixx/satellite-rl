@@ -199,9 +199,10 @@ class Encoder(nn.Module):
     def _beam_count(self, states, actual_width):
         """从状态里取出“当前是第几束”（即处理序号 idx+1）。
 
-        逐束实体的第 5 个通道是 ``i/(N−1)``，所以由实体行数即可得到序号的还原比例；
-        已处理束在实体里是连续前缀（layout 档第 5 通道、full 档第 6 通道为 1），
-        它们的个数就是当前处理序号 idx。该标量同时用于 N 条件调制与规模统计。
+        逐束实体的第 5 个通道是 ``i/(N−1)``；已处理束在实体里是连续前缀
+        （layout 档第 5 通道、full 档第 6 通道为 1），它们的个数就是当前处理序号
+        idx。行数是补零后的固定行数，真实束数由 ``lengths`` 给出，因此这里同时
+        接受长度张量（批）与整数（单样本）。该标量同时用于 N 条件调制与规模统计。
         """
         if not self.actual_count:
             return None
@@ -213,22 +214,36 @@ class Encoder(nn.Module):
         trailing = 4 * self.previous_actual_action
         if "natural_resource_context" in self.natural_shapes:
             trailing += 8 * self.natural_shapes["natural_resource_context"][0]
-        count = (states.shape[1] - offset - trailing) // width
-        served = states[:, offset + served_channel:offset + count * width:width] > 0.5
+        rows = (states.shape[1] - offset - trailing) // width
+        if torch.is_tensor(actual_width):
+            count = actual_width.reshape(-1).to(states.device)
+        elif isinstance(actual_width, int) and actual_width < rows:
+            count = torch.full((states.shape[0],), int(actual_width),
+                               device=states.device, dtype=torch.long)
+        else:
+            count = torch.full((states.shape[0],), rows, device=states.device, dtype=torch.long)
+        served = states[:, offset + served_channel:offset + rows * width:width] > 0.5
         index = served.to(torch.int64).sum(dim=1)
         position = torch.round(
-            states[:, offset + 4:offset + count * width:width] * max(count - 1, 1)).long()
-        gathered = position.gather(1, index.clamp(max=count - 1).reshape(-1, 1)).reshape(-1)
+            states[:, offset + 4:offset + rows * width:width]
+            * torch.clamp(count - 1, min=1).reshape(-1, 1).to(states.dtype)).long()
+        gathered = position.gather(1, index.clamp(max=rows - 1).reshape(-1, 1)).reshape(-1)
         return (gathered.to(states.dtype) + 1.0).clamp(min=1.0, max=float(self.max_beam_count))
 
     def forward(self, states, lengths=None):
         if states.ndim != 2:
             raise ValueError(f"State must be [batch,width], got {tuple(states.shape)}")
         resolved, actual_width = self._resolve_lengths(states, lengths)
-        if actual_width != states.shape[1]:
-            raise ValueError(f"State width {states.shape[1]} differs from declared {actual_width}")
-        if not self.actual_count and states.shape[1] != self.state_dim:
-            raise ValueError(f"State shape must be [batch,{self.state_dim}], got {tuple(states.shape)}")
+        if self.actual_count:
+            # 逐束实体档位：观测宽度固定为「按场景束数上限补零」的宽度，而
+            # ``lengths`` 给出的是每个样本的真实束数，两者不是同一个量。
+            if states.shape[1] != self.state_dim:
+                raise ValueError(f"State shape must be [batch,{self.state_dim}], got {tuple(states.shape)}")
+        else:
+            if actual_width != states.shape[1]:
+                raise ValueError(f"State width {states.shape[1]} differs from declared {actual_width}")
+            if states.shape[1] != self.state_dim:
+                raise ValueError(f"State shape must be [batch,{self.state_dim}], got {tuple(states.shape)}")
         if self.graph_mode != "none":
             return self.graph(states)
         if self.kind == "mlp":
@@ -366,7 +381,7 @@ class Encoder(nn.Module):
                     raise ValueError("注意力池化的有效实体为空，无法计算读出")
                 result = torch.einsum("bn,bnd->bd", weights, entity)
             if self.beam_count_conditioning == "film":
-                count = self._beam_count(states, actual_width).reshape(-1, 1)
+                count = self._beam_count(states, resolved if resolved is not None else actual_width).reshape(-1, 1)
                 scale, shift = self.film(count / float(self.max_beam_count)).chunk(2, dim=-1)
                 result = result * (1.0 + scale) + shift
         return result

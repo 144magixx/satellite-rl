@@ -330,8 +330,14 @@ class WorkbenchEnv:
         # 默认档位仍用固定 (10,10,11) 的 100 束布局，所以既有对照逐位不变。
         actual_count = self.config["network"].get("context_beam_count", "fixed_100") == "actual"
         beam_width = 5 if level == "layout" else 11
-        # 逐束编码档位按实际束数构造；默认档位保持历史 (10,10,11) 的 100 束布局。
+        # 网络输入宽度必须恒定：按实际束数构造时把逐束实体补零到场景束数上限，
+        # 前 count 行为真实束、其余行是占位。占位不产生干扰、动作、奖励或统计，
+        # 池化由编码器的有效位屏蔽排除（方案17 问答第 5 节的要求）。
         beam_rows = count if actual_count else 100
+        if actual_count:
+            beam_rows = int(self.config["environment"]["beam_count_max"])
+            if count > beam_rows:
+                raise RuntimeError("实际束数超过场景束数上限，无法构造固定宽度观测")
         global_context = np.zeros(10, dtype=np.float32)
         # 注意：这里始终按 11 通道分配，实际写入观测时再按档位截取到 beam_width 列，
         # 与历史实现（layout 档取前 5 列）保持一致。

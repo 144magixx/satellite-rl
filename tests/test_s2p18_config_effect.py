@@ -204,7 +204,9 @@ class ConfigEffectTests(unittest.TestCase):
                 agent = build_agent(config, summary["state_dim"],
                                     tuple(summary["action_dims"]), "cpu")
                 with torch.no_grad():
-                    action = agent.act(state, deterministic=True, action_mask=mask)
+                    # 逐束实体档位：观测按束数上限补零，选择动作时必须给出真实束数。
+                    action = agent.act(state, deterministic=True, action_mask=mask,
+                                       beam_entity_count=count)
                 self.assertEqual(len(action), 3)
                 width = natural_shapes(config["state"]["context_level"])["natural_beam_context"][-1]
                 offset = 204 + natural_shapes(config["state"]["context_level"])["natural_global_context"][0]
@@ -214,9 +216,9 @@ class ConfigEffectTests(unittest.TestCase):
                 permuted[offset:offset + count * width] = rows[order].reshape(-1)
                 with torch.no_grad():
                     left = agent.policy_network()(
-                        torch.as_tensor(state, dtype=torch.float32).reshape(1, -1))
+                        torch.as_tensor(state, dtype=torch.float32).reshape(1, -1), count)
                     right = agent.policy_network()(
-                        torch.as_tensor(permuted, dtype=torch.float32).reshape(1, -1))
+                        torch.as_tensor(permuted, dtype=torch.float32).reshape(1, -1), count)
                 for a, b in zip(left, right):
                     torch.testing.assert_close(a, b, rtol=0, atol=1e-4)
                 self.assertEqual(tuple(int(row.argmax()) for row in left),

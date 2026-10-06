@@ -88,17 +88,22 @@ def _pos_slots(config):
 
 
 def natural_state_width(config, count):
-    """自然布局在给定场景束数下的观测宽度（仅逐束编码档位随 N 变化）。"""
+    """自然布局在给定场景束数下的观测宽度。
+
+    逐束编码档位下，观测按``environment.beam_count_max``固定补零：网络输入宽度
+    必须恒定，真实束数由观测内归一化束数还原并由编码器屏蔽补零实体。因此这里
+    只要求 ``count`` 不超过上限，宽度与 ``count`` 无关。
+    """
     base = sum(math.prod(_feature_shape(config, fid)) for fid in config["state"]["features"])
     if network_beam_count_mode(config) != "actual":
         return base
     shapes = natural_shapes(config["state"]["context_level"])
     if "natural_beam_context" not in shapes:
         return base
-    # 观测里逐束字段每实体只写本档声明的通道数（layout 档 5、full 档 11）。
-    width = shapes["natural_beam_context"][-1]
     reference = int(config["environment"]["beam_count_max"])
-    return base + (count - reference) * width
+    if count > reference:
+        raise ValueError("场景束数超过 environment.beam_count_max，无法构造固定宽度观测")
+    return base
 
 
 def expected_state_dim(config):
