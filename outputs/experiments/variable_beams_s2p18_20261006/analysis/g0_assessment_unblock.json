@@ -1,0 +1,44 @@
+{
+  "checked_utc": "2026-10-06T18:18:23.162268+00:00",
+  "symptom": "G0 的 440 景共同考核连续被服务端拒绝，两个缺陷先后暴露",
+  "defect_1": {
+    "error": "S2-P18须使用V0/V1四十万步终点或冻结T0十五万步终点",
+    "cause": "终点门槛只认 tsac_14_variable_context 布局，G0 用 tsac_natural_context 逐束自然布局",
+    "fix": "接受的布局扩展为可变束数上下文与自然逐束布局两种；混合束数、种子51001、四十万步预算与来源步数等约束未放宽",
+    "evidence": "本地单元测试704项通过；实例仓库提交 f4607c3e"
+  },
+  "defect_2": {
+    "error": "S2-P18 H0 environment override provenance mismatch",
+    "cause": "服务端对非可变束数布局一律注入 beam_count_max=200 覆盖，而该覆盖的来源校验只为冻结T0写死（要求 state_dim=207 与特定 run_id），G0 为逐束自然布局（state_dim 与 T0 不同），且其配置本就声明上限 200，不需要覆盖",
+    "fix": "仅当模型配置声明的上限低于 200 时才注入覆盖；G0 走常规上限校验",
+    "evidence": "本地单元测试704项通过；实例仓库提交 8a148e3a；同步回执 sha_verified=true"
+  },
+  "defect_3": {
+    "error": "训练源码有未提交改动，请先完成验证并提交",
+    "cause": "直接上传文件导致冻结仓库工作区不干净",
+    "fix": "在实例仓库以仓库级身份提交该修正；备份文件移至 ops 目录"
+  },
+  "defect_4": {
+    "error": "同一请求编号已用于不同的配置",
+    "cause": "首次失败提交已占用 s2p18-g0-jan29-eval 这一请求编号",
+    "fix": "用 --tag fix2 生成新编号 s2p18-g0-jan29-eval-fix2"
+  },
+  "outcome": {
+    "job": "evaluate_sac_20261007_014310_aa0f13ed（fix2）",
+    "state": "evaluating",
+    "failed_attempts_preserved": true,
+    "note": "两次失败尝试（未加tag与被拒）保留在任务记录中，未删除"
+  },
+  "process_restarts": [
+    {
+      "time": "2026-10-06 约23:40",
+      "pid": 81357,
+      "reason": "加载终点门槛修正"
+    },
+    {
+      "time": "2026-10-06 约02:00",
+      "pid": 83417,
+      "reason": "加载束数上限按需注入修正"
+    }
+  ]
+}
