@@ -865,6 +865,9 @@ def _training(directory, job, config, ledger, resume):
                 replay_options["replay_bucket"] = replay_bucket
             if progress_segment is not None:
                 replay_options["progress_segment"] = progress_segment
+            if getattr(agent, "variable_width", False):
+                # 逐束实体档位：真实束数随转移写入回放（自然布局观测无法还原束数）。
+                replay_options["entity_count"] = int(beam_count_for_gamma)
             agent.observe(state, action, reward, next_state, done, **replay_options)
             env_step += 1
             if replay_bucket is not None:

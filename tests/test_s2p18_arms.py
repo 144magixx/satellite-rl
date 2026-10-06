@@ -7,8 +7,7 @@ import unittest
 import numpy as np
 import torch
 
-from satellite_rl.agents.workbench_algorithms import (Replay, WorkbenchAgent,
-                                                      beam_count_from_state)
+from satellite_rl.agents.workbench_algorithms import Replay, WorkbenchAgent
 from satellite_rl.agents.workbench_networks import Encoder, MultiHeadNetwork
 from satellite_rl.envs.satellite import BeamInfo
 from satellite_rl.state_layouts import (S2P18_VARIABLE_FEATURES,

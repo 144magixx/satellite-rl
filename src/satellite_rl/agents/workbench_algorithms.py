@@ -29,13 +29,13 @@ def _state_tensor(states, device):
     return torch.as_tensor(np.asarray(states, dtype=np.float32), device=device)
 
 
-def pad_states(states, device, *, padded_width=None):
+def pad_states(states, device, *, padded_width=None, entity_counts=None):
     """S2-P18 逐束编码：观测宽度恒定，批次只需要拼装。
 
     ``padded_width`` 给定时（逐束实体档位），观测本身已按场景束数上限补零，因此
-    这里只做批张量拼装，并把每个样本的**真实束数**作为有效长度返回（由观测里的
-    ``beam_count_normalized`` 还原，不依赖被补零的实体行）。编码器据此屏蔽补零
-    实体，且只对真实实体做池化。未给定时保持历史行为：右侧补零到本批最大宽度并
+    这里只做批张量拼装，并把每个样本的**真实束数**作为有效长度返回。真实束数由
+    ``entity_counts`` 给出（写入回放时记录）；自然布局的观测里没有可还原束数的
+    标量，因此不允许从观测反推。未给定时保持历史行为：右侧补零到本批最大宽度并
     把有效宽度作为长度返回。
 
     返回 ``(padded, lengths)``。空批次返回空张量。
@@ -46,33 +46,19 @@ def pad_states(states, device, *, padded_width=None):
     width = int(padded_width) if padded_width else max(widths)
     if any(value > width for value in widths):
         raise ValueError("样本观测宽度超过补零宽度")
+    if padded_width and entity_counts is None:
+        raise ValueError("逐束实体档位要求给出每条转移的真实束数")
     padded = np.zeros((len(states), width), dtype=np.float32)
     lengths = []
     for row, state in enumerate(states):
         flat = np.asarray(state, dtype=np.float32).reshape(-1)
         padded[row, :flat.shape[0]] = flat
-        lengths.append(beam_count_from_state(flat) if padded_width else flat.shape[0])
+        if padded_width:
+            lengths.append(int(entity_counts[row]))
+        else:
+            lengths.append(flat.shape[0])
     return (torch.as_tensor(padded, device=device),
             torch.as_tensor(lengths, dtype=torch.long, device=device))
-
-
-def beam_count_from_state(state) -> int:
-    """从扁平观测还原真实束数。
-
-    可变束数状态前 204 项是基础块（beam 3、power 1、interference 100、occupancy 100），
-    随后按 ``state_layouts.VARIABLE_BEAM_FEATURES`` 的顺序排列标量：
-    204 beta、205 progress、206 remaining_demand、207 beam_count_normalized（=N/200）、
-    208 remaining_beams_normalized、209 power_pressure，再往后是 S2-P18 新增标量。
-    因此真实束数由第 207 项反推，与逐束实体是否补零无关。
-    """
-    flat = np.asarray(state, dtype=np.float32).reshape(-1)
-    if flat.shape[0] < 208:
-        raise ValueError("观测过短，无法还原束数")
-    normalized = float(flat[207])
-    count = int(round(normalized * 200))
-    if not 1 <= count <= 200:
-        raise ValueError(f"观测中的归一化束数无效：{normalized}")
-    return count
 
 
 def _joint_q(heads):
@@ -183,8 +169,8 @@ def generalized_advantages(rewards, values, dones, last_value, gamma, gae_lambda
 class Replay:
     def __init__(self, capacity, seed, bucket_mode="none", progress_strata=1,
                  padded_width=None):
-        # 逐束实体档位：观测固定为补零宽度，采样时不需要按批再补齐，长度按每个
-        # 样本的真实束数给出（由观测内归一化束数还原）。None 表示历史行为。
+        # 逐束实体档位：观测固定为补零宽度，采样时不需要按批再补齐，长度按每条
+        # 转移记录的真实束数给出。None 表示历史行为。
         self.padded_width = int(padded_width) if padded_width else None
         if bucket_mode not in ("none", "fixed_100", "mixed_four_buckets"):
             raise ValueError("Unknown replay bucket mode")
@@ -214,6 +200,10 @@ class Replay:
         self.replacement_draws = {key: 0 for key in (self.bucket_indices or {})}
         self.sampled_by_stratum = {}
         self.replacement_draws_by_stratum = {}
+        # 逐束实体档位：每条转移的真实束数（与 rows 同步扩展；其他档位保持空表）。
+        self.slot_entity_counts = []
+        # 逐束实体档位：本条转移的真实束数，由 act() 记录、observe() 使用。
+        self.pending_entity_count = None
 
     def _stratum(self, bucket, segment):
         return f"{bucket}|p{segment}"
@@ -222,11 +212,22 @@ class Replay:
         return len(self.rows)
 
     def add(self, state, action, reward, next_state, done, action_mask=None, next_action_mask=None,
-            bucket=None, progress_segment=None):
+            bucket=None, progress_segment=None, entity_count=None):
+        if self.padded_width is not None and entity_count is None:
+            # 逐束实体档位：观测按束数上限补零，自然布局里没有可还原束数的标量，
+            # 因此真实束数必须在写入时记录，采样时按它屏蔽补零实体。
+            raise ValueError("逐束实体档位要求在写入转移时给出真实束数")
         row = (np.asarray(state, dtype=np.float32).copy(),
                tuple(int(x) for x in action), float(reward),
                np.asarray(next_state, dtype=np.float32).copy(), bool(done))
         row = row if action_mask is None else row + (action_mask, next_action_mask)
+        if self.padded_width is not None:
+            # 逐束实体档位：把真实束数存进附加表（不改动行结构，避免影响既有
+            # 掩码字段的解析与旧断点兼容）。
+            if len(self.slot_entity_counts) < len(self.rows) + 1:
+                self.slot_entity_counts.extend([0] * (len(self.rows) + 1 - len(self.slot_entity_counts)))
+            self.slot_entity_counts[self.next_position if self.bucket_mode != "none"
+                                    else len(self.rows)] = int(entity_count)
         if self.segment_indices is not None:
             if progress_segment is None or not 0 <= int(progress_segment) < self.progress_strata:
                 raise ValueError("进度分层采样要求每条转移给出有效的回合内进度段")
@@ -311,8 +312,13 @@ class Replay:
             self.rng.shuffle(indices)
             rows = [self.rows[index] for index in indices]
         states, actions, rewards, next_states, dones = zip(*(row[:5] for row in rows))
-        state_tensor, lengths = pad_states(states, device, padded_width=self.padded_width)
-        next_state_tensor, next_lengths = pad_states(next_states, device, padded_width=self.padded_width)
+        state_tensor, lengths = pad_states(states, device, padded_width=self.padded_width,
+                                          entity_counts=([self.slot_entity_counts[index] for index in indices]
+                                                         if self.padded_width is not None else None))
+        next_state_tensor, next_lengths = pad_states(
+            next_states, device, padded_width=self.padded_width,
+            entity_counts=([self.slot_entity_counts[index] for index in indices]
+                           if self.padded_width is not None else None))
         result = (state_tensor, torch.as_tensor(actions, dtype=torch.long, device=device),
                   torch.as_tensor(rewards, dtype=torch.float32, device=device),
                   next_state_tensor, torch.as_tensor(dones, dtype=torch.float32, device=device),
@@ -338,6 +344,8 @@ class Replay:
             data["slot_segments"] = list(self.slot_segments)
             data["sampled_by_stratum"] = dict(self.sampled_by_stratum)
             data["replacement_draws_by_stratum"] = dict(self.replacement_draws_by_stratum)
+        if self.padded_width is not None:
+            data["slot_entity_counts"] = list(self.slot_entity_counts)
         return data
 
     def load_state_dict(self, data):
@@ -351,6 +359,11 @@ class Replay:
             raise ValueError("Replay progress strata changed")
         if self.bucket_mode == "none":
             self.rows = deque(data["rows"], maxlen=self.capacity)
+            if self.padded_width is not None:
+                saved_counts = data.get("slot_entity_counts")
+                if saved_counts is None or len(saved_counts) != len(self.rows):
+                    raise ValueError("逐束实体档位的回放缺真实束数记录")
+                self.slot_entity_counts = [int(value) for value in saved_counts]
         else:
             rows, buckets = list(data["rows"]), list(data["slot_buckets"])
             if len(rows) != len(buckets) or len(rows) > self.capacity:
@@ -375,6 +388,11 @@ class Replay:
             self.next_position = position
             self.sampled_by_bucket = dict(data["sampled_by_bucket"])
             self.replacement_draws = dict(data["replacement_draws"])
+            if self.padded_width is not None:
+                saved_counts = data.get("slot_entity_counts")
+                if saved_counts is None or len(saved_counts) != len(rows):
+                    raise ValueError("逐束实体档位的回放缺真实束数记录")
+                self.slot_entity_counts = [int(value) for value in saved_counts]
             if self.segment_indices is not None:
                 saved_segments = data.get("slot_segments")
                 if saved_segments is not None:
@@ -556,6 +574,9 @@ class WorkbenchAgent:
                 if beam_entity_count is None:
                     raise ValueError("逐束实体档位必须在选择动作时给出真实束数")
                 lengths = int(beam_entity_count)
+                # 逐束实体档位：记下本条转移的真实束数，observe() 写入回放时使用
+                # （自然布局的观测里没有可还原束数的标量）。
+                self.pending_entity_count = lengths
             if self.temporal_enabled:
                 self.online_history.append(np.asarray(state, dtype=np.float32).copy())
                 sequence = _state_tensor(list(self.online_history), self.device).unsqueeze(0)
@@ -643,7 +664,9 @@ class WorkbenchAgent:
 
     def observe(self, state, action, reward, next_state, done,
                 action_mask=None, next_action_mask=None, actual_action=None, replay_bucket=None,
-                progress_segment=None):
+                progress_segment=None, entity_count=None):
+        if entity_count is None and self.variable_width:
+            entity_count = getattr(self, "pending_entity_count", None)
         if self.action_mask_mode == "joint_feasible":
             action_mask = copy_action_mask(action_mask, self.action_dims)
             if next_action_mask is None:
@@ -663,7 +686,8 @@ class WorkbenchAgent:
                                 action_mask, next_action_mask, actual_action)
             else:
                 self.replay.add(state, chosen, reward, next_state, done, action_mask, next_action_mask,
-                                bucket=replay_bucket, progress_segment=progress_segment)
+                                bucket=replay_bucket, progress_segment=progress_segment,
+                                entity_count=entity_count)
             return
         if action_mask is not None or next_action_mask is not None:
             raise ValueError("action_mask supplied while masking is disabled")
