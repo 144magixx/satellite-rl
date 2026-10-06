@@ -524,5 +524,35 @@
       "报告14填数",
       "同步目录/问答/EXPERIMENT_STATUS"
     ]
+  },
+  "stage3_progress": {
+    "checked_utc": "2026-10-06T09:39:17.951039+00:00",
+    "V3": {
+      "assessment": {
+        "run_id": "evaluate_sac_20261006_162655_a661dd3d",
+        "request_id": "s2p18-v3-jan29-eval",
+        "stage": "completed",
+        "units": "2200/2200",
+        "scene_rows": 1320,
+        "note": "440景x3次动作；含固定/贪心基线；结果结构已探测（metrics/beams/分段计时齐全）"
+      },
+      "sca": {
+        "request_id": "s2p18-v3-sca",
+        "stage": "evaluating",
+        "units": "8/3960",
+        "note": "440景x3次动作x3方法(none/sca/sca_si_lp)"
+      }
+    },
+    "V2": {
+      "pilot_run": "train_sac_20261006_084454_365eff71",
+      "stage": "training",
+      "env_step": 372950
+    },
+    "G0": {
+      "pilot_run": "train_sac_20261006_092142_142c6953",
+      "stage": "training",
+      "env_step": 220000
+    },
+    "note": "自动线在V3考核完成后未接上SCA（提交后卡住），已手动提交V3的SCA；V2/G0跑满时需人工或重跑自动线"
   }
 }
