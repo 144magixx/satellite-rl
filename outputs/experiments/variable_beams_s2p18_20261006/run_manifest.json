@@ -498,5 +498,24 @@
       }
     },
     "reading": "V2 在 N=200 的每束槽数已接近冻结 V1 水平（1.97 对 1.82），V3 仍低于 V1（1.665）；G0 早期在 N=50 高达 5.26 槽/束（接近贪心水平）但绝对 SI 最低，说明它把资源摊薄了；三臂的 SI 随 N 变化形状不同：V2 在 N=100 见顶后缓降，V3 在 N=80 见顶后下降更快，G0 则随 N 单调上升（与它按束数条件化的设计一致）。"
+  },
+  "automation": {
+    "checked_utc": "2026-10-06T06:10:05.374872+00:00",
+    "lines": {
+      "hourly_progress": "scripts/variable_beams/monitor18.py，整点记录，终态或出错立即记录",
+      "assess_and_sca": "scripts/variable_beams/assess_when_ready18.py，臂跑满40万步即提交440景考核，考核completed后自动提交统一SCA，出错即停"
+    },
+    "guards": [
+      "考核仅接受stage=completed且步数=预算=400000",
+      "考核显式选择final导出，非final直接拒绝",
+      "SCA以已完成的考核为冻结初解来源，未完成时拒绝"
+    ],
+    "remaining_after_extension": [
+      "逐N汇总与G1-G4判定",
+      "逐束与计时审计",
+      "本地中文曲线",
+      "报告14填数",
+      "同步目录/问答/EXPERIMENT_STATUS"
+    ]
   }
 }
