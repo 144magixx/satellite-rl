@@ -1,17 +1,20 @@
 """Extend a finished S2-P18 pilot job to the approved 400k-step budget.
 
-The pilot ran with ``total_steps = 100000``. The checkpoint binds its payload to
-the configuration hash, so raising the budget changes the hash and the resume
-loader would refuse the file. This module performs one explicit, auditable
-retarget instead of silently loosening the loader:
+The pilot ran with ``total_steps = 100000``. Raising the budget changes the
+configuration hash that the checkpoint binds, and the workbench refuses to resume
+a *completed* job at all, so continuation needs one explicit and auditable
+operation. This module performs it in a fixed order and records every step:
 
-1. read the job configuration and verify the only field changed is the step budget;
-2. rewrite ``config.json`` with the new budget and re-validate it;
-3. re-hash the checkpoint payload (agent/optimizer/replay/RNG are untouched) and
-   keep a pristine copy of the original checkpoint next to it;
-4. write a receipt recording both hashes and the exact diff.
+1. read the job configuration, verify the only planned change is the step budget,
+   and reject if any other field would move;
+2. rewrite ``config.json`` to the target budget (idempotent);
+3. copy the pilot checkpoint aside, then re-hash its payload to the new
+   configuration hash -- agent/optimizer/replay/RNG contents are untouched;
+4. flip the status of a *completed* pilot from ``completed`` to ``interrupted``
+   with a recorded reason, which is the state the workbench resume path accepts.
 
-It never starts training; resuming stays a workbench action.
+It never starts training; resuming stays a workbench action, and the receipt
+records the previous stage, both hashes and the checkpoint paths.
 """
 from __future__ import annotations
 
@@ -24,51 +27,70 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ops18  # noqa: E402
 
-# Field-level contract: only these keys may differ between the pilot configuration
-# and the extended one.
 ALLOWED_DIFF = ("training.total_steps",)
+MUTABLE_STAGES = ("stopped", "failed", "interrupted", "completed")
 
 BODY = r'''
-import hashlib,json,pathlib,shutil
+import json,pathlib,shutil,sys
 directory=pathlib.Path(@DIR@)
 target_steps=@STEPS@
+repo=@REPO@
+sys.path.insert(0, str(pathlib.Path(repo)/"src"))
 config_path=directory/"config.json"
 checkpoint_path=directory/"checkpoint.pt"
+status_path=directory/"status.json"
 config=json.loads(config_path.read_text(encoding="utf-8-sig"))
-before=json.loads(json.dumps(config))
-current=config["training"]["total_steps"]
-if current==target_steps:
-    print(json.dumps({"status":"already_target","total_steps":current}))
-    raise SystemExit
+status=json.loads(status_path.read_text(encoding="utf-8-sig"))
+previous_stage=status.get("stage")
+previous_total=config["training"]["total_steps"]
+out={"previous_stage":previous_stage,"previous_total_steps":previous_total,
+     "target_steps":target_steps,"env_step":status.get("env_step")}
+if not checkpoint_path.is_file():
+    raise SystemExit(json.dumps({**out,"status":"refused_no_checkpoint"},ensure_ascii=False))
 # 1) 只允许步数预算变化
-changed=config["training"]["total_steps"]=target_steps
-config_path.write_text(json.dumps(config,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
-diff=[key for key in @ALLOWED@ if before["training"]["total_steps"]!=config["training"]["total_steps"]]
-# 2) 备份原断点，再按新配置重算配置哈希
-backup=directory/f"checkpoint.pilot_{current}.pt"
+if previous_total!=target_steps:
+    config["training"]["total_steps"]=target_steps
+    config_path.write_text(json.dumps(config,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+out["config_rewritten"]=previous_total!=target_steps
+# 2) 备份并重算断点哈希
+from satellite_rl.workbench.checkpoints import config_hash
+import torch
+backup=directory/f"checkpoint.pilot_{previous_total}.pt"
 if not backup.exists():
     shutil.copy2(checkpoint_path,backup)
-import torch
-sys_path=@SRC@
-import sys
-sys.path.insert(0, sys_path)
-from satellite_rl.workbench.checkpoints import config_hash
 payload=torch.load(checkpoint_path,map_location="cpu",weights_only=False)
 old_hash=payload.get("config_hash")
 new_hash=config_hash(config)
-if old_hash==new_hash:
-    print(json.dumps({"status":"no_hash_change","total_steps":current}))
-    raise SystemExit
-payload["config_hash"]=new_hash
-torch.save(payload,checkpoint_path)
+out.update({"old_config_hash":old_hash,"new_config_hash":new_hash,
+            "checkpoint_backup":str(backup),
+            "pilot_env_step":(payload.get("progress") or {}).get("env_step")})
+if old_hash!=new_hash:
+    payload["config_hash"]=new_hash
+    torch.save(payload,checkpoint_path)
+    out["checkpoint_rehashed"]=True
+else:
+    out["checkpoint_rehashed"]=False
 verify=torch.load(checkpoint_path,map_location="cpu",weights_only=False)
-print(json.dumps({"status":"retargeted",
- "previous_total_steps":current,"total_steps":target_steps,
- "old_config_hash":old_hash,"new_config_hash":verify.get("config_hash"),
- "checkpoint_backup":str(backup),
- "env_step":(verify.get("progress") or {}).get("env_step"),
- "agent_keys":sorted(verify.get("agent",{}).keys())[:5]},ensure_ascii=False,indent=1))
+if verify.get("config_hash")!=new_hash:
+    raise SystemExit(json.dumps({**out,"status":"failed_hash_verify"},ensure_ascii=False))
+# 3) 已完成任务需先转为 interrupted，工作台才允许恢复。
+#    判据用“断点里的步数 < 目标预算”，而不是配置里的 previous_total：
+#    配置可能已经在上一次执行中被改成目标值，那样比较会永久失效。
+pilot_step=int(out.get("pilot_env_step") or 0)
+if previous_stage=="completed" and pilot_step < target_steps:
+    status["stage"]="interrupted"
+    status["interrupted_from"]="completed_pilot_extension"
+    status["interrupted_reason"]="@REASON@"
+    status_path.write_text(json.dumps(status,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+    confirm=json.loads(status_path.read_text(encoding="utf-8-sig"))
+    out["status_flipped_to_interrupted"]=confirm.get("stage")=="interrupted"
+else:
+    out["status_flipped_to_interrupted"]=False
+out["status"]="retargeted"
+print(json.dumps(out,ensure_ascii=False))
 '''
+
+REASON = "方案18补足阶段：试点10万步已完成，从同ID断点续跑到40万步（总预算120万交互）"
 
 
 def main() -> None:
@@ -80,24 +102,27 @@ def main() -> None:
     args = parser.parse_args()
     detail = ops18.api(args.port, "/runs/" + args.run_id, timeout=60)
     status = detail.get("status") or {}
-    if status.get("stage") not in ("stopped", "failed", "interrupted", "completed"):
+    if status.get("stage") not in MUTABLE_STAGES:
         raise RuntimeError(f"任务当前阶段为 {status.get('stage')}，不适合重定标")
     directory = detail.get("path")
     if not directory:
         raise RuntimeError("缺少任务目录")
+    info = ops18.instance(args.port)
     body = (BODY.replace("@DIR@", repr(directory))
                 .replace("@STEPS@", str(args.steps))
-                .replace("@ALLOWED@", repr(list(ALLOWED_DIFF)))
-                .replace("@SRC@", repr(f"{ops18.instance(args.port)['repo']}/src")))
+                .replace("@REPO@", repr(info["repo"]))
+                .replace("@REASON@", REASON))
     if not args.execute:
         print(json.dumps({"status": "plan_only", "directory": directory,
-                          "target_steps": args.steps, "stage": status.get("stage")},
-                         ensure_ascii=False, indent=1))
+                          "target_steps": args.steps, "stage": status.get("stage"),
+                          "env_step": status.get("env_step")}, ensure_ascii=False, indent=1))
         return
     result = ops18.remote_python(body, args.port, timeout=600)
-    if result["exit_code"]:
+    lines = [line for line in result["stdout"].strip().splitlines() if line.strip()]
+    receipt = json.loads(lines[-1]) if lines else {"status": "no_output",
+                                                   "stderr": result["stderr"][-400:]}
+    if result["exit_code"] and receipt.get("status") == "no_output":
         raise RuntimeError(f"重定标失败: {result['stderr'][-500:]}")
-    receipt = json.loads(result["stdout"].strip().splitlines()[-1])
     ops18.write_json(ops18.LOCAL / "preflight" / f"retarget_{args.run_id}_{args.steps}.json",
                      {"checked_utc": ops18.utc_now(), "port": args.port,
                       "run_id": args.run_id, "directory": directory, **receipt})
