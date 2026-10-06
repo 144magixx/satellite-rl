@@ -38,7 +38,8 @@ def plan(source: Path, commit: str) -> dict:
     # but only for the two S2-P18 driver scripts and only when nothing else is
     # dirty: the deployed scientific tree must stay byte-identical.
     allowed = {"scripts/variable_beams/deploy18.py", "scripts/variable_beams/submit18.py",
-               "scripts/variable_beams/ops18.py"}
+               "scripts/variable_beams/ops18.py", "scripts/variable_beams/import18.py",
+               "scripts/variable_beams/stop18.py"}
     blocking = []
     for line in dirty.splitlines():
         path = line[3:].strip().strip('"')
@@ -67,6 +68,14 @@ print(json.dumps({{"gpu":run(["nvidia-smi","--query-gpu=name,uuid,memory.total,m
         if result["exit_code"]:
             raise RuntimeError(f"预检失败 {port}: {result['stderr'][-400:]}")
         detail = json.loads(result["stdout"].strip().splitlines()[-1])
+        existing = detail.get("existing") or {}
+        if existing.get("repo"):
+            head = (existing.get("repo_head") or {}).get("stdout", "")
+            dirty = (existing.get("repo_dirty") or {}).get("stdout", "")
+            if dirty:
+                raise RuntimeError(f"{port} 现有检出有未提交改动，拒绝覆盖：{dirty[:200]}")
+            if head != commit:
+                detail["update_from"] = head
         report["instances"][str(port)] = {
             "target": info["target"], "root": info["root"], "repo": info["repo"],
             "archive": info["archive"], "api_port": info["api_port"], **detail}
