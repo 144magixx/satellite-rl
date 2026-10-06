@@ -8,3 +8,25 @@ dist/
 outputs/
 models/runs/
 
+
+
+# 工作台任务散件误落项目根目录时的忽略规则（2026-10-06 补充）
+# 说明：2026-09-25 一次失败任务把 job.json/status.json/checkpoint.pt 等写到了仓库根目录，
+# 这些是运行产物而非源码，不应纳入版本管理；正式产物应位于 outputs/ 下。
+/artifacts.json
+/checkpoint.pt
+/config.json
+/episodes.jsonl
+/evaluations.jsonl
+/events.jsonl
+/failure.json
+/job.json
+/launch.json
+/metrics.jsonl
+/status.json
+/traces.jsonl
+/updates.jsonl
+/worker.log
+
+# 本地临时工作目录（测试日志、一次性排查脚本）
+/tmp/
