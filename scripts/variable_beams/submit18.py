@@ -94,8 +94,16 @@ ARM_OVERRIDES = {
     "V2": {
         # means A (throughput + spectrum gain) with B/C/E/H already folded into
         # the shared s2p18 state profile and the progress-stratified replay.
+        # Network layout stays the frozen variable-beam layout; attention pooling
+        # and size conditioning are only allowed under the natural per-beam
+        # layout, so this arm keeps first_token / none.
         "state": {"context_level": "none", "demand_visibility": "known",
                   "features": list(S2P18_FEATURES)},
+        "network": {"kind": "transformer", "transformer_layout": "tsac_14_variable_context",
+                    "embedding_dim": 128, "num_heads": 8, "num_layers": 2,
+                    "feedforward_dim": 512, "activation": "relu", "dropout": 0,
+                    "context_beam_count": "fixed_100", "readout_mode": "first_token",
+                    "beam_count_conditioning": "none"},
         "reward": {
             "preset": "legacy_repaired_throughput",
             "terms": [{"id": "si_delta", "weight": 1, "scale": 1, "timing": "step"}],
@@ -107,13 +115,16 @@ ARM_OVERRIDES = {
             "gamma": 0.99,
             "gamma_schedule": {"mode": "none", "default": 0.99, "by_beam_count": []},
         },
-        "network": {"context_beam_count": "fixed_100", "readout_mode": "first_token",
-                    "beam_count_conditioning": "none"},
     },
     "V3": {
         # same observation as V2; only the credit assignment changes (D + F).
         "state": {"context_level": "none", "demand_visibility": "known",
                   "features": list(S2P18_FEATURES)},
+        "network": {"kind": "transformer", "transformer_layout": "tsac_14_variable_context",
+                    "embedding_dim": 128, "num_heads": 8, "num_layers": 2,
+                    "feedforward_dim": 512, "activation": "relu", "dropout": 0,
+                    "context_beam_count": "fixed_100", "readout_mode": "first_token",
+                    "beam_count_conditioning": "none"},
         "reward": {
             "preset": "legacy_repaired",
             "terms": [{"id": "si_delta", "weight": 1, "scale": 1, "timing": "step"}],
@@ -127,14 +138,17 @@ ARM_OVERRIDES = {
                                "by_beam_count": [{"max_beam_count": 100, "gamma": 0.99},
                                                  {"max_beam_count": 200, "gamma": 0.999}]},
         },
-        "network": {"context_beam_count": "fixed_100", "readout_mode": "first_token",
-                    "beam_count_conditioning": "none"},
     },
     "G0": {
-        # per-beam set encoding: actual-count beam context, attention pooling
-        # readout and size conditioning; reward stays the frozen original.
-        "state": {"context_level": "none", "demand_visibility": "known",
-                  "features": list(S2P18_FEATURES)},
+        # per-beam set encoding: the natural per-beam layout is mandatory here
+        # (actual-count beam context, attention pooling readout, size
+        # conditioning); reward stays the frozen original.
+        "state": {"context_level": "full", "demand_visibility": "known"},
+        "network": {"kind": "transformer", "transformer_layout": "tsac_natural_context",
+                    "embedding_dim": 128, "num_heads": 8, "num_layers": 2,
+                    "feedforward_dim": 512, "activation": "relu", "dropout": 0,
+                    "context_beam_count": "actual", "readout_mode": "attention_pooling",
+                    "beam_count_conditioning": "film"},
         "reward": {
             "preset": "legacy_repaired",
             "terms": [{"id": "si_delta", "weight": 1, "scale": 1, "timing": "step"}],
@@ -146,8 +160,6 @@ ARM_OVERRIDES = {
             "gamma": 0.99,
             "gamma_schedule": {"mode": "none", "default": 0.99, "by_beam_count": []},
         },
-        "network": {"context_beam_count": "actual", "readout_mode": "attention_pooling",
-                    "beam_count_conditioning": "film"},
     },
 }
 
