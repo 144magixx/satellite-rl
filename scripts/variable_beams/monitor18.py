@@ -51,11 +51,12 @@ def record(arms: dict, note: str) -> None:
     entry = {"utc": ops18.utc_now(), "beijing": time.strftime("%Y-%m-%d %H:%M:%S"),
              "note": note, "arms": arms}
     with LOG.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        handle.write(json.dumps(entry, ensure_ascii=True) + "\n")
     summary = " | ".join(
         f"{arm}:{data['stage']}:{data['env_step']}/{data['budget_env_steps']}"
         for arm, data in sorted(arms.items()))
-    print(f"[{entry['beijing']}] {note} {summary}", flush=True)
+    print(json.dumps({"beijing": entry["beijing"], "note": note, "arms": summary},
+                 ensure_ascii=True), flush=True)
 
 
 def main() -> None:
