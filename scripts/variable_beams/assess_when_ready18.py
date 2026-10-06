@@ -31,8 +31,9 @@ def state(port: int, run_id: str) -> dict:
     return detail.get("status") or {}
 
 
-def submit(arm: str, port: int) -> dict:
-    result = subprocess.run([PY, DRIVER, "--arm", arm, "--port", str(port), "--evaluate", "--execute"],
+def submit(arm: str, port: int, mode: str) -> dict:
+    """Submit either the 440-scene assessment or the SCA refinement for one arm."""
+    result = subprocess.run([PY, DRIVER, "--arm", arm, "--port", str(port), f"--{mode}", "--execute"],
                             capture_output=True, text=True)
     text = (result.stdout or "").strip()
     try:
@@ -41,10 +42,28 @@ def submit(arm: str, port: int) -> dict:
         return {"raw": text[-600:], "stderr": (result.stderr or "")[-300:]}
 
 
+def assessment_state(arm: str, port: int) -> dict:
+    """Latest assessment job for this arm, so SCA can be chained after it completes."""
+    runs = ops18.api(port, "/runs", timeout=60).get("runs", [])
+    best = {}
+    for item in runs:
+        request = str(item.get("request_id", ""))
+        if not request.startswith(f"s2p18-{arm.lower()}-") or "eval" not in request:
+            continue
+        detail = ops18.api(port, "/runs/" + item["run_id"], timeout=60)
+        status = detail.get("status") or {}
+        row = {"run_id": item["run_id"], "request_id": request,
+               "stage": status.get("stage") or item.get("stage"),
+               "env_step": status.get("env_step"), "error": status.get("error")}
+        if not best or (row["env_step"] or 0) >= (best.get("env_step") or 0):
+            best = row
+    return best
+
+
 def main() -> None:
-    done = set()
+    done, refined = set(), set()
     deadline = time.time() + DEADLINE_HOURS * 3600
-    while time.time() < deadline and len(done) < len(ARMS):
+    while time.time() < deadline and len(refined) < len(ARMS):
         for arm, (port, run_id) in ARMS.items():
             if arm in done:
                 continue
@@ -60,10 +79,20 @@ def main() -> None:
                 return
             if stage == "completed" and step == budget == 400000:
                 print(f"{arm} 已到40万步终点，提交440景考核", flush=True)
-                print(json.dumps(submit(arm, port), ensure_ascii=False), flush=True)
+                print(json.dumps(submit(arm, port, "evaluate"), ensure_ascii=False), flush=True)
                 done.add(arm)
+            if arm in done:
+                # 考核完成后立刻串接统一SCA；SCA以已完成的考核为冻结初解来源。
+                assessment = assessment_state(arm, port)
+                if assessment.get("stage") == "completed" and arm not in refined:
+                    print(f"{arm} 考核完成，提交统一SCA", flush=True)
+                    print(json.dumps(submit(arm, port, "sca"), ensure_ascii=False), flush=True)
+                    refined.add(arm)
+                elif assessment.get("error"):
+                    print(f"{arm} 考核出错：{assessment['error']}", flush=True)
+                    return
         time.sleep(POLL)
-    print("等待结束，已提交:", sorted(done), flush=True)
+    print("等待结束，已提交考核:", sorted(done), "已提交SCA:", sorted(refined), flush=True)
 
 
 if __name__ == "__main__":
