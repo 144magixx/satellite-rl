@@ -34,8 +34,18 @@ def plan(source: Path, commit: str) -> dict:
     if git(source, "rev-parse", "HEAD") != commit:
         raise RuntimeError("正式源码 HEAD 与指定提交不符")
     dirty = git(source, "status", "--porcelain")
-    if dirty:
-        raise RuntimeError("正式源码工作区不干净：" + dirty[:400])
+    # Ops-only fixups committed on top of the frozen science commit are allowed,
+    # but only for the two S2-P18 driver scripts and only when nothing else is
+    # dirty: the deployed scientific tree must stay byte-identical.
+    allowed = {"scripts/variable_beams/deploy18.py", "scripts/variable_beams/submit18.py",
+               "scripts/variable_beams/ops18.py"}
+    blocking = []
+    for line in dirty.splitlines():
+        path = line[3:].strip().strip('"')
+        if path not in allowed:
+            blocking.append(line)
+    if blocking:
+        raise RuntimeError("正式源码工作区不干净：" + " | ".join(blocking)[:400])
     report = {"scientific_commit": commit, "source_repo": str(source), "instances": {}}
     for port in ops18.PORTS:
         info = ops18.instance(port)
@@ -88,9 +98,19 @@ def run(args,**kw):
  p=subprocess.run(args,capture_output=True,text=True,**kw)
  return {{"exit_code":p.returncode,"stdout":p.stdout.strip(),"stderr":p.stderr[-300:]}}
 steps={{}}
-if repo.is_dir():
+# A pre-created empty directory is not a checkout: only treat the repo as
+# present when it is a real git work tree.
+is_checkout=(repo/".git").is_dir()
+if is_checkout:
  steps["clone"]={{"exit_code":0,"stdout":"already_present","stderr":""}}
 else:
+ if repo.is_dir():
+  # Refuse to delete anything: only an empty directory may be reused.
+  leftovers=[p.name for p in repo.iterdir()]
+  if leftovers:
+   raise RuntimeError("repo directory exists but is not a git checkout and is not empty: "+str(leftovers[:5]))
+  repo.rmdir()
+ repo.parent.mkdir(parents=True,exist_ok=True)
  steps["clone"]=run(["git","clone","--quiet",str(bundle),str(repo)])
 steps["fetch"]=run(["git","-C",str(repo),"fetch","--quiet",str(bundle),"HEAD"])
 steps["checkout"]=run(["git","-C",str(repo),"checkout","--quiet",commit])
