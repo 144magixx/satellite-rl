@@ -1,0 +1,71 @@
+{
+  "checked_utc": "2026-10-06T18:53:32.217445+00:00",
+  "run_id": "evaluate_sac_20261007_021119_846087b2",
+  "overall": {
+    "final_si_mean": 0.8152344591079695,
+    "final_sgm_mean": 0.5679342353400177,
+    "actual_slots": 384.73030303030305,
+    "power_w": 1961.249999999545
+  },
+  "baselines": {
+    "fixed": 0.8368048764079439,
+    "greedy": 0.8933191049569863
+  },
+  "per_n": {
+    "50": {
+      "si": 0.8234,
+      "slots_per_beam": 5.73,
+      "rows": 120
+    },
+    "60": {
+      "si": 0.8251,
+      "slots_per_beam": 5.15,
+      "rows": 120
+    },
+    "75": {
+      "si": 0.8155,
+      "slots_per_beam": 4.49,
+      "rows": 120
+    },
+    "90": {
+      "si": 0.8145,
+      "slots_per_beam": 3.96,
+      "rows": 120
+    },
+    "100": {
+      "si": 0.81,
+      "slots_per_beam": 3.66,
+      "rows": 120
+    },
+    "125": {
+      "si": 0.8022,
+      "slots_per_beam": 3.11,
+      "rows": 120
+    },
+    "140": {
+      "si": 0.8073,
+      "slots_per_beam": 2.88,
+      "rows": 120
+    },
+    "150": {
+      "si": 0.8074,
+      "slots_per_beam": 2.76,
+      "rows": 120
+    },
+    "175": {
+      "si": 0.8173,
+      "slots_per_beam": 2.54,
+      "rows": 120
+    },
+    "180": {
+      "si": 0.8208,
+      "slots_per_beam": 2.51,
+      "rows": 120
+    },
+    "200": {
+      "si": 0.824,
+      "slots_per_beam": 2.38,
+      "rows": 120
+    }
+  }
+}
