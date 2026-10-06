@@ -42,7 +42,7 @@
     "test": "scenes_20261004_133838_d7476a54 (440)"
   },
   "jobs": {},
-  "updated_utc": "2026-10-06T03:25:22.268230+00:00",
+  "updated_utc": "2026-10-06T03:45:58.217772+00:00",
   "pilot": {
     "arm_configs": {
       "V2": {
@@ -344,5 +344,16 @@
       "评价仍要求40万步终点与来源provenance校验",
       "SCA仍要求原动作次数/种子与总功率路线一致"
     ]
+  },
+  "plotting_decision": {
+    "checked_utc": "2026-10-06T03:45:58.217772+00:00",
+    "finding": "远端两个容器的 matplotlib 只有19个字体、无任何CJK字体（本机有 SimHei/Microsoft YaHei 等）",
+    "decision": "全部中文图表在本地由拉回的原始逐场景结果生成，脚本固定为 scripts/variable_beams/analyse18.py 的 configure_plotting()",
+    "reasons": [
+      "远端渲染中文会缺字或空白，报告图表必须可读",
+      "同一字体与同一脚本生成全部图表，避免风格与口径漂移",
+      "在本地绘图不改动任何远端结果，原始数据与图一一对应"
+    ],
+    "font_used": "SimHei（自检图 tmp/font_check.png 已验证中文标签正常）"
   }
 }

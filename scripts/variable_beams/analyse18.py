@@ -111,6 +111,27 @@ def per_beam_min_ratio(beams) -> float | None:
     return {"min": ratios[0], "p05": ratios[index], "n": len(ratios)}
 
 
+def configure_plotting():
+    """Agg backend plus a CJK-capable font so Chinese labels render on both hosts."""
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib import font_manager
+    import matplotlib.pyplot as plt
+    available = {font.name for font in font_manager.fontManager.ttflist}
+    chosen = next((name for name in ("SimHei", "Microsoft YaHei", "Noto Sans CJK SC",
+                                     "WenQuanYi Zen Hei", "Source Han Sans SC", "DejaVu Sans")
+                   if name in available), "DejaVu Sans")
+    plt.rcParams.update({
+        "font.family": chosen,
+        "font.size": 9,
+        "axes.unicode_minus": False,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "savefig.dpi": 180,
+    })
+    return plt, chosen
+
+
 def run_index(port: int) -> list:
     """All S2-P18 jobs on one instance, newest first."""
     runs = ops18.api(port, "/runs", timeout=60).get("runs", [])
