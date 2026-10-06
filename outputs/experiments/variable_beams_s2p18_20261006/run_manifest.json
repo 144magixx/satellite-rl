@@ -3,7 +3,7 @@
   "title": "可变束数泛化第二轮（V2/V3/G0 三臂机制验证）",
   "created_utc": "2026-10-05T23:49:39.6950930Z",
   "plan": "docs/第二阶段/方案/18_可变束数泛化第二轮改进方案.md",
-  "status": "stage2_extension_running",
+  "status": "two_arms_extension_one_pilot",
   "budget": {
     "arms": 3,
     "stage1_steps_per_arm": 100000,
@@ -42,7 +42,7 @@
     "test": "scenes_20261004_133838_d7476a54 (440)"
   },
   "jobs": {},
-  "updated_utc": "2026-10-06T02:56:01.304554+00:00",
+  "updated_utc": "2026-10-06T03:03:32.208033+00:00",
   "pilot": {
     "arm_configs": {
       "V2": {
@@ -278,26 +278,30 @@
   },
   "stage2": {
     "budget_target_steps": 400000,
+    "V2": {
+      "run_id": "train_sac_20261006_084454_365eff71",
+      "port": 20418,
+      "pilot_steps": 100000,
+      "state": "extension_running",
+      "old_config_hash": "c485203cc45701ba3c57374b2a53d02ec52866c265bd2aeebf38d509d1a243e8",
+      "new_config_hash": "1b00ab8f280f9f20c278c7dc2e09c0b2381280ae1864967aeeecf4edac904aef",
+      "checkpoint_rehashed": true,
+      "retired_snapshot_sha256": "fa53baeaca047d91d4ae44b81cd36d6636e909ad56204d066375c32f3b3f2ca8"
+    },
     "V3": {
       "run_id": "train_sac_20261006_084726_c004cd09",
       "port": 20424,
       "pilot_steps": 100000,
       "state": "extension_running",
-      "retarget_receipt": "preflight/retarget_train_sac_20261006_084726_c004cd09_400000.json",
-      "snapshot_retired": "preflight/retire_snapshot_train_sac_20261006_084726_c004cd09_100000.json",
-      "note": "同ID断点续跑；配置只改总步数；原断点与试点快照均改名保留并记录SHA"
-    },
-    "V2": {
-      "run_id": "train_sac_20261006_084454_365eff71",
-      "port": 20418,
-      "pilot_steps": 100000,
-      "state": "pilot_finishing"
+      "new_config_hash": "0ca55bd83cf45bca5d2a792f35ea591c435096d7bcaee6bab32dafac691fa215",
+      "retired_snapshot_sha256": "1c5939395c54b6d7b4372fe00052359ceb49e08c6bdc1e5e889bb670338ff206"
     },
     "G0": {
       "run_id": "train_sac_20261006_092142_142c6953",
       "port": 20418,
       "pilot_steps": 100000,
       "state": "pilot_training"
-    }
+    },
+    "note": "两臂同ID断点续跑；配置只改总步数；原断点与试点快照均改名保留并记录SHA；G0试点完成后按同一流程处理"
   }
 }
