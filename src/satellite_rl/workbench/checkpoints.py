@@ -204,8 +204,14 @@ class Policy:
     def last_action_info(self):
         return self.agent.last_action_info
 
-    def act(self, state, deterministic=True, action_mask=None):
-        return self.agent.act(state, deterministic=deterministic, action_mask=action_mask)
+    @property
+    def variable_width(self):
+        """逐束实体档位：观测按束数上限补零，选动作时必须给出真实束数。"""
+        return bool(getattr(self.agent, "variable_width", False))
+
+    def act(self, state, deterministic=True, action_mask=None, beam_entity_count=None):
+        return self.agent.act(state, deterministic=deterministic, action_mask=action_mask,
+                              beam_entity_count=beam_entity_count)
 
     def reset_episode(self):
         self.agent.reset_episode()

@@ -374,6 +374,10 @@ def _evaluation_episode(env, policy, scene, scene_id, seed, action_mode, trace_p
     while not done:
         mask = env.action_mask()
         policy_options = {"action_mask": mask} if mask is not None else {}
+        if getattr(policy, "variable_width", False):
+            # 逐束实体档位：观测按束数上限补零，必须把本场景真实束数传给编码器，
+            # 否则补零行会参与注意力池化与 N 条件调制。
+            policy_options["beam_entity_count"] = int(env.raw_env.beam_num)
         if timed_cuda:
             torch.cuda.synchronize()
         action_started = time.perf_counter()
