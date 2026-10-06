@@ -82,20 +82,22 @@ def summarize_scenes(rows: list, group_key) -> dict:
         p05 = [item["p05"] for item in tails if item]
         entry["beam_min_ratio"] = mean(mins)
         entry["beam_p05_ratio"] = mean(p05)
-        out[key] = entry
+        out[f"N={key[0]}|load={key[1]}"] = entry
     return out
 
 
 def figure_terminal(table: dict, field: str, label: str, path: Path) -> dict:
     plt, font = configure_plotting()
-    counts = sorted({key[0] for key in table})
-    methods = sorted({key[1] for key in table})
+    parsed = {key: (int(key.split("|")[0].split("=")[1]),
+                    key.split("|load=")[1]) for key in table}
+    counts = sorted({value[0] for value in parsed.values()})
+    methods = sorted({value[1] for value in parsed.values()})
     fig, ax = plt.subplots(figsize=(7.6, 4.4))
     for method in methods:
         xs, ys = [], []
         for count in counts:
-            values = [table[key][field] for key in table
-                      if key[0] == count and key[1] == method and table[key][field] is not None]
+            values = [table[key][field] for key, meta in parsed.items()
+                      if meta[0] == count and meta[1] == method and table[key][field] is not None]
             if values:
                 xs.append(count)
                 ys.append(statistics.fmean(values))
@@ -133,7 +135,9 @@ def main() -> None:
         data = fetch_results(entry["port"], entry["run_id"], entry["directory"])
         scenes = data.get("scenes") or []
         key = entry["request_id"]
-        model_rows = [row for row in scenes if (row.get("model") or row.get("policy") or "model") == "model"] or scenes
+        # 考核行按 group 区分：model 为被评模型，baseline_* 为对照基线。
+        model_rows = [row for row in scenes if str(row.get("group", "model")).startswith("model")] or [
+            row for row in scenes if not str(row.get("group", "")).startswith("baseline")] or scenes
         table = summarize_scenes(model_rows, lambda row: (row.get("beam_count"),
                                                           (row.get("scene_metadata") or {}).get("load_multiplier")))
         summaries[key] = {"scenes": len(scenes), "per_group": table}
@@ -141,10 +145,10 @@ def main() -> None:
                              ("slots", "每束占用槽数")):
             path = OUT / f"中文_{field}_随束数变化.png"
             if field == "slots":
-                for group_key in table:
-                    entry_row = table[group_key]
-                    if entry_row.get("slots") and group_key[0]:
-                        entry_row["slots_per_beam"] = entry_row["slots"] / group_key[0]
+                for group_key, entry_row in table.items():
+                    count = int(group_key.split("|")[0].split("=")[1])
+                    if entry_row.get("slots") and count:
+                        entry_row["slots_per_beam"] = entry_row["slots"] / count
                 summaries[key]["slots_note"] = "按每束槽数绘制"
             summaries[key].setdefault("figures", []).append(
                 figure_terminal(table, "slots_per_beam" if field == "slots" else field, label, path))
