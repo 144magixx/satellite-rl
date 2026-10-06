@@ -3,7 +3,7 @@
   "title": "可变束数泛化第二轮（V2/V3/G0 三臂机制验证）",
   "created_utc": "2026-10-05T23:49:39.6950930Z",
   "plan": "docs/第二阶段/方案/18_可变束数泛化第二轮改进方案.md",
-  "status": "pilot_training_running",
+  "status": "training_and_assessment_complete_sca_finishing",
   "budget": {
     "arms": 3,
     "stage1_steps_per_arm": 100000,
@@ -42,7 +42,7 @@
     "test": "scenes_20261004_133838_d7476a54 (440)"
   },
   "jobs": {},
-  "updated_utc": "2026-10-06T18:18:23.170270+00:00",
+  "updated_utc": "2026-10-06T21:11:13.696443+00:00",
   "pilot": {
     "arm_configs": {
       "G0": {
@@ -345,7 +345,7 @@
       "run_id": "train_sac_20261006_084454_365eff71",
       "port": 20418,
       "pilot_steps": 100000,
-      "state": "extension_running",
+      "state": "completed_400000",
       "old_config_hash": "c485203cc45701ba3c57374b2a53d02ec52866c265bd2aeebf38d509d1a243e8",
       "new_config_hash": "1b00ab8f280f9f20c278c7dc2e09c0b2381280ae1864967aeeecf4edac904aef",
       "checkpoint_rehashed": true,
@@ -355,7 +355,7 @@
       "run_id": "train_sac_20261006_084726_c004cd09",
       "port": 20424,
       "pilot_steps": 100000,
-      "state": "extension_running",
+      "state": "completed_400000",
       "new_config_hash": "0ca55bd83cf45bca5d2a792f35ea591c435096d7bcaee6bab32dafac691fa215",
       "retired_snapshot_sha256": "1c5939395c54b6d7b4372fe00052359ceb49e08c6bdc1e5e889bb670338ff206"
     },
@@ -363,9 +363,9 @@
       "run_id": "train_sac_20261006_092142_142c6953",
       "port": 20418,
       "pilot_steps": 100000,
-      "state": "pilot_training"
+      "state": "completed_400000"
     },
-    "note": "两臂同ID断点续跑；配置只改总步数；原断点与试点快照均改名保留并记录SHA；G0试点完成后按同一流程处理"
+    "note": "三臂均在同一任务 ID 上从 10 万步断点续跑到 40 万步；重定标只改总步数预算，原断点与试点终点快照改名保留并记录 SHA"
   },
   "throughput_observed": {
     "checked_utc": "2026-10-06T03:07:44.490439+00:00",
@@ -637,5 +637,63 @@
         "reason": "加载束数上限按需注入修正"
       }
     ]
+  },
+  "final_state": {
+    "checked_utc": "2026-10-06T21:11:13.696443+00:00",
+    "arms": {
+      "V2": {
+        "train_run": "train_sac_20261006_084454_365eff71",
+        "port": 20418,
+        "train_stage": "completed",
+        "train_env_step": 400000,
+        "assessment_run": "evaluate_sac_20261006_181949_137a0534",
+        "sca_run": "refine_sac_20261006_224531_316265cd",
+        "note": "训练与440景共同考核均完成；SCA 三路线按各臂实际进度记录"
+      },
+      "V3": {
+        "train_run": "train_sac_20261006_084726_c004cd09",
+        "port": 20424,
+        "train_stage": "completed",
+        "train_env_step": 400000,
+        "assessment_run": "evaluate_sac_20261006_162655_a661dd3d",
+        "sca_run": "refine_sac_20261006_173515_4b10636d",
+        "note": "训练与440景共同考核均完成；SCA 三路线按各臂实际进度记录"
+      },
+      "G0": {
+        "train_run": "train_sac_20261006_092142_142c6953",
+        "port": 20418,
+        "train_stage": "completed",
+        "train_env_step": 400000,
+        "assessment_run": "evaluate_sac_20261007_021119_846087b2",
+        "sca_run": "refine_sac_20261007_024934_39422e19",
+        "note": "训练与440景共同考核均完成；SCA 三路线按各臂实际进度记录"
+      }
+    },
+    "budget": {
+      "pilot": 300000,
+      "extension": 900000,
+      "approved_cap": 1200000,
+      "note": "试点三臂各10万＋补足三臂各增30万；故障中断尝试的消耗另计于审计轨"
+    },
+    "verdicts": {
+      "G1": "未达标",
+      "G2": "未达标",
+      "G3": "部分达标（G0 槽数 +31% 达标；尾部与绝对水平未改善）",
+      "G4": "按方案转下一手段，不追加同手段预算"
+    },
+    "headline": {
+      "direct": {
+        "V2": 0.8795,
+        "V3": 0.866,
+        "G0": 0.8152,
+        "greedy": 0.8933,
+        "fixed": 0.8368
+      },
+      "after_sca": {
+        "V2": 0.9236,
+        "V3": 0.909,
+        "G0": "见 g0_sca_per_method.json"
+      }
+    }
   }
 }
