@@ -66,12 +66,16 @@ def main() -> None:
         arms = snapshot()
         stages = {arm: data["stage"] for arm, data in arms.items()}
         errors = {arm: data["error"] for arm, data in arms.items() if data["error"]}
-        changed = stages != last_stages
+        # 只对“有意义的阶段事件”立即记录：validation 节点会让 training 与
+        # validating 交替出现，若按任意变化记录就会退回每10分钟刷屏。
+        terminal = {"completed", "failed", "interrupted", "stopped"}
+        events = [arm for arm, stage in stages.items()
+                  if stage in terminal and last_stages.get(arm) not in terminal]
         if errors:
             record(arms, "错误需处理")
             return
-        if changed and last_stages:
-            record(arms, "阶段变化")
+        if events:
+            record(arms, "阶段事件:" + ",".join(sorted(events)))
         now = time.time()
         if now - last_progress >= HOUR_SECONDS or last_progress == 0.0:
             record(arms, "每小时记录")
