@@ -276,6 +276,58 @@ def submit(port: int, arm: str, steps: int, *, execute: bool, tag: str = "") -> 
     return {"status": "submitted", "job": job, **report}
 
 
+def arm_runs_like(port: int, arm: str) -> list:
+    """List this arm's runs, skipping superseded failed attempts."""
+    runs = ops18.api(port, "/runs", timeout=60).get("runs", [])
+    out = []
+    for item in runs:
+        request = str(item.get("request_id", ""))
+        if not request.startswith(f"s2p18-{arm.lower()}-"):
+            continue
+        if "retry" in request and "retry3" not in request:
+            continue
+        detail = ops18.api(port, "/runs/" + item["run_id"], timeout=60)
+        status = detail.get("status") or {}
+        out.append({"run_id": item["run_id"], "request_id": request,
+                    "kind": item.get("kind"),
+                    "stage": status.get("stage") or item.get("stage"),
+                    "env_step": status.get("env_step"), "directory": detail.get("path")})
+    return out
+
+
+def submit_evaluation(port: int, arm: str, *, execute: bool, tag: str = "") -> dict:
+    """Submit the 440-scene common assessment for one arm.
+
+    The server requires three stochastic action samples with seed 53001 for
+    variable-beam assessments and rejects deterministic evaluation, so the call
+    never relaxes those constraints.
+    """
+    records = scene_records(port)
+    models = ops18.api(port, "/models", timeout=120).get("models", [])
+    completed = [run for run in arm_runs_like(port, arm)
+                 if run["kind"] == "train" and run["stage"] == "completed"]
+    if not completed:
+        raise RuntimeError(f"{arm} 尚无已完成的训练任务，不能提交考核")
+    run = completed[0]
+    candidates = [item for item in models if run["run_id"] in (item.get("path") or "")]
+    if not candidates:
+        raise RuntimeError(f"{arm} 的完成模型尚未登记到模型库")
+    model = candidates[0]
+    suffix = f"-{tag}" if tag else ""
+    body = {"model_id": model["id"], "scene_id": records["test"]["id"],
+            "experiment_id": "S2-P18", "action_mode": "stochastic",
+            "repeats": 3, "action_seed": 53001,
+            "baselines": ["fixed", "greedy"],
+            "request_id": f"s2p18-{arm.lower()}-jan29-eval{suffix}"}
+    plan = {"port": port, "arm": arm, "run_id": run["run_id"],
+            "model_id": model["id"], "model_path": model.get("path"),
+            "test_scenes": records["test"], "request_id": body["request_id"]}
+    if not execute:
+        return {"status": "plan_only", **plan}
+    job = ops18.api(port, "/evaluations", body, method="POST", timeout=600)
+    return {"status": "submitted", "job": job, **plan}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--arm", choices=tuple(ARM_OVERRIDES), required=True)
@@ -284,9 +336,12 @@ def main() -> None:
     parser.add_argument("--port", type=int, choices=ops18.PORTS)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--tag", default="", help="重试时使用的请求标记，避免幂等返回旧任务")
+    parser.add_argument("--evaluate", action="store_true", help="提交440景共同考核而不是训练")
     args = parser.parse_args()
     port = args.port or ARM_PLACEMENT[args.arm]
-    result = submit(port, args.arm, args.steps, execute=args.execute, tag=args.tag)
+    result = (submit_evaluation(port, args.arm, execute=args.execute, tag=args.tag)
+              if args.evaluate else
+              submit(port, args.arm, args.steps, execute=args.execute, tag=args.tag))
     receipt = LOCAL / "preflight" / f"submit_{args.arm}_{args.steps}_{port}.json"
     ops18.write_json(receipt, result)
     print(json.dumps({key: value for key, value in result.items() if key != "config"},
