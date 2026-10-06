@@ -1,0 +1,57 @@
+{
+  "checked_utc": "2026-10-06T18:30:52.115546+00:00",
+  "arms": {
+    "V3": {
+      "none": {
+        "label": "原分配（不调整）",
+        "rows": 1320,
+        "si": 0.866,
+        "sgm": 0.689,
+        "power_w": 2440.9129,
+        "slots": null
+      },
+      "sca": {
+        "label": "功率优化 SCA",
+        "rows": 1320,
+        "si": 0.909,
+        "sgm": 0.9087,
+        "power_w": 2978.6482,
+        "slots": null
+      },
+      "sca_si_lp": {
+        "label": "SI优先 SCA",
+        "rows": 1320,
+        "si": 0.909,
+        "sgm": 0.9084,
+        "power_w": 2978.8378,
+        "slots": null
+      }
+    },
+    "V2": {
+      "none": {
+        "label": "原分配（不调整）",
+        "rows": 1320,
+        "si": 0.8795,
+        "sgm": 0.6717,
+        "power_w": 2477.5189,
+        "slots": null
+      },
+      "sca": {
+        "label": "功率优化 SCA",
+        "rows": 1320,
+        "si": 0.9236,
+        "sgm": 0.9244,
+        "power_w": 2985.7757,
+        "slots": null
+      },
+      "sca_si_lp": {
+        "label": "SI优先 SCA",
+        "rows": 1320,
+        "si": 0.9236,
+        "sgm": 0.9241,
+        "power_w": 2985.9997,
+        "slots": null
+      }
+    }
+  }
+}
