@@ -267,7 +267,10 @@ class Application:
                            for ref in model_files):
                     raise ValueError(f"{experiment_id} H0实际权重SHA不是冻结T0十五万步终点")
             extra.update(experiment_id=experiment_id, action_seed=action_seed)
-            if config["network"].get("transformer_layout") != "tsac_14_variable_context":
+            # 固定 100 束布局的模型需要把环境上限抬到 200；S2-P18 的逐束自然布局
+            # 在配置里本就声明了上限，注入覆盖反而与来源记录冲突，因此按需注入。
+            if (config["network"].get("transformer_layout") != "tsac_14_variable_context"
+                    and int(config["environment"].get("beam_count_max", 0)) < 200):
                 extra["environment_overrides"] = {"beam_count_max": 200}
         return self.store.create_job(config, kind="evaluate", request_id=body.get("request_id"), extra={
             "name": "测试 · " + model["name"], "model_id": model["id"], "model_path": model["path"],

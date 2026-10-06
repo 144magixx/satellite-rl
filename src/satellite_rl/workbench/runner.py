@@ -1283,6 +1283,8 @@ def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
     environment_config = policy.config
     overrides = job.get("environment_overrides")
     if overrides is not None:
+        # 该覆盖只为把固定 100 束布局的冻结 T0（H0）抬到 200 束上限，其身份必须精确匹配；
+        # S2-P18 的逐束自然布局不需要覆盖，其配置本身已声明上限，走下面的常规校验。
         if (overrides != {"beam_count_max": 200} or
                 environment_config["environment"].get("profile") != "europe_v1" or
                 policy.metadata.get("state_dim") != 207 or
