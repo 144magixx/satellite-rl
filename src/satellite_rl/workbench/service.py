@@ -198,7 +198,12 @@ class Application:
         if variable_experiment:
             from .power_refinement import _is_t0
             training = config["training"]
-            expected_new = (config["network"].get("transformer_layout") == "tsac_14_variable_context"
+            # 终点门槛接受的布局：可变束数上下文，以及 S2-P18 的 G0 逐束自然布局
+            # （tsac_natural_context + 逐束实体档位）。其余条件（混合束数、种子、
+            # 四十万步预算与来源步数）一条都不放宽。
+            accepted_layout = config["network"].get("transformer_layout") in (
+                "tsac_14_variable_context", "tsac_natural_context")
+            expected_new = (accepted_layout
                             and training.get("beam_count_mode") in ("fixed_100", "mixed_four_buckets")
                             and training["seed"] == 51001 and training["total_steps"] == 400000
                             and (model.get("provenance") or {}).get("env_step") == 400000)
