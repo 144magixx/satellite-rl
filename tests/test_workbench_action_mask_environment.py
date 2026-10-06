@@ -153,6 +153,13 @@ class ActionMaskEnvironmentTests(unittest.TestCase):
         historical["training"].pop("fixed_alpha", None)
         for key in ("beam_count_mode", "beam_count_min", "beam_count_max", "held_out_beam_counts"):
             historical["training"].pop(key, None)
+        # S2-P18 新增的可选键同样只在离开默认值时进入语义哈希。
+        historical["reward"].pop("shaping", None)
+        historical["training"].pop("progress_strata", None)
+        historical["training"].pop("gamma_schedule", None)
+        historical["network"].pop("context_beam_count", None)
+        historical["network"].pop("readout_mode", None)
+        historical["network"].pop("beam_count_conditioning", None)
         historical.pop("telemetry", None)
         expected = hashlib.sha256(json.dumps(historical, ensure_ascii=False, sort_keys=True,
                                             separators=(",", ":")).encode("utf-8")).hexdigest()

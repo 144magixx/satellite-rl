@@ -12,7 +12,7 @@ import uuid
 import numpy as np
 import torch
 
-from satellite_rl.agents.workbench_algorithms import build_agent
+from satellite_rl.agents.workbench_algorithms import build_agent, resolve_gamma
 from satellite_rl.agents.workbench_networks import model_description
 from satellite_rl.training.run_monitor import replace_with_retry
 
@@ -38,6 +38,15 @@ def _experiment_modes(config):
     if training.get("beam_count_mode", "none") != "none":
         modes.update({key: training[key] for key in
                       ("beam_count_mode", "beam_count_min", "beam_count_max", "held_out_beam_counts")})
+    # S2-P18：只有显式启用时才把新学习机制写进模式元数据，旧配置的元数据与
+    # experiment_modes 逐位不变，旧断点与旧模型仍按原样加载。
+    if int(training.get("progress_strata", 1)) > 1:
+        modes["progress_strata"] = int(training["progress_strata"])
+    schedule = training.get("gamma_schedule") or {"mode": "none"}
+    if schedule.get("mode", "none") != "none":
+        modes["gamma_schedule"] = schedule
+        modes["effective_gamma_by_beam_count"] = {
+            str(count): resolve_gamma(training, count) for count in (50, 100, 120, 160, 200)}
     return modes
 
 
@@ -77,6 +86,20 @@ def config_hash(config):
         semantic["network"].pop("graph_mode", None)
     if semantic["network"].get("transformer_layout", "scalar_tokens") == "scalar_tokens":
         semantic["network"].pop("transformer_layout", None)
+    # S2-P18 新增键：只有离开默认值时才纳入语义哈希，因此改动前已冻结的配置
+    # （V0/V1、T0、欧洲欧洲对照等）保持原来的 config_hash，旧断点与旧模型可原样恢复；
+    # 一旦真正启用新奖励/新采样/新逐束编码，哈希随之变化，权重不会被误认为兼容。
+    if semantic["network"].get("context_beam_count", "fixed_100") == "fixed_100":
+        semantic["network"].pop("context_beam_count", None)
+    if semantic["network"].get("readout_mode", "first_token") == "first_token":
+        semantic["network"].pop("readout_mode", None)
+    if semantic["network"].get("beam_count_conditioning", "none") == "none":
+        semantic["network"].pop("beam_count_conditioning", None)
+    semantic["reward"] = dict(config["reward"])
+    shaping = semantic["reward"].get("shaping")
+    if (not any(shaping.get(key, 0) for key in ("w_throughput", "w_spectrum", "w_shape"))
+            and shaping.get("throughput_reference", "mean_demand") == "mean_demand"):
+        semantic["reward"].pop("shaping", None)
     semantic["evaluation"] = dict(config["evaluation"])
     if semantic["evaluation"].get("extra_steps", []) == []:
         semantic["evaluation"].pop("extra_steps", None)
@@ -96,6 +119,10 @@ def config_hash(config):
         semantic["training"].pop("scene_order", None)
         if semantic["training"].get("scene_order_seed", 51001) == 51001:
             semantic["training"].pop("scene_order_seed", None)
+    if int(semantic["training"].get("progress_strata", 1)) == 1:
+        semantic["training"].pop("progress_strata", None)
+    if (semantic["training"].get("gamma_schedule") or {"mode": "none"}).get("mode", "none") == "none":
+        semantic["training"].pop("gamma_schedule", None)
     return hashlib.sha256(_canonical(semantic).encode("utf-8")).hexdigest()
 
 

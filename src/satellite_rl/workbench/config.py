@@ -5,7 +5,10 @@ import math
 from satellite_rl.envs.regions import get_profile, profile_catalog, profile_metadata
 from satellite_rl.state_layouts import (NATURAL_CONTEXT_LEVELS, natural_dim,
                                         natural_shapes, natural_token_count,
+                                        S2P18_OPTIONAL_FEATURES, S2P18_VARIABLE_FEATURES,
                                         VARIABLE_BEAM_FEATURES)
+from satellite_rl.workbench.experiments import (S2P18, VARIABLE_BEAM_EXPERIMENTS,
+                                                is_variable_beam_experiment)
 
 
 FEATURES = [
@@ -21,7 +24,9 @@ FEATURES = [
     dict(id="remaining_demand", label="剩余业务需求", description="含当前波束的剩余总需求除以全部波束参考需求", shape=[1], unit="比例", timing="动作前", source="全场景需求", visibility="known"),
     dict(id="beam_count_normalized", label="实际波束数", description="实际目标束数除以200", shape=[1], unit="比例", timing="动作前", source="场景", visibility="both"),
     dict(id="remaining_beams_normalized", label="剩余波束数/200", description="含当前待分配束，终态为0", shape=[1], unit="比例", timing="动作前", source="处理序号", visibility="both"),
-    dict(id="power_pressure", label="剩余功率压力", description="剩余功率/(剩余功率+30W×剩余目标束数)，终态为0", shape=[1], unit="比例", timing="动作前", source="真实功率账", visibility="both"),
+    dict(id="group_remaining_obligation", label="本组剩余预留义务", description="本复用组尚未处理束数（含当前束）除以总束数；与掩码的剩余预留口径一致", shape=[1], unit="比例", timing="动作前", source="处理序号", visibility="both"),
+    dict(id="remaining_slot_limit", label="剩余合法槽上限", description="本组空槽数减去为同组其余束各预留1槽后，当前束可用的槽数除以100", shape=[1], unit="比例", timing="动作前", source="真实频率账", visibility="both"),
+    dict(id="power_pressure", label="剩余功率压力", description="剩余功率/(剩余功率＋每束公平份额×剩余目标束数)，公平份额=预算/总束数，终态为0", shape=[1], unit="比例", timing="动作前", source="真实功率账", visibility="both"),
     dict(id="remaining_demand_mean", label="剩余平均需求", description="含当前波束的剩余平均需求除以600 Mbps", shape=[1], unit="比例", timing="动作前", source="全场景需求", visibility="known"),
     dict(id="served_shortfall", label="已服务平均欠供", description="已处理波束的平均(1-满足率)，无记录时为0", shape=[1], unit="比例", timing="动作前", source="已处理波束当前速率", visibility="both"),
     dict(id="served_met", label="已服务达标比例", description="已处理波束中满足需求者比例，无记录时为0", shape=[1], unit="比例", timing="动作前", source="已处理波束当前速率", visibility="both"),
@@ -38,10 +43,67 @@ FEATURES = [
 ]
 
 
+VARIABLE_BEAM_REWARD_PRESETS = ("legacy_repaired", "legacy_repaired_throughput")
+
+
+def variable_beam_features(profile="legacy_210"):
+    """可变束数状态字段表。默认 ``legacy_210`` 保持 V0/V1 冻结的 210 维顺序。
+
+    ``s2p18`` 追加组号与本组预留/剩余槽上限三个标量（方案18 第 3 节 B、C 项），
+    供第二轮 V2/V3 两条臂共用；G0 不启用额外标量，只改逐束编码。
+    """
+    if profile == "legacy_210":
+        return list(VARIABLE_BEAM_FEATURES)
+    if profile == "s2p18":
+        return list(S2P18_VARIABLE_FEATURES)
+    raise ValueError(f"未知可变束数状态档案: {profile!r}")
+
+
 def _feature_shape(config, fid):
     if config["network"]["transformer_layout"] == "tsac_natural_context" and fid in natural_shapes(config["state"]["context_level"]):
-        return natural_shapes(config["state"]["context_level"])[fid]
+        shape = list(natural_shapes(config["state"]["context_level"])[fid])
+        if fid == "natural_beam_context" and network_beam_count_mode(config) == "actual":
+            # 逐束编码档位：观测只含实际实体 [N, 写入通道数]，行数取场景束数上限。
+            shape = [int(config["environment"]["beam_count_max"]), shape[-1]]
+        return shape
     return next(f["shape"] for f in FEATURES if f["id"] == fid)
+
+
+def _pos_slots(config):
+    """逐束实体编码的位置槽位总数（按束数上界一次分配）。"""
+    network, level = config["network"], config["state"]["context_level"]
+    shapes = natural_shapes(level)
+    if network.get("context_beam_count", "fixed_100") != "actual":
+        return natural_token_count(level) - 13
+    # 观测里逐束字段每实体只写本档声明的通道数（layout 档 5、full 档 11）。
+    width = shapes["natural_beam_context"][-1]
+    slots = width * int(config["environment"]["beam_count_max"])
+    if "natural_resource_context" in shapes:
+        slots += shapes["natural_resource_context"][0]
+    return slots
+
+
+def natural_state_width(config, count):
+    """自然布局在给定场景束数下的观测宽度（仅逐束编码档位随 N 变化）。"""
+    base = sum(math.prod(_feature_shape(config, fid)) for fid in config["state"]["features"])
+    if network_beam_count_mode(config) != "actual":
+        return base
+    shapes = natural_shapes(config["state"]["context_level"])
+    if "natural_beam_context" not in shapes:
+        return base
+    # 观测里逐束字段每实体只写本档声明的通道数（layout 档 5、full 档 11）。
+    width = shapes["natural_beam_context"][-1]
+    reference = int(config["environment"]["beam_count_max"])
+    return base + (count - reference) * width
+
+
+def expected_state_dim(config):
+    """按 ``environment.beam_count_max`` 估算的观测宽度（训练脚本的一致性门槛）。"""
+    return natural_state_width(config, int(config["environment"]["beam_count_max"]))
+
+
+def network_beam_count_mode(config):
+    return config["network"].get("context_beam_count", "fixed_100")
 
 REWARD_TERMS = [
     ("si_delta", "需求满足率增量", "所有已处理波束当前满足率总和的变化", "step", "service"),
@@ -105,6 +167,9 @@ PRESETS = [
     dict(id="legacy_original", label="原公式与原记账", description="复现原奖励；零槽请求仍计功率"),
     dict(id="legacy_repaired", label="原公式与修正记账", description="复现原奖励；零槽不计功率"),
     dict(id="fused", label="融合奖励", description="2Δ基本服务＋Δ满足率＋0.2ΔSGM－实际功率/预算"),
+    dict(id="legacy_repaired_throughput", label="原公式＋吞吐与频谱使用（S2-P18 V2）",
+         description="保留原四项，另加 w_throughput×Δ有效承载/参考量与 w_spectrum×本步占用槽/本组可用槽；"
+                     "权重默认0，必须显式配置才生效；原始奖励分量仍逐项记录"),
     dict(id="custom", label="自选奖励项", description="逐项计算并保存原值、缩放值与加权值"),
 ]
 
@@ -117,9 +182,17 @@ def default_config():
                      cnn_channels=[16, 32], kernel_size=3, embedding_dim=64,
                      num_heads=4, num_layers=2, feedforward_dim=128,
                      sac_policy_structure="factorized", sac_critic_structure="additive",
-                     temporal_mode="none", temporal_window=16, graph_mode="none"),
+                     temporal_mode="none", temporal_window=16, graph_mode="none",
+                     # S2-P18 手段G：逐束上下文按实际束数构造（默认保持固定100束），
+                     # 读出方式与 N 条件调制都可选；默认值与改动前逐位一致。
+                     context_beam_count="fixed_100", readout_mode="first_token",
+                     beam_count_conditioning="none"),
         state=dict(features=["beam", "power", "interference", "occupancy"], demand_visibility="known", context_level="none"),
-        reward=dict(preset="legacy_repaired", terms=[dict(id="si_delta", weight=1, scale=1, timing="step")]),
+        reward=dict(preset="legacy_repaired", terms=[dict(id="si_delta", weight=1, scale=1, timing="step")],
+                    # S2-P18 新增奖励分量。全部默认为 0（关闭），所以默认配置的语义、
+                    # 数值与配置哈希都与改动前一致；启用时必须写入冻结配置。
+                    shaping=dict(w_throughput=0, w_spectrum=0, w_shape=0,
+                                 throughput_reference="mean_demand")),
         environment=dict(profile="china_legacy", beam_count_max=100, power_budget_w=3000, basic_fraction=0.1, action_mode="legacy_clip",
                          action_mask="none",
                          power_levels_w=[5, 10, 15, 20, 25, 30, 35, 40, 45, 50]),
@@ -131,6 +204,10 @@ def default_config():
                       replay_capacity=20000, warmup_steps=2000, update_every=1,
                       gradient_steps=1, initial_alpha=0.1, target_entropy=6.9,
                       alpha_mode="adaptive", fixed_alpha=0.01,
+                      # S2-P18 手段E：按回合内进度分位分层采样；1 表示关闭（旧行为逐位不变）。
+                      progress_strata=1,
+                      # S2-P18 手段D：按回合长度/束数设定折扣；mode="none" 时使用上面的 gamma。
+                      gamma_schedule=dict(mode="none", default=0.99, by_beam_count=[]),
                       gradient_clip=10, rollout_steps=256, ppo_epochs=4, gae_lambda=0.95,
                       clip_ratio=0.2, entropy_coef=0.01, value_coef=0.5,
                       eps_start=1, eps_end=0.05, eps_decay_steps=5000,
@@ -200,7 +277,10 @@ def _network_size(config):
             if "natural_global_context" in shapes:
                 projection += (shapes["natural_global_context"][0] + 2) * embed
             if "natural_beam_context" in shapes:
-                projection += (10 * shapes["natural_beam_context"][-1] + 1 + 10) * embed
+                rows = (config["environment"].get("beam_count_max", 100)
+                        if n.get("context_beam_count", "fixed_100") == "actual"
+                        else shapes["natural_beam_context"][0])
+                projection += (rows * shapes["natural_beam_context"][-1] + 1 + 10) * embed
             if "natural_resource_context" in shapes:
                 projection += (shapes["natural_resource_context"][-1] + 1 + 8) * embed
         encoder = projection + n["num_layers"] * (
@@ -234,6 +314,72 @@ def _network_size(config):
     return total
 
 
+def resolve_gamma(training, beam_count=None):
+    """S2-P18 手段D：按回合长度/束数解析实际折扣。
+
+    ``gamma_schedule.mode``：
+    - ``none``：使用 ``training.gamma``（默认 0.99，旧行为逐位不变）；
+    - ``constant``：使用 ``default``，用于“统一取 0.995”这类单一新值；
+    - ``by_beam_count``：按 ``by_beam_count`` 里升序的 ``[{"max_beam_count": N,
+      "gamma": g}, ...]`` 取第一个 ``N <= max_beam_count`` 的 g，否则用 ``default``。
+    """
+    schedule = training.get("gamma_schedule") or {}
+    mode = schedule.get("mode", "none")
+    if mode == "none":
+        return float(training["gamma"])
+    if mode == "constant":
+        return float(schedule["default"])
+    if mode == "by_beam_count":
+        if beam_count is None:
+            raise ValueError("按束数设定折扣需要实际束数")
+        for bucket in schedule["by_beam_count"]:
+            if int(beam_count) <= int(bucket["max_beam_count"]):
+                return float(bucket["gamma"])
+        return float(schedule["default"])
+    raise ValueError(f"未知折扣日程: {mode!r}")
+
+
+def _validate_gamma_schedule(training):
+    schedule = training["gamma_schedule"]
+    if not isinstance(schedule, dict):
+        raise ValueError("gamma_schedule 必须是对象")
+    mode = schedule["mode"]
+    if mode not in ("none", "constant", "by_beam_count"):
+        raise ValueError("折扣日程仅支持 none、constant 或 by_beam_count")
+    _number(schedule["default"], "折扣日程默认折扣", 0, 1)
+    buckets = schedule["by_beam_count"]
+    if not isinstance(buckets, list):
+        raise ValueError("折扣分档必须是列表")
+    limits = []
+    for bucket in buckets:
+        if not isinstance(bucket, dict) or set(bucket) != {"max_beam_count", "gamma"}:
+            raise ValueError("折扣分档字段无效")
+        _number(bucket["max_beam_count"], "折扣分档上限", 1, 200, integer=True)
+        _number(bucket["gamma"], "折扣分档折扣", 0, 1)
+        limits.append(bucket["max_beam_count"])
+    if limits != sorted(set(limits)):
+        raise ValueError("折扣分档上限必须升序且不重复")
+    if mode == "by_beam_count" and not buckets:
+        raise ValueError("按束数设定折扣需要至少一个分档")
+
+
+def _validate_reward_shaping(reward):
+    """S2-P18 新增奖励分量：默认全 0；启用时必须是有限、非负、可复现的冻结值。"""
+    shaping = reward["shaping"]
+    if not isinstance(shaping, dict):
+        raise ValueError("奖励整形必须是对象")
+    for key in ("w_throughput", "w_spectrum", "w_shape"):
+        _number(shaping[key], f"奖励整形权重 {key}", 0)
+    reference = shaping["throughput_reference"]
+    if isinstance(reference, bool) or not (
+            reference in ("mean_demand", "total_demand")
+            or (isinstance(reference, (int, float)) and math.isfinite(reference) and reference > 0)):
+        raise ValueError("吞吐归一化参考量须为 mean_demand、total_demand 或正数 Gbps")
+    if reward["preset"] == "legacy_repaired_throughput" and not any(
+            shaping[key] for key in ("w_throughput", "w_spectrum", "w_shape")):
+        raise ValueError("吞吐与频谱使用预设要求至少给出一个正权重，否则请保留 legacy_repaired")
+
+
 def validate_config(raw):
     c = _merge(default_config(), raw)
     if type(c["schema_version"]) is not int or c["schema_version"] != 1:
@@ -253,6 +399,25 @@ def validate_config(raw):
         raise ValueError("不支持的跨波束历史模式")
     if n["graph_mode"] not in ("none", "beam_tokens", "interference_bias"):
         raise ValueError("不支持的波束图编码")
+    temporal = n["temporal_mode"] != "none"
+    graph = n["graph_mode"] != "none"
+    if n["context_beam_count"] not in ("fixed_100", "actual"):
+        raise ValueError("逐束上下文束数仅支持 fixed_100 或 actual")
+    if n["readout_mode"] not in ("first_token", "attention_pooling"):
+        raise ValueError("读出方式仅支持 first_token 或 attention_pooling")
+    if n["beam_count_conditioning"] not in ("none", "film"):
+        raise ValueError("N 条件调制仅支持 none 或 film")
+    if (n["readout_mode"] != "first_token" or n["beam_count_conditioning"] != "none") and not (
+            n["kind"] == "transformer" and n["transformer_layout"] == "tsac_natural_context"):
+        raise ValueError("注意力池化读出与 N 条件调制仅用于自然状态的逐束布局")
+    if n["context_beam_count"] == "actual" and not (
+            n["kind"] == "transformer" and n["transformer_layout"] == "tsac_natural_context"
+            and c["state"]["context_level"] in ("layout", "full")):
+        raise ValueError("按实际束数构造逐束上下文需要自然状态的 layout 或 full 档")
+    if n["context_beam_count"] == "actual" and n["transformer_layout"] == "tsac_natural_context" \
+            and c["environment"]["beam_count_max"] > c["training"]["beam_count_max"]:
+        # 观测宽度直接由场景束数决定，因此场景束数上限不得超过训练束数上限。
+        raise ValueError("按实际束数构造要求场景束数上限不超过训练束数上限")
     _number(n["temporal_window"], "历史窗口", 1, 16, integer=True)
     temporal = n["temporal_mode"] != "none"
     graph = n["graph_mode"] != "none"
@@ -290,8 +455,14 @@ def validate_config(raw):
     if n["transformer_layout"] == "tsac_14_variable_context":
         if c["algorithm"] != "sac" or n["kind"] != "transformer":
             raise ValueError("可变波束14令牌布局仅支持SAC Transformer")
-        if c["state"]["features"] != list(VARIABLE_BEAM_FEATURES) or c["state"]["demand_visibility"] != "known":
-            raise ValueError("可变波束布局要求规范210维字段顺序及已知全场景需求")
+        if (c["state"]["features"] != list(VARIABLE_BEAM_FEATURES)
+                and c["state"]["features"] != list(S2P18_VARIABLE_FEATURES)):
+            raise ValueError("可变波束布局要求冻结的210维字段顺序或S2-P18的213维字段顺序")
+        if c["state"]["demand_visibility"] != "known":
+            raise ValueError("可变波束布局要求已知全场景需求")
+        if n["readout_mode"] != "first_token" or n["beam_count_conditioning"] != "none" or \
+                n["context_beam_count"] != "fixed_100":
+            raise ValueError("注意力池化读出、N条件调制与按实际束数构造上下文仅用于自然状态的逐束布局")
     if n["transformer_layout"] == "tsac_32_context":
         if c["algorithm"] != "sac" or n["kind"] != "transformer":
             raise ValueError("32令牌分档状态布局仅支持SAC的Transformer网络")
@@ -306,7 +477,9 @@ def validate_config(raw):
         expected_features = list(natural_shapes(level)) + (["previous_actual_action"] if temporal else [])
         if c["state"]["demand_visibility"] != "known" or c["state"]["features"] != expected_features:
             raise ValueError("自然状态布局要求本档实际开放的状态特征及规范顺序")
-        if n["dropout"] != 0 or c["reward"]["preset"] != "legacy_repaired" or c["training"]["scene_order"] != "shuffle_each_cycle":
+        allowed_presets = ("legacy_repaired", "legacy_repaired_throughput")
+        if n["dropout"] != 0 or c["reward"]["preset"] not in allowed_presets or \
+                c["training"]["scene_order"] != "shuffle_each_cycle":
             raise ValueError("自然状态对照固定旧奖励、dropout=0与每轮打乱场景")
     elif c["state"]["context_level"] != "none" or any(fid in c["state"]["features"] for fid in ("global_context", "beam_context", "resource_context", "natural_global_context", "natural_beam_context", "natural_resource_context")):
         raise ValueError("状态信息档位与分档特征仅适用于32令牌布局，旧布局使用none")
@@ -376,6 +549,7 @@ def validate_config(raw):
         _number(term["scale"], "奖励尺度", 0, strictly=True)
         if term["timing"] != definitions[term["id"]][3]:
             raise ValueError(f"奖励结算时点错误: {term['id']}")
+    _validate_reward_shaping(r)
     t = c["training"]
     if t["alpha_mode"] not in ("adaptive", "fixed"):
         raise ValueError("温度模式须为adaptive或fixed")
@@ -386,8 +560,12 @@ def validate_config(raw):
             "total_steps": (1, None), "batch_size": (1, None), "replay_capacity": (1, None),
             "warmup_steps": (0, None), "update_every": (1, None), "gradient_steps": (1, None),
             "rollout_steps": (1, None), "ppo_epochs": (1, None), "eps_decay_steps": (1, None),
-            "target_update_interval": (1, None), "checkpoint_interval": (1, None), "log_interval": (1, None)}
+            "target_update_interval": (1, None), "checkpoint_interval": (1, None), "log_interval": (1, None),
+            "progress_strata": (1, 8)}
     for key, (lo, hi) in ints.items(): _number(t[key], key, lo, hi, integer=True)
+    if c["algorithm"] in ("sac", "dqn") and t["batch_size"] % (
+            t["progress_strata"] * (1 if t["beam_count_mode"] != "mixed_four_buckets" else 4)):
+        raise ValueError("进度分层采样要求批大小能被（数量桶×进度段）整除")
     if t["scene_order"] not in ("sequential", "shuffle_each_cycle", "variable_beams"):
         raise ValueError("训练场景顺序无效")
     if t["beam_count_mode"] not in ("none", "fixed_100", "mixed_four_buckets"):
@@ -408,7 +586,8 @@ def validate_config(raw):
           or e["action_mask"] != "joint_feasible" or e["action_mode"] != "legacy_clip"
           or e["power_budget_w"] != 3000 or e["power_levels_w"] != [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
           or n["sac_policy_structure"] != "factorized" or n["sac_critic_structure"] != "additive"
-          or n["dropout"] != 0 or r["preset"] != "legacy_repaired"
+          or n["dropout"] != 0
+          or r["preset"] not in VARIABLE_BEAM_REWARD_PRESETS
           or t["alpha_mode"] != "fixed" or t["fixed_alpha"] != 0.01
           or t["seed"] != 51001 or t["total_steps"] != 400000
           or t["batch_size"] != 256 or t["replay_capacity"] != 20000 or t["warmup_steps"] != 2000
@@ -427,6 +606,7 @@ def validate_config(raw):
         raise ValueError("训练种子与交互步预算之和超出场景随机数范围")
     for key in ("gamma", "gae_lambda", "clip_ratio", "eps_start", "eps_end"):
         _number(t[key], key, 0, 1)
+    _validate_gamma_schedule(t)
     for key in ("entropy_coef", "value_coef"):
         _number(t[key], key, 0)
     _number(t["target_entropy"], "target_entropy")
@@ -493,6 +673,70 @@ def catalog():
                                   dict(id="fixed_100", label="V0 固定100束"),
                                   dict(id="mixed_four_buckets", label="V1 四桶各25%")],
                 presets=deepcopy(PRESETS),
+                # S2-P18 三臂预设：前端按 id 套用对应状态/奖励/学习机制组合。
+                s2p18_arms=[
+                    dict(id="V2", label="V2 目标与观测修正",
+                         description="奖励加吞吐与频谱使用项＋修正 power_pressure 归一化＋组号与预留义务可见＋进度分层采样",
+                         state_features=list(S2P18_VARIABLE_FEATURES), reward_preset="legacy_repaired_throughput",
+                         reward_shaping=dict(w_throughput=50, w_spectrum=1, w_shape=0,
+                                             throughput_reference="mean_demand"),
+                         progress_strata=4, gamma_schedule=dict(mode="none", default=0.99,
+                                                                by_beam_count=[]),
+                         network=dict(transformer_layout="tsac_14_variable_context",
+                                      context_beam_count="fixed_100", readout_mode="first_token",
+                                      beam_count_conditioning="none")),
+                    dict(id="V3", label="V3 信用分配修正",
+                         description="与 V2 同一状态定义；按束数设定折扣＋跨束势能型奖励整形，不改奖励主项",
+                         state_features=list(S2P18_VARIABLE_FEATURES), reward_preset="legacy_repaired",
+                         reward_shaping=dict(w_throughput=0, w_spectrum=0, w_shape=0.5,
+                                             throughput_reference="mean_demand"),
+                         progress_strata=1,
+                         gamma_schedule=dict(mode="by_beam_count", default=0.995,
+                                             by_beam_count=[dict(max_beam_count=100, gamma=0.99)]),
+                         network=dict(transformer_layout="tsac_14_variable_context",
+                                      context_beam_count="fixed_100", readout_mode="first_token",
+                                      beam_count_conditioning="none")),
+                    dict(id="G0", label="G0 逐束实体编码原型",
+                         description="逐束上下文按实际束数构造＋注意力池化读出＋FiLM 式 N 条件调制，暂不加 A/D",
+                         state_features=["beam", "power", "interference", "occupancy",
+                                         "natural_global_context", "natural_beam_context",
+                                         "natural_resource_context"],
+                         reward_preset="legacy_repaired",
+                         reward_shaping=dict(w_throughput=0, w_spectrum=0, w_shape=0,
+                                             throughput_reference="mean_demand"),
+                         progress_strata=1,
+                         gamma_schedule=dict(mode="none", default=0.99, by_beam_count=[]),
+                         network=dict(transformer_layout="tsac_natural_context",
+                                      context_level="layout", context_beam_count="actual",
+                                      readout_mode="attention_pooling",
+                                      beam_count_conditioning="film")),
+                ],
+                optional_state_features=[
+                    dict(id="group", label="当前组号", description="复用组号除以7；V2/V3 状态修正项"),
+                    dict(id="group_remaining_obligation", label="本组剩余预留义务",
+                         description="本复用组尚未处理束数（含当前束）除以总束数"),
+                    dict(id="remaining_slot_limit", label="剩余合法槽上限",
+                         description="本组空槽数减去为同组其余束各预留1槽后，当前束可用槽数除以100"),
+                ],
+                readout_modes=[dict(id="first_token", label="读取首个令牌（原读出）",
+                                    description="与原 T-SAC 一致，读取位置0的令牌；已有对照都使用该模式"),
+                               dict(id="attention_pooling", label="注意力池化读出",
+                                    description="对逐束实体令牌做可学习打分的加权平均；实体置换后读出与决策一致，占位不参与池化")],
+                beam_count_conditioning_modes=[dict(id="none", label="不加 N 条件",
+                                                    description="与原结构一致，N 只经输入标量进入"),
+                                               dict(id="film", label="FiLM 式 N 条件调制",
+                                                    description="用当前处理序号除以束数上界，对读出结果做逐通道缩放与平移")],
+                context_beam_counts=[dict(id="fixed_100", label="固定100束上下文",
+                                          description="历史行为：逐束字段固定 100 行，观测宽度与 N 无关"),
+                                     dict(id="actual", label="按实际束数构造",
+                                          description="逐束实体编码：状态只含真实实体，宽度随 N 变化，不填充到100")],
+                progress_strata_options=[dict(id="1", label="关闭（旧采样）", description="每批只在数量桶之间等分"),
+                                          dict(id="2", label="2 段", description="每批同时覆盖数量桶×进度前半/后半"),
+                                          dict(id="4", label="4 段", description="每批同时覆盖数量桶×进度四分位（V2 使用）")],
+                gamma_schedule_modes=[dict(id="none", label="使用固定折扣（默认0.99）", description="旧行为逐位不变"),
+                                      dict(id="constant", label="统一取新值", description="例如统一 0.995"),
+                                      dict(id="by_beam_count", label="按束数分档",
+                                           description="按实际束数取第一个 max_beam_count ≥ N 的档位，V3 使用")],
                 transformer_layouts=[dict(id="scalar_tokens", label="逐标量令牌（现有工作台）", implemented=True),
                                      dict(id="tsac_13_tokens", label="原 T-SAC（13 令牌）", implemented=True,
                                           description="需 SAC、Transformer 和原204维状态顺序；旧权重不直接复用"),
@@ -591,14 +835,29 @@ def config_summary(config):
     else:
         formula = {"legacy_original": "原公式：阈值满足率＋本束SGM－SGM偏差惩罚－占用冲突比例；零槽仍计功率",
                    "legacy_repaired": "原公式：阈值满足率＋本束SGM－SGM偏差惩罚－占用冲突比例；零槽不计功率",
+                   "legacy_repaired_throughput":
+                       "原公式四项 + w_throughput×ΔΣmin(C,D)/参考量 + w_spectrum×(本步占用槽/本组可用槽)"
+                       " + w_shape×(γΦ(s')−Φ(s))；原始奖励分量仍逐项保存",
                    "fused": "2×Δ基本服务＋Δ需求满足率＋0.2×ΔSGM－实际功率/预算"}[r["preset"]]
         if r["terms"] != default_config()["reward"]["terms"]:
             warnings.append("当前预设使用固定公式；奖励项列表仅在 custom 预设生效。")
+        shaping = r["shaping"]
+        if r["preset"] == "legacy_repaired_throughput":
+            warnings.append(
+                "奖励已追加吞吐与频谱使用项（w_throughput={:g}、w_spectrum={:g}，参考量 {}）；"
+                "累计回报不能与旧奖励口径直接排名，报告须同时给出原始奖励口径的回报。".format(
+                    shaping["w_throughput"], shaping["w_spectrum"], shaping["throughput_reference"]))
+        if shaping["w_shape"]:
+            warnings.append(
+                "已启用跨束势能型奖励整形 w_shape={:g}；该项为 Φ(s)=mean_i min(C_i/D_i,1) 的差分，"
+                "不改变最优策略，但会改变学习曲线的数值尺度。".format(shaping["w_shape"]))
     if c["state"]["demand_visibility"] == "online" and r["preset"] in ("legacy_original", "legacy_repaired", "fused"):
         warnings.append("在线需求模式的旧奖励仍按全场景需求计算SGM；观测不包含未来需求。")
     if c["algorithm"] == "sac" and not 0 <= c["training"]["target_entropy"] <= math.log(math.prod([100, 10, len(c["environment"]["power_levels_w"])])):
         warnings.append("SAC 目标熵位于当前离散动作的理论范围之外；请检查温度更新方向与取值。")
     transformer_layout = c["network"]["transformer_layout"] if c["network"]["kind"] == "transformer" else None
+    variable_features = list(c["state"]["features"]) == list(S2P18_VARIABLE_FEATURES)
+    beam_context_actual = c["network"].get("context_beam_count", "fixed_100") == "actual"
     layout_description = ({"scalar_tokens": "状态中每个标量各形成一个令牌，全部令牌汇总后输出",
                            "tsac_13_tokens": "位置、业务需求、功率各1个令牌，干扰与占用按10段合为10个频率槽令牌；读取首令牌输出",
                            "tsac_14_context": "保留原13令牌，另加平均需求、处理进度与剩余需求组成的全局令牌；207维输入，读取首令牌输出",
@@ -606,6 +865,11 @@ def config_summary(config):
                            "tsac_32_context": "四档同2946维封装：原13令牌＋全局1＋每10束一段共10＋8个资源组；未开放信息置零，共32令牌",
                            "tsac_natural_context": "状态与令牌仅包含本档实际开放的信息；无未开放字段占位"}
                           .get(transformer_layout))
+    if transformer_layout == "tsac_14_variable_context" and variable_features:
+        layout_description = ("保留原13令牌，全局令牌含原3项、束数、剩余束数、功率压力与组号、"
+                              "本组剩余预留义务、剩余合法槽上限；共14令牌")
+    if beam_context_actual:
+        layout_description = (layout_description or "") + "；逐束上下文按场景实际束数构造，不填充到100束"
     temporal_mode = c["network"]["temporal_mode"]
     graph_mode = c["network"]["graph_mode"]
     token_count = (natural_token_count(c["state"]["context_level"])
@@ -625,6 +889,8 @@ def config_summary(config):
             layout_description += f"；每个目标决策附最多{c['network']['temporal_window']}步同场景历史，仅目标位置计一个学习损失"
     return dict(state_dim=offset, state_layout=layout,
                 state_version=("variable_beams_210_v1" if transformer_layout == "tsac_14_variable_context"
+                               and not variable_features else
+                               "variable_beams_s2p18_v1" if transformer_layout == "tsac_14_variable_context"
                                else "tsac_14_context_207_v1" if transformer_layout == "tsac_14_context"
                                else transformer_layout),
                 beam_count_max=c["environment"]["beam_count_max"],
@@ -640,6 +906,17 @@ def config_summary(config):
                 graph_mode=graph_mode,
                 alpha_mode=c["training"]["alpha_mode"],
                 fixed_alpha=c["training"]["fixed_alpha"] if c["training"]["alpha_mode"] == "fixed" else None,
+                progress_strata=c["training"]["progress_strata"],
+                gamma=c["training"]["gamma"],
+                gamma_schedule=c["training"]["gamma_schedule"],
+                effective_gamma=({str(N): resolve_gamma(c["training"], N)
+                                  for N in (50, 100, 120, 160, 200)}
+                                 if c["training"]["gamma_schedule"]["mode"] != "none" else None),
+                reward_shaping=c["reward"]["shaping"],
+                reward_preset=c["reward"]["preset"],
+                beam_context_count=c["network"].get("context_beam_count", "fixed_100"),
+                readout_mode=c["network"].get("readout_mode", "first_token"),
+                beam_count_conditioning=c["network"].get("beam_count_conditioning", "none"),
                 context_level=c["state"]["context_level"],
                 telemetry=c["telemetry"],
                 action_dims=[100, 10, len(c["environment"]["power_levels_w"])],

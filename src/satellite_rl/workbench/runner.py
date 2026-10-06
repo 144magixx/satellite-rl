@@ -23,6 +23,7 @@ from satellite_rl.agents.workbench_algorithms import build_agent, ensure_finite_
 from satellite_rl.training.run_monitor import replace_with_retry
 from satellite_rl.workbench.checkpoints import (config_hash, export_policy, load_checkpoint,
                                                  load_policy, save_checkpoint)
+from satellite_rl.workbench.experiments import is_variable_beam_experiment
 from satellite_rl.workbench.learning_snapshots import FORMAT as LEARNING_SNAPSHOT_FORMAT, save_learning_snapshot
 from satellite_rl.workbench.scene_order import SceneOrder, VariableBeamSceneOrder
 
@@ -449,7 +450,7 @@ def _validation_due(evaluation, progress, env_step):
 
 
 def _zero_validation_case(path, contract, result=None):
-    """Immutable S2-P17 validation@0 allocation, bound to the initial checkpoint."""
+    """Immutable variable-beam validation@0 allocation, bound to the initial checkpoint."""
     path = Path(path)
     if path.exists():
         try:
@@ -459,17 +460,17 @@ def _zero_validation_case(path, contract, result=None):
                 separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
             if (envelope.get("sha256") != actual or body.get("contract") != contract or
                     not isinstance(body.get("result"), dict)):
-                raise ValueError("S2-P17零步验证缓存SHA或冻结合同不一致")
+                raise ValueError("可变束数零步验证缓存SHA或冻结合同不一致")
             saved = body["result"]
             scene = saved.get("scene") or {}
             if (saved.get("action_seed") != contract["action_seed"] or
                     scene.get("source_sha256") != contract["source_scene_sha256"] or
                     _sha256(scene["path"]) != scene.get("sha256") or
                     not isinstance(saved.get("trace"), list) or not saved["trace"]):
-                raise ValueError("S2-P17零步验证缓存案例身份或归档场景损坏")
+                raise ValueError("可变束数零步验证缓存案例身份或归档场景损坏")
             return saved
         except (OSError, KeyError, TypeError, ValueError) as error:
-            raise ValueError(f"S2-P17零步验证缓存损坏，拒绝重算：{path}") from error
+            raise ValueError(f"可变束数零步验证缓存损坏，拒绝重算：{path}") from error
     if result is None:
         return None
     body = {"contract": contract, "result": _jsonable(result)}
@@ -494,7 +495,7 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
     if zero_cache is not None and (group != "validation" or env_step != 0 or
                                    config["training"].get("beam_count_mode", "none") == "none" or
                                    config["evaluation"]["repeats"] != 1):
-        raise ValueError("零步案例缓存仅支持S2-P17可变束数单动作验证")
+        raise ValueError("零步案例缓存仅支持可变束数单动作验证")
     for index in range(count):
         seed = seed_base + index
         scene_path = Path(directory) / "scenes" / group / f"scene_{seed}.npz"
@@ -645,6 +646,15 @@ def _training(directory, job, config, ledger, resume):
             fields.setdefault("replay_bucket_sizes", {key: len(value) for key, value in
                                                       agent.replay.bucket_indices.items()})
             fields.setdefault("replay_sampled_by_bucket", dict(agent.replay.sampled_by_bucket))
+            if agent.replay.segment_indices is not None:
+                # S2-P18 手段E：每桶、每进度段的配额与有放回抽样次数都必须可回读。
+                fields.setdefault("progress_strata", agent.replay.progress_strata)
+                fields.setdefault("replay_sampled_by_stratum", dict(agent.replay.sampled_by_stratum))
+                fields.setdefault("replay_replacement_draws_by_stratum",
+                                  dict(agent.replay.replacement_draws_by_stratum))
+                fields.setdefault("replay_stratum_sizes", {
+                    key: [len(cell) for cell in bucket]
+                    for key, bucket in agent.replay.segment_indices.items()})
         ledger.save_status(stage=current_stage, env_step=env_step, episode=episode,
                            update_step=agent.update_step, budget_env_steps=training["total_steps"],
                            steps_per_second=step_rate, updates_per_second=update_rate,
@@ -781,6 +791,15 @@ def _training(directory, job, config, ledger, resume):
                 scene = env.scene()
             if variable_mode != "none" and len(scene["rate"]) != selection["beam_count"]:
                 raise ValueError("Frozen scene actual beam count differs from training metadata")
+            # 逐束实体编码档位：观测宽度随 N 变化，权重按束数上界建立，必须与
+            # 配置的 beam_count_max 一致（否则策略输入会在训练中途改变形状）。
+            if config["network"].get("context_beam_count", "fixed_100") == "actual":
+                from satellite_rl.workbench.config import expected_state_dim
+                if state.shape[0] != expected_state_dim(config):
+                    raise ValueError(
+                        "逐束实体编码要求场景束数等于配置的 beam_count_max；"
+                        f"当前场景 {len(scene['rate'])} 束、配置上限 "
+                        f"{config['environment']['beam_count_max']}")
             reset_history = getattr(agent, "reset_episode", None)
             if reset_history is not None:
                 reset_history()
@@ -804,9 +823,24 @@ def _training(directory, job, config, ledger, resume):
             episode_terms = partial_episode["reward_terms"]
             episode_start = time.monotonic() - partial_episode["elapsed_seconds"]
             partial_episode = None
+        # S2-P18 手段D：按本回合实际束数解析折扣，并写进环境供奖励整形使用。
+        beam_count_for_gamma = (selection.get("beam_count")
+                                or (len(scene["rate"]) if "rate" in scene else None)
+                                or getattr(getattr(env, "raw_env", None), "beam_num", None))
+        gamma_lookup = getattr(agent, "gamma_for", None)
+        effective_gamma = (gamma_lookup(beam_count_for_gamma) if gamma_lookup is not None
+                           else float(training["gamma"]))
+        env._effective_gamma = effective_gamma
         done = False
         while not done and env_step < training["total_steps"]:
             mask = env.action_mask()
+            progress_segment = None
+            replay = getattr(agent, "replay", None)
+            if getattr(replay, "segment_indices", None) is not None:
+                # 回合内进度分位：用掩码前可见的 beam_idx/beam_num 分段。
+                progress_segment = min(replay.progress_strata - 1,
+                                       int(env.raw_env.beam_idx / env.raw_env.beam_num
+                                           * replay.progress_strata))
             policy_options = {"action_mask": mask} if mask is not None else {}
             action = agent.act(state, env_step=env_step, **policy_options)
             next_state, reward, done, info = env.step(action)
@@ -819,6 +853,8 @@ def _training(directory, job, config, ledger, resume):
                 replay_options["actual_action"] = info["actual_action"]
             if replay_bucket is not None:
                 replay_options["replay_bucket"] = replay_bucket
+            if progress_segment is not None:
+                replay_options["progress_segment"] = progress_segment
             agent.observe(state, action, reward, next_state, done, **replay_options)
             env_step += 1
             if replay_bucket is not None:
@@ -1217,17 +1253,19 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
 
 
 def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
-    """S2-P17 allocation cases survive interruption without rerunning completed work."""
+    """Variable-beam (S2-P17/S2-P18) allocation cases survive interruption unchanged."""
     from satellite_rl.workbench.baselines import BaselinePolicy
     from satellite_rl.workbench.datasets import assert_scene_profile, scene_set_files
     from satellite_rl.workbench.environment import WorkbenchEnv
+    from satellite_rl.workbench.experiments import VARIABLE_BEAM_EXPERIMENTS
     from satellite_rl.workbench.variable_evaluation import VariableEvaluationCases
 
-    if job.get("legacy_type") or job.get("experiment_id") != "S2-P17":
-        raise ValueError("S2-P17 evaluation requires a workbench policy")
+    experiment_id = job.get("experiment_id")
+    if job.get("legacy_type") or not is_variable_beam_experiment(experiment_id):
+        raise ValueError("可变束数评价需要一个工作台策略：" + "/".join(VARIABLE_BEAM_EXPERIMENTS))
     for reference in job.get("model_files", []):
         if _sha256(reference["path"]) != reference["sha256"]:
-            raise ValueError("Frozen S2-P17 model file differs")
+            raise ValueError(f"Frozen {experiment_id} model file differs")
     policy = load_policy(job["model_path"], config=job.get("model_config"), device=device)
     environment_config = policy.config
     overrides = job.get("environment_overrides")
@@ -1237,19 +1275,19 @@ def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
                 policy.metadata.get("state_dim") != 207 or
                 policy.metadata.get("provenance", {}).get("run_id") !=
                 "train_sac_20261001_162126_33e89e95"):
-            raise ValueError("S2-P17 H0 environment override provenance mismatch")
+            raise ValueError(f"{experiment_id} H0 environment override provenance mismatch")
         environment_config = deepcopy(environment_config)
         environment_config["environment"]["beam_count_max"] = 200
     if environment_config["environment"].get("profile") != "europe_v1" or \
             environment_config["environment"].get("beam_count_max") != 200:
-        raise ValueError("S2-P17 model environment must support 200 European beams")
+        raise ValueError(f"{experiment_id} model environment must support 200 European beams")
     scene_set = job.get("scene_sets", {}).get("test")
     if not scene_set:
-        raise ValueError("S2-P17 evaluation requires a frozen test set")
+        raise ValueError(f"{experiment_id} evaluation requires a frozen test set")
     assert_scene_profile(scene_set, "europe_v1")
     files = scene_set_files(scene_set)
     if len(files) != 440 or len(scene_set["files"]) != 440:
-        raise ValueError("S2-P17 independent assessment requires all 440 frozen scenarios")
+        raise ValueError(f"{experiment_id} independent assessment requires all 440 frozen scenarios")
     action_seed_base = int(job.get("action_seed", -1))
     repeats = int(job.get("repeats", 0))
     action_mode = job.get("action_mode")
@@ -1257,17 +1295,17 @@ def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
     if (action_seed_base != 53001 or repeats != 3 or action_mode != "stochastic" or
             len(set(baseline_names)) != len(baseline_names) or
             any(name not in ("fixed", "greedy") for name in baseline_names)):
-        raise ValueError("S2-P17 evaluation action budget or baseline list differs")
+        raise ValueError(f"{experiment_id} evaluation action budget or baseline list differs")
     for index, (file, digest) in enumerate(files):
         record = scene_set["files"][index]
         if (record.get("beam_count") not in (50, 60, 75, 90, 100, 125, 140, 150, 175, 180, 200) or
                 record.get("partition_role") != "test" or
                 record.get("sha256") != digest):
-            raise ValueError("S2-P17 frozen scenario count/role/SHA differs")
+            raise ValueError(f"{experiment_id} frozen scenario count/role/SHA differs")
     model_root = Path(job["model_path"])
     if model_root.is_file():
         model_root = model_root.parent
-    contract = {"experiment_id": "S2-P17", "run_id": job["run_id"],
+    contract = {"experiment_id": experiment_id, "run_id": job["run_id"],
                 "git_commit": job["git_commit"], "job_config_hash": config_hash(config),
                 "policy_config_hash": config_hash(policy.config),
                 "model_path": str(model_root),
@@ -1330,7 +1368,7 @@ def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
             file, digest = files[index]
             scene = _load_scene(file)
             if len(scene["rate"]) != expected["beam_count"]:
-                raise ValueError("S2-P17 frozen scene arrays differ from metadata")
+                raise ValueError(f"{experiment_id} frozen scene arrays differ from metadata")
             scene_ref = _save_scene(Path(directory) / "scenes" / "test" /
                                     f"scene_{index:05d}.npz", scene)
             seed = expected["action_seed"]
@@ -1364,7 +1402,7 @@ def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
         else:
             archived = previous["scene"]
             if _sha256(archived["path"]) != archived["sha256"]:
-                raise ValueError(f"S2-P17 completed case archived scene is missing or damaged: {case_id}")
+                raise ValueError(f"{experiment_id} completed case archived scene is missing or damaged: {case_id}")
             reused_completed += 1
         completed += 1
         progress(completed)
@@ -1428,7 +1466,7 @@ def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
                     result_stream.write(("," if ordinal else "") + json.dumps(row, ensure_ascii=False, allow_nan=False))
                 result_stream.write("]}")
             result_stream.write('},"metadata":' + json.dumps({**_job_provenance(job, environment_config),
-                "experiment_id": "S2-P17", "model_path": job["model_path"],
+                "experiment_id": experiment_id, "model_path": job["model_path"],
                 "git_commit": job["git_commit"], "action_mode": action_mode,
                 "repeats": repeats, "action_seed_base": action_seed_base,
                 "case_contract_sha256": store.contract_sha256,
@@ -1498,7 +1536,7 @@ def run_job(job_dir, *, resume=False):
         if job["kind"] == "train":
             _training(directory, job, config, ledger, resume)
         elif job["kind"] == "evaluate":
-            if job.get("experiment_id") == "S2-P17":
+            if is_variable_beam_experiment(job.get("experiment_id")):
                 _evaluate_variable_job(directory, job, config, ledger)
             elif resume:
                 raise ValueError("Evaluation restart must create a fresh job")

@@ -73,6 +73,10 @@ class ValidationScheduleTests(unittest.TestCase):
             def ready(self, *_args):
                 return False
 
+            def gamma_for(self, *_args):
+                # S2-P18：runner 每回合按束数解析折扣；固定回合长度的旧任务返回默认值。
+                return 0.99
+
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
             config = default_config()

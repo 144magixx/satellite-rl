@@ -1,7 +1,17 @@
 """Reproducible third-stage tables and curves from complete saved case records."""
 from pathlib import Path
+import json
 
 import numpy as np
+
+
+def _experiment_id(directory):
+    """报告文案随任务实际的实验编号变化，不写死某一轮编号。"""
+    try:
+        job = json.loads((Path(directory) / "job.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "可变束数实验"
+    return job.get("experiment_id") or "可变束数实验"
 
 
 def write_report(directory, rows, summaries, config):
@@ -139,5 +149,5 @@ def write_report(directory, rows, summaries, config):
             for method, label in labels.items():
                 if line.startswith("| " + method + " |"):
                     lines[index] = line.replace("| " + method + " |", "| " + label + " |", 1)
-        lines += ["", "S2-P17主报告按波束数量和母场景配对；本任务总体表不能替代分档报告。直接分配原始耗时另见已保存初始结果的initial_allocation_seconds；本表none包含同一初解的额外物理复核。"]
+        lines += ["", f"{_experiment_id(directory)}主报告按波束数量和母场景配对；本任务总体表不能替代分档报告。直接分配原始耗时另见已保存初始结果的initial_allocation_seconds；本表none包含同一初解的额外物理复核。"]
     (directory / "power_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

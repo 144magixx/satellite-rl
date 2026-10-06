@@ -1,4 +1,4 @@
-"""Durable, immutable per-allocation evidence for the approved S2-P17 assessment."""
+"""Durable, immutable per-allocation evidence for the approved variable-beam assessment."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 
 from satellite_rl.training.run_monitor import replace_with_retry
+
+from .experiments import is_variable_beam_experiment
 
 
 def _canonical(value):
@@ -44,8 +46,10 @@ class VariableEvaluationCases:
     """
 
     def __init__(self, directory, contract):
-        if contract.get("experiment_id") != "S2-P17":
-            raise ValueError("Variable case store requires S2-P17")
+        experiment_id = contract.get("experiment_id")
+        if not is_variable_beam_experiment(experiment_id):
+            raise ValueError(f"Variable case store requires a variable-beam experiment, got {experiment_id!r}")
+        self.experiment_id = experiment_id
         self.directory = Path(directory) / "cases"
         self.directory.mkdir(parents=True, exist_ok=True)
         self.contract = contract
@@ -55,17 +59,17 @@ class VariableEvaluationCases:
             try:
                 saved = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as error:
-                raise ValueError("S2-P17 case contract is corrupt") from error
+                raise ValueError(f"{experiment_id} case contract is corrupt") from error
             if saved != {"contract": contract, "sha256": self.contract_sha256}:
-                raise ValueError("S2-P17 evaluation inputs differ from frozen case contract")
+                raise ValueError(f"{experiment_id} evaluation inputs differ from frozen case contract")
         else:
             if any(self.directory.glob("*.json")):
-                raise ValueError("S2-P17 case files exist without a frozen contract")
+                raise ValueError(f"{experiment_id} case files exist without a frozen contract")
             _atomic_json(path, {"contract": contract, "sha256": self.contract_sha256})
 
     def path(self, case_id):
         if not re.fullmatch(r"(?:model|fixed|greedy)_\d{5}_\d{2}", case_id):
-            raise ValueError("Invalid S2-P17 case identity")
+            raise ValueError(f"Invalid {self.experiment_id} case identity")
         return self.directory / f"{case_id}.json"
 
     def load(self, case_id, expected):
@@ -75,12 +79,12 @@ class VariableEvaluationCases:
         try:
             envelope = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
-            raise ValueError(f"S2-P17 case is corrupt: {case_id}") from error
+            raise ValueError(f"{self.experiment_id} case is corrupt: {case_id}") from error
         body = envelope.get("body") if isinstance(envelope, dict) else None
         if (not isinstance(body, dict) or envelope.get("sha256") != _sha256(body) or
                 body.get("case_id") != case_id or body.get("contract_sha256") != self.contract_sha256 or
                 body.get("expected") != expected or not isinstance(body.get("result"), dict)):
-            raise ValueError(f"S2-P17 case checksum or frozen input mismatch: {case_id}")
+            raise ValueError(f"{self.experiment_id} case checksum or frozen input mismatch: {case_id}")
         result = body["result"]
         scene = result.get("scene")
         if (result.get("case_id", case_id) != case_id or
@@ -91,12 +95,12 @@ class VariableEvaluationCases:
                 result.get("beam_count") != expected.get("beam_count") or
                 ("scene_metadata" in expected and
                  result.get("scene_metadata") != expected["scene_metadata"])):
-            raise ValueError(f"S2-P17 case result identity mismatch: {case_id}")
+            raise ValueError(f"{self.experiment_id} case result identity mismatch: {case_id}")
         return result
 
     def save(self, case_id, expected, result):
         if self.load(case_id, expected) is not None:
-            raise ValueError(f"S2-P17 completed case cannot be overwritten: {case_id}")
+            raise ValueError(f"{self.experiment_id} completed case cannot be overwritten: {case_id}")
         body = {"case_id": case_id, "contract_sha256": self.contract_sha256,
                 "expected": expected, "result": result}
         _atomic_json(self.path(case_id), {"body": body, "sha256": _sha256(body)})
@@ -106,9 +110,9 @@ class VariableEvaluationCases:
         planned = {case_id for case_id, _ in cases}
         found = {path.stem for path in self.directory.glob("*.json") if path.name != "contract.json"}
         if found != planned:
-            raise ValueError("S2-P17 case inventory differs from approved evaluation plan")
+            raise ValueError(f"{self.experiment_id} case inventory differs from approved evaluation plan")
         for case_id, expected in cases:
             result = self.load(case_id, expected)
             if result is None:
-                raise ValueError(f"S2-P17 planned case is missing: {case_id}")
+                raise ValueError(f"{self.experiment_id} planned case is missing: {case_id}")
             yield case_id, result

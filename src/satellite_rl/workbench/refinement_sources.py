@@ -1,12 +1,14 @@
-"""Strict reuse of completed workbench allocations for the S2-P17 SCA route."""
+"""Strict reuse of completed workbench allocations for the variable-beam SCA route."""
 from copy import deepcopy
 import math
 from pathlib import Path
 
+from .experiments import VARIABLE_BEAM_EXPERIMENTS, is_variable_beam_experiment
 from .storage import digest, read_json, validate_id
 
 
-EXPERIMENT_ID = "S2-P17"
+EXPERIMENT_ID = "S2-P17"  # 历史默认值（S2-P17 冻结来源链）；常规链路用 EXPERIMENT_IDS 集合判断。
+EXPERIMENT_IDS = VARIABLE_BEAM_EXPERIMENTS
 SOURCE_GROUPS = ("model", "fixed", "greedy")
 
 
@@ -70,7 +72,7 @@ def source_rows(reference):
 
 
 def prepare_source(app, body):
-    """Resolve only a completed S2-P17 evaluation in this workbench."""
+    """Resolve only a completed variable-beam (S2-P17/S2-P18) evaluation in this workbench."""
     run_id = body.get("source_run_id")
     validate_id(run_id)
     group = body.get("source_group", "model")
@@ -79,8 +81,9 @@ def prepare_source(app, body):
     directory, readonly = app.resolve_run(run_id)
     job = read_json(directory / "job.json", {})
     status = read_json(directory / "status.json", {})
-    if readonly or job.get("kind") != "evaluate" or job.get("experiment_id") != EXPERIMENT_ID:
-        raise ValueError("须选择本工作台S2-P17正式评价任务")
+    experiment_id = job.get("experiment_id")
+    if readonly or job.get("kind") != "evaluate" or not is_variable_beam_experiment(experiment_id):
+        raise ValueError(f"须选择本工作台可变束数正式评价任务（{'/'.join(EXPERIMENT_IDS)}）")
     if status.get("stage") != "completed":
         raise ValueError("第二阶段初始分配尚未完整完成")
     dataset = (job.get("scene_sets") or {}).get("test")
@@ -98,7 +101,7 @@ def prepare_source(app, body):
     selected = (summary.get("scenes", []) if group == "model" else
                 summary.get("baselines", {}).get(group, {}).get("scenes", []))
     if not selected or any(not row.get("case_path") for row in selected):
-        raise ValueError("S2-P17来源须有完整持久初解case")
+        raise ValueError(f"{experiment_id}来源须有完整持久初解case")
     reference["case_files"] = [{"path": str(Path(row["case_path"]).resolve(strict=True)),
                                 "sha256": digest(row["case_path"])} for row in selected]
     indexed = source_rows(reference)
