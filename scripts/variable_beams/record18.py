@@ -9,6 +9,8 @@ sys.path.insert(0, r"D:\paper\scripts\variable_beams")
 import ops18  # noqa: E402
 
 ROOT = Path(r"D:\paper")
+BEGIN = "<!-- S2P18-LIVE-BEGIN -->"
+END = "<!-- S2P18-LIVE-END -->"
 MANIFEST = ops18.LOCAL / "run_manifest.json"
 
 
@@ -137,8 +139,13 @@ def main() -> None:
     lines.append("")
     status = ROOT / "EXPERIMENT_STATUS.md"
     text = status.read_text(encoding="utf-8")
-    header_end = text.index("\n\n") + 1
-    status.write_text(text[:header_end] + "\n".join(lines) + text[header_end:], encoding="utf-8")
+    # 用显式标记界定实况段：只替换标记之间的内容，不做任何前缀/特征猜测。
+    if BEGIN not in text or END not in text:
+        raise RuntimeError(f"EXPERIMENT_STATUS.md 缺少实况标记 {BEGIN} / {END}")
+    before, _, rest = text.partition(BEGIN)
+    _, _, after = rest.partition(END)
+    status.write_text(before + BEGIN + "\n" + "\n".join(lines) + "\n" + END + after,
+                      encoding="utf-8")
     print("\n".join(lines))
 
 
