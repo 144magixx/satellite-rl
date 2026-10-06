@@ -328,6 +328,36 @@ def submit_evaluation(port: int, arm: str, *, execute: bool, tag: str = "") -> d
     return {"status": "submitted", "job": job, **plan}
 
 
+def submit_sca(port: int, arm: str, *, execute: bool, tag: str = "") -> dict:
+    """Submit the unified SCA refinement for one arm's completed assessment.
+
+    The server requires the frozen variable-beam method set, three stochastic
+    action samples with seed 53001 and the total-power budget route, and it binds
+    the refinement to a completed assessment through ``source_run_id``.
+    """
+    completed = [run for run in arm_runs_like(port, arm)
+                 if run["kind"] == "evaluate" and run["stage"] == "completed"]
+    if not completed:
+        raise RuntimeError(f"{arm} 尚无已完成的440景考核，SCA 缺少冻结初解来源")
+    assessment = completed[0]
+    controls = {"methods": ["none", "sca", "sca_si_lp"], "power_budget_mode": "total",
+                "action_mode": "stochastic", "repeats": 3, "action_seed": 53001}
+    suffix = f"-{tag}" if tag else ""
+    body = {"source_run_id": assessment["run_id"], "source_group": "model",
+            "config": controls,
+            "request_id": f"s2p18-{arm.lower()}-sca{suffix}"}
+    plan = {"port": port, "arm": arm, "source_run_id": assessment["run_id"],
+            "source_step": assessment.get("env_step"), "controls": controls,
+            "request_id": body["request_id"]}
+    if not execute:
+        available = ops18.api(port, "/power-refinement/initial-sources", timeout=120)
+        plan["initial_sources"] = [row for row in available.get("sources", [])
+                                   if row.get("run_id") == assessment["run_id"]]
+        return {"status": "plan_only", **plan}
+    job = ops18.api(port, "/power-refinement/runs", body, method="POST", timeout=900)
+    return {"status": "submitted", "job": job, **plan}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--arm", choices=tuple(ARM_OVERRIDES), required=True)
@@ -337,11 +367,15 @@ def main() -> None:
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--tag", default="", help="重试时使用的请求标记，避免幂等返回旧任务")
     parser.add_argument("--evaluate", action="store_true", help="提交440景共同考核而不是训练")
+    parser.add_argument("--sca", action="store_true", help="提交统一SCA细调（需先有完成的考核）")
     args = parser.parse_args()
     port = args.port or ARM_PLACEMENT[args.arm]
-    result = (submit_evaluation(port, args.arm, execute=args.execute, tag=args.tag)
-              if args.evaluate else
-              submit(port, args.arm, args.steps, execute=args.execute, tag=args.tag))
+    if args.sca:
+        result = submit_sca(port, args.arm, execute=args.execute, tag=args.tag)
+    elif args.evaluate:
+        result = submit_evaluation(port, args.arm, execute=args.execute, tag=args.tag)
+    else:
+        result = submit(port, args.arm, args.steps, execute=args.execute, tag=args.tag)
     receipt = LOCAL / "preflight" / f"submit_{args.arm}_{args.steps}_{port}.json"
     ops18.write_json(receipt, result)
     print(json.dumps({key: value for key, value in result.items() if key != "config"},
