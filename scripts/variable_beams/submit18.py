@@ -243,8 +243,12 @@ def build_config(port: int, arm: str, steps: int) -> dict:
     return config
 
 
-def submit(port: int, arm: str, steps: int, *, execute: bool) -> dict:
-    request_id = f"s2p18-{arm.lower()}-pilot-{steps}-51001"
+def submit(port: int, arm: str, steps: int, *, execute: bool, tag: str = "") -> dict:
+    # Request IDs are idempotent in the workbench: resubmitting the same ID returns
+    # the existing job. A retry after a fixed startup failure therefore needs its own
+    # tag, and the failed attempt stays in the records instead of being overwritten.
+    suffix = f"-{tag}" if tag else ""
+    request_id = f"s2p18-{arm.lower()}-pilot-{steps}-51001{suffix}"
     records = scene_records(port)
     config = build_config(port, arm, steps)
     # The arm identity is written into the frozen configuration: the validator
@@ -279,9 +283,10 @@ def main() -> None:
                         default=STEPS_PILOT)
     parser.add_argument("--port", type=int, choices=ops18.PORTS)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--tag", default="", help="重试时使用的请求标记，避免幂等返回旧任务")
     args = parser.parse_args()
     port = args.port or ARM_PLACEMENT[args.arm]
-    result = submit(port, args.arm, args.steps, execute=args.execute)
+    result = submit(port, args.arm, args.steps, execute=args.execute, tag=args.tag)
     receipt = LOCAL / "preflight" / f"submit_{args.arm}_{args.steps}_{port}.json"
     ops18.write_json(receipt, result)
     print(json.dumps({key: value for key, value in result.items() if key != "config"},
