@@ -17,7 +17,8 @@ sys.path.insert(0, r"D:\paper\scripts\variable_beams")
 import ops18  # noqa: E402
 
 JOBS = {"V3": (20424, "refine_sac_20261006_173515_4b10636d"),
-        "V2": (20418, "refine_sac_20261006_224531_316265cd")}
+        "V2": (20418, "refine_sac_20261006_224531_316265cd"),
+        "G0": (20418, "refine_sac_20261007_024934_39422e19")}
 OUT = Path(r"D:\paper\outputs\experiments\variable_beams_s2p18_20261006\analysis")
 
 BODY = r'''

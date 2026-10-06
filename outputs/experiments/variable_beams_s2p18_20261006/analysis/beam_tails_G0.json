@@ -1,0 +1,60 @@
+{
+  "checked_utc": "2026-10-06T21:36:18.355394+00:00",
+  "arm": "G0",
+  "run_id": "refine_sac_20261007_024934_39422e19",
+  "exists": true,
+  "bytes": 1066624390,
+  "columns": [
+    "basic_met",
+    "beam_count",
+    "beam_id",
+    "capacity_bps",
+    "capacity_demand_ratio",
+    "effective_served_bps",
+    "freq",
+    "git_commit",
+    "group",
+    "initial_allocation_sha256",
+    "initial_capacity_bps",
+    "initial_power_w",
+    "initial_source_group",
+    "initializer_kind",
+    "lat",
+    "lon"
+  ],
+  "methods": {
+    "none": {
+      "n": 161400,
+      "ratio_min": 0.011694263226792243,
+      "ratio_max": 31.72450271091318,
+      "ratio_mean": 1.9012,
+      "sample_p05": 0.17552486847307433,
+      "sample_p50": 1.3857829289343206,
+      "sample_size": 3228,
+      "share_below_1": 0.3744,
+      "share_below_0_8": 0.3003
+    },
+    "sca": {
+      "n": 161400,
+      "ratio_min": 0.011694263226845067,
+      "ratio_max": 1.1008163193300082,
+      "ratio_mean": 0.8731,
+      "sample_p05": 0.10000093167560162,
+      "sample_p50": 1.0000007296013607,
+      "sample_size": 3228,
+      "share_below_1": 0.4176,
+      "share_below_0_8": 0.1741
+    },
+    "sca_si_lp": {
+      "n": 161400,
+      "ratio_min": 0.011694258226818133,
+      "ratio_max": 1.0074707783557062,
+      "ratio_mean": 0.873,
+      "sample_p05": 0.10000000666823892,
+      "sample_p50": 0.9999999999999998,
+      "sample_size": 3228,
+      "share_below_1": 0.5236,
+      "share_below_0_8": 0.174
+    }
+  }
+}
