@@ -312,7 +312,18 @@ def submit_evaluation(port: int, arm: str, *, execute: bool, tag: str = "") -> d
     candidates = [item for item in models if run["run_id"] in (item.get("path") or "")]
     if not candidates:
         raise RuntimeError(f"{arm} 的完成模型尚未登记到模型库")
-    model = candidates[0]
+    # 评估门槛只接受 40 万步终点，而同一任务会导出 latest/best_validation/final 三类，
+    # 其中 best_validation 会随训练不断更新。因此显式优先 final，并在结果里回读所选项。
+    def export_rank(item):
+        name = (item.get("path") or "").rstrip("/").split("/")[-1]
+        return {"final": 0, "best_validation": 1, "latest": 2}.get(name, 3)
+
+    model = sorted(candidates, key=export_rank)[0]
+    chosen_export = (model.get("path") or "").rstrip("/").split("/")[-1]
+    chosen_step = (model.get("provenance") or {}).get("env_step")
+    if chosen_export != "final":
+        raise RuntimeError(f"{arm} 尚无 final 导出（当前只有 {chosen_export}），"
+                           f"考核须使用 40 万步终点")
     suffix = f"-{tag}" if tag else ""
     body = {"model_id": model["id"], "scene_id": records["test"]["id"],
             "experiment_id": "S2-P18", "action_mode": "stochastic",
@@ -321,6 +332,9 @@ def submit_evaluation(port: int, arm: str, *, execute: bool, tag: str = "") -> d
             "request_id": f"s2p18-{arm.lower()}-jan29-eval{suffix}"}
     plan = {"port": port, "arm": arm, "run_id": run["run_id"],
             "model_id": model["id"], "model_path": model.get("path"),
+            "model_export": chosen_export, "model_env_step": chosen_step,
+            "available_exports": sorted((item.get("path") or "").rstrip("/").split("/")[-1]
+                                        for item in candidates),
             "test_scenes": records["test"], "request_id": body["request_id"]}
     if not execute:
         return {"status": "plan_only", **plan}
