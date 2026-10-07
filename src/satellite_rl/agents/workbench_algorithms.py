@@ -224,10 +224,23 @@ class Replay:
         if self.padded_width is not None:
             # 逐束实体档位：把真实束数存进附加表（不改动行结构，避免影响既有
             # 掩码字段的解析与旧断点兼容）。
-            if len(self.slot_entity_counts) < len(self.rows) + 1:
-                self.slot_entity_counts.extend([0] * (len(self.rows) + 1 - len(self.slot_entity_counts)))
-            self.slot_entity_counts[self.next_position if self.bucket_mode != "none"
-                                    else len(self.rows)] = int(entity_count)
+            if self.bucket_mode == "none":
+                # deque 满后会从左侧丢弃最旧行；束数表必须同步左移。
+                if len(self.slot_entity_counts) != len(self.rows):
+                    raise ValueError("逐束实体档位的回放束数表与行数不同步")
+                if len(self.rows) == self.capacity:
+                    self.slot_entity_counts.pop(0)
+                self.slot_entity_counts.append(int(entity_count))
+            else:
+                # ring 满后只覆盖 next_position，不能按 len(rows)+1 扩出
+                # 从未被索引的第 capacity+1 个零元素。
+                index = self.next_position
+                if index == len(self.slot_entity_counts):
+                    self.slot_entity_counts.append(int(entity_count))
+                elif 0 <= index < len(self.slot_entity_counts) == len(self.rows):
+                    self.slot_entity_counts[index] = int(entity_count)
+                else:
+                    raise ValueError("逐束实体档位的回放束数表与环位置不同步")
         if self.segment_indices is not None:
             if progress_segment is None or not 0 <= int(progress_segment) < self.progress_strata:
                 raise ValueError("进度分层采样要求每条转移给出有效的回合内进度段")
@@ -331,8 +344,14 @@ class Replay:
                          mask_batch([row[6] for row in rows], action_dims, device))
 
     def state_dict(self):
+        if self.padded_width is not None and len(self.slot_entity_counts) != len(self.rows):
+            raise ValueError("逐束实体档位的回放束数表与行数不同步")
         if self.bucket_mode == "none":
-            return {"rows": list(self.rows), "rng": self.rng.getstate(), "capacity": self.rows.maxlen}
+            data = {"rows": list(self.rows), "rng": self.rng.getstate(),
+                    "capacity": self.rows.maxlen}
+            if self.padded_width is not None:
+                data["slot_entity_counts"] = list(self.slot_entity_counts)
+            return data
         data = {"rows": list(self.rows), "rng": self.rng.getstate(), "capacity": self.capacity,
                 "bucket_mode": self.bucket_mode, "next_position": self.next_position,
                 "slot_buckets": list(self.slot_buckets),
@@ -363,6 +382,8 @@ class Replay:
                 saved_counts = data.get("slot_entity_counts")
                 if saved_counts is None or len(saved_counts) != len(self.rows):
                     raise ValueError("逐束实体档位的回放缺真实束数记录")
+                if any(type(value) is not int or value <= 0 for value in saved_counts):
+                    raise ValueError("逐束实体档位的回放真实束数非法")
                 self.slot_entity_counts = [int(value) for value in saved_counts]
         else:
             rows, buckets = list(data["rows"]), list(data["slot_buckets"])
@@ -390,8 +411,16 @@ class Replay:
             self.replacement_draws = dict(data["replacement_draws"])
             if self.padded_width is not None:
                 saved_counts = data.get("slot_entity_counts")
+                if (saved_counts is not None and len(rows) == self.capacity and
+                        len(saved_counts) == len(rows) + 1 and
+                        type(saved_counts[-1]) is int and saved_counts[-1] == 0):
+                    # 旧满环断点的唯一已知写盘缺陷：多保存一个从未被采样
+                    # 或覆盖的尾部零。前 capacity 条束数与行索引一一对应。
+                    saved_counts = saved_counts[:-1]
                 if saved_counts is None or len(saved_counts) != len(rows):
                     raise ValueError("逐束实体档位的回放缺真实束数记录")
+                if any(type(value) is not int or value <= 0 for value in saved_counts):
+                    raise ValueError("逐束实体档位的回放真实束数非法")
                 self.slot_entity_counts = [int(value) for value in saved_counts]
             if self.segment_indices is not None:
                 saved_segments = data.get("slot_segments")
