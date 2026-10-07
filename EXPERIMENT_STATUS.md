@@ -1,5 +1,17 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-07 S2-P19验证预算修复已完成，三组继续训练（根API/SSH：北京时间20:33:22）。**
+
+| 路线 | 当前进度 / 总上限 | 阶段与冻结来源 |
+| --- | --- | --- |
+| C0 | 198500/400000逐束，196501更新 | training，20418，48c7 |
+| C1 | 199100/400000逐束，197101更新 | training，20424，48c7 |
+| I0 | API149517/400000宏步；原始trace154470，更新日志在154450步为152451次 | training，20418，62e |
+
+C0/C1累计397600/800000逐束＝49.70%；I0原始宏步154470/400000＝38.62%，两类交互不相加；完整训练终点0/3。两卡GPU72%/43%、显存1385/892MiB，三worker PID/出生及冻结路径匹配。I0于139517宏步/4450回合经工作台正常stop，原断点SHA f2b3ebad…完整归档后同ID恢复62e33c1baa066c2a577a351cd18ecb487f4e11e8；新worker37818已真实越过停点。原四验证节点/试点审计未改，300k将只checkpoint并记skip、200k与实际终点保留，直接验证上限1296不增。143项相关整合回归通过；120k代表性GPU/RNG等价与实际139517恢复断点明确分开，来源合同及299项归档SHA均已核。没有重新训练或重做已完成评价。[本轮根现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261007T105552Z/final_root_live.json) · [实际恢复](outputs/experiments/sac_routes_s2p19_20261007/preflight/i0_budget_62e_resume_api.json) · [不可变证据](outputs/experiments/sac_routes_s2p19_20261007/preflight/i0_budget_62e_live_worker.json)。
+
+I0试点验证的直接/B改善+3.7378/+3.2836百分点仍成立，但只是Jan12的72景/6母；独立880景与规则/随机控制尚未评价。完整B累计504，保留三臂的真实审计已保存。控制器ee0a60c按revision5恢复，本机PID30064/20:25:58出生，日志`runtime_ee0a60c_R1.log`；主8900/8901仍13ea、临时8902已关闭，后续先实时核身份。最终矩阵必须等全部训练/终点B、20418同实例无竞争计时回执后才派发，不提前串行训练；报告15、曲线和双端归档仍待完成。工作台沿用现有停/恢复、来源历史和任务展示，本次等价运维修复无新增实验选择项。[运行清单](outputs/experiments/sac_routes_s2p19_20261007/run_manifest.json) · [每小时跟进精确回读](outputs/experiments/sac_routes_s2p19_20261007/followup/budget_repair_complete_verified_readback.json)。
+
 **2026-10-07 S2-P19三试点均通过，I0验证集已优于贪心；最终结论待880景共同考核。**I0在97112宏步/3125回合的受限试点完成72景、6母验证及完整B（任务`refine_sac_20261007_191743_e37373af`）；19:26:14审计passed，直接SI0.935578对贪心0.898200（+3.7378百分点），相同B后0.970679对0.937843（+3.2836百分点），6/6母最终B提升>0.1百分点。控制器已同ID批准I0续训；19:44代理实查I0 training110000宏步/108001更新，仍13ea。C0/C1仍48c7续训。结果限于单seed51001的Jan12验证母场景，尚不能称独立考核胜出或SAC优于同预算规则/随机搜索。[I0审计](outputs/experiments/sac_routes_s2p19_20261007/pilot_audit/I0_audit.json) · [三臂保留审计](outputs/experiments/sac_routes_s2p19_20261007/controller/gates/pilot_retention_audit.json)。
 
 **验证预算缺陷已发现，当前未超额，正在做等价修复。**受限试点97112与随后100000各保存72景，三臂现有直接验证720/1296；不修会最多1368。所有已有案例保留，I0后续保200000与实际终点、300000照常checkpoint但显式跳过验证，保持每臂最多6节点；不改变学习、训练步数/回合、种子或最终B预算。补丁已在13ea独立支线708c526，正确性与真实更新/RNG等价检查通过，专属工作台来源修复和真实当前断点验收仍在准备；未热改13ea worker，正式切源以实际回执为准。[只读预算审计](outputs/experiments/sac_routes_s2p19_20261007/preflight/i0_validation_budget_audit.json)。
