@@ -610,23 +610,45 @@ def _task_status(task: dict, receipts: dict, runs: dict[int, list[dict]],
                  plan: dict | None = None) -> dict:
     task_id = task["id"]
     saved = receipts.get(task_id)
-    if saved and saved.get("state") in ("gate_failed", "not_selected"):
-        return saved
-    if task["kind"] == "milestone":
-        return saved or {"state": "waiting"}
     if task["kind"] == "approve_pilot":
-        if saved:
+        if saved and saved.get("state") in ("completed", "gate_failed"):
             return saved
         pilot = receipts.get(task["pilot_task_id"]) or {}
         run_id = pilot.get("run_id")
         if run_id and pilot.get("state") in ("running", "completed"):
             proof = _pilot_gate_proof(task["port"], run_id)
             if proof is not None:
-                if proof.get("pass") is not True or proof.get("run_id") != run_id:
-                    raise RuntimeError("saved pilot gate proof has wrong run identity")
+                step = proof.get("checkpoint_step")
+                if (proof.get("pass") is not True or proof.get("run_id") != run_id or
+                        type(step) is not int or not 0 < step <= 100000 or
+                        (task_id in ("approve_C0_pilot", "approve_C1_pilot") and step != 100000) or
+                        not isinstance(proof.get("checkpoint_sha256"), str) or
+                        len(proof["checkpoint_sha256"]) != 64 or
+                        not isinstance(proof.get("audit_path"), str) or
+                        not isinstance(proof.get("audit_sha256"), str) or
+                        len(proof["audit_sha256"]) != 64 or
+                        not isinstance(proof.get("approved_at"), str)):
+                    raise RuntimeError("saved pilot gate proof identity/step/source fields differ")
+                reference = {"audit_path": proof["audit_path"],
+                             "audit_sha256": proof["audit_sha256"]}
+                audit = _pilot_audit_from_receipt(task["port"], run_id, reference,
+                                                  approved=True)
+                if (audit.get("passed") is not True or audit.get("run_id") != run_id or
+                        audit.get("checkpoint_sha256") != proof["checkpoint_sha256"] or
+                        audit.get("checkpoint_step") != step or
+                        not audit.get("source_files")):
+                    raise RuntimeError("saved pilot approval lacks matched source-backed audit")
                 return {"state": "completed", "approved_run_id": run_id,
+                        "audit_path": proof["audit_path"],
+                        "audit_sha256": proof["audit_sha256"],
+                        "checkpoint_sha256": proof["checkpoint_sha256"],
+                        "checkpoint_step": step,
                         "recovered_from_workbench_proof": True}
-        return {"state": "waiting"}
+        return saved or {"state": "waiting"}
+    if saved and saved.get("state") in ("gate_failed", "not_selected"):
+        return saved
+    if task["kind"] == "milestone":
+        return saved or {"state": "waiting"}
     if task["kind"] == "import_scene":
         if saved and saved.get("scene_id"):
             match = [scene for scene in scenes[task["port"]] if scene.get("id") == saved["scene_id"]]
