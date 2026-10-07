@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
+import types
 import unittest
 from unittest.mock import patch
 
@@ -234,12 +236,16 @@ class FinalTimingTests(unittest.TestCase):
             observed = {"pid": 33, "start_ticks": 44, "max_workers": "1",
                         "cwd": "/s2p19/20418/repo", "source_commit": timing.SERVICE_COMMIT,
                         "environment": {key: "1" for key in timing.THREAD_NAMES}}
+            psutil_stub = types.ModuleType("psutil")
+            psutil_stub.process_iter = lambda _fields: []
+            psutil_stub.AccessDenied = type("AccessDenied", (Exception,), {})
+            psutil_stub.NoSuchProcess = type("NoSuchProcess", (Exception,), {})
             with (patch.object(timing, "SWITCH_RECEIPT", switch),
                   patch.object(timing, "ORIGINAL_RECEIPT", original),
                   patch.object(timing, "SERVICE_RECEIPT", service),
                   patch.object(timing, "INTENT", intent),
                   patch.object(timing, "_service_process", return_value=observed),
-                  patch("psutil.process_iter", return_value=[]),
+                  patch.dict(sys.modules, {"psutil": psutil_stub}),
                   patch.object(timing, "_update_deployment_receipt"),
                   patch.object(timing.controller, "_service_identity", return_value={}),
                   patch.object(timing.plan_builder, "capture_final_timing_isolation",
