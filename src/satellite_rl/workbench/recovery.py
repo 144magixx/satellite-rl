@@ -340,7 +340,9 @@ def prepare_s2p19_replay_recovery(store, job, validation_path, validation_sha256
             status.get("stop_reason") != "s2p19_pilot_gate_pending" or
             checkpoint_sha != expected["checkpoint_sha256"] or
             "逐束实体档位的回放缺真实束数记录" not in failure.get("error", "") or
-            "Replay.load_state_dict" not in failure.get("traceback", "") or
+            'self.replay.load_state_dict(data["replay"])' not in failure.get("traceback", "") or
+            'workbench_algorithms.py", line 394, in load_state_dict' not in
+            failure.get("traceback", "") or
             (failure.get("last_normal_checkpoint") or {}).get("sha256") != checkpoint_sha or
             (failure.get("last_normal_checkpoint") or {}).get("env_step") != 100000):
         raise ValueError("S2-P19失败签名、完整试点断点或步数不符")

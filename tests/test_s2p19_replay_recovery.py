@@ -62,7 +62,9 @@ class ReplayRecoveryTests(unittest.TestCase):
         status = {"stage": "failed", "env_step": 100000, "update_step": 98001,
                   "stop_reason": "s2p19_pilot_gate_pending", "pid": 0}
         failure = {"error": "逐束实体档位的回放缺真实束数记录",
-                   "traceback": "Replay.load_state_dict failed",
+                   "traceback": ('self.replay.load_state_dict(data["replay"])\n'
+                                 'workbench_algorithms.py", line 394, in load_state_dict\n'
+                                 'ValueError: 逐束实体档位的回放缺真实束数记录'),
                    "last_normal_checkpoint": {"sha256": checkpoint_sha, "env_step": 100000}}
         write_json(job_dir / "job.json", job)
         write_json(job_dir / "status.json", status)
@@ -202,6 +204,14 @@ class ReplayRecoveryTests(unittest.TestCase):
                     recovery.prepare_s2p19_replay_recovery(
                         store, {**job, "run_id": "train_sac_i0"},
                         str(validation_path), digest(validation_path), REPAIR)
+                payload["agent"]["replay"]["slot_entity_counts"][-1] = 0
+                failure_path = store.job_dir(RUN) / "failure.json"
+                failure = json.loads(failure_path.read_text(encoding="utf-8"))
+                failure["traceback"] = "different replay failure"
+                write_json(failure_path, failure)
+                with self.assertRaisesRegex(ValueError, "失败签名"):
+                    recovery.prepare_s2p19_replay_recovery(
+                        store, job, str(validation_path), digest(validation_path), REPAIR)
 
     def test_scheduler_rejects_plain_retry_of_known_failed_pilot(self):
         with TemporaryDirectory() as temporary:
