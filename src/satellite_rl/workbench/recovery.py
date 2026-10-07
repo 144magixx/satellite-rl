@@ -301,7 +301,9 @@ def prepare_i0_validation_budget_recovery(store, job, validation_path,
                 previous.get("validation_receipt_sha256") != validation_sha256 or
                 job.get("git_commit") != expected_repair_commit or
                 job.get("source_root") != previous.get("new_source_root") or
-                read_json(proof_path) != previous):
+                read_json(proof_path) != previous or
+                digest(directory / "checkpoint.pt") != previous.get("checkpoint_sha256") or
+                digest(validation_path) != validation_sha256):
             raise ValueError("I0先前预算修复来源/证明不一致，禁止再次替换")
         verified_manifest(job["source_root"], expected_repair_commit)
         return job
@@ -377,6 +379,7 @@ def prepare_i0_validation_budget_recovery(store, job, validation_path,
     mandatory = set(I0_SAVED_VALIDATION_STEPS)
     if (not mandatory.issubset(found) or
             set(found) not in (mandatory, mandatory | {200000}) or
+            (200000 in found and step < 200000) or
             (validation_dir / "step_000300000").exists() or
             (directory / "validation_skips/step_000300000.json").exists()):
         raise ValueError("I0已存验证节点不符合四个原节点与最多200k的预算")
@@ -474,6 +477,7 @@ def prepare_i0_validation_budget_recovery(store, job, validation_path,
                 proof.get("checkpoint_sha256") != checkpoint_sha or
                 proof.get("validation_receipt_sha256") != validation_sha256 or
                 proof.get("saved_nodes") != node_refs or
+                digest(archive / "validation_receipt.json") != validation_sha256 or
                 set(backup) != set(archive_names) or
                 any(digest(original / name) != backup[name] or
                     digest(directory / name) != backup[name] for name in archive_names)):
