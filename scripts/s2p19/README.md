@@ -145,6 +145,11 @@ also the default). It checks the **actual** C0/C1 400000-step endpoints, I0's
 request with 216 completed method records bound to the same run, checkpoint,
 and validation step. A queued, failed, mismatched, or absent job yields a wait
 or hard block; controller receipts alone cannot release the switch. The current
+final C0/C1 checkpoint SHA is read from each original workbench job's
+`checkpoint.pt` and checked against its 400000-step provenance: their status
+records do not publish that SHA. I0's status SHA is checked against its file.
+The completed pilot B source schemas used for this gate are preserved in
+`preflight/final_timing_B_schema_audit.json`. The current
 read-only check is saved separately under
 `outputs/experiments/sac_routes_s2p19_20261007/preflight/final_timing_readonly_check.json`.
 

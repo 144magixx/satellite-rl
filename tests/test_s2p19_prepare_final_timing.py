@@ -11,29 +11,40 @@ from unittest.mock import patch
 from scripts.s2p19 import prepare_final_timing as timing
 
 
+CHECKPOINTS = {"C0": "a" * 64, "C1": "b" * 64, "I0": "c" * 64}
+
+
 def fixture():
     catalogs = {20418: [], 20424: []}
     details = {}
     for arm, (port, run_id, request_id, commit) in timing.ARMS.items():
-        checkpoint = arm.lower() * 32
+        checkpoint = CHECKPOINTS[arm]
         catalogs[port].append({"run_id": run_id, "request_id": request_id})
         status = {"run_id": run_id, "stage": "completed",
                   "env_step": 380000 if arm == "I0" else 400000,
                   "episodes": 12500 if arm == "I0" else 3300,
                   "completed_due_to": "episode_cap" if arm == "I0" else None,
-                  "checkpoint_sha256": checkpoint}
+                  "checkpoint_step": 380000 if arm == "I0" else 400000}
+        if arm == "I0":
+            status["checkpoint_sha256"] = checkpoint  # I0 records it; C0/C1 do not.
         details[run_id] = {"job": {"run_id": run_id, "request_id": request_id,
                                    "git_commit": commit, "kind": "train",
-                                   "experiment_id": "S2-P19"}, "status": status}
+                                   "experiment_id": "S2-P19",
+                                   "source_root": timing.ops.instance(port)["archive"] +
+                                   "/outputs/workbench/source_snapshots/" + commit},
+                           "status": status}
         b_id = f"refine_{arm.lower()}_endpoint"
         b_request = f"s2p19-{arm.lower()}-endpoint-B"
         catalogs[port].append({"run_id": b_id, "request_id": b_request})
         details[b_id] = {"job": {"run_id": b_id, "request_id": b_request,
                                   "kind": "refine", "experiment_id": "S2-P19",
-                                  "initial_source": {"run_id": run_id, "group": "model",
+                                  "initial_source": {"format": ("s2p19_i0_case_v1" if arm == "I0"
+                                                                 else "s2p19_inline_validation_v1"),
+                                     "run_id": run_id, "group": "model",
                                      "partition": "validation", "validation_step": status["env_step"],
                                      "source_checkpoint_sha256": checkpoint,
-                                     "scene_count": 72, "case_files": [{}] * 72}},
+                                     "scene_count": 72, "repeats": 1,
+                                     "action_seed": 53001, "case_files": [{}] * 72}},
                          "status": {"run_id": b_id, "stage": "completed",
                                     "env_step": 216, "budget_env_steps": 216}}
 
@@ -45,12 +56,47 @@ def fixture():
     return catalogs, details, api
 
 
+def checkpoint_stub(arm, _job, _status):
+    return {"checkpoint_sha256": CHECKPOINTS[arm]}
+
+
 class FinalTimingTests(unittest.TestCase):
+    def test_C0_complete_status_without_sha_reads_own_400k_checkpoint(self):
+        port, run_id, request, commit = timing.ARMS["C0"]
+        archive = timing.ops.instance(port)["archive"]
+        job = {"run_id": run_id, "request_id": request, "git_commit": commit,
+               "kind": "train", "experiment_id": "S2-P19",
+               "source_root": archive + "/outputs/workbench/source_snapshots/" + commit}
+        status = {"run_id": run_id, "stage": "completed", "env_step": 400000,
+                  "checkpoint_step": 400000}  # Real C0/C1 schema omits checkpoint_sha256.
+        observed = {"checkpoint_sha256": CHECKPOINTS["C0"],
+                    "format": "satellite_rl_workbench_checkpoint_v1", "step": 400000,
+                    "last_checkpoint_step": 400000, "run_id": run_id,
+                    "provenance_commit": commit, "provenance_profile": "europe_v1",
+                    "config_hash": "frozen-hash", "computed_config_hash": "frozen-hash",
+                    "config_sha256": "d" * 64}
+        scripts = []
+
+        def remote(code, actual_port, timeout=120):
+            self.assertEqual(actual_port, port)
+            compile(code, "remote_checkpoint_reader", "exec")
+            scripts.append(code)
+            return {"exit_code": 0, "stdout": json.dumps(observed) + "\n", "stderr": ""}
+
+        with patch.object(timing.ops, "remote_python", side_effect=remote):
+            result = timing._endpoint_checkpoint("C0", job, status)
+            self.assertEqual(result["checkpoint_sha256"], CHECKPOINTS["C0"])
+            with self.assertRaisesRegex(timing.TimingGateError, "status/actual checkpoint"):
+                timing._endpoint_checkpoint("C0", job,
+                    {**status, "checkpoint_sha256": "0" * 64})
+        self.assertEqual(len(scripts), 2)
+
     def test_active_training_waits_and_execute_does_nothing(self):
         catalogs, details, api = fixture()
         details[timing.ARMS["C0"][1]]["status"]["stage"] = "training"
         with TemporaryDirectory() as temporary:
             with (patch.object(timing.ops, "api", side_effect=api),
+                  patch.object(timing, "_endpoint_checkpoint", side_effect=checkpoint_stub),
                   patch.object(timing, "SWITCH_RECEIPT", Path(temporary) / "switch.json"),
                   patch.object(timing, "_stop_controller") as stop,
                   patch.object(timing, "_stop_old_service") as stop_remote,
@@ -68,6 +114,7 @@ class FinalTimingTests(unittest.TestCase):
         details["refine_c1_endpoint"]["status"]["stage"] = "running"
         with TemporaryDirectory() as temporary:
             with (patch.object(timing.ops, "api", side_effect=api),
+                  patch.object(timing, "_endpoint_checkpoint", side_effect=checkpoint_stub),
                   patch.object(timing, "SWITCH_RECEIPT", Path(temporary) / "switch.json"),
                   patch.object(timing, "_controller_state_ready", return_value=None),
                   patch.object(timing, "_launch_one_worker") as launch):
@@ -79,12 +126,14 @@ class FinalTimingTests(unittest.TestCase):
     def test_wrong_training_source_or_B_step_is_hard_block(self):
         catalogs, details, api = fixture()
         details[timing.ARMS["I0"][1]]["job"]["git_commit"] = "0" * 40
-        with patch.object(timing.ops, "api", side_effect=api):
+        with (patch.object(timing.ops, "api", side_effect=api),
+              patch.object(timing, "_endpoint_checkpoint", side_effect=checkpoint_stub)):
             with self.assertRaisesRegex(timing.TimingGateError, "identity/source"):
                 timing.inspect()
         details[timing.ARMS["I0"][1]]["job"]["git_commit"] = timing.ARMS["I0"][3]
         details["refine_i0_endpoint"]["job"]["initial_source"]["validation_step"] = 300000
-        with patch.object(timing.ops, "api", side_effect=api):
+        with (patch.object(timing.ops, "api", side_effect=api),
+              patch.object(timing, "_endpoint_checkpoint", side_effect=checkpoint_stub)):
             with self.assertRaisesRegex(timing.TimingGateError, "exact final model/step"):
                 timing.inspect()
 

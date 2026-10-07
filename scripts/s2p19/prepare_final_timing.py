@@ -65,6 +65,71 @@ def _status_summary(status: dict) -> dict:
              "checkpoint_sha256", "completed_due_to", "heartbeat_at")}
 
 
+def _endpoint_checkpoint(arm: str, job: dict, status: dict) -> dict:
+    """Read the actual job-owned final checkpoint, even when status omits SHA."""
+    port, run_id, _, commit = ARMS[arm]
+    archive = ops.instance(port)["archive"]
+    source = f"{archive}/outputs/workbench/source_snapshots/{commit}"
+    if job.get("source_root") != source:
+        raise TimingGateError(arm + " final checkpoint source root escaped its frozen commit")
+    code = f'''
+import hashlib,json,pathlib,sys,torch
+archive=pathlib.Path({archive!r});run={run_id!r};source=pathlib.Path({source!r})
+directory=archive/'outputs/workbench/jobs'/run
+checkpoint=directory/'checkpoint.pt';config_path=directory/'config.json'
+def sha(path):
+ h=hashlib.sha256()
+ with path.open('rb') as stream:
+  for block in iter(lambda:stream.read(4*1024*1024),b''):h.update(block)
+ return h.hexdigest()
+config=json.loads(config_path.read_text(encoding='utf-8'))
+payload=torch.load(checkpoint,map_location='cpu',weights_only=False)
+if {arm!r}=='I0':
+ result={{'checkpoint_sha256':sha(checkpoint),'format':'s2p19_i0_checkpoint_v1',
+  'step':payload.get('env_step'),'episodes':payload.get('episodes'),
+  'run_id':payload.get('run_id'),'frozen_config_sha256':payload.get('frozen_config_sha256'),
+  'config_sha256':sha(config_path),'version':payload.get('version'),
+  'pilot_gate_passed':payload.get('pilot_gate_passed')}}
+else:
+ sys.path.insert(0,str(source/'src'))
+ from satellite_rl.workbench.checkpoints import config_hash
+ progress=payload.get('progress') or {{}}
+ provenance=payload.get('environment_state') or {{}}
+ result={{'checkpoint_sha256':sha(checkpoint),'format':payload.get('format'),
+  'step':progress.get('env_step'),'last_checkpoint_step':progress.get('last_checkpoint_step'),
+  'run_id':provenance.get('run_id'),'provenance_commit':provenance.get('git_commit'),
+  'provenance_profile':provenance.get('profile'),
+  'config_hash':payload.get('config_hash'),'computed_config_hash':config_hash(config),
+  'config_sha256':sha(config_path)}}
+print(json.dumps(result))
+'''
+    response = ops.remote_python(code, port, timeout=180)
+    if response["exit_code"]:
+        raise TimingGateError(arm + " final checkpoint unavailable: " + response["stderr"][-400:])
+    saved = json.loads(response["stdout"].splitlines()[-1])
+    digest = saved.get("checkpoint_sha256")
+    step = status.get("env_step")
+    if (not isinstance(digest, str) or len(digest) != 64 or
+            saved.get("run_id") != run_id or saved.get("step") != step or
+            status.get("checkpoint_step") != step or
+            (status.get("checkpoint_sha256") is not None and
+             status["checkpoint_sha256"] != digest)):
+        raise TimingGateError(arm + " final status/actual checkpoint identity differs")
+    if arm == "I0":
+        if (saved.get("version") != 1 or saved.get("format") != "s2p19_i0_checkpoint_v1" or
+                saved.get("episodes") != status.get("episodes") or
+                saved.get("frozen_config_sha256") != saved.get("config_sha256") or
+                saved.get("pilot_gate_passed") is not True):
+            raise TimingGateError("I0 final complete checkpoint/config/episode differs")
+    elif (saved.get("format") != "satellite_rl_workbench_checkpoint_v1" or
+          saved.get("last_checkpoint_step") != 400000 or
+          saved.get("provenance_commit") != commit or
+          saved.get("provenance_profile") != "europe_v1" or
+          saved.get("config_hash") != saved.get("computed_config_hash")):
+        raise TimingGateError(arm + " final 400000 checkpoint provenance/config differs")
+    return saved
+
+
 def _training_gate(arm: str, catalog: list[dict]) -> tuple[dict, str | None]:
     port, run_id, request_id, expected_commit = ARMS[arm]
     row = _unique(catalog, request_id)
@@ -89,10 +154,14 @@ def _training_gate(arm: str, catalog: list[dict]) -> tuple[dict, str | None]:
              status.get("completed_due_to") == "episode_cap" and
              type(step) is int and 0 < step < 400000)):
         raise TimingGateError("I0 completed away from its fixed env-step/episode endpoint")
-    if stage == "completed" and not isinstance(status.get("checkpoint_sha256"), str):
-        raise TimingGateError(arm + " completed without final checkpoint identity")
+    summary = _status_summary(status)
+    checkpoint = None
+    if stage == "completed":
+        checkpoint = _endpoint_checkpoint(arm, job, status)
+        summary["checkpoint_sha256"] = checkpoint["checkpoint_sha256"]
     return {"port": port, "run_id": run_id, "request_id": request_id,
-            "git_commit": expected_commit, "status": _status_summary(status)}, reason
+            "git_commit": expected_commit, "status": summary,
+            "checkpoint": checkpoint}, reason
 
 
 def _endpoint_B_gate(arm: str, catalog: list[dict], train: dict) -> tuple[dict, str | None]:
