@@ -23,10 +23,11 @@ def fixture():
         status = {"run_id": run_id, "stage": "completed",
                   "env_step": 380000 if arm == "I0" else 400000,
                   "episodes": 12500 if arm == "I0" else 3300,
-                  "completed_due_to": "episode_cap" if arm == "I0" else None,
-                  "checkpoint_step": 380000 if arm == "I0" else 400000}
+                  "completed_due_to": "episode_cap" if arm == "I0" else None}
         if arm == "I0":
             status["checkpoint_sha256"] = checkpoint  # I0 records it; C0/C1 do not.
+        else:
+            status["checkpoint_step"] = 400000
         details[run_id] = {"job": {"run_id": run_id, "request_id": request_id,
                                    "git_commit": commit, "kind": "train",
                                    "experiment_id": "S2-P19",
@@ -90,6 +91,27 @@ class FinalTimingTests(unittest.TestCase):
                 timing._endpoint_checkpoint("C0", job,
                     {**status, "checkpoint_sha256": "0" * 64})
         self.assertEqual(len(scripts), 2)
+
+    def test_I0_completed_status_without_checkpoint_step_uses_file_and_sha(self):
+        port, run_id, request, commit = timing.ARMS["I0"]
+        archive = timing.ops.instance(port)["archive"]
+        job = {"run_id": run_id, "request_id": request, "git_commit": commit,
+               "kind": "train", "experiment_id": "S2-P19",
+               "source_root": archive + "/outputs/workbench/source_snapshots/" + commit}
+        status = {"run_id": run_id, "stage": "completed", "env_step": 380000,
+                  "episodes": 12500, "completed_due_to": "episode_cap",
+                  "checkpoint_sha256": CHECKPOINTS["I0"]}
+        observed = {"checkpoint_sha256": CHECKPOINTS["I0"],
+                    "format": "s2p19_i0_checkpoint_v1", "step": 380000,
+                    "episodes": 12500, "run_id": run_id, "version": 1,
+                    "frozen_config_sha256": "d" * 64,
+                    "config_sha256": "d" * 64, "pilot_gate_passed": True}
+        with patch.object(timing.ops, "remote_python", return_value={
+                "exit_code": 0, "stdout": json.dumps(observed) + "\n", "stderr": ""}):
+            self.assertEqual(timing._endpoint_checkpoint("I0", job, status), observed)
+            with self.assertRaisesRegex(timing.TimingGateError, "status/actual checkpoint"):
+                timing._endpoint_checkpoint("I0", job,
+                    {**status, "checkpoint_step": 300000})
 
     def test_active_training_waits_and_execute_does_nothing(self):
         catalogs, details, api = fixture()

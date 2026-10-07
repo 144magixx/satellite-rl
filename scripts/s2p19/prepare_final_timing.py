@@ -111,7 +111,8 @@ print(json.dumps(result))
     step = status.get("env_step")
     if (not isinstance(digest, str) or len(digest) != 64 or
             saved.get("run_id") != run_id or saved.get("step") != step or
-            status.get("checkpoint_step") != step or
+            (arm != "I0" and status.get("checkpoint_step") != step) or
+            (arm == "I0" and status.get("checkpoint_step") not in (None, step)) or
             (status.get("checkpoint_sha256") is not None and
              status["checkpoint_sha256"] != digest)):
         raise TimingGateError(arm + " final status/actual checkpoint identity differs")
