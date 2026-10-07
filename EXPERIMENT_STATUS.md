@@ -1,5 +1,17 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-07 S2-P19三组均实际训练中，断点故障已修复（根API/SSH：北京时间18:47:09）。**
+
+| 路线 | 实例 | 实际进度 / 总上限 | 当前冻结源码 |
+| --- | --- | --- | --- |
+| C0 终态目标对齐SAC | 20418 | 109300/400000逐束，107301更新 | 修复48c7，科学起点47da |
+| C1 示范回放SAC | 20424 | 108600/400000逐束，106601更新 | 修复48c7，科学起点47da |
+| I0 贪心起点多步改进SAC | 20418 | API70000/400000宏步、68001更新；同期原始日志72654宏步、episode2360 | 13ea |
+
+C0/C1累计217900/800000逐束（27.2375%），I0宏步另计，三训练终点完成0/3。两卡当时GPU54%/43%、显存1385/890MiB；I0原PID17797未变，C0/C1同ID新worker24787/23359已真实越过100k并持续更新。48c7只修满环束数表恢复及必要来源链，两个原试点断点和100k学习快照SHA保留；17项冻结修复测试、28项相关回归及双真断点GPU下一更新严格等价通过。详细失败与被阻断的准备版f8/92保留，不算新训练。主8900/8901仍13ea，临时8902/8903已关闭。[根现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/root_three_training_verified.json) · [修复验证](outputs/experiments/sac_routes_s2p19_20261007/preflight/c0c1_replay_repair_validation_48c7.json)。
+
+固定控制器8d已按revision4恢复，18:46:54最新观察20/24节点完成、waiting为空；本机PID34184/18:45:18出生，运行于独立ops worktree，后续须实时核身份。两个10万科学审批已真实认领完成，I0试点受100000宏步/3125回合先到者约束，之后自动接72景B并由每小时跟进构建科学审计再决定续训。新40母/880景已双端导入，V2历史权重已导入；完整B累计432＝216开发＋216验证。尚未开始最终共同考核，**当前没有超过贪心的正式结论**；最终直配/B、规则/随机对照、逐束、统一计时、曲线和报告15待完成。每小时跟进ACTIVE并精确回读，授权范围内继续，无需中间确认。[运行清单](outputs/experiments/sac_routes_s2p19_20261007/run_manifest.json) · [控制器观察](outputs/experiments/sac_routes_s2p19_20261007/controller/latest_observation.json) · [跟进回读](outputs/experiments/sac_routes_s2p19_20261007/followup/running_verified_readback.json)。
+
 **2026-10-07 S2-P19续训恢复异常正在等价修复，I0持续训练。**18:01北京根API/SSH实核：C0/C1工作台已接受10万步科学审计，但两个新worker在加载回放时失败，仍各100000/400000、98001更新，**不能称已成功续训**。两份checkpoint与pilot_artifacts逐SHA完全相同，各20000转移完整；实际束数表误多存一个未使用尾0（20001项），有效20000项与状态/桶全量一致，未丢学习状态。新算法补丁d3cc591（47da独立修复支线）只兼容该精确格式并修满环写入；正做真实GPU恢复/下一更新等价和专门工作台来源修复合同，不改原断点或原冻结worker。I0任务`train_sac_20261007_174121_7d0b687c`在20418/13ea正常运行，API20000宏步、最后原始trace20941宏步，单列400000宏步/12500回合上限。[真实现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/root_post_resume_live.json) · [故障](outputs/experiments/sac_routes_s2p19_20261007/preflight/c0c1_resume_failure.json) · [C0原断点全量取证](outputs/experiments/sac_routes_s2p19_20261007/preflight/c0c1_resume_forensics_20418.json)。
 
 C0/C1试点72景真实审计已通过原相对门槛：直接SI0.84631/0.86825、最终B0.90042/0.91765；同景贪心0.89820/0.93784，故仍未超过贪心。C1对C0直接+2.1946百分点、B+1.7232百分点，保留C1及必要参照C0。两份审计各929源文件SHA绑定并保存不可变试点副本。795项整合检查791通过/4条件跳过，新代码已并入main；每小时跟进ACTIVE且更新精确回读。固定controller曾因最终场景传record.json而非父目录失败，已迁移revision3并重启完成部分导入；18:06左右为恢复来源合同审计暂停本机控制器（仅其PID25136，远端I0不受影响），修复后再接续。[试点审计](outputs/experiments/sac_routes_s2p19_20261007/run_manifest.json) · [跟进回读](outputs/experiments/sac_routes_s2p19_20261007/followup/continuation_verified_readback.json)。
