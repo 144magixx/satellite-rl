@@ -213,25 +213,58 @@ def prepare_source(app, body):
             job.get("research_stage") == "sac_improvement" and job.get("mode") == "train"):
         step = body.get("validation_step")
         episodes = status.get("episodes")
-        if (group != "model" or partition != "validation" or type(step) is not int or
-                not 0 < step <= 100000 or type(episodes) is not int or
-                not 0 <= episodes <= 3125 or
-                not (step == 100000 or episodes == 3125) or
-                status.get("stage") != "stopped" or
-                status.get("stop_reason") != "s2p19_pilot_gate_pending" or
-                status.get("env_step") != step or status.get("checkpoint_step") != step or
-                job.get("action_seed") != 53001 or job.get("repeats") != 1):
-            raise ValueError("I0初解仅接受已停于实际100k/3125受限试点的验证")
         source_config = read_json(directory / "config.json", {})
         from satellite_rl.sac_improvement.config import validate_config
         controls = validate_config(source_config.get("i0"))
         if (source_config.get("research_stage") != "sac_improvement" or
                 controls["device"] != "cuda" or
                 controls != job.get("i0_config")):
-            raise ValueError("I0试点配置与冻结任务不一致")
+            raise ValueError("I0训练配置与冻结任务不一致")
+        if (group != "model" or partition != "validation" or type(step) is not int or
+                type(episodes) is not int or status.get("env_step") != step or
+                job.get("action_seed") != 53001 or job.get("repeats") != 1):
+            raise ValueError("I0初解须绑定本任务实际训练验证节点与动作种子")
         checkpoint_sha = digest(directory / "checkpoint.pt")
         if status.get("checkpoint_sha256") != checkpoint_sha:
-            raise ValueError("I0试点断点与停止状态SHA不一致")
+            raise ValueError("I0训练断点与当前状态SHA不一致")
+        final_model_sha = None
+        if status.get("stage") == "stopped":
+            if (not 0 < step <= controls["pilot_stop_steps"] or
+                    not 0 <= episodes <= controls["pilot_max_episodes"] or
+                    not (step == controls["pilot_stop_steps"] or
+                         episodes == controls["pilot_max_episodes"]) or
+                    status.get("stop_reason") != "s2p19_pilot_gate_pending" or
+                    status.get("checkpoint_step") != step):
+                raise ValueError("I0初解仅接受已停于实际100k/3125受限试点的验证")
+            source_stage = "pilot"
+        elif status.get("stage") == "completed":
+            due = status.get("completed_due_to")
+            if (status.get("run_id") != run_id or
+                    job.get("total_steps") != controls["total_steps"] or
+                    job.get("seed") != controls["seed"] or
+                    not 0 < episodes <= controls["max_episodes"] or
+                    not ((due == "env_steps" and step == controls["total_steps"]) or
+                         (due == "episode_cap" and
+                          controls["pilot_stop_steps"] < step < controls["total_steps"] and
+                          episodes == controls["max_episodes"]))):
+                raise ValueError("I0终点须为冻结400k或12500回合实际受限完成状态")
+            model_dir = Path(job["model_dir"]) / "final"
+            model_path = model_dir / "policy.pt"
+            model = read_json(model_dir / "model.json", {})
+            final_model_sha = digest(model_path)
+            if (status.get("model_path") != str(model_path) or
+                    status.get("model_sha256") != final_model_sha or
+                    model.get("run_id") != run_id or model.get("env_step") != step or
+                    model.get("episodes") != episodes or
+                    model.get("updates") != status.get("updates") or
+                    model.get("config_sha256") != digest(directory / "config.json") or
+                    model.get("policy_sha256") != final_model_sha or
+                    (model.get("provenance") or {}).get("run_id") != run_id or
+                    (model.get("provenance") or {}).get("env_step") != step):
+                raise ValueError("I0最终权重/配置与真实受限终点或保存断点不一致")
+            source_stage = "final"
+        else:
+            raise ValueError("I0初解仅接受已停止试点或已完成固定终点")
         dataset = (job.get("scene_sets") or {}).get("validation")
         from .s2p19_service import constructive_config
         model_config = constructive_config("C0")
@@ -240,8 +273,10 @@ def prepare_source(app, body):
                      "source_kind": "i0_train_validation", "run_id": run_id,
                      "source_directory": str(directory), "group": group,
                      "partition": partition, "validation_step": step,
+                     "source_stage": source_stage,
                      "repeats": 1, "action_mode": "stochastic", "action_seed": 53001,
                      "source_checkpoint_sha256": checkpoint_sha,
+                     "source_model_sha256": final_model_sha,
                      "summary_path": str(summary_path), "summary_sha256": digest(summary_path)}
     elif job.get("kind") == "train" and job.get("algorithm") == "sac":
         step = body.get("validation_step")
