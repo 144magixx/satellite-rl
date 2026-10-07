@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-08最终计时切换仅完成准备，当前未执行（根API/SSH：北京时间00:25:56）。**C0/C1仍training389400/395200逐束，I0 API380000、原始trace389172宏步/当前episode12251；完整训练终点0/3，三项endpoint B尚未创建。I0真实300k跳过记录已核：断点SHA5e6c4d48…、cases_generated=0、未生成300k验证目录；直接验证保持1080/1296。两GPU当时62%/42%、1387/892MiB，旧worker/源码未切换。
+
+已新增`prepare_final_timing.py`：默认只读，实时核三训练固定/受限终点与各自72景endpoint B全部完成，才允许显式执行同13ea源码的20418单worker计时切换；C0/C1状态无checkpoint SHA、I0状态无checkpoint_step时均按真实断点核验，已用现有B与服务身份确认字段。25项相关检查通过；根DQN首次9pass/1可选psutil测试依赖错误已保留，测试stub修正后base/DQN各10/10通过，不安装依赖或改生产逻辑。实际--check仍waiting、mutation_count0，本轮未停controller/服务或新评价。下一轮从D:/paper以base运维Python运行该脚本，切换成功后精确核回执并及时重启冻结ee控制器；最终计时回执若在append前超过10分钟须重新只读取证，不能重复起服务。报告15与最终880矩阵仍待完成。[本轮现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261007T154856Z/remote_after_preparation.json) · [只读切换检查](outputs/experiments/sac_routes_s2p19_20261007/preflight/final_timing_readonly_check_r2.json) · [服务身份](outputs/experiments/sac_routes_s2p19_20261007/preflight/final_timing_service_identity_check.json)。
+
 **2026-10-07 S2-P19验证预算修复已完成，三组继续训练（根API/SSH：北京时间20:33:22）。**
 
 | 路线 | 当前进度 / 总上限 | 阶段与冻结来源 |
