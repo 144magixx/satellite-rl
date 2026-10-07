@@ -136,3 +136,32 @@ main task review any precision cleanup of redundant new-group raw copies.
 Compression alone never authorizes deletion. Old P17/P18/G11 assets are outside
 the cleanup target. Training weights/checkpoints and source contracts remain
 addressable through preserved immutable archives and the workbench ledger.
+
+### Final 880-scene timing lane
+
+`python -m scripts.s2p19.prepare_final_timing --check` is read-only (and is
+also the default). It checks the **actual** C0/C1 400000-step endpoints, I0's
+400000-step or 12500-episode endpoint, and each unique endpoint B workbench
+request with 216 completed method records bound to the same run, checkpoint,
+and validation step. A queued, failed, mismatched, or absent job yields a wait
+or hard block; controller receipts alone cannot release the switch. The current
+final C0/C1 checkpoint SHA is read from each original workbench job's
+`checkpoint.pt` and checked against its 400000-step provenance: their status
+records do not publish that SHA. I0's status SHA is checked against its file.
+The completed pilot B source schemas used for this gate are preserved in
+`preflight/final_timing_B_schema_audit.json`. The current
+read-only check is saved separately under
+`outputs/experiments/sac_routes_s2p19_20261007/preflight/final_timing_readonly_check.json`.
+
+Once the approved jobs and both GPUs are genuinely idle, explicit
+`python -m scripts.s2p19.prepare_final_timing --execute` stops only the exact
+local ee controller and replaces only the verified 20418:8900 service. The
+replacement uses the same clean 13ea checkout and DQN/CUDA/solver packages,
+one worker, and four thread environment settings at 1; 20424 is untouched.
+It backs up the original service deployment receipt, pins the new PID and
+birth time for `controller._service_identity`, and invokes the existing
+`capture_final_timing_isolation(["C0", "C1", "I0"])` check. The switch
+does not submit the final matrix. An uncertain launch is inspected by exact
+service identity before any retry; an already saved same-target switch is a
+no-op. The final receipt is
+`outputs/experiments/sac_routes_s2p19_20261007/preflight/final_timing_switch/switch_receipt.json`.
