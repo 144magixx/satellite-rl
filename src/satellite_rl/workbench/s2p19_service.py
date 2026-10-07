@@ -140,6 +140,16 @@ class S2P19Application:
         prep = deepcopy(body["preparation"])
         kind = prep.get("preparation_type")
         extra = {"experiment_id": EXPERIMENT, "research_stage": "s2p19_preparation"}
+        if body.get("recovery_parent_run_id"):
+            if kind != "mother_sources":
+                raise ValueError("母源网络恢复只适用于mother_sources")
+            from .s2p19_data import build_recovery_source
+            parent = validate_id(body["recovery_parent_run_id"])
+            recovery = build_recovery_source(self.store.job_dir(parent))
+            if prep.get("recovery_source") not in (None, recovery):
+                raise ValueError("恢复输入必须由本工作台失败任务构建")
+            prep["recovery_source"] = recovery
+            extra["recovery_parent_run_id"] = parent
         if kind == "demonstrations":
             from .config import validate_config
             teacher = validate_config(body.get("teacher_config") or constructive_config())
@@ -161,6 +171,8 @@ class S2P19Application:
             "network": {"kind": "none"}, "environment": {"profile": "europe_v1", "beam_count_max": 200},
             "research_stage": "s2p19_preparation", "preparation": prep,
             "training": {"total_steps": count, "device": "cuda", "seed": 51001}}
+        if extra.get("recovery_parent_run_id"):
+            config["name"] += " · 同资产恢复R1"
         return self.store.create_job(config, kind="prepare", request_id=body.get("request_id"), extra=extra)
 
     def improvement(self, body):

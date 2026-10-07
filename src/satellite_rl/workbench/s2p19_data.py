@@ -44,6 +44,12 @@ OFFICIAL_ASSETS = (
     ("2024-02-01", 149304672, 1784412160),
     ("2024-02-02", 149522532, 1714810880),
 )
+RECOVERY_PARENT_RUN_ID = "prepare_prepare_20261007_145623_5e8713ea"
+RECOVERY_SMALL_KEYS = ("job", "config", "status", "failure", "feb01_download",
+                       "feb02_download", "feb02_stderr", "feb01_eligibility", "feb01_selection")
+RECOVERY_KEYS = frozenset(("parent_run_id", "feb01_archive", "feb01_csv_files",
+                           "frozen_evidence", *RECOVERY_SMALL_KEYS))
+MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 
 
 def _sha(path: Path) -> str:
@@ -78,6 +84,116 @@ def _source_reference(value: object, maximum: int) -> dict:
     if not path.is_file() or path.stat().st_size > maximum or _sha(path) != digest:
         raise ValueError("source file missing, oversized or SHA changed: " + str(path))
     return {"path": str(path.resolve()), "sha256": digest}
+
+
+def _recovery_expected_paths(parent: Path, selection: dict) -> dict:
+    raw = parent / "mother_sources" / "raw"
+    day = parent / "mother_sources" / "snapshots" / "final" / "2024-02-01"
+    expected = {"job": parent / "job.json", "config": parent / "config.json",
+                "status": parent / "status.json", "failure": parent / "failure.json",
+                "feb01_archive": raw / "v2024.02.01-planes-readsb-staging-0.tar",
+                "feb01_download": raw / "2024-02-01_download.json",
+                "feb02_download": raw / "2024-02-02_download.json",
+                "feb02_stderr": raw / "2024-02-02_curl.stderr",
+                "feb01_eligibility": day / "eligibility.json",
+                "feb01_selection": day / "selection_contract.json"}
+    expected["feb01_csv_files"] = [day / f"t{index:03d}.csv"
+                                     for index in selection["selected_indices"]]
+    return expected
+
+
+def _validate_recovery_source(value: object, source_record_sha: str,
+                              official_assets: list[dict]) -> dict:
+    """Only the one failed, SHA-bound S2-P19 Feb01/02 preparation is reusable."""
+    if not isinstance(value, dict) or set(value) - RECOVERY_KEYS or value.get("parent_run_id") != RECOVERY_PARENT_RUN_ID:
+        raise ValueError("recovery_source只能引用登记的S2-P19失败母场景任务")
+    if any(key not in value for key in (*RECOVERY_SMALL_KEYS, "feb01_archive", "feb01_csv_files")):
+        raise ValueError("recovery_source缺旧任务/原始资产/二十母证据")
+    refs = {key: _source_reference(value[key], MAX_RECORD_BYTES) for key in RECOVERY_SMALL_KEYS}
+    archive = _source_reference(value["feb01_archive"], MAX_ARCHIVE_BYTES)
+    csv_refs = value["feb01_csv_files"]
+    if not isinstance(csv_refs, list) or len(csv_refs) != 20:
+        raise ValueError("旧Feb01须有恰好20个母场景CSV来源")
+    csv_refs = [_source_reference(row, MAX_CSV_BYTES) for row in csv_refs]
+    parent = Path(refs["job"]["path"]).parent
+    job = _json(Path(refs["job"]["path"]))
+    archive_root = Path(job.get("archive_root", "")).resolve()
+    if (parent != archive_root / "outputs" / "workbench" / "jobs" / RECOVERY_PARENT_RUN_ID or
+            job.get("run_id") != RECOVERY_PARENT_RUN_ID or job.get("kind") != "prepare" or
+            job.get("experiment_id") != "S2-P19" or
+            job.get("research_stage") != "s2p19_preparation" or
+            job.get("request_id") != "s2p19-feb01-feb02-mothers-20424"):
+        raise ValueError("旧母场景任务身份、工作台归属或请求编号不符")
+    old_config = _json(Path(refs["config"]["path"]))
+    old_prep = old_config.get("preparation") or {}
+    if (old_prep.get("preparation_type") != "mother_sources" or
+            (old_prep.get("source_record") or {}).get("sha256") != source_record_sha or
+            old_prep.get("official_assets") != official_assets or
+            old_config.get("research_stage") != "s2p19_preparation"):
+        raise ValueError("旧失败任务的科学来源、日期或官方资产与新任务不同")
+    status, failure = _json(Path(refs["status"]["path"])), _json(Path(refs["failure"]["path"]))
+    if (status.get("stage") != "failed" or failure.get("run_id") != RECOVERY_PARENT_RUN_ID or
+            "eight resumable attempts" not in str(failure.get("error", ""))):
+        raise ValueError("旧任务不是已记录八次失败的母场景准备")
+    feb01 = _json(Path(refs["feb01_download"]["path"]))
+    feb02 = _json(Path(refs["feb02_download"]["path"]))
+    if (feb01.get("status") != "completed" or feb01.get("asset") != official_assets[0] or
+            Path(feb01.get("path", "")).resolve() != Path(archive["path"]) or
+            feb01.get("sha256") != archive["sha256"] or
+            feb01.get("bytes") != OFFICIAL_ASSETS[0][2] or
+            Path(archive["path"]).stat().st_size != OFFICIAL_ASSETS[0][2]):
+        raise ValueError("旧Feb01官方归档不完整或SHA/大小与回执不符")
+    if (feb02.get("asset") != official_assets[1] or len(feb02.get("attempts") or []) != 8 or
+            feb02.get("partial_bytes") != 0 or
+            any(item.get("partial_bytes") != 0 for item in feb02["attempts"])):
+        raise ValueError("旧Feb02八次失败及0字节证据不完整")
+    selection = _json(Path(refs["feb01_selection"]["path"]))
+    eligibility = _json(Path(refs["feb01_eligibility"]["path"]))
+    if (selection.get("date_utc") != "2024-02-01" or
+            selection.get("archive_sha256") != archive["sha256"] or
+            selection.get("eligibility_sha256") != refs["feb01_eligibility"]["sha256"] or
+            eligibility.get("date_utc") != "2024-02-01" or
+            eligibility.get("archive_sha256") != archive["sha256"] or
+            len(selection.get("selected_indices") or []) != 20 or
+            len(selection.get("selected_times_utc") or []) != 20 or
+            len(set(selection["selected_times_utc"])) != 20 or
+            any(not stamp.startswith("2024-02-01T") for stamp in selection["selected_times_utc"])):
+        raise ValueError("旧Feb01二十母选择/资格/日期或上游归档来源不符")
+    expected = _recovery_expected_paths(parent, selection)
+    for key, ref in {**refs, "feb01_archive": archive}.items():
+        if Path(ref["path"]) != expected[key].resolve():
+            raise ValueError("恢复证据路径不在旧任务的预期位置：" + key)
+    if [Path(row["path"]) for row in csv_refs] != [path.resolve() for path in expected["feb01_csv_files"]]:
+        raise ValueError("旧Feb01母场景CSV文件名、顺序或路径不符")
+    candidates = eligibility.get("candidates") or []
+    if len(candidates) != 288:
+        raise ValueError("旧Feb01资格网格不完整")
+    indices, substitutions = _selected_indices(candidates)
+    if indices != selection["selected_indices"] or substitutions != selection.get("substitutions"):
+        raise ValueError("旧Feb01母场景选择与既定前向替代规则不同")
+    for index, stamp in zip(indices, selection["selected_times_utc"], strict=True):
+        item = candidates[index]
+        if (item.get("selected_time_utc") != stamp or item.get("positive_demand_aircraft", 0) < 200 or
+                item.get("unique_positions", 0) < 200):
+            raise ValueError("旧Feb01母时刻不是合格且同日的冻结场景")
+    normalized = {"parent_run_id": RECOVERY_PARENT_RUN_ID, **refs,
+                  "feb01_archive": archive, "feb01_csv_files": csv_refs}
+    frozen = value.get("frozen_evidence")
+    if frozen is not None:
+        if not isinstance(frozen, dict) or set(frozen) != set(RECOVERY_SMALL_KEYS) | {"feb01_csv_files"}:
+            raise ValueError("冻结的恢复小证据清单不完整")
+        for key in RECOVERY_SMALL_KEYS:
+            copied = _source_reference(frozen[key], MAX_RECORD_BYTES)
+            if copied["sha256"] != refs[key]["sha256"]:
+                raise ValueError("冻结恢复证据SHA不同：" + key)
+        copied_csv = frozen["feb01_csv_files"]
+        if not isinstance(copied_csv, list) or len(copied_csv) != 20:
+            raise ValueError("冻结Feb01 CSV证据数不足20")
+        for old, item in zip(csv_refs, copied_csv, strict=True):
+            if _source_reference(item, MAX_CSV_BYTES)["sha256"] != old["sha256"]:
+                raise ValueError("冻结Feb01 CSV证据SHA不同")
+        normalized["frozen_evidence"] = frozen
+    return normalized
 
 
 def _extract_mothers(record: dict, kind: str) -> list[dict]:
@@ -133,7 +249,7 @@ def validate_preparation_config(raw: dict) -> dict:
     if not isinstance(raw, dict) or set(raw) - {
         "preparation_type", "source_record", "seed", "environment_profile",
         "mother_sources", "frozen_input_sources", "original_source_record",
-        "official_assets",
+        "official_assets", "recovery_source",
     }:
         raise ValueError("unknown S2-P19 preparation fields")
     kind = raw.get("preparation_type")
@@ -162,10 +278,15 @@ def validate_preparation_config(raw: dict) -> dict:
         result = {"preparation_type": kind, "source_record": record_ref,
                   "seed": SEED, "environment_profile": "europe_v1",
                   "official_assets": assets}
+        if raw.get("recovery_source") is not None:
+            result["recovery_source"] = _validate_recovery_source(
+                raw["recovery_source"], record_ref["sha256"], assets)
         if raw.get("frozen_input_sources"):
             result["frozen_input_sources"] = True
             result["original_source_record"] = raw.get("original_source_record")
         return result
+    if raw.get("recovery_source") is not None:
+        raise ValueError("仅mother_sources允许同资产失败恢复")
     extracted = _extract_mothers(record, kind)
     if raw.get("mother_sources") is None:
         mother_sources = [{"selected_time_utc": row["selected_time_utc"],
@@ -193,6 +314,28 @@ def validate_preparation_config(raw: dict) -> dict:
     return normalized
 
 
+def build_recovery_source(parent_jobdir: Path) -> dict:
+    """Build SHA references from the one failed task for the typed workbench API.
+
+    This is read-only. The caller must still pass the result through
+    ``validate_preparation_config`` with the new canonical mother request.
+    """
+    parent = Path(parent_jobdir).resolve(strict=True)
+    if parent.name != RECOVERY_PARENT_RUN_ID or parent.parent.name != "jobs":
+        raise ValueError("恢复来源不是原S2-P19失败母场景工作台任务")
+    selection = _json(parent / "mother_sources/snapshots/final/2024-02-01/selection_contract.json")
+    expected = _recovery_expected_paths(parent, selection)
+    result = {"parent_run_id": RECOVERY_PARENT_RUN_ID}
+    for key in RECOVERY_SMALL_KEYS:
+        path = expected[key]
+        result[key] = {"path": str(path), "sha256": _sha(path)}
+    archive = expected["feb01_archive"]
+    result["feb01_archive"] = {"path": str(archive), "sha256": _sha(archive)}
+    result["feb01_csv_files"] = [{"path": str(path), "sha256": _sha(path)}
+                                  for path in expected["feb01_csv_files"]]
+    return result
+
+
 def input_references(config: dict) -> list[dict]:
     normalized = validate_preparation_config(config)
     if normalized["preparation_type"] == "mother_sources":
@@ -208,6 +351,12 @@ def freeze_preparation_config(raw: dict, destination: Path) -> dict:
         raise ValueError("a frozen preparation config cannot be frozen twice")
     normalized = validate_preparation_config(raw)
     destination = Path(destination).resolve()
+    recovery = normalized.get("recovery_source")
+    if recovery is not None:
+        old_jobs = Path(recovery["job"]["path"]).parent.parent
+        new_jobs = destination.parent.parent
+        if old_jobs != new_jobs or old_jobs.name != "jobs":
+            raise ValueError("恢复源任务必须属于同一工作台archive的jobs目录")
     destination.mkdir(parents=True, exist_ok=True)
 
     def copy(source: dict, name: str) -> dict:
@@ -229,6 +378,12 @@ def freeze_preparation_config(raw: dict, destination: Path) -> dict:
     if normalized["preparation_type"] == "mother_sources":
         result = {**normalized, "source_record": record_copy,
                   "frozen_input_sources": True, "original_source_record": original}
+        if recovery is not None:
+            evidence = {key: copy(recovery[key], f"recovery_{key}{Path(recovery[key]['path']).suffix}")
+                        for key in RECOVERY_SMALL_KEYS}
+            evidence["feb01_csv_files"] = [copy(item, f"recovery_feb01_{index:02d}.csv")
+                                            for index, item in enumerate(recovery["feb01_csv_files"])]
+            result["recovery_source"] = {**recovery, "frozen_evidence": evidence}
         validate_preparation_config(result)
         return result
     mother_copies = []
@@ -429,7 +584,13 @@ def _official_metadata(asset: dict) -> dict:
 
 
 def _download_archive(raw_dir: Path, asset: dict, stop: Callable[[], bool] | None,
-                      progress_callback: Callable[[dict], None] | None) -> dict:
+                      progress_callback: Callable[[dict], None] | None,
+                      *, api_asset: bool = False, max_attempts: int = 8) -> dict:
+    if api_asset and (asset["date_utc"] != "2024-02-02" or asset["asset_id"] != 149522532 or
+                      max_attempts != 4):
+        raise ValueError("恢复传输仅允许Feb02同一官方asset_id且最多四次新尝试")
+    if not api_asset and max_attempts != 8:
+        raise ValueError("原下载合同保持八次上限")
     raw_dir.mkdir(parents=True, exist_ok=True)
     target = raw_dir / asset["asset_name"]
     partial = raw_dir / (asset["asset_name"] + ".part")
@@ -438,6 +599,13 @@ def _download_archive(raw_dir: Path, asset: dict, stop: Callable[[], bool] | Non
         "status": "pending", "asset": asset, "attempts": []}
     if state.get("asset") != asset:
         raise ValueError("existing download belongs to another official asset")
+    if api_asset:
+        if state.get("transport", "github_asset_api_v1") != "github_asset_api_v1":
+            raise ValueError("恢复下载回执来自不同传输入口")
+        state["transport"] = "github_asset_api_v1"
+        state["attempt_limit"] = 4
+    elif state.get("transport"):
+        raise ValueError("原下载任务不得复用API恢复回执")
     if target.exists():
         if target.stat().st_size != asset["expected_bytes"]:
             raise RuntimeError("existing archive byte count differs")
@@ -450,16 +618,24 @@ def _download_archive(raw_dir: Path, asset: dict, stop: Callable[[], bool] | Non
         return state
     if partial.exists() and partial.stat().st_size > asset["expected_bytes"]:
         raise RuntimeError("partial official archive exceeds expected byte count")
-    if len(state["attempts"]) >= 8 and (not partial.exists() or
+    if len(state["attempts"]) >= max_attempts and (not partial.exists() or
                                           partial.stat().st_size != asset["expected_bytes"]):
-        raise RuntimeError("official archive exhausted eight recorded download attempts")
+        raise RuntimeError("official archive exhausted " +
+                           ("four" if api_asset else "eight") + " recorded download attempts")
     stderr_path = raw_dir / (asset["date_utc"] + "_curl.stderr")
-    for attempt in range(len(state["attempts"]) + 1, 9):
+    for attempt in range(len(state["attempts"]) + 1, max_attempts + 1):
         if stop is not None and stop():
             raise InterruptedError("official archive download stopped")
         command = ["curl", "--location", "--fail", "--silent", "--show-error",
                    "--connect-timeout", "20", "--max-time", "1800", "--continue-at", "-",
-                   "--output", str(partial), asset["url"]]
+                   "--output", str(partial)]
+        if api_asset:
+            command.extend(["--header", "Accept: application/octet-stream",
+                            "--header", "X-GitHub-Api-Version: 2022-11-28",
+                            "--user-agent", "S2-P19-official-asset-recovery",
+                            "https://api.github.com/repos/adsblol/globe_history_2024/releases/assets/149522532"])
+        else:
+            command.append(asset["url"])
         started = datetime.now(timezone.utc).isoformat()
         with stderr_path.open("ab") as error_stream:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
@@ -484,8 +660,9 @@ def _download_archive(raw_dir: Path, asset: dict, stop: Callable[[], bool] | Non
             break
         if current > asset["expected_bytes"]:
             raise RuntimeError("download exceeded official byte count")
-        if attempt == 8:
-            raise RuntimeError("official archive did not download after eight resumable attempts")
+        if attempt == max_attempts:
+            raise RuntimeError("official archive did not download after " +
+                               ("four API" if api_asset else "eight") + " resumable attempts")
         time.sleep(min(5 * attempt, 30))
     if not partial.exists() or partial.stat().st_size != asset["expected_bytes"]:
         raise RuntimeError("official archive byte count incomplete after download")
@@ -627,6 +804,77 @@ def _selected_indices(candidates: list[dict]) -> tuple[list[int], list[dict]]:
     return selected, substitutions
 
 
+def _reuse_feb01_mothers(job_dir: Path, recovery: dict,
+                         progress_callback: Callable[[dict], None] | None) -> tuple[list[dict], list[dict], dict, dict]:
+    """Copy only small, SHA-locked Feb01 evidence; never write the parent task."""
+    archive = recovery["feb01_archive"]
+    archive_path = Path(archive["path"])
+    if (archive_path.stat().st_size != OFFICIAL_ASSETS[0][2] or
+            _sha(archive_path) != archive["sha256"]):
+        raise ValueError("复用前旧Feb01官方归档大小或SHA发生变化")
+    frozen = recovery["frozen_evidence"]
+    day = "2024-02-01"
+    day_dir = job_dir / "mother_sources" / "snapshots" / "final" / day
+    day_dir.mkdir(parents=True, exist_ok=True)
+
+    def copy_small(reference: dict, target: Path):
+        if target.exists():
+            if _sha(target) != reference["sha256"]:
+                raise ValueError("恢复任务已保存的小证据与旧Feb01 SHA不同")
+            return
+        pending = target.with_name(target.name + ".tmp")
+        shutil.copy2(reference["path"], pending)
+        if _sha(pending) != reference["sha256"]:
+            pending.unlink(missing_ok=True)
+            raise ValueError("复制Feb01小证据后SHA不同")
+        pending.replace(target)
+
+    eligibility_path = day_dir / "eligibility.json"
+    selection_path = day_dir / "selection_contract.json"
+    copy_small(frozen["feb01_eligibility"], eligibility_path)
+    copy_small(frozen["feb01_selection"], selection_path)
+    eligibility = _json(eligibility_path)
+    selection = _json(selection_path)
+    indices = selection["selected_indices"]
+    candidates = eligibility["candidates"]
+    files, snapshots = [], []
+    for position, (index, source_ref) in enumerate(zip(indices, frozen["feb01_csv_files"], strict=True)):
+        target = day_dir / f"t{index:03d}.csv"
+        copy_small(source_ref, target)
+        candidate = candidates[index]
+        files.append({"path": str(target), "sha256": source_ref["sha256"],
+                      "bytes": target.stat().st_size,
+                      "selected_time_utc": candidate["selected_time_utc"]})
+        snapshots.append({"selected_time_utc": candidate["selected_time_utc"],
+                          "source_dates": [day],
+                          "counts": {"selected_aircraft": candidate["selected_aircraft"],
+                                     "zero_demand_aircraft": candidate["selected_aircraft"]
+                                     - candidate["positive_demand_aircraft"]}})
+        if progress_callback is not None:
+            progress_callback({"partition": "mother_sources", "date_utc": day,
+                               "phase": "reused_verified_csv", "completed_mothers": position + 1,
+                               "total_mothers": 40})
+    old_download = _json(Path(frozen["feb01_download"]["path"]))
+    if old_download.get("sha256") != archive["sha256"]:
+        raise ValueError("冻结Feb01下载回执与复用归档SHA不同")
+    receipt = {"date_utc": day,
+               "official": {"release_tag": old_download["asset"]["release_tag"],
+                            "asset_id": old_download["asset"]["asset_id"],
+                            "asset_name": old_download["asset"]["asset_name"],
+                            "asset_url": old_download["asset"]["url"],
+                            "expected_bytes": old_download["asset"]["expected_bytes"],
+                            "metadata_source": "parent_frozen_download_receipt"},
+               "path": str(archive_path), "sha256": archive["sha256"],
+               "bytes": archive_path.stat().st_size,
+               "reused_from_parent_run_id": recovery["parent_run_id"],
+               "parent_download_receipt_sha256": recovery["feb01_download"]["sha256"]}
+    selection_ref = {"date_utc": day, "path": str(selection_path),
+                     "sha256": _sha(selection_path),
+                     "substitution_count": len(selection.get("substitutions", [])),
+                     "reused_from_parent_run_id": recovery["parent_run_id"]}
+    return files, snapshots, receipt, selection_ref
+
+
 def _prepare_mother_sources(job_dir: Path, config: dict,
                             progress_callback: Callable[[dict], None] | None,
                             stop: Callable[[], bool] | None) -> dict:
@@ -647,12 +895,24 @@ def _prepare_mother_sources(job_dir: Path, config: dict,
                 "sha256": _sha(output_record), "count": 40, "reused": True}
     model = _json(Path(config["source_record"]["path"]))["source"]["demand_model"]
     files, snapshots, archive_receipts, selections = [], [], [], []
+    recovery = config.get("recovery_source")
+    if recovery is not None and "frozen_evidence" not in recovery:
+        raise ValueError("恢复worker缺工作台冻结的小证据")
     for asset in config["official_assets"]:
         if stop is not None and stop():
             raise InterruptedError("mother preparation stopped before next day")
         day = asset["date_utc"]
+        if recovery is not None and day == "2024-02-01":
+            reused_files, reused_snapshots, reused_archive, reused_selection = _reuse_feb01_mothers(
+                job_dir, recovery, progress_callback)
+            files.extend(reused_files)
+            snapshots.extend(reused_snapshots)
+            archive_receipts.append(reused_archive)
+            selections.append(reused_selection)
+            continue
         metadata = _official_metadata(asset)
-        download = _download_archive(raw_dir, asset, stop, progress_callback)
+        download = _download_archive(raw_dir, asset, stop, progress_callback,
+                                     api_asset=recovery is not None, max_attempts=4 if recovery else 8)
         archive_receipts.append({"date_utc": day, "official": metadata,
                                  "path": download["path"], "sha256": download["sha256"],
                                  "bytes": download["bytes"]})
