@@ -41,7 +41,7 @@ print(json.dumps({"observed_utc":datetime.datetime.now(datetime.timezone.utc).is
  "torch":torch_info,"nvidia_smi":run(["nvidia-smi","--query-gpu=uuid,name,memory.total,memory.used,utilization.gpu","--format=csv,noheader,nounits"]),
  "ports":{str(p):port_state(p) for p in (8781,8896,8897,8898,8899,8900,8901)},
  "processes":processes,
- "home_free_bytes":__import__('shutil').disk_usage('/home').free,
+ "archive_mount_free_bytes":__import__('shutil').disk_usage('/home/u2024110224').free,
  "s2p19_root_exists":pathlib.Path('/home/u2024110224/second_stage_satellite_rl/sac_routes_s2p19').exists()},ensure_ascii=False))
 '''
 

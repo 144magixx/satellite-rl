@@ -36,6 +36,7 @@ def plan() -> dict:
         code = f'''
 import datetime,json,os,pathlib,shutil,socket,subprocess
 root=pathlib.Path({info['root']!r});repo=root/'repo';api={info['api_port']}
+capacity_path=root if root.exists() else pathlib.Path('/home/u2024110224')
 with socket.socket() as sock:
  sock.settimeout(2);busy=sock.connect_ex(('127.0.0.1',api))==0
 head=None;dirty=None
@@ -44,7 +45,9 @@ if (repo/'.git').is_dir():
  dirty=subprocess.run(['git','-C',str(repo),'status','--porcelain'],capture_output=True,text=True).stdout.strip()
 print(json.dumps({{'observed_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
  'root_exists':root.exists(),'repo_exists':repo.exists(),'repo_head':head,'repo_dirty':dirty,
- 'api_port':api,'api_port_busy':busy,'home_free_bytes':shutil.disk_usage('/home').free,
+ 'api_port':api,'api_port_busy':busy,
+ 'archive_mount_free_bytes':shutil.disk_usage(capacity_path).free,
+ 'archive_mount_device':capacity_path.stat().st_dev,
  'gpu':subprocess.run(['nvidia-smi','--query-gpu=uuid,name,memory.total,memory.used,utilization.gpu',
   '--format=csv,noheader,nounits'],capture_output=True,text=True).stdout.strip()}},ensure_ascii=False))
 '''

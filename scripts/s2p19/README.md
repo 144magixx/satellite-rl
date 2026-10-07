@@ -20,8 +20,9 @@ Its output record must be imported with `POST /api/scenes/import` in each
 instance that will use it. Existing P17 8064 train scenes likewise need a
 strict read-only import into each instance; their scientific arrays stay frozen.
 
-After both services are running from one clean commit, run `python -m
-scripts.s2p19.plan_builder bootstrap`. It reads the two reviewed A-stage API
+For a fresh experiment only, after both services are running from one clean
+commit, `python -m scripts.s2p19.plan_builder bootstrap` reads the two
+reviewed A-stage API
 payloads, fetches the deployed typed catalog, and writes twenty initial tasks:
 preparations, two-instance imports, teacher, I0 non-learning gate, C0/C1/I0
 pilots, and SHA-bound pilot approvals. Train scene IDs, the final mother record,
@@ -35,6 +36,36 @@ one shared greedy/rule/random test-baseline task, and same-route final B for
 each source. With all C0/C1/I0 arms retained, the final matrix uses exactly
 14,960 complete B calls (three arms 7,920, V2 2,640, baselines 4,400).
 It remains nonterminal until the formal report and archive receipt are added.
+
+**Current S2-P19 live handoff uses `plan_builder adopt`, never `bootstrap`.**
+`adopt-preview` checks the actual run_manifest identities, two workbench run
+catalogs, config-file SHA, and scene imports without writing plan/state or
+sending POST. `adopt` publishes the exact existing C0/C1/I0/development B,
+teacher and R1 mother-source receipts as `adopted_only` tasks with no dispatch
+body; the failed 6e8 mother task remains history. Science jobs stay on 47da,
+while the sole R1 mother-source preparation may carry 62202. Future final-880
+preparation/import, the exact V2 historical model import, and I0 training are
+separate typed nodes. I0 training uses request ID `s2p19-i0-train-51001` and
+requires a complete, paired raw B scientific audit. The gate reads
+`controller/gates/i0_nonlearning_receipt.json`, verifies its audit SHA,
+criteria, true per-candidate thresholds, exact four workbench run IDs, and
+every listed raw source SHA in bounded batches. A failed audit marks
+`gate_failed`/`not_selected` for I0 only; C0/C1 continue. Do not run the
+persistent controller until the parent task has reviewed the adopted plan.
+
+After the two services are switched under a separately verified handoff,
+`plan_builder harden-live --service-commit <40-char SHA>` records that server
+version separately from the fixed 47da science origin. Existing C0/C1 jobs
+retain their own 47da `expected_commit`; R1 remains a prepare-only 62202
+exception. It also adopts the already submitted final-880 preparation under
+its exact request/config SHA and adds a second independent I0 logging-runtime
+receipt hold. An I0 first-train POST is impossible until both the raw
+development science gate and a source-backed logging equivalence proof pass,
+the runtime receipt names the exact request ID, and the active service commit
+matches that runtime. Pilot audit receipts are read and their raw sources
+rehash checked before any approve API call. C0 continuation waits for **both**
+C0 and C1 audits; if either fails, neither arm is silently resumed. A failed
+I0 gate marks only I0 `not_selected`, leaving C0/C1 work independent.
 
 `controller --run` requires a frozen
 `D:/paper/outputs/experiments/sac_routes_s2p19_20261007/controller/plan.json`.
@@ -53,11 +84,15 @@ verified workbench result. Pilot approval requires a stopped run with
 path and SHA; report/archive completion cannot be inferred from training end.
 
 The controller checks both remote Git heads, all request IDs, prerequisites,
-and the shared `/home` free space on every poll. A 12 GiB reserve and a
-conservative 10 MiB per complete B prediction block unsafe dispatch; running
-jobs reserve future growth so two large jobs cannot both be admitted against
-the same initial free-space snapshot. Below reserve, it requests workbench
-stop for active **S2-P19** jobs and exits for diagnosis. It never stops old
+and the **archive mount** free space on every poll. `/home` itself is a separate
+container overlay; the two archive roots share one NFS mount. Capacity and
+running-job reservations are deduplicated by that mount identity. Since NFS
+statvfs reports server-wide free space without a verified user quota, a
+256 GiB S2-P19 engineering envelope is a **warning to schedule staged
+archives**, not a capacity or user-quota claim. A 12 GiB actual-filesystem
+reserve remains the stop threshold; 10 MiB per complete B conservatively
+forecasts growth. Only crossing the actual reserve requests workbench stop
+for active **S2-P19** jobs and exits for diagnosis. It never stops old
 experiments, deletes files, silently resumes failures, or approves a pilot
 without source-backed audit. `--once` is read-only; `--run` writes controller
 receipts and submits one dependent task per poll. Do not start it until the
