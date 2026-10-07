@@ -414,6 +414,84 @@ def _model_episode(agent, scene, config, seed, *, deterministic=True):
 
 
 VALIDATION_NODES = (0, 50000, 100000, 200000, 300000, 400000)
+VALIDATION_NODE_BUDGET = 6
+
+
+def _saved_validation_nodes(directory):
+    nodes = []
+    for path in (Path(directory) / "validation").glob("step_*/summary.json"):
+        try:
+            step = int(path.parent.name.removeprefix("step_"))
+        except ValueError as error:
+            raise ValueError("I0 validation summary directory has invalid step") from error
+        summary = _read(path)
+        if (summary.get("env_step") != step or summary.get("count") != 72 or
+                len(summary.get("cases") or []) != 72):
+            raise ValueError("I0 saved validation node is incomplete or mislabeled")
+        nodes.append(step)
+    if len(nodes) != len(set(nodes)) or len(nodes) > VALIDATION_NODE_BUDGET:
+        raise ValueError("I0 saved validation nodes exceed the six-node budget")
+    return sorted(nodes)
+
+
+def _validation_due(directory, step, *, terminal=False, pilot_reached=False):
+    """Reserve one of six direct nodes for the actual, possibly capped end."""
+    saved = _saved_validation_nodes(directory)
+    if step in saved:
+        return True  # Strict idempotent SHA check remains in _validate_node.
+    if terminal or pilot_reached:
+        if len(saved) >= VALIDATION_NODE_BUDGET:
+            raise ValueError("I0 actual endpoint has no remaining direct validation budget")
+        return True
+    if step not in VALIDATION_NODES:
+        return False
+    if len(saved) >= VALIDATION_NODE_BUDGET:
+        raise ValueError("I0 fixed validation node exceeds the six-node budget")
+    # 0/50k/100k are the pilot contract. Later fixed nodes are optional only
+    # when a prior episode cap added a real off-grid validation (e.g. 97112).
+    if step in (200000, 300000) and len(saved) >= VALIDATION_NODE_BUDGET - 1:
+        return False
+    return True
+
+
+def _record_validation_skip(directory, job, step, checkpoint_sha):
+    """An auditable schedule decision, never a validation summary or case."""
+    saved = _saved_validation_nodes(directory)
+    node = Path(directory) / "validation" / f"step_{step:09d}"
+    if (node / "summary.json").exists() or any(node.glob("scene_*.json")):
+        raise ValueError("I0 scheduled validation has saved cases; cannot call it skipped")
+    record = {"run_id": job["run_id"], "env_step": step,
+              "checkpoint_sha256": checkpoint_sha,
+              "reason": "six_direct_nodes_reserve_actual_terminal",
+              "saved_validation_steps_before_skip": saved,
+              "direct_validation_budget_nodes": VALIDATION_NODE_BUDGET,
+              "cases_generated": 0}
+    path = Path(directory) / "validation_skips" / f"step_{step:09d}.json"
+    previous = _read(path)
+    if previous is not None:
+        if previous != record:
+            raise ValueError("I0 validation skip receipt/checkpoint identity differs")
+    else:
+        _atomic_json(path, record)
+    _artifacts(Path(directory), job, validation_skips_directory=str(path.parent))
+
+
+def _scheduled_validation(directory, job, config, agent, step, checkpoint_sha,
+                          validation, *, terminal=False, pilot_reached=False):
+    if _validation_due(directory, step, terminal=terminal, pilot_reached=pilot_reached):
+        return _validate_node(directory, job, config, agent, step, checkpoint_sha, validation)
+    if step in VALIDATION_NODES:
+        _record_validation_skip(directory, job, step, checkpoint_sha)
+    return True
+
+
+def _training_checkpoint_due(steps, last_checkpoint_step, episodes, config,
+                             pilot_reached, requested_stop):
+    # This cadence is independent of whether an intermediate validation is
+    # skipped: the original 300k checkpoint remains mandatory.
+    return (steps - last_checkpoint_step >= config["checkpoint_interval"] or
+            pilot_reached or requested_stop or steps >= config["total_steps"] or
+            episodes >= config["max_episodes"] or steps in VALIDATION_NODES)
 
 
 def _validate_node(directory, job, config, agent, step, checkpoint_sha, validation):
@@ -617,10 +695,18 @@ def _train_job(directory, job, config, resume, frozen_config_sha):
         digest = _sha(directory / "checkpoint.pt")
     _artifacts(directory, job, checkpoint=str(directory / "checkpoint.pt"),
                validation_directory=str(directory / "validation"))
-    if steps in VALIDATION_NODES or (not gate_passed and
-                                   (steps >= config["pilot_stop_steps"] or
-                                    episodes >= config["pilot_max_episodes"])):
-        if not _validate_node(directory, job, config, agent, steps, digest, validation):
+    initial_terminal = steps >= config["total_steps"] or episodes >= config["max_episodes"]
+    saved_nodes = _saved_validation_nodes(directory)
+    if (len(saved_nodes) >= VALIDATION_NODE_BUDGET and
+            not (initial_terminal and steps in saved_nodes)):
+        raise ValueError("I0 direct validation budget was exhausted before the actual endpoint")
+    initial_pilot = (not gate_passed and
+                     (steps >= config["pilot_stop_steps"] or
+                      episodes >= config["pilot_max_episodes"]))
+    if steps in VALIDATION_NODES or initial_pilot or initial_terminal:
+        if not _scheduled_validation(directory, job, config, agent, steps, digest,
+                                     validation, terminal=initial_terminal,
+                                     pilot_reached=initial_pilot):
             _status(directory, job, config, "stopped", step=steps, episodes=episodes,
                     stop_reason="user_stop_during_validation", checkpoint_step=steps,
                     checkpoint_sha256=digest, pilot_gate_passed=gate_passed)
@@ -691,10 +777,8 @@ def _train_job(directory, job, config, resume, frozen_config_sha):
                          (steps >= config["pilot_stop_steps"] or
                           episodes >= config["pilot_max_episodes"]))
         requested_stop = (directory / "stop.request").exists()
-        checkpoint_due = (steps - last_checkpoint_step >= config["checkpoint_interval"]
-                          or pilot_reached or requested_stop or steps >= config["total_steps"]
-                          or episodes >= config["max_episodes"]
-                          or steps in VALIDATION_NODES)
+        checkpoint_due = _training_checkpoint_due(
+            steps, last_checkpoint_step, episodes, config, pilot_reached, requested_stop)
         if checkpoint_due:
             digest = _checkpoint(directory, job, config, frozen_config_sha, agent, steps,
                                  episodes, scene_index, env, pilot_gate_passed=gate_passed)
@@ -711,9 +795,11 @@ def _train_job(directory, job, config, resume, frozen_config_sha):
                 _jsonl(directory / ("episodes.jsonl" if
                                     steps >= config["total_steps"] and not requested_stop and not pilot_reached
                                     else "episode_snapshots.jsonl"), partial)
-            if (steps in VALIDATION_NODES or pilot_reached
-                    or episodes >= config["max_episodes"]):
-                if not _validate_node(directory, job, config, agent, steps, digest, validation):
+            terminal = steps >= config["total_steps"] or episodes >= config["max_episodes"]
+            if steps in VALIDATION_NODES or pilot_reached or terminal:
+                if not _scheduled_validation(directory, job, config, agent, steps, digest,
+                                             validation, terminal=terminal,
+                                             pilot_reached=pilot_reached):
                     if env is not None and not (pilot_reached or requested_stop or
                                                 steps >= config["total_steps"]):
                         _jsonl(directory / "episode_snapshots.jsonl", _partial_episode_row(
