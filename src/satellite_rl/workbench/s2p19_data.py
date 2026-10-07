@@ -204,7 +204,7 @@ def input_references(config: dict) -> list[dict]:
 
 def freeze_preparation_config(raw: dict, destination: Path) -> dict:
     """Copy small JSON/CSV sources into a task's immutable input_sources dir."""
-    if raw.get("frozen_input_sources") or raw.get("mother_sources") is not None:
+    if raw.get("frozen_input_sources"):
         raise ValueError("a frozen preparation config cannot be frozen twice")
     normalized = validate_preparation_config(raw)
     destination = Path(destination).resolve()

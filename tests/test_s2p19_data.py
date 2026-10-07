@@ -50,6 +50,18 @@ def mother_fixture(root: Path, count: int, kind: str) -> dict:
 
 
 class S2P19DataTests(unittest.TestCase):
+    def test_api_normalized_input_can_be_frozen_once(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = mother_fixture(root, 12, "dev_validation")
+            normalized = data.validate_preparation_config(raw)
+            self.assertEqual(len(normalized["mother_sources"]), 12)
+            frozen = data.freeze_preparation_config(normalized, root / "job/input_sources")
+            self.assertTrue(frozen["frozen_input_sources"])
+            self.assertEqual(len(data.input_references(frozen)), 13)
+            with self.assertRaises(ValueError):
+                data.freeze_preparation_config(frozen, root / "second/input_sources")
+
     def test_dev_freeze_and_partition_are_stable(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
