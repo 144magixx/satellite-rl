@@ -48,7 +48,9 @@ class ReplayRecoveryTests(unittest.TestCase):
                                                                "files": manifest})
         checkpoint = job_dir / "checkpoint.pt"
         checkpoint.write_bytes(b"immutable checkpoint fixture")
-        config = {"environment": {"profile": "europe_v1"}, "training": {"total_steps": 400000}}
+        config = {"environment": {"profile": "europe_v1"},
+                  "training": {"seed": 51001, "total_steps": 400000,
+                               "pilot_stop_steps": 100000, "device": "cuda"}}
         write_json(job_dir / "config.json", config)
         checkpoint_sha, config_sha = digest(checkpoint), digest(job_dir / "config.json")
         expected_runs = {
@@ -58,7 +60,7 @@ class ReplayRecoveryTests(unittest.TestCase):
                     "checkpoint_sha256": "a" * 64, "config_sha256": "c" * 64}}
         job = {"run_id": RUN, "request_id": expected_runs[RUN]["request_id"],
                "kind": "train", "experiment_id": "S2-P19", "git_commit": ORIGIN,
-               "source_root": str(old), "seed": 51001, "total_steps": 400000}
+               "source_root": str(old)}
         status = {"stage": "failed", "env_step": 100000, "update_step": 98001,
                   "stop_reason": "s2p19_pilot_gate_pending", "pid": 0}
         failure = {"error": "逐束实体档位的回放缺真实束数记录",

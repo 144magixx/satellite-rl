@@ -328,8 +328,7 @@ def prepare_s2p19_replay_recovery(store, job, validation_path, validation_sha256
         verified_manifest(job["source_root"], expected_repair_commit)
         return job
     if (job.get("request_id") != expected["request_id"] or job.get("kind") != "train" or
-            job.get("experiment_id") != "S2-P19" or job.get("git_commit") != S2P19_ORIGIN_COMMIT or
-            job.get("seed") != 51001 or job.get("total_steps") != 400000):
+            job.get("experiment_id") != "S2-P19" or job.get("git_commit") != S2P19_ORIGIN_COMMIT):
         raise ValueError("S2-P19回放修复任务身份/预算与冻结试点不符")
     status = read_json(directory / "status.json", {})
     failure = read_json(directory / "failure.json", {})
@@ -348,8 +347,11 @@ def prepare_s2p19_replay_recovery(store, job, validation_path, validation_sha256
         raise ValueError("S2-P19失败签名、完整试点断点或步数不符")
     config_path = directory / "config.json"
     config = read_json(config_path)
-    if digest(config_path) != expected["config_sha256"]:
-        raise ValueError("S2-P19冻结试点配置SHA发生变化")
+    training = (config or {}).get("training") or {}
+    if (digest(config_path) != expected["config_sha256"] or
+            training.get("seed") != 51001 or training.get("total_steps") != 400000 or
+            training.get("pilot_stop_steps") != 100000 or training.get("device") != "cuda"):
+        raise ValueError("S2-P19冻结试点配置SHA/训练种子/预算/CUDA发生变化")
     pilot_dir = directory / "pilot_artifacts"
     gate = read_json(directory / "pilot_gate.json", {})
     pilot = read_json(pilot_dir / "manifest.json", {})
