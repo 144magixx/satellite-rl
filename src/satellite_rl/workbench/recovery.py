@@ -34,6 +34,51 @@ S2P17_SOURCE_ALLOWLIST = {
     "src/satellite_rl/workbench/power_refinement.py",
 }
 
+I0_BUDGET_REPAIR_ID = "s2p19_i0_validation_budget_v1"
+I0_ORIGIN_COMMIT = "13ea014f1c1709c4a82059fc89ba3092e75010e1"
+I0_RUN_ID = "train_sac_20261007_174121_7d0b687c"
+I0_REQUEST_ID = "s2p19-i0-train-51001"
+I0_CONFIG_SHA256 = "fdd0b03f742324c166c98bc0a70bc833820cbd516d84a15e1446b98e55a383fe"
+I0_EQUIVALENCE_120K_SHA256 = "7ff1020f179df269184e60df1551cb1d8018462fef65a055ead77a5cb30ef91d"
+I0_SAVED_VALIDATION_STEPS = (0, 50000, 97112, 100000)
+I0_BUDGET_SOURCE_FILES = {
+    "src/satellite_rl/sac_improvement/runner.py",
+    "src/satellite_rl/workbench/recovery.py",
+    "src/satellite_rl/workbench/runtime.py",
+}
+
+
+def verify_i0_validation_budget_chain(old_root, new_root, new_commit, validation):
+    """Bind a scheduling-only source change to the original 13ea I0 run."""
+    old = verified_manifest(old_root, I0_ORIGIN_COMMIT)
+    new = verified_manifest(new_root, new_commit)
+    names = set(old["files"]) | set(new["files"])
+    changed = {name for name in names if old["files"].get(name) != new["files"].get(name)}
+    if changed != I0_BUDGET_SOURCE_FILES:
+        raise ValueError("I0验证预算修复源码超出runner/恢复入口三文件")
+    criteria = validation.get("criteria") or {}
+    required = {"saved_nodes_sha_unchanged", "same_checkpoint_learning_state",
+                "one_gpu_update_equal", "training_rng_equal", "validation_rng_restored",
+                "future_direct_nodes_at_most_six", "skip_only_future_300k_validation"}
+    if (validation.get("format") != "s2p19_i0_validation_budget_repair_v1" or
+            validation.get("repair_id") != I0_BUDGET_REPAIR_ID or
+            validation.get("origin_commit") != I0_ORIGIN_COMMIT or
+            validation.get("repair_commit") != new_commit or
+            validation.get("run_id") != I0_RUN_ID or
+            validation.get("tests_passed") is not True or
+            set(criteria) != required or any(criteria[key] is not True for key in required)):
+        raise ValueError("I0验证预算修复缺少同断点/更新/RNG等价证据")
+    return {"repair_id": I0_BUDGET_REPAIR_ID,
+            "origin_commit": I0_ORIGIN_COMMIT, "repair_commit": new_commit,
+            "old_source_root": str(Path(old_root).resolve()),
+            "new_source_root": str(Path(new_root).resolve()),
+            "old_manifest_sha256": digest(Path(old_root) / "source_manifest.json"),
+            "new_manifest_sha256": digest(Path(new_root) / "source_manifest.json"),
+            "changed_files": sorted(changed),
+            "source_file_sha256_before": {name: old["files"][name] for name in sorted(changed)},
+            "source_file_sha256_after": {name: new["files"][name] for name in sorted(changed)},
+            "scope": "I0 future validation cadence only; frozen train inputs and update semantics unchanged"}
+
 
 def _canonical_sha(value):
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True,
@@ -232,6 +277,241 @@ def prepare_io_retry_recovery(store, job):
     updated.setdefault("original_git_commit", job["git_commit"])
     updated.setdefault("source_history", []).append(proof)
     updated.update(source_root=str(new_root), git_commit=new_commit, io_repair=proof)
+    return updated
+
+
+def prepare_i0_validation_budget_recovery(store, job, validation_path,
+                                          validation_sha256, expected_repair_commit):
+    """Preserve the approved I0 run and rebind only its future validation cadence."""
+    import torch
+
+    if (job.get("run_id") != I0_RUN_ID or job.get("request_id") != I0_REQUEST_ID or
+            job.get("kind") != "train" or job.get("experiment_id") != "S2-P19" or
+            job.get("research_stage") != "sac_improvement" or job.get("mode") != "train" or
+            job.get("seed") != 51001 or job.get("total_steps") != 400000 or
+            not isinstance(expected_repair_commit, str) or
+            not re.fullmatch(r"[0-9a-f]{40}", expected_repair_commit)):
+        raise ValueError("I0验证预算修复只允许原单种子40万步训练任务")
+    directory = store.job_dir(I0_RUN_ID)
+    previous = job.get("i0_validation_budget_repair") or {}
+    if previous:
+        proof_path = Path(previous.get("archive_path", "")) / "repair_proof.json"
+        if (previous.get("repair_id") != I0_BUDGET_REPAIR_ID or
+                previous.get("repair_commit") != expected_repair_commit or
+                previous.get("validation_receipt_sha256") != validation_sha256 or
+                job.get("git_commit") != expected_repair_commit or
+                job.get("source_root") != previous.get("new_source_root") or
+                read_json(proof_path) != previous):
+            raise ValueError("I0先前预算修复来源/证明不一致，禁止再次替换")
+        verified_manifest(job["source_root"], expected_repair_commit)
+        return job
+    if job.get("git_commit") != I0_ORIGIN_COMMIT:
+        raise ValueError("I0训练原冻结源码不是13ea")
+    status = read_json(directory / "status.json", {})
+    config_path, checkpoint = directory / "config.json", directory / "checkpoint.pt"
+    config = read_json(config_path, {})
+    controls = config.get("i0") or {}
+    if (digest(config_path) != I0_CONFIG_SHA256 or
+            job.get("i0_config") != controls or
+            controls.get("seed") != 51001 or controls.get("total_steps") != 400000 or
+            controls.get("pilot_stop_steps") != 100000 or
+            controls.get("pilot_max_episodes") != 3125 or
+            controls.get("max_episodes") != 12500 or controls.get("device") != "cuda" or
+            (config.get("training") or {}).get("seed") != 51001 or
+            (config.get("training") or {}).get("total_steps") != 400000):
+        raise ValueError("I0冻结配置/种子/训练预算不一致")
+    checkpoint_sha = digest(checkpoint)
+    step, episodes, updates = (status.get(key) for key in ("env_step", "episodes", "updates"))
+    if (status.get("stage") != "stopped" or status.get("stop_reason") != "user_stop" or
+            status.get("pilot_gate_passed") is not True or
+            type(step) is not int or not 100000 < step < 300000 or
+            type(episodes) is not int or not 3125 < episodes < 12500 or
+            type(updates) is not int or updates <= 0 or
+            status.get("checkpoint_step") != step or
+            status.get("checkpoint_sha256") != checkpoint_sha):
+        raise ValueError("I0没有300k之前、pilot已通过的正常完整停止断点")
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    agent = payload.get("agent") or {}
+    rng = payload.get("rng") or {}
+    if (payload.get("version") != 1 or payload.get("run_id") != I0_RUN_ID or
+            payload.get("frozen_config_sha256") != I0_CONFIG_SHA256 or
+            payload.get("i0_config") != controls or
+            (payload.get("env_step"), payload.get("episodes")) != (step, episodes) or
+            payload.get("pilot_gate_passed") is not True or
+            agent.get("updates") != updates or
+            not {"actor", "critic1", "critic2", "target1", "target2",
+                 "actor_opt", "critic1_opt", "critic2_opt", "replay"}.issubset(agent) or
+            set(rng) != {"python", "numpy", "torch", "cuda"} or
+            any(rng[key] is None for key in rng) or
+            not (isinstance(payload.get("environment"), dict) or
+                 (payload.get("environment") is None and payload.get("scene_index") is None))):
+        raise ValueError("I0断点缺完整策略/优化器/回放/RNG/环境状态")
+    del payload
+    gate = read_json(directory / "pilot_gate.json", {})
+    pilot = read_json(directory / "pilot_artifacts/manifest.json", {})
+    audit_path = Path(gate.get("audit_path", ""))
+    audit = read_json(audit_path, {})
+    pilot_sha = digest(directory / "pilot_artifacts/checkpoint.pt")
+    if (gate.get("pass") is not True or gate.get("run_id") != I0_RUN_ID or
+            gate.get("checkpoint_step") != 97112 or
+            gate.get("checkpoint_sha256") != pilot_sha or
+            pilot.get("run_id") != I0_RUN_ID or pilot.get("env_step") != 97112 or
+            pilot.get("checkpoint_sha256") != pilot_sha or
+            pilot.get("config_sha256") != I0_CONFIG_SHA256 or
+            pilot.get("git_commit") != I0_ORIGIN_COMMIT or
+            pilot.get("audit_path") != gate.get("audit_path") or
+            pilot.get("audit_sha256") != gate.get("audit_sha256") or
+            not audit_path.is_file() or not audit_path.resolve().is_relative_to(store.archive_root.resolve()) or
+            digest(audit_path) != gate.get("audit_sha256") or
+            audit.get("run_id") != I0_RUN_ID or audit.get("checkpoint_sha256") != pilot_sha or
+            audit.get("checkpoint_step") != 97112 or audit.get("passed") is not True or
+            not audit.get("criteria") or not audit.get("source_files") or
+            any(value is not True for value in audit["criteria"].values())):
+        raise ValueError("I0已批准97112试点/原始审计证据不一致")
+    for reference in audit.get("source_files") or []:
+        if digest(reference["path"]) != reference["sha256"]:
+            raise ValueError("I0试点审计原始来源SHA变化")
+    validation_dir = directory / "validation"
+    found = sorted(int(path.parent.name.removeprefix("step_"))
+                   for path in validation_dir.glob("step_*/summary.json"))
+    mandatory = set(I0_SAVED_VALIDATION_STEPS)
+    if (not mandatory.issubset(found) or
+            set(found) not in (mandatory, mandatory | {200000}) or
+            (validation_dir / "step_000300000").exists() or
+            (directory / "validation_skips/step_000300000.json").exists()):
+        raise ValueError("I0已存验证节点不符合四个原节点与最多200k的预算")
+    node_refs = []
+    archive_names = ["checkpoint.pt", "config.json", "job.json", "status.json",
+                     "pilot_gate.json", "pilot_artifacts/checkpoint.pt",
+                     "pilot_artifacts/manifest.json"]
+    for node in found:
+        relative = f"validation/step_{node:09d}"
+        summary_path = directory / relative / "summary.json"
+        summary = read_json(summary_path, {})
+        cases = summary.get("cases") or []
+        if (summary.get("env_step") != node or summary.get("count") != 72 or
+                len(cases) != 72 or
+                len(list((directory / relative).glob("scene_*.json"))) != 72 or
+                not re.fullmatch(r"[0-9a-f]{64}", str(summary.get("checkpoint_sha256", "")))):
+            raise ValueError("I0已存验证摘要/72案例不完整")
+        case_hashes = []
+        for index, reference in enumerate(cases):
+            case_path = inside(reference["path"], directory / relative)
+            if (case_path.name != f"scene_{index:05d}.json" or
+                    digest(case_path) != reference["sha256"]):
+                raise ValueError("I0已存验证案例路径或SHA变化")
+            case = read_json(case_path, {})
+            if (case.get("env_step") != node or
+                    case.get("checkpoint_sha256") != summary["checkpoint_sha256"]):
+                raise ValueError("I0已存验证案例与原节点断点不一致")
+            case_hashes.append(reference["sha256"])
+            archive_names.append(f"{relative}/{case_path.name}")
+        archive_names.append(f"{relative}/summary.json")
+        node_refs.append({"step": node, "summary_sha256": digest(summary_path),
+                          "case_hashes_sha256": _canonical_sha(case_hashes),
+                          "checkpoint_sha256": summary["checkpoint_sha256"]})
+    validation_path = inside(validation_path, directory / "recoveries")
+    if digest(validation_path) != validation_sha256:
+        raise ValueError("I0验证预算修复回执SHA不符")
+    validation = read_json(validation_path, {})
+    actual = validation.get("actual_recovery_checkpoint") or {}
+    equivalent = validation.get("equivalence_checkpoint") or {}
+    equivalent_path = Path(equivalent.get("proof_path", ""))
+    equivalent_proof = read_json(equivalent_path, {})
+    if (actual != {"sha256": checkpoint_sha, "env_step": step,
+                   "episodes": episodes, "updates": updates} or
+            equivalent.get("sha256") != I0_EQUIVALENCE_120K_SHA256 or
+            equivalent.get("env_step") != 120000 or
+            equivalent.get("source_commit") != I0_ORIGIN_COMMIT or
+            not equivalent_path.is_file() or
+            not equivalent_path.resolve().is_relative_to(store.archive_root.resolve()) or
+            digest(equivalent_path) != equivalent.get("proof_sha256") or
+            equivalent_proof.get("strict_equivalence_passed") is not True or
+            equivalent_proof.get("copy_sha256_before") != I0_EQUIVALENCE_120K_SHA256 or
+            equivalent_proof.get("copy_sha256_after") != I0_EQUIVALENCE_120K_SHA256 or
+            equivalent_proof.get("copied_env_step") != 120000 or
+            equivalent_proof.get("old_source_commit") != I0_ORIGIN_COMMIT or
+            equivalent_proof.get("patch_commit") != "708c5264f9ebcd2a0b423da946c7042337211d74" or
+            equivalent_proof.get("old_new_config_equal") is not True or
+            equivalent_proof.get("old_new_checkpoint_loader_source_equal") is not True or
+            equivalent_proof.get("gpu_replay_sample_equal") is not True or
+            equivalent_proof.get("partial_env_state_equal") is not True or
+            equivalent_proof.get("simulated_skip", {}).get("rng_unchanged") is not True or
+            equivalent_proof.get("simulated_skip", {}).get("no_validation_case_or_summary_created") is not True or
+            equivalent_proof.get("simulated_skip", {}).get("300k_checkpoint_due") is not True or
+            equivalent_proof.get("diagnostic_max_abs") != 0 or
+            equivalent_proof.get("post_network_max_abs") != 0 or
+            equivalent_proof.get("post_optimizer_max_abs") != 0 or
+            set(equivalent_proof.get("actor_double_q_parameter_changes") or {}) !=
+            {"actor", "critic1", "critic2"} or
+            any(value <= 0 for value in
+                (equivalent_proof.get("actor_double_q_parameter_changes") or {}).values()) or
+            validation.get("config_sha256") != I0_CONFIG_SHA256 or
+            validation.get("pilot_checkpoint_sha256") != pilot_sha or
+            validation.get("pilot_audit_sha256") != gate["audit_sha256"] or
+            validation.get("saved_nodes") != node_refs):
+        raise ValueError("I0修复回执把代表性120k等价证据与实际停点混淆，或旧节点SHA不符")
+    evidence = validation.get("evidence_files") or []
+    if not isinstance(evidence, list) or not evidence:
+        raise ValueError("I0修复回执缺少可核原始等价证据")
+    for item in evidence:
+        path = inside(item["path"], store.archive_root)
+        if digest(path) != item["sha256"]:
+            raise ValueError("I0等价证据文件SHA变化")
+    old_root = inside(job["source_root"], store.root / "source_snapshots")
+    new_root, new_commit = store.freeze_source()
+    if new_commit != expected_repair_commit or new_commit == I0_ORIGIN_COMMIT:
+        raise ValueError("I0修复服务源码不是指定干净提交")
+    source_proof = verify_i0_validation_budget_chain(old_root, new_root, new_commit, validation)
+    archive = inside(directory / "recoveries" /
+                     (I0_BUDGET_REPAIR_ID + "_" + new_commit[:12]), directory)
+    original = archive / "original"
+    if archive.exists():
+        proof = read_json(archive / "repair_proof.json", {})
+        backup = proof.get("backup_files_sha256") or {}
+        if (any(proof.get(key) != value for key, value in source_proof.items()) or
+                proof.get("run_id") != I0_RUN_ID or
+                proof.get("checkpoint_sha256") != checkpoint_sha or
+                proof.get("validation_receipt_sha256") != validation_sha256 or
+                proof.get("saved_nodes") != node_refs or
+                set(backup) != set(archive_names) or
+                any(digest(original / name) != backup[name] or
+                    digest(directory / name) != backup[name] for name in archive_names)):
+            raise ValueError("I0既有修复归档不完整或来源不同，禁止覆盖")
+    else:
+        original.mkdir(parents=True)
+        backup = {}
+        for relative in archive_names:
+            source = inside(directory / relative, directory)
+            destination = original / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            if digest(source) != digest(destination):
+                raise RuntimeError("I0旧断点/验证案例归档SHA失败：" + relative)
+            backup[relative] = digest(source)
+        shutil.copy2(validation_path, archive / "validation_receipt.json")
+        if digest(archive / "validation_receipt.json") != validation_sha256:
+            raise RuntimeError("I0验证回执归档SHA失败")
+        proof = {**source_proof, "run_id": I0_RUN_ID, "at": now(),
+                 "archive_path": str(archive), "checkpoint_sha256": checkpoint_sha,
+                 "checkpoint_step": step, "checkpoint_episodes": episodes,
+                 "checkpoint_updates": updates, "config_sha256": I0_CONFIG_SHA256,
+                 "pilot_checkpoint_sha256": pilot_sha,
+                 "pilot_gate_sha256": digest(directory / "pilot_gate.json"),
+                 "pilot_audit_sha256": gate["audit_sha256"],
+                 "equivalence_checkpoint_sha256": I0_EQUIVALENCE_120K_SHA256,
+                 "equivalence_proof_sha256": equivalent["proof_sha256"],
+                 "saved_nodes": node_refs, "backup_files_sha256": backup,
+                 "validation_receipt_path": str(validation_path),
+                 "validation_receipt_sha256": validation_sha256,
+                 "reason": "reserve one direct validation for actual terminal within six nodes"}
+        atomic_json(archive / "repair_proof.json", proof)
+    updated = deepcopy(job)
+    updated.setdefault("original_git_commit", I0_ORIGIN_COMMIT)
+    updated.setdefault("source_history", []).append(proof)
+    updated.update(source_root=str(new_root), git_commit=new_commit,
+                   scientific_origin_commit=I0_ORIGIN_COMMIT,
+                   i0_validation_budget_repair=proof)
     return updated
 
 
