@@ -318,20 +318,29 @@ print(json.dumps({{'head':head,'dirty':dirty,'rows':rows,'port_busy':busy}}))
         raise TimingGateError("cannot inspect exact 8900 service: " + result["stderr"][-400:])
     observed = json.loads(result["stdout"].splitlines()[-1])
     rows = observed["rows"]
+    command = rows[0]["cmdline"] if len(rows) == 1 else []
+    workers = (command[command.index("--max-workers") + 1]
+               if "--max-workers" in command and
+               command.index("--max-workers") + 1 < len(command) else None)
+    worker_python = (command[command.index("--python") + 1]
+                     if "--python" in command and
+                     command.index("--python") + 1 < len(command) else None)
+    environment = rows[0]["environment"] if len(rows) == 1 else {}
+    pythonpath = (environment.get("PYTHONPATH") or "").split(":")
+    solver_env = environment.get("SATELLITE_RL_PRIORITY_DEPS")
     if (observed["head"] != SERVICE_COMMIT or observed["dirty"] or
             len(rows) != 1 or not observed["port_busy"] or
             rows[0]["cwd"] != pinned["service_repo"] or
-            pinned["service_repo"] + "/src" not in
-            (rows[0]["environment"]["PYTHONPATH"] or "").split(":") or
-            rows[0]["environment"]["SATELLITE_RL_PRIORITY_DEPS"] != ops.PRIORITY_DEPS or
-            "--max-workers" not in rows[0]["cmdline"] or
-            "--python" not in rows[0]["cmdline"] or
-            rows[0]["cmdline"][rows[0]["cmdline"].index("--python") + 1] != ops.DQN or
-            "--no-scheduler" in rows[0]["cmdline"] or
-            not rows[0]["cmdline"][0].startswith(str(Path(ops.DQN).parent))):
+            pinned["service_repo"] + "/src" not in pythonpath or
+            ops.PRIORITY_DEPS not in pythonpath or
+            workers not in ("1", "2") or
+            (workers == "1" and solver_env != ops.PRIORITY_DEPS) or
+            (workers == "2" and solver_env not in (None, ops.PRIORITY_DEPS)) or
+            worker_python != ops.DQN or
+            "--no-scheduler" in command or not command or command[0] != ops.DQN):
         raise TimingGateError("8900 owner/source/package path is ambiguous")
     row = rows[0]
-    row["max_workers"] = row["cmdline"][row["cmdline"].index("--max-workers") + 1]
+    row["max_workers"] = workers
     row["source_commit"] = observed["head"]
     row["original_receipt_pid"] = pinned["new_server_pid"]
     row["original_receipt_ticks"] = pinned["new_server_start_ticks"]

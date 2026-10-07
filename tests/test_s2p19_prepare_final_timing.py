@@ -62,6 +62,45 @@ def checkpoint_stub(arm, _job, _status):
 
 
 class FinalTimingTests(unittest.TestCase):
+    def test_existing_13ea_service_uses_exact_posix_DQN_path(self):
+        repo = "/s2p19/20418/ops/service_13ea/repo"
+        archive = timing.ops.instance(20418)["archive"]
+        values = {key: "1" for key in timing.THREAD_NAMES}
+        values.update(PYTHONPATH=repo + "/src:" + timing.ops.PRIORITY_DEPS,
+                      SATELLITE_RL_PRIORITY_DEPS=None)  # Actual old two-worker service.
+        observed = {"head": timing.SERVICE_COMMIT, "dirty": "", "port_busy": True,
+                    "rows": [{"pid": 15747, "start_ticks": 795964753, "cwd": repo,
+                              "cmdline": [timing.ops.DQN, "-B", "-m",
+                                          "satellite_rl.workbench.server", "--archive-root",
+                                          archive, "--port", "8900", "--python",
+                                          timing.ops.DQN, "--max-workers", "2"],
+                              "environment": values}]}
+        with TemporaryDirectory() as temporary:
+            receipt = Path(temporary) / "deployment.json"
+            receipt.write_text(json.dumps({"service_commit": timing.SERVICE_COMMIT,
+                "instances": {"20418": {"service_repo": repo,
+                                         "new_server_pid": 15747,
+                                         "new_server_start_ticks": 795964753}}}), encoding="utf-8")
+
+            def remote(code, port, timeout=120):
+                self.assertEqual(port, 20418)
+                compile(code, "read_only_service_identity", "exec")
+                return {"exit_code": 0, "stdout": json.dumps(observed) + "\n",
+                        "stderr": ""}
+
+            with (patch.object(timing, "SERVICE_RECEIPT", receipt),
+                  patch.object(timing.ops, "remote_python", side_effect=remote)):
+                self.assertEqual(timing._service_process()["pid"], 15747)
+                observed["rows"][0]["cmdline"][-1] = "1"
+                with self.assertRaisesRegex(timing.TimingGateError, "ambiguous"):
+                    timing._service_process()  # New target must set the solver environment.
+                observed["rows"][0]["environment"]["SATELLITE_RL_PRIORITY_DEPS"] = (
+                    timing.ops.PRIORITY_DEPS)
+                self.assertEqual(timing._service_process()["max_workers"], "1")
+                observed["rows"][0]["cmdline"][0] = "/usr/bin/python"
+                with self.assertRaisesRegex(timing.TimingGateError, "ambiguous"):
+                    timing._service_process()
+
     def test_C0_complete_status_without_sha_reads_own_400k_checkpoint(self):
         port, run_id, request, commit = timing.ARMS["C0"]
         archive = timing.ops.instance(port)["archive"]
@@ -233,6 +272,25 @@ class FinalTimingTests(unittest.TestCase):
             self.assertEqual(result["pid"], 123)
             self.assertEqual(len(scripts), 1)
             self.assertIn("--max-workers','1'", scripts[0])
+
+    def test_remote_stop_snippet_has_only_defined_remote_errors(self):
+        row = {"pid": 15747, "start_ticks": 795964753,
+               "original_receipt_pid": 15747,
+               "original_receipt_ticks": 795964753,
+               "max_workers": "2", "cwd": "/s2p19/20418/ops/service_13ea/repo"}
+        scripts = []
+
+        def capture(code, port, timeout=120):
+            self.assertEqual(port, 20418)
+            compile(code, "remote_exact_server_stop", "exec")
+            scripts.append(code)
+            return {"exit_code": 0, "stdout": json.dumps({"old_pid": 15747,
+                    "old_ticks": 795964753, "closed": True}) + "\n", "stderr": ""}
+
+        with patch.object(timing.ops, "remote_python", side_effect=capture):
+            self.assertTrue(timing._stop_old_service(row)["closed"])
+        self.assertIn("raise RuntimeError", scripts[0])
+        self.assertNotIn("raise TimingGateError", scripts[0])
 
 
 if __name__ == "__main__":
