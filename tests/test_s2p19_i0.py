@@ -16,7 +16,8 @@ from satellite_rl.sac_improvement import ImprovementEnv, default_config
 from satellite_rl.sac_improvement.agent import ImprovementSAC, pack_actions
 from satellite_rl.sac_improvement.environment import STATE_WIDTH
 from satellite_rl.sac_improvement.runner import (_baseline_job, _gate_on_resume, _load_evaluation_agent,
-                                                 _train_job, _validate_node, run_job)
+                                                 _last_jsonl, _train_job, _validate_node,
+                                                 run_job)
 
 
 def scene(count, seed=73):
@@ -79,6 +80,58 @@ class ImprovementChecks(unittest.TestCase):
         self.assertTrue(done)
         self.assertEqual(info["probes"], 1)
         self.assertEqual(info["decisions"], 2)
+
+    def test_step_and_terminal_service_logs_bind_physics_and_scope(self):
+        env = ImprovementEnv(self.config())
+        env.reset(scene(16))
+        candidate = env.candidates()[0]
+        _, _, _, info = env.step(candidate.id)
+        self.assertEqual(info["requested_action"]["kind"], candidate.kind)
+        self.assertEqual(info["requested_action"]["candidate_id"], candidate.id)
+        self.assertEqual(info["actual_action"]["changes"], info["requested_action"]["changes"])
+        self.assertEqual(len(info["changed_beam_service"]), len(candidate.changes))
+        self.assertEqual(info["service_scope"],
+                         "changed_beams_only_after_full_all_beam_physics_recalculation")
+        for beam in info["changed_beam_service"]:
+            i = beam["beam_id"]
+            self.assertAlmostEqual(beam["capacity_bps"], float(env.current_eval.capacity_bps[i]))
+            self.assertAlmostEqual(beam["capacity_demand_ratio"],
+                                   beam["capacity_bps"] / beam["required_bps"])
+            self.assertEqual(beam["units"]["capacity_bps"], "bit/s")
+        snapshot = env.terminal_snapshot()
+        self.assertEqual(len(snapshot["last_exploration_state"]["beams"]), 16)
+        self.assertEqual(len(snapshot["selected_best_output"]["beams"]), 16)
+        self.assertAlmostEqual(snapshot["last_exploration_state"]["metrics"]["si"],
+                               env.current_eval.si)
+        self.assertAlmostEqual(snapshot["selected_best_output"]["metrics"]["si"],
+                               env.output()["metrics"]["si"])
+        _, _, _, stop = env.step("STOP")
+        self.assertEqual(stop["requested_action"],
+                         {"candidate_id": "STOP", "kind": "STOP", "changes": []})
+        self.assertEqual(stop["actual_action"]["changes"], [])
+
+    def test_terminal_snapshot_does_not_replace_worse_exploration_with_best(self):
+        fixed = scene(16)
+        config = self.config()
+        probe = ImprovementEnv(config)
+        probe.reset(fixed)
+        divergent = None
+        for candidate in probe.candidates():
+            current = ImprovementEnv(config)
+            current.reset(fixed)
+            current.step(candidate.id)
+            if (current.current_eval.si != current.best_eval.si or
+                    current.current_eval.sgm != current.best_eval.sgm):
+                divergent = current
+                break
+        self.assertIsNotNone(divergent)
+        terminal = divergent.terminal_snapshot()
+        self.assertAlmostEqual(terminal["last_exploration_state"]["metrics"]["si"],
+                               divergent.current_eval.si)
+        self.assertAlmostEqual(terminal["selected_best_output"]["metrics"]["si"],
+                               divergent.best_eval.si)
+        self.assertNotEqual(terminal["last_exploration_state"]["layout_sha256"],
+                            terminal["selected_best_output"]["layout_sha256"])
 
     def test_real_transition_updates_twin_q_and_actor(self):
         config = self.config()
@@ -283,6 +336,19 @@ class ImprovementChecks(unittest.TestCase):
                 self.assertEqual(status["stage"], "stopped")
                 self.assertEqual(status["stop_reason"], "s2p19_pilot_gate_pending")
                 self.assertEqual(status["env_step"], 1)
+                trace = json.loads((directory / "traces.jsonl").read_text(encoding="utf-8").splitlines()[0])
+                self.assertIn("requested_action", trace)
+                self.assertIn("actual_action", trace)
+                self.assertIn("changed_beam_service", trace)
+                episode_file = (directory / "episodes.jsonl") if (directory / "episodes.jsonl").exists() \
+                    else (directory / "episode_snapshots.jsonl")
+                episode_log = json.loads(episode_file.read_text(encoding="utf-8").splitlines()[0])
+                self.assertIn("last_exploration_state", episode_log["terminal_snapshot"])
+                self.assertIn("selected_best_output", episode_log["terminal_snapshot"])
+                for state_name in ("last_exploration_state", "selected_best_output"):
+                    beams = episode_log["terminal_snapshot"][state_name]["beams"]
+                    self.assertEqual(len(beams), 16)
+                    self.assertEqual(beams[0]["service_units"]["capacity_bps"], "bit/s")
                 (directory / "pilot_gate.json").write_text(json.dumps({"run_id": "train_smoke",
                     "checkpoint_sha256": status["checkpoint_sha256"], "pass": True}), encoding="utf-8")
                 _train_job(directory, job, config, True, frozen_sha)
@@ -304,6 +370,56 @@ class ImprovementChecks(unittest.TestCase):
                                       "sha", {"env_step": config["pilot_stop_steps"],
                                               "episodes": 1}, config)
             self.assertFalse(allowed)
+
+    def test_damaged_terminal_jsonl_is_not_silently_completed(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "episodes.jsonl"
+            path.write_bytes(b'{"episode":0}\n{"episode":1')
+            with self.assertRaisesRegex(ValueError, "incomplete record"):
+                _last_jsonl(path)
+
+    def test_training_trace_write_failure_marks_job_failed(self):
+        config = self.config()
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            path = directory / "scene.npz"
+            np.savez_compressed(path, **scene(16))
+            digest = sha256(path.read_bytes()).hexdigest()
+            train_files = [(path, digest)] * 8064
+            validation_files = [(path, digest)] * 72
+            record = {"files": [{"beam_count": 16, "mother_scene_id": "smoke",
+                                 "load_multiplier": 0.75}] * 8064}
+            job = {"run_id": "train_log_failure", "kind": "train",
+                   "mode": "train", "i0_config": config}
+            (directory / "job.json").write_text(json.dumps(job), encoding="utf-8")
+            (directory / "config.json").write_text(json.dumps({
+                "research_stage": "sac_improvement", "i0": config}), encoding="utf-8")
+
+            class Order:
+                def __init__(self, *args):
+                    pass
+
+                def selection(self, episode):
+                    return {"source_index": 0}
+
+            def selected(_job, role):
+                return ((record, train_files) if role == "train"
+                        else ({"files": [{}] * 72}, validation_files))
+
+            with patch("satellite_rl.sac_improvement.runner._cuda_preflight",
+                       return_value={"isolated_smoke": True}), \
+                    patch("satellite_rl.sac_improvement.runner._scene_set", side_effect=selected), \
+                    patch("satellite_rl.sac_improvement.runner.VariableBeamSceneOrder", Order), \
+                    patch("satellite_rl.sac_improvement.runner._validate_node", return_value=True), \
+                    patch("satellite_rl.sac_improvement.runner._jsonl", side_effect=OSError(
+                          "trace disk failure")):
+                with self.assertRaisesRegex(OSError, "trace disk failure"):
+                    run_job(directory)
+            status = json.loads((directory / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["stage"], "failed")
+            self.assertIn("trace disk failure",
+                          (directory / "failure.json").read_text(encoding="utf-8"))
+            self.assertFalse((directory / "models" / "final" / "policy.pt").exists())
 
 
 if __name__ == "__main__":

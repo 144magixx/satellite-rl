@@ -295,10 +295,23 @@ class ImprovementEnv:
         if self.done:
             raise RuntimeError("I0 episode already complete")
         candidates = {candidate.id: candidate for candidate in self.candidates()}
+        candidate = candidates.get(candidate_id)
+        before_starts, before_slots = self.current_starts.copy(), self.current_slots.copy()
+        requested_changes = ([{"beam_id": int(i), "group": int(i % 8),
+                               "from_freq": int(before_starts[i]), "to_freq": int(start),
+                               "from_slots": int(before_slots[i]), "to_slots": int(length),
+                               "power_w": float(self.power[i])}
+                              for i, start, length in candidate.changes]
+                             if candidate is not None else [] if candidate_id == "STOP" else None)
+        requested_action = {"candidate_id": candidate_id,
+                            "kind": candidate.kind if candidate is not None else
+                                    "STOP" if candidate_id == "STOP" else "unknown",
+                            "changes": requested_changes}
         self.decision_count += 1
         reward = 0.0
         reason = "candidate"
-        candidate = candidates.get(candidate_id)
+        actual_changes = []
+        changed_beam_service = []
         if candidate_id == "STOP":
             reason = "stop"
             self.done = True
@@ -318,6 +331,19 @@ class ImprovementEnv:
             self.probe_count += 1
             self.visited.add(key)
             self.current_starts, self.current_slots, self.current_eval = starts, slots, evaluated
+            actual_changes = list(requested_changes)
+            for change in actual_changes:
+                i = change["beam_id"]
+                changed_beam_service.append({
+                    "beam_id": i, "group": change["group"],
+                    **beam_service_fields(float(evaluated.capacity_bps[i]),
+                                          float(self.demand[i]),
+                                          float(evaluated.beam_sgm[i])),
+                    "service_timing": "after_this_macro_action_and_full_interference_recalculation",
+                    "source": "FixedAllocationPhysics.from_scene.evaluate",
+                    "units": {"required_bps": "bit/s", "capacity_bps": "bit/s",
+                              "effective_served_bps": "bit/s", "capacity_demand_ratio": "ratio",
+                              "si": "ratio", "sgm": "ratio"}})
             if self._protected(evaluated) and evaluated.si > self.best_eval.si + 1e-12:
                 reward = 100.0 * (evaluated.si - self.best_eval.si)
                 self.best_starts, self.best_slots, self.best_eval = starts.copy(), slots.copy(), evaluated
@@ -329,21 +355,60 @@ class ImprovementEnv:
         info = {"reason": reason, "candidate_id": candidate_id, "decisions": self.decision_count,
                 "probes": self.probe_count, "current_si": self.current_eval.si,
                 "best_si": self.best_eval.si, "best_sgm": self.best_eval.sgm,
-                "protected_output": self._protected(self.best_eval)}
+                "protected_output": self._protected(self.best_eval),
+                "requested_action": requested_action,
+                "actual_action": {"accepted": candidate is not None and candidate_id != "STOP",
+                                  "changes": actual_changes, "rejection_reason":
+                                  reason if candidate is None and candidate_id != "STOP" else None},
+                "changed_beam_service": changed_beam_service,
+                "service_scope": "changed_beams_only_after_full_all_beam_physics_recalculation",
+                "all_beams_recomputed": bool(actual_changes),
+                "service_units": {"demand": "bit/s", "capacity": "bit/s",
+                                  "effective_served": "bit/s", "rho": "ratio",
+                                  "si": "ratio", "sgm": "ratio"}}
         self.trace.append(info)
         return self.state(), reward, self.done, info
+
+    def _beam_rows(self, starts, slots, evaluation):
+        beams = []
+        for i, old in enumerate(self.initial_beams):
+            capacity = float(evaluation.capacity_bps[i])
+            matching = float(evaluation.beam_sgm[i])
+            row = dict(old, freq=int(starts[i]), slots=int(slots[i]),
+                       **beam_service_fields(capacity, float(self.demand[i]), matching))
+            row["basic_met"] = bool(capacity >= self.config["basic_fraction"] * self.demand[i])
+            beams.append(row)
+        return beams
+
+    def terminal_snapshot(self):
+        """Return both real last explored layout and independently saved best."""
+        if self.scene is None:
+            raise RuntimeError("I0 has no complete initial allocation")
+        current = self._beam_rows(self.current_starts, self.current_slots, self.current_eval)
+        best = self._beam_rows(self.best_starts, self.best_slots, self.best_eval)
+        def view(label, beams, evaluation, starts, slots):
+            return {"state_role": label, "beams": beams,
+                    "layout_sha256": _sha_layout(starts, slots),
+                    "metrics": {"si": float(evaluation.si), "sgm": float(evaluation.sgm),
+                                "basic_met": sum(row["basic_met"] for row in beams),
+                                "power_w": float(self.power.sum()),
+                                "slots_total": int(slots.sum())}}
+        return {"last_exploration_state": view("last_exploration_state", current,
+                                               self.current_eval, self.current_starts,
+                                               self.current_slots),
+                "selected_best_output": view("selected_best_output", best,
+                                             self.best_eval, self.best_starts,
+                                             self.best_slots),
+                "beam_result_source": "FixedAllocationPhysics.from_scene.evaluate",
+                "service_timing": "after_last_recorded_macro_action_including_all_interference",
+                "units": {"required_bps": "bit/s", "capacity_bps": "bit/s",
+                          "effective_served_bps": "bit/s", "capacity_demand_ratio": "ratio",
+                          "si": "ratio", "sgm": "ratio", "power_w": "W"}}
 
     def output(self):
         if self.scene is None:
             raise RuntimeError("I0 has no complete allocation")
-        beams = []
-        for i, old in enumerate(self.initial_beams):
-            capacity = float(self.best_eval.capacity_bps[i])
-            matching = float(self.best_eval.beam_sgm[i])
-            row = dict(old, freq=int(self.best_starts[i]), slots=int(self.best_slots[i]),
-                       **beam_service_fields(capacity, float(self.demand[i]), matching))
-            row["basic_met"] = bool(capacity >= self.config["basic_fraction"] * self.demand[i])
-            beams.append(row)
+        beams = self._beam_rows(self.best_starts, self.best_slots, self.best_eval)
         return {"beams": beams, "metrics": {"si": self.best_eval.si, "sgm": self.best_eval.sgm,
                                             "initial_si": self.base_eval.si,
                                             "initial_sgm": self.base_eval.sgm,

@@ -199,6 +199,66 @@ def _episode_result(env, scene_record, source_sha, seed, method):
     return result
 
 
+def _training_beam_snapshot(env, job, scene_record, scene_sha, episode, env_step,
+                            terminal_reason, complete_episode):
+    """Save the actual last explored state separately from the deployable best."""
+    snapshot = env.terminal_snapshot()
+    context = {"run_id": job["run_id"], "git_commit": job.get("git_commit"),
+               "scene_sha256": scene_sha, "mother_scene_id": scene_record.get("mother_scene_id"),
+               "selected_time_utc": scene_record.get("selected_time_utc"),
+               "beam_count": len(env.demand),
+               "load_multiplier": scene_record.get("load_multiplier"),
+               "episode": episode, "env_step": env_step,
+               "episode_step": env.decision_count,
+               "complete_episode": bool(complete_episode),
+               "terminal_reason": terminal_reason}
+    for state_name in ("last_exploration_state", "selected_best_output"):
+        for beam in snapshot[state_name]["beams"]:
+            beam.update({"scene_sha256": scene_sha,
+                         "mother_scene_id": context["mother_scene_id"],
+                         "episode": episode, "env_step": env_step,
+                         "episode_step": env.decision_count,
+                         "service_source": snapshot["beam_result_source"],
+                         "service_units": snapshot["units"]})
+    return {**context, **snapshot}
+
+
+def _partial_episode_row(env, job, scene_record, scene_index, scene_sha,
+                         episode, env_step, reason):
+    return {"episode": episode, "env_step": env_step,
+            "scene_index": scene_index, "scene_sha256": scene_sha,
+            "mother_scene_id": scene_record.get("mother_scene_id"),
+            "beam_count": len(env.demand),
+            "load_multiplier": scene_record.get("load_multiplier"),
+            "metrics": env.output()["metrics"],
+            "reward_total": 100 * (env.best_eval.si - env.base_eval.si),
+            "terminal_snapshot": _training_beam_snapshot(
+                env, job, scene_record, scene_sha, episode, env_step,
+                reason, False)}
+
+
+def _last_jsonl(path):
+    path = Path(path)
+    if not path.is_file():
+        return None
+    with path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        end = stream.tell()
+        stream.seek(max(0, end - 4 * 1024 * 1024))
+        tail = stream.read()
+    if not tail:
+        return None
+    if not tail.endswith(b"\n"):
+        raise ValueError("I0 terminal JSONL ends with an incomplete record")
+    lines = tail.splitlines()
+    if not lines:
+        return None
+    try:
+        return json.loads(lines[-1].decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("I0 terminal JSONL contains a damaged last record") from error
+
+
 def _case(directory, case_id, result, repeat_index=0):
     path = directory / "cases" / f"{case_id}.json"
     if path.exists():
@@ -596,15 +656,34 @@ def _train_job(directory, job, config, resume, frozen_config_sha):
         _jsonl(directory / "traces.jsonl", {"env_step": steps, "episode": episodes,
                                               "scene_index": scene_index, "action_index": index,
                                               "candidate_id": chosen, "reward": reward,
-                                              "done": done, **info})
+                                               "done": done, "episode_step": env.decision_count,
+                                               "scene_sha256": files[scene_index][1],
+                                               "mother_scene_id": record["files"][scene_index].get("mother_scene_id"),
+                                               "selected_time_utc": record["files"][scene_index].get("selected_time_utc"),
+                                               "beam_count": len(env.demand),
+                                               "load_multiplier": record["files"][scene_index].get("load_multiplier"),
+                                               "source": {"run_id": job["run_id"],
+                                                          "git_commit": job.get("git_commit"),
+                                                          "physics": "FixedAllocationPhysics.from_scene.evaluate"},
+                                               **info})
         if done:
             output = env.output()
+            terminal_reason = ("policy_stop" if info["reason"] == "stop" else
+                               "decision_or_probe_limit" if env.decision_count >= config["max_decisions"]
+                               or env.probe_count >= config["max_probes"] else info["reason"])
             _jsonl(directory / "episodes.jsonl", {"episode": episodes, "env_step": steps,
                                                    "scene_index": scene_index,
                                                    "scene_sha256": files[scene_index][1],
+                                                    "mother_scene_id": record["files"][scene_index].get("mother_scene_id"),
+                                                    "beam_count": len(env.demand),
+                                                    "load_multiplier": record["files"][scene_index].get("load_multiplier"),
                                                    "metrics": output["metrics"],
                                                    "reward_total": 100 * (output["metrics"]["si"] -
-                                                                          output["metrics"]["initial_si"])})
+                                                                           output["metrics"]["initial_si"]),
+                                                    "terminal_snapshot": _training_beam_snapshot(
+                                                        env, job, record["files"][scene_index],
+                                                        files[scene_index][1], episodes, steps,
+                                                        terminal_reason, True)})
             episodes += 1
             env = None
             scene_index = None
@@ -622,9 +701,25 @@ def _train_job(directory, job, config, resume, frozen_config_sha):
             _artifacts(directory, job, checkpoint=str(directory / "checkpoint.pt"),
                        validation_directory=str(directory / "validation"))
             last_checkpoint_step = steps
+            if env is not None and (pilot_reached or requested_stop or
+                                    steps >= config["total_steps"]):
+                pause_reason = ("s2p19_pilot_gate_pending" if pilot_reached else
+                                "user_stop" if requested_stop else "training_budget_exhausted")
+                partial = _partial_episode_row(
+                    env, job, record["files"][scene_index], scene_index,
+                    files[scene_index][1], episodes, steps, pause_reason)
+                _jsonl(directory / ("episodes.jsonl" if
+                                    steps >= config["total_steps"] and not requested_stop and not pilot_reached
+                                    else "episode_snapshots.jsonl"), partial)
             if (steps in VALIDATION_NODES or pilot_reached
                     or episodes >= config["max_episodes"]):
                 if not _validate_node(directory, job, config, agent, steps, digest, validation):
+                    if env is not None and not (pilot_reached or requested_stop or
+                                                steps >= config["total_steps"]):
+                        _jsonl(directory / "episode_snapshots.jsonl", _partial_episode_row(
+                            env, job, record["files"][scene_index], scene_index,
+                            files[scene_index][1], episodes, steps,
+                            "user_stop_during_validation"))
                     _status(directory, job, config, "stopped", step=steps, episodes=episodes,
                             stop_reason="user_stop_during_validation", checkpoint_step=steps,
                             checkpoint_sha256=digest, pilot_gate_passed=gate_passed,
@@ -640,6 +735,18 @@ def _train_job(directory, job, config, resume, frozen_config_sha):
             _status(directory, job, config, "training", step=steps, episodes=episodes,
                     checkpoint_step=steps, checkpoint_sha256=digest,
                     pilot_gate_passed=gate_passed, updates=agent.updates)
+    # A failed terminal-log append may have left a valid final checkpoint but
+    # no terminal row. Refuse to publish a model until that row is durable.
+    if env is not None:
+        expected = (episodes, steps, "training_budget_exhausted")
+        last = _last_jsonl(directory / "episodes.jsonl") or {}
+        observed = (last.get("episode"), last.get("env_step"),
+                    (last.get("terminal_snapshot") or {}).get("terminal_reason"))
+        if observed != expected:
+            _jsonl(directory / "episodes.jsonl", _partial_episode_row(
+                env, job, record["files"][scene_index], scene_index,
+                files[scene_index][1], episodes, steps,
+                "training_budget_exhausted"))
     # The fixed endpoint is the final actor, even if the episode cap stops early.
     model_root = Path(job.get("model_dir", directory / "models"))
     model_dir = model_root / "final"
