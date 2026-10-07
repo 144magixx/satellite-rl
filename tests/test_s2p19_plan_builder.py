@@ -86,6 +86,13 @@ class PlanBuilderTests(unittest.TestCase):
                 receipts[f"{arm}_pilot_{port}"] = {"state": "completed", "run_id": f"train_sac_{arm.lower()}"}
                 receipts[f"approve_{arm}_pilot"] = {"state": "completed"}
             state_path.write_text(json.dumps({"tasks": receipts}), encoding="utf-8")
+            before = plan_path.read_bytes()
+            with (patch.object(plan_builder.ops, "LOCAL", root),
+                  patch.object(plan_builder.controller, "PLAN", plan_path),
+                  patch.object(plan_builder.controller, "STATE", state_path)):
+                with self.assertRaisesRegex(RuntimeError, "timing isolation receipt"):
+                    plan_builder.advance_common_evaluation()
+            self.assertEqual(plan_path.read_bytes(), before)
 
             def api(port, path):
                 if path == "/api/s2p19/catalog":
@@ -99,6 +106,13 @@ class PlanBuilderTests(unittest.TestCase):
 
             with (patch.object(plan_builder.ops, "LOCAL", root),
                   patch.object(plan_builder.ops, "api", side_effect=api),
+                  patch.object(plan_builder, "_require_final_timing_receipt",
+                               return_value={"path": "verified", "sha256": "9" * 64}),
+                  patch.object(plan_builder, "_pin_c1_final_model", return_value={
+                      "path": plan_builder.ops.instance(20424)["archive"] +
+                              "/models/runs/workbench/train_sac_c1/final",
+                      "model_id": "model_C1", "policy.pt": "7" * 64,
+                      "model.json": "8" * 64}),
                   patch.object(plan_builder.controller, "PLAN", plan_path),
                   patch.object(plan_builder.controller, "STATE", state_path)):
                 result = plan_builder.advance_common_evaluation()
@@ -112,6 +126,24 @@ class PlanBuilderTests(unittest.TestCase):
             self.assertEqual(len([task for task in tasks if task.startswith("baseline_greedy_B")]), 1)
             self.assertEqual(tasks["V2_final_direct_20418"]["body"]["model_id"],
                              plan_builder.ref("import_V2_model_20418", "model_id"))
+            self.assertEqual(tasks["C1_final_direct_20418"]["body"]["model_id"],
+                             plan_builder.ref("import_C1_final_model_20418", "model_id"))
+            self.assertEqual(tasks["C1_final_direct_20418"]["body"]["scene_id"],
+                             plan_builder.ref("import_final_20418", "scene_id"))
+            self.assertEqual(tasks["C1_final_direct_20418"]["body"]["repeats"], 3)
+            self.assertEqual(tasks["C1_final_direct_20418"]["body"]["action_seed"], 53001)
+            self.assertEqual(tasks["C1_final_B_20418"]["body"]["source_run_id"],
+                             plan_builder.ref("C1_final_direct_20418", "run_id"))
+            self.assertEqual(tasks["import_C1_final_model_20418"]["expected_sha256"], "7" * 64)
+            timed = [row for row in updated["tasks"] if row["phase"] in
+                     ("common_evaluation", "refinement")]
+            self.assertEqual({row["port"] for row in timed}, {20418})
+            previous = "import_C1_final_model_20418"
+            for row in timed:
+                self.assertIn(previous, row["requires"])
+                previous = row["id"]
+            self.assertEqual(sum(row["phase"] == "refinement" for row in timed), 7)
+            self.assertEqual(updated["final_complete_B_allocations"], 14960)
 
 
 if __name__ == "__main__":

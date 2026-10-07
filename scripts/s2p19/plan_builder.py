@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import subprocess
 
 from . import controller, ops
@@ -179,6 +181,192 @@ def _final_model_id(port: int, train_run_id: str) -> str:
     if len(matches) != 1:
         raise RuntimeError(f"{port} exact 400k final model for {train_run_id} absent/ambiguous")
     return matches[0]["id"]
+
+
+def _pin_c1_final_model(train_run_id: str) -> dict:
+    """Pin the 20424 final pair before importing it on the timed 20418 lane."""
+    if not isinstance(train_run_id, str) or not re.fullmatch(
+            r"train_sac_[0-9]{8}_[0-9]{6}_[0-9a-f]{8}", train_run_id):
+        raise ValueError("C1 fixed final model run identity malformed")
+    port = 20424
+    archive = ops.instance(port)["archive"]
+    source = f"{archive}/models/runs/workbench/{train_run_id}/final"
+    models = ops.api(port, "/api/models").get("models") or []
+    matches = [row for row in models if row.get("path") == source and
+               (row.get("provenance") or {}).get("run_id") == train_run_id and
+               (row.get("provenance") or {}).get("env_step") == 400000 and
+               row.get("format") == "satellite_rl_workbench_policy_v1"]
+    if len(matches) != 1:
+        raise RuntimeError("C1 source is not one frozen 20424 400k final policy")
+    code = f'''
+import hashlib,json,pathlib
+root=pathlib.Path({source!r}).resolve(strict=True)
+archive=pathlib.Path({archive!r}).resolve(strict=True)
+if root != archive/'models/runs/workbench'/{train_run_id!r}/'final':
+ raise RuntimeError('C1 source path escaped fixed final model')
+files={{name:hashlib.sha256((root/name).read_bytes()).hexdigest()
+       for name in ('policy.pt','model.json')}}
+metadata=json.loads((root/'model.json').read_text(encoding='utf-8'))
+print(json.dumps({{'files':files,'format':metadata.get('format'),
+ 'provenance':metadata.get('provenance'),
+ 'config_algorithm':(metadata.get('config') or {{}}).get('algorithm')}}))
+'''
+    observed = ops.remote_python(code, port, timeout=90)
+    if observed["exit_code"]:
+        raise RuntimeError("C1 fixed final pair unavailable: " + observed["stderr"][-500:])
+    actual = json.loads(observed["stdout"].splitlines()[-1])
+    if (actual.get("format") != "satellite_rl_workbench_policy_v1" or
+            actual.get("config_algorithm") != "sac" or
+            (actual.get("provenance") or {}).get("run_id") != train_run_id or
+            (actual.get("provenance") or {}).get("env_step") != 400000 or
+            actual.get("provenance") != matches[0]["provenance"] or
+            set(actual.get("files") or {}) != {"policy.pt", "model.json"} or
+            any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+                for value in actual["files"].values())):
+        raise RuntimeError("C1 fixed final model bytes/provenance differ from catalog")
+    return {"path": source, "model_id": matches[0]["id"], **actual["files"]}
+
+
+def _timing_lane_observation(port: int) -> dict:
+    """Read current server/thread/job/GPU occupancy; never alter a worker."""
+    info = ops.instance(port)
+    code = f'''
+import datetime,json,pathlib,subprocess
+archive=pathlib.Path({info['archive']!r}).resolve(strict=True)
+server=[]
+for proc in pathlib.Path('/proc').iterdir():
+ if not proc.name.isdigit():continue
+ try:
+  args=(proc/'cmdline').read_bytes().split(b'\\0')
+  args=[part.decode('utf-8','replace') for part in args if part]
+  if ('satellite_rl.workbench.server' not in args or '--archive-root' not in args
+      or str(archive) not in args or '--port' not in args
+      or str({info['api_port']}) not in args):continue
+  ticks=int((proc/'stat').read_text().split(')')[-1].split()[19])
+  raw=(proc/'environ').read_bytes().split(b'\\0')
+  env={{k:next((v.decode('utf-8','replace').split('=',1)[1] for v in raw
+                 if v.startswith((k+'=').encode())),None)
+       for k in ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS','NUMEXPR_NUM_THREADS')}}
+  workers=args[args.index('--max-workers')+1] if '--max-workers' in args else None
+  server.append({{'pid':int(proc.name),'start_ticks':ticks,'max_workers':workers,
+                 'thread_environment':env}})
+ except (OSError,ValueError,IndexError):continue
+active=[]
+for status in (archive/'outputs/workbench/jobs').glob('*/status.json'):
+ try:row=json.loads(status.read_text(encoding='utf-8'))
+ except (OSError,ValueError):continue
+ if row.get('stage') not in ('completed','failed','stopped','cancelled'):
+  active.append({{'run_id':status.parent.name,'stage':row.get('stage')}})
+gpu=subprocess.run(['nvidia-smi','--query-gpu=uuid','--format=csv,noheader'],
+ capture_output=True,text=True,check=True)
+apps=subprocess.run(['nvidia-smi','--query-compute-apps=pid',
+ '--format=csv,noheader,nounits'],capture_output=True,text=True,check=True)
+uuids=[line.strip() for line in gpu.stdout.splitlines() if line.strip()]
+pids=sorted({{int(line.strip()) for line in apps.stdout.splitlines()
+             if line.strip().isdigit()}})
+allowed={{row['pid'] for row in server}}
+print(json.dumps({{'observed_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+ 'server':server,'active_jobs':sorted(active,key=lambda row:row['run_id']),
+ 'gpu_uuids':uuids,'external_gpu_pids':[pid for pid in pids if pid not in allowed]}}))
+'''
+    result = ops.remote_python(code, port, timeout=45)
+    if result["exit_code"]:
+        raise RuntimeError(f"{port} final timing lane probe failed: " + result["stderr"][-500:])
+    return json.loads(result["stdout"].splitlines()[-1])
+
+
+def _assert_isolated_timing_observation(port: int, current: dict) -> None:
+    servers = current.get("server") or []
+    threads = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+               "NUMEXPR_NUM_THREADS")
+    if (len(servers) != 1 or not current.get("gpu_uuids") or
+            len(current["gpu_uuids"]) != 1 or current.get("active_jobs") or
+            current.get("external_gpu_pids") or
+            (port == 20418 and (servers[0].get("max_workers") != "1" or
+                                 any(servers[0].get("thread_environment", {}).get(key) != "1"
+                                     for key in threads)))):
+        raise RuntimeError(f"{port} is not an isolated fixed-thread final timing lane")
+
+
+def _training_completion_observation(retained: list[str], receipts: dict) -> dict:
+    """Read actual workbench status for each arm, including I0's capped end."""
+    result = {}
+    for arm in retained:
+        port = 20424 if arm == "C1" else 20418
+        run_id = receipts[f"{arm}_pilot_{port}"]["run_id"]
+        detail = ops.api(port, f"/api/runs/{run_id}")
+        job, status = detail.get("job") or {}, detail.get("status") or {}
+        step = status.get("env_step")
+        if (job.get("run_id") != run_id or job.get("experiment_id") != "S2-P19" or
+                status.get("stage") != "completed" or type(step) is not int or
+                (arm in ("C0", "C1") and step != 400000) or
+                (arm == "I0" and not 0 < step <= 400000)):
+            raise RuntimeError(f"{arm} retained training is not actually completed")
+        result[arm] = {"run_id": run_id, "port": port, "env_step": step,
+                       "git_commit": job.get("git_commit"),
+                       "model_dir": job.get("model_dir")}
+    return result
+
+
+def capture_final_timing_isolation(retained: list[str]) -> dict:
+    """Save only real, current read-only observations before retention is published."""
+    if controller.PLAN.is_file() and "timing_isolation_receipt" in json.loads(
+            controller.PLAN.read_text(encoding="utf-8")):
+        raise RuntimeError("final timing receipt is already pinned by the appended plan")
+    if (not isinstance(retained, list) or len(set(retained)) != len(retained) or
+            not set(retained) <= {"C0", "C1", "I0"} or
+            ("C1" in retained and "C0" not in retained)):
+        raise ValueError("final timing capture has invalid retained-arm scope")
+    state = json.loads(controller.STATE.read_text(encoding="utf-8"))
+    receipts = state.get("tasks") or {}
+    runs = {}
+    for arm in retained:
+        run = receipts.get(f"{arm}_pilot_{20424 if arm == 'C1' else 20418}") or {}
+        if run.get("state") != "completed" or not run.get("run_id"):
+            raise RuntimeError(f"{arm} training is not completed for final timing")
+        runs[arm] = run["run_id"]
+    training_completion = _training_completion_observation(retained, receipts)
+    observations = {str(port): _timing_lane_observation(port) for port in ops.SSH_PORTS}
+    for port in ops.SSH_PORTS:
+        _assert_isolated_timing_observation(port, observations[str(port)])
+    receipt = {"format": "s2p19_final_timing_isolation_v1",
+               "experiment_id": "S2-P19", "passed": True, "target_port": 20418,
+               "retained_runs": runs,
+               "training_completion": training_completion,
+               "observed_utc": datetime.now(timezone.utc).isoformat(),
+               "observations": observations}
+    path = ops.LOCAL / "controller/gates/final_timing_isolation_receipt.json"
+    controller.write_json(path, receipt)
+    return {"path": str(path), "sha256": controller.digest(path),
+            "observed_utc": receipt["observed_utc"]}
+
+
+def _require_final_timing_receipt(retained: list[str], receipts: dict) -> dict:
+    path = ops.LOCAL / "controller/gates/final_timing_isolation_receipt.json"
+    if not path.is_file():
+        raise RuntimeError("final 880 matrix needs a real same-instance timing isolation receipt")
+    proof = json.loads(path.read_text(encoding="utf-8"))
+    expected_runs = {arm: receipts[f"{arm}_pilot_{20424 if arm == 'C1' else 20418}"]["run_id"]
+                     for arm in retained}
+    observed_at = datetime.fromisoformat(proof.get("observed_utc", ""))
+    age = (datetime.now(timezone.utc) - observed_at).total_seconds()
+    if (proof.get("format") != "s2p19_final_timing_isolation_v1" or
+            proof.get("experiment_id") != "S2-P19" or proof.get("passed") is not True or
+            proof.get("target_port") != 20418 or
+            proof.get("retained_runs") != expected_runs or
+            proof.get("training_completion") !=
+                _training_completion_observation(retained, receipts) or
+            type(age) is not float or not 0 <= age <= 600 or
+            set(proof.get("observations") or {}) != {"20418", "20424"}):
+        raise RuntimeError("final timing receipt identity/retention/freshness differs")
+    for port in ops.SSH_PORTS:
+        saved = proof["observations"][str(port)]
+        current = _timing_lane_observation(port)
+        _assert_isolated_timing_observation(port, current)
+        if any(saved.get(key) != current.get(key) for key in
+               ("server", "active_jobs", "gpu_uuids", "external_gpu_pids")):
+            raise RuntimeError(f"{port} live final timing isolation differs from receipt")
+    return {"path": str(path), "sha256": controller.digest(path), "observed_utc": proof["observed_utc"]}
 
 
 def adopt(*, publish: bool = True) -> dict:
@@ -517,6 +705,7 @@ def advance_common_evaluation() -> dict:
             raise RuntimeError(f"{arm} retained without completed same-ID full training")
         if receipts.get(f"approve_{arm}_pilot", {}).get("state") != "completed":
             raise RuntimeError(f"{arm} missing saved pilot scientific approval")
+    timing_proof = _require_final_timing_receipt(retained, receipts)
 
     p17_configs = json.loads(Path("D:/paper/outputs/verification/s2p19_research_20261007/p17_sca_configs.json").read_text(encoding="utf-8"))
     stochastic_B = p17_configs["V1"]["config_power_refinement"]
@@ -526,6 +715,17 @@ def advance_common_evaluation() -> dict:
             stochastic_B["repeats"] != 3 or greedy_B["repeats"] != 1):
         raise ValueError("saved P17 common B route differs")
     appended = []
+    c1_source = None
+    if "C1" in retained:
+        c1_source = _pin_c1_final_model(receipts["C1_pilot_20424"]["run_id"])
+        appended.append(task("import_C1_final_model_20418", "preparation", 20418,
+            "import_model", {"path": c1_source["path"],
+                             "name": "S2-P19 C1 frozen 400k final on timed 20418"},
+            "dev_validation", ["C1_pilot_20424"], source_path=c1_source["path"],
+            expected_sha256=c1_source["policy.pt"],
+            expected_model_json_sha256=c1_source["model.json"],
+            expected_provenance_run_id=receipts["C1_pilot_20424"]["run_id"],
+            expected_provenance_env_step=400000))
     appended.append(task("V2_final_direct_20418", "common_evaluation", 20418,
         "constructive_evaluate",
         {"experiment_id": "S2-P19", "model_id": ref("import_V2_model_20418", "model_id"),
@@ -551,11 +751,12 @@ def advance_common_evaluation() -> dict:
              "source_group": group, "partition": "test", "config": controls},
             disk_class, ["baseline_test_20418"]))
     for arm in retained:
-        port = 20424 if arm == "C1" else 20418
-        pilot = f"{arm}_pilot_{port}"
-        final_scene = f"import_final_{port}"
+        port = 20418
+        pilot = f"{arm}_pilot_{20424 if arm == 'C1' else 20418}"
+        final_scene = "import_final_20418"
         if arm in ("C0", "C1"):
-            model_id = _final_model_id(port, receipts[pilot]["run_id"])
+            model_id = (ref("import_C1_final_model_20418", "model_id") if arm == "C1"
+                        else _final_model_id(port, receipts[pilot]["run_id"]))
             body = {"experiment_id": "S2-P19", "model_id": model_id,
                     "scene_id": ref(final_scene, "scene_id"),
                     "action_mode": "stochastic", "action_seed": 53001, "repeats": 3,
@@ -575,6 +776,17 @@ def advance_common_evaluation() -> dict:
             {"source_run_id": ref(eval_id, "run_id"), "source_group": "model",
              "partition": "test", "config": stochastic_B},
             "final_B_one_stochastic_arm_2640", [eval_id]))
+    timed = [row for row in appended if row["phase"] in ("common_evaluation", "refinement")]
+    if any(row["port"] != 20418 for row in timed):
+        raise RuntimeError("final timed matrix must use only instance 20418")
+    prior = "import_C1_final_model_20418" if c1_source else None
+    for row in timed:
+        if prior is not None and prior not in row["requires"]:
+            row["requires"].append(prior)
+        prior = row["id"]
+    complete_B_allocations = 880 * (8 + 3 * len(retained))
+    if complete_B_allocations > 14960:
+        raise RuntimeError("retained final matrix exceeds approved B budget")
     appended.append({"id": "formal_report_and_archive", "phase": "report_archive",
                      "port": 20418, "kind": "milestone",
                      "requires": [row["id"] for row in appended if row["phase"] == "refinement"],
@@ -586,6 +798,8 @@ def advance_common_evaluation() -> dict:
     new_plan = {**plan, "revision": plan["revision"] + 1, "parent_plan_sha256": old_sha,
                 "terminal": False, "retention_audit_path": str(audit_path),
                 "retention_audit_sha256": decision["audit_sha256"],
+                "timing_isolation_receipt": timing_proof,
+                "final_complete_B_allocations": complete_B_allocations,
                 "tasks": [*plan["tasks"], *appended]}
     controller.write_json(controller.PLAN, new_plan)
     controller.load_plan()
@@ -598,12 +812,19 @@ def advance_common_evaluation() -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("bootstrap", "adopt-preview", "adopt",
-                                           "harden-live", "advance-common-evaluation"))
+                                           "harden-live", "capture-final-timing",
+                                           "advance-common-evaluation"))
     parser.add_argument("--service-commit")
+    parser.add_argument("--retained-arms", help="comma-separated source-backed retained arms for timing capture")
     args = parser.parse_args()
+    if args.action == "capture-final-timing" and args.retained_arms is None:
+        parser.error("capture-final-timing requires an explicit --retained-arms value")
     result = (bootstrap() if args.action == "bootstrap" else adopt(publish=False) if args.action == "adopt-preview"
               else adopt() if args.action == "adopt"
               else harden_live_plan(args.service_commit) if args.action == "harden-live"
+              else capture_final_timing_isolation(
+                  [arm for arm in (args.retained_arms or "").split(",") if arm])
+              if args.action == "capture-final-timing"
               else advance_common_evaluation())
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

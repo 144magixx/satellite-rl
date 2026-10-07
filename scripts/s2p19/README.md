@@ -37,6 +37,31 @@ each source. With all C0/C1/I0 arms retained, the final matrix uses exactly
 14,960 complete B calls (three arms 7,920, V2 2,640, baselines 4,400).
 It remains nonterminal until the formal report and archive receipt are added.
 
+The old frozen 8d controller must **not** append the final 880-scene matrix:
+it places C1 timing on 20424 while the other methods run on 20418. Keep the
+current training and `pilot_jobs` workers on their frozen source. Before
+writing `retained_arms.json`, hand off only the controller to a newly frozen
+version containing the common-timing fix, with its plan/state SHA and process
+identity checked. The final append requires a fresh, actually observed
+`controller/gates/final_timing_isolation_receipt.json`: all retained training
+is complete, 20418 serves with one worker and four thread limits at 1, and
+neither instance has another active job or external GPU compute process.
+Final direct and B jobs then form one serial 20418 chain. A retained C1 final
+policy is imported from its SHA-pinned 20424 final pair through the 20418
+workbench before timing starts. This adds no training, action repeat or B call.
+After the verified single-worker service handoff and source-backed retention
+audit, capture this receipt with
+`python -m scripts.s2p19.plan_builder capture-final-timing --retained-arms C0,C1,I0`
+(replace the list with the actual retained arms, or pass an explicit empty
+value if none). Capture reads the two instances' process/thread/GPU/job state
+and writes only the local receipt when both are idle. The later append
+rechecks the same live identities and requires a receipt no older than ten
+minutes. Do not capture it during training or copy a synthetic test fixture.
+The new controller rechecks the pinned server/GPU identity and idle jobs/GPU
+processes before each timed workbench submission; a changed lane stops dispatch.
+External CPU/GPU work starting after a timed worker begins still requires
+runtime monitoring and an explicit contention flag in the final time report.
+
 **Current S2-P19 live handoff uses `plan_builder adopt`, never `bootstrap`.**
 `adopt-preview` checks the actual run_manifest identities, two workbench run
 catalogs, config-file SHA, and scene imports without writing plan/state or

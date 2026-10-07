@@ -112,6 +112,13 @@ def load_plan() -> tuple[dict, str]:
             if kind == "import_model" and (not task.get("source_path") or
                                            not task.get("expected_sha256")):
                 raise ValueError(f"{identifier}: frozen model source path/SHA required")
+            if identifier == "import_C1_final_model_20418" and (
+                    task["port"] != 20418 or
+                    not isinstance(task.get("expected_model_json_sha256"), str) or
+                    len(task["expected_model_json_sha256"]) != 64 or
+                    not isinstance(task.get("expected_provenance_run_id"), str) or
+                    task.get("expected_provenance_env_step") != 400000):
+                raise ValueError("C1 cross-instance final import lacks complete source pin")
         required = task.get("requires", [])
         if not isinstance(required, list) or any(dep not in {row["id"] for row in tasks[:index]} for dep in required):
             raise ValueError(f"{identifier}: dependency must precede task")
@@ -528,6 +535,55 @@ def _resolve(value, receipts: dict):
     return value
 
 
+def _verify_imported_model(task: dict, model: dict) -> None:
+    """The C1 cross-instance copy must preserve both policy and metadata bytes."""
+    if task["id"] != "import_C1_final_model_20418":
+        return
+    archive = ops.instance(20418)["archive"]
+    identifier = model.get("id")
+    expected_path = (f"{archive}/outputs/workbench/models/{identifier}"
+                     if isinstance(identifier, str) else None)
+    if (model.get("source_path") != task["source_path"] or
+            model.get("path") != expected_path or
+            model.get("sha256") != task["expected_sha256"] or
+            (model.get("provenance") or {}).get("run_id") !=
+                task["expected_provenance_run_id"] or
+            (model.get("provenance") or {}).get("env_step") != 400000):
+        raise RuntimeError("C1 imported final model identity/policy/provenance differs")
+    code = f'''
+import hashlib,json,pathlib
+root=pathlib.Path({expected_path!r}).resolve(strict=True)
+archive=pathlib.Path({archive!r}).resolve(strict=True)
+if root != archive/'outputs/workbench/models'/{identifier!r}:
+ raise RuntimeError('imported C1 model escaped workbench record')
+print(json.dumps({{'model_json_sha256':hashlib.sha256((root/'model.json').read_bytes()).hexdigest()}}))
+'''
+    observed = ops.remote_python(code, 20418, timeout=45)
+    if (observed["exit_code"] or
+            json.loads(observed["stdout"].splitlines()[-1])["model_json_sha256"] !=
+            task["expected_model_json_sha256"]):
+        raise RuntimeError("C1 imported final model.json SHA differs from 20424 source")
+
+
+def _final_timing_dispatch_gate(plan: dict) -> None:
+    """Recheck the pinned one-worker lane before each formal timed job POST."""
+    reference = plan.get("timing_isolation_receipt") or {}
+    path = Path(reference.get("path", ""))
+    if (not path.is_file() or digest(path) != reference.get("sha256")):
+        raise RuntimeError("formal timing receipt absent or changed before dispatch")
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    if receipt.get("target_port") != 20418 or receipt.get("passed") is not True:
+        raise RuntimeError("formal timing receipt does not reserve instance 20418")
+    from .plan_builder import _assert_isolated_timing_observation, _timing_lane_observation
+    for port in ops.SSH_PORTS:
+        current = _timing_lane_observation(port)
+        _assert_isolated_timing_observation(port, current)
+        pinned = (receipt.get("observations") or {}).get(str(port)) or {}
+        if (current.get("server") != pinned.get("server") or
+                current.get("gpu_uuids") != pinned.get("gpu_uuids")):
+            raise RuntimeError(f"{port} timed service/GPU identity changed before dispatch")
+
+
 def _service_identity(port: int, commit: str) -> dict:
     info = ops.instance(port)
     service_path = ops.LOCAL / "preflight" / f"service_{commit[:4]}" / "deployment_receipt.json"
@@ -670,12 +726,16 @@ def _task_status(task: dict, receipts: dict, runs: dict[int, list[dict]],
     if task["kind"] == "import_model":
         if saved and saved.get("model_id"):
             match = [model for model in models[task["port"]] if model.get("id") == saved["model_id"]]
+            if len(match) == 1:
+                _verify_imported_model(task, match[0])
             return {**saved, "state": "completed"} if len(match) == 1 else {**saved, "state": "attention_required"}
         matches = [model for model in models[task["port"]]
                    if model.get("source_path") == task["source_path"]
                    and model.get("sha256") == task["expected_sha256"]]
         if len(matches) > 1:
             raise RuntimeError(f"{task_id}: duplicate frozen model import")
+        if len(matches) == 1:
+            _verify_imported_model(task, matches[0])
         return ({"state": "completed", "model_id": matches[0]["id"],
                  "recovered_from_catalog": True} if len(matches) == 1 else {"state": "waiting"})
     matches = [row for row in runs[task["port"]] if row.get("request_id") == task["request_id"]]
@@ -912,6 +972,8 @@ def step(dispatch: bool = False) -> dict:
             if body.get("request_id") not in (None, task["request_id"]):
                 raise ValueError(f"{task_id}: API body request id mismatch")
             body["request_id"] = task["request_id"]
+        if task["phase"] in ("common_evaluation", "refinement"):
+            _final_timing_dispatch_gate(plan)
         result = ops.api(task["port"], ENDPOINTS[task["kind"]], body, "POST", timeout=180)
         if task["kind"] not in ("import_scene", "import_model") and result.get("git_commit") != expected_commit:
             raise RuntimeError(f"{task_id}: created job has wrong runtime commit")
@@ -961,6 +1023,8 @@ def maybe_advance_common_evaluation() -> dict | None:
         return None
     decision_path = ops.LOCAL / "controller/gates/retained_arms.json"
     if not decision_path.is_file() or not STATE.is_file():
+        return None
+    if not (ops.LOCAL / "controller/gates/final_timing_isolation_receipt.json").is_file():
         return None
     decision = json.loads(decision_path.read_text(encoding="utf-8"))
     retained = decision.get("retained_arms")
