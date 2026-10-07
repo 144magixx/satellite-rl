@@ -12,7 +12,8 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import subprocess
 import time
 
@@ -481,6 +482,34 @@ def _joint_pilot_audits(plan: dict, plan_sha: str, receipts: dict,
 
 
 def _resolve(value, receipts: dict):
+    if isinstance(value, dict) and set(value) == {"$record_directory"}:
+        spec = value["$record_directory"]
+        allowed = {("prepare_dev_20418", 20418): {"development", "validation"},
+                   ("prepare_final_20424", 20424): {"final"}}
+        if (not isinstance(spec, dict) or
+                set(spec) != {"id", "source_port", "partition", "path"} or
+                type(spec["source_port"]) is not int or
+                spec["partition"] not in allowed.get((spec["id"], spec["source_port"]), set()) or
+                spec["path"] != ["result", "summary", "outputs", spec["partition"], "path"]):
+            raise ValueError("$record_directory reference has invalid task/partition/path")
+        source = receipts.get(spec["id"])
+        run_id = source.get("run_id") if isinstance(source, dict) else None
+        if (not source or source.get("state") != "completed" or
+                not isinstance(run_id, str) or
+                not re.fullmatch(r"prepare_[A-Za-z0-9_-]+", run_id)):
+            raise ValueError("record directory source is not a completed preparation job")
+        selected = source
+        try:
+            for key in spec["path"]:
+                selected = selected[key]
+        except (KeyError, TypeError) as error:
+            raise ValueError("record directory source result is incomplete") from error
+        expected = (PurePosixPath(ops.instance(spec["source_port"])["archive"])
+                    / "outputs" / "workbench" / "jobs" / run_id
+                    / "prepared" / spec["partition"] / "record.json")
+        if not isinstance(selected, str) or selected != str(expected):
+            raise ValueError("record directory source escaped its frozen preparation result")
+        return str(expected.parent)
     if isinstance(value, dict) and set(value) == {"$task"}:
         spec = value["$task"]
         if not isinstance(spec, dict) or set(spec) != {"id", "path"}:

@@ -28,6 +28,17 @@ def ref(task: str, *keys: str) -> dict:
     return {"$task": {"id": task, "path": list(keys)}}
 
 
+def record_directory(task: str, partition: str, source_port: int) -> dict:
+    """Resolve a preparation result's record.json to its scene directory.
+
+    The controller accepts this typed reference only under the matching
+    S2-P19 workbench job's prepared/<partition>/record.json path.
+    """
+    return {"$record_directory": {"id": task, "source_port": source_port,
+                                  "partition": partition,
+                                  "path": ["result", "summary", "outputs", partition, "path"]}}
+
+
 def task(identifier: str, phase: str, port: int, kind: str, body: dict,
          disk_class: str, dependencies: list[str], **extra) -> dict:
     return {"id": identifier, "phase": phase, "port": port, "kind": kind,
@@ -97,7 +108,7 @@ def bootstrap() -> dict:
             "dev_validation", [], source_record_id="variable_beams_train_20261004", expected_count=8064))
         for partition in ("development", "validation"):
             tasks.append(task(f"import_{partition}_{port}", "preparation", port, "import_scene",
-                {"path": ref("prepare_dev_20418", "result", "summary", "outputs", partition, "path"),
+                {"path": record_directory("prepare_dev_20418", partition, 20418),
                  "name": f"S2-P19 {partition} {port}", "profile": "europe_v1"},
                 "dev_validation", ["prepare_dev_20418"],
                 source_record_id=f"s2p19_{partition}_20261007", expected_count=72))
@@ -110,7 +121,7 @@ def bootstrap() -> dict:
         "final", ["prepare_mothers_20424"]))
     for port in ops.SSH_PORTS:
         tasks.append(task(f"import_final_{port}", "preparation", port, "import_scene",
-            {"path": ref("prepare_final_20424", "result", "summary", "outputs", "final", "path"),
+            {"path": record_directory("prepare_final_20424", "final", 20424),
              "name": f"S2-P19 final 880 {port}", "profile": "europe_v1"},
             "final", ["prepare_final_20424"],
             source_record_id="s2p19_final_20261007", expected_count=880))
@@ -289,7 +300,7 @@ def adopt(*, publish: bool = True) -> dict:
         "final", ["prepare_mothers_R1_20424"]))
     for port in ops.SSH_PORTS:
         tasks.append(task(f"import_final_{port}", "preparation", port, "import_scene",
-            {"path": ref("prepare_final_20424", "result", "summary", "outputs", "final", "path"),
+            {"path": record_directory("prepare_final_20424", "final", 20424),
              "name": f"S2-P19 final 880 {port}", "profile": "europe_v1"},
             "final", ["prepare_final_20424"],
             source_record_id="s2p19_final_20261007", expected_count=880))

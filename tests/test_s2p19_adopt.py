@@ -194,6 +194,10 @@ class AdoptTests(unittest.TestCase):
             self.assertEqual(plan["scientific_commit"], SCIENCE)
             self.assertFalse(any("old_failed" in row["id"] for row in plan["tasks"]))
             self.assertEqual(tasks["I0_pilot_20418"]["requires"][0], "i0_scientific_gate")
+            for port in (20418, 20424):
+                self.assertIn("$record_directory", tasks[f"import_final_{port}"]["body"]["path"])
+            self.assertIn("$task", tasks["prepare_final_20424"]["body"]["preparation"]
+                              ["source_record"]["path"])
 
     def test_adopt_rejects_request_id_rebound_to_another_run(self):
         with TemporaryDirectory() as temporary:
