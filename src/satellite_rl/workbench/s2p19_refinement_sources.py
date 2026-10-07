@@ -15,6 +15,8 @@ from .storage import digest, read_json, validate_id
 
 GROUPS = ("model", "greedy", "rule", "random")
 PARTITIONS = ("development", "validation", "test")
+I0_VALIDATION_COUNTS = (50, 80, 100, 120, 160, 200)
+I0_VALIDATION_LOADS = (0.75, 1.25)
 
 
 def _body_sha(body):
@@ -73,6 +75,34 @@ def _verify_beams(beams, metrics, count):
             "complete": True, "overload": False}
 
 
+def _validate_i0_validation_grid(dataset):
+    """The six held-out mothers must each have the frozen 6×2 validation grid."""
+    mothers = {}
+    expected = {(n, load) for n in I0_VALIDATION_COUNTS for load in I0_VALIDATION_LOADS}
+    for item in dataset["files"]:
+        mother = item.get("mother_scene_id")
+        source_sha = item.get("source_sha256")
+        selected = item.get("selected_time_utc")
+        key = (item.get("beam_count"), item.get("load_multiplier"))
+        if (not isinstance(mother, str) or not mother or
+                not isinstance(source_sha, str) or len(source_sha) != 64 or
+                any(c not in "0123456789abcdef" for c in source_sha) or
+                not isinstance(selected, str) or not selected or
+                item.get("partition_role") != "validation" or
+                key not in expected):
+            raise ValueError("I0验证场景缺冻结母来源或N×负载身份")
+        details = mothers.setdefault(mother, {"source_sha256": source_sha,
+                                              "selected_time_utc": selected, "grid": set()})
+        if (details["source_sha256"] != source_sha or
+                details["selected_time_utc"] != selected or key in details["grid"]):
+            raise ValueError("I0验证母场景来源或N×负载网格重复")
+        details["grid"].add(key)
+    if (len(mothers) != 6 or any(row["grid"] != expected for row in mothers.values()) or
+            len({row["source_sha256"] for row in mothers.values()}) != 6 or
+            len({row["selected_time_utc"] for row in mothers.values()}) != 6):
+        raise ValueError("I0验证须为六母各6种束数×双负载完整网格")
+
+
 def _case_row(reference, item):
     path = Path(item["path"]).resolve(strict=True)
     source = Path(reference["source_directory"]).resolve(strict=True)
@@ -107,8 +137,13 @@ def _case_row(reference, item):
                 original.get("action_seed") != item["action_seed"] or
                 original.get("repeat_index") != item["repeat_index"]):
             raise ValueError("S2-P19 I0 case场景、方法或动作种子不一致")
-        if (reference["group"] == "model" and
-                original.get("model_sha256") != reference.get("source_model_sha256")):
+        if reference.get("source_kind") == "i0_train_validation":
+            if (original.get("env_step") != reference["validation_step"] or
+                    original.get("checkpoint_sha256") != reference["source_checkpoint_sha256"] or
+                    original.get("scene_metadata") != item["scene_metadata"]):
+                raise ValueError("S2-P19 I0试点case节点、断点或场景元数据不一致")
+        elif (reference["group"] == "model" and
+              original.get("model_sha256") != reference.get("source_model_sha256")):
             raise ValueError("S2-P19 I0模型case与冻结权重SHA不一致")
         metrics = original.get("metrics") or {}
         duration = metrics.get("total_seconds")
@@ -146,6 +181,9 @@ def source_rows(reference):
     if reference.get("experiment_id") != "S2-P19" or reference.get("format") not in (
             "s2p19_inline_validation_v1", "s2p19_i0_case_v1"):
         raise ValueError("不是S2-P19已冻结初解来源")
+    if (reference.get("source_kind") == "i0_train_validation" and
+            digest(reference["summary_path"]) != reference["summary_sha256"]):
+        raise ValueError("S2-P19 I0试点验证摘要SHA变化")
     rows = {}
     for item in reference["case_files"]:
         row = _case_row(reference, item)
@@ -171,7 +209,41 @@ def prepare_source(app, body):
     if readonly or job.get("experiment_id") != "S2-P19":
         raise ValueError("S2-P19初解须来自本工作台同组任务")
     from .datasets import assert_scene_profile, scene_set_files
-    if job.get("kind") == "train" and job.get("algorithm") == "sac":
+    if (job.get("kind") == "train" and job.get("algorithm") == "sac" and
+            job.get("research_stage") == "sac_improvement" and job.get("mode") == "train"):
+        step = body.get("validation_step")
+        episodes = status.get("episodes")
+        if (group != "model" or partition != "validation" or type(step) is not int or
+                not 0 < step <= 100000 or type(episodes) is not int or
+                not 0 <= episodes <= 3125 or
+                not (step == 100000 or episodes == 3125) or
+                status.get("stage") != "stopped" or
+                status.get("stop_reason") != "s2p19_pilot_gate_pending" or
+                status.get("env_step") != step or status.get("checkpoint_step") != step or
+                job.get("action_seed") != 53001 or job.get("repeats") != 1):
+            raise ValueError("I0初解仅接受已停于实际100k/3125受限试点的验证")
+        source_config = read_json(directory / "config.json", {})
+        from satellite_rl.sac_improvement.config import validate_config
+        controls = validate_config(source_config.get("i0"))
+        if (source_config.get("research_stage") != "sac_improvement" or
+                controls["device"] != "cuda" or
+                controls != job.get("i0_config")):
+            raise ValueError("I0试点配置与冻结任务不一致")
+        checkpoint_sha = digest(directory / "checkpoint.pt")
+        if status.get("checkpoint_sha256") != checkpoint_sha:
+            raise ValueError("I0试点断点与停止状态SHA不一致")
+        dataset = (job.get("scene_sets") or {}).get("validation")
+        from .s2p19_service import constructive_config
+        model_config = constructive_config("C0")
+        summary_path = directory / "validation" / f"step_{step:09d}" / "summary.json"
+        reference = {"experiment_id": "S2-P19", "format": "s2p19_i0_case_v1",
+                     "source_kind": "i0_train_validation", "run_id": run_id,
+                     "source_directory": str(directory), "group": group,
+                     "partition": partition, "validation_step": step,
+                     "repeats": 1, "action_mode": "stochastic", "action_seed": 53001,
+                     "source_checkpoint_sha256": checkpoint_sha,
+                     "summary_path": str(summary_path), "summary_sha256": digest(summary_path)}
+    elif job.get("kind") == "train" and job.get("algorithm") == "sac":
         step = body.get("validation_step")
         if (group != "model" or partition != "validation" or type(step) is not int or
                 step not in (100000, 400000) or status.get("env_step") != step or
@@ -233,11 +305,38 @@ def prepare_source(app, body):
         raise ValueError("S2-P19初解缺对应真实分区的冻结场景")
     assert_scene_profile(dataset, "europe_v1")
     files = scene_set_files(dataset)
-    if not app.scene_dates(dataset):
+    dates = app.scene_dates(dataset)
+    if not dates:
         raise ValueError("S2-P19初解场景缺UTC日期来源")
+    if reference.get("source_kind") == "i0_train_validation" and dates != {"2024-01-12"}:
+        raise ValueError("I0试点验证须来自冻结Jan12留出日期")
+    if reference.get("source_kind") == "i0_train_validation" and len(files) != 72:
+        raise ValueError("I0试点验证须覆盖完整72景")
+    if reference.get("source_kind") == "i0_train_validation":
+        _validate_i0_validation_grid(dataset)
     reference["scene_count"] = len(files)
     items = []
-    if reference["format"] == "s2p19_inline_validation_v1":
+    if reference.get("source_kind") == "i0_train_validation":
+        summary = read_json(reference["summary_path"], {})
+        listed = summary.get("cases")
+        if (summary.get("env_step") != reference["validation_step"] or
+                summary.get("checkpoint_sha256") != reference["source_checkpoint_sha256"] or
+                summary.get("source_set_id") != dataset["id"] or
+                summary.get("count") != 72 or not isinstance(listed, list) or
+                len(listed) != 72):
+            raise ValueError("I0试点验证摘要与冻结72景/断点不一致")
+        for index, (_, sha) in enumerate(files):
+            path = directory / "validation" / f"step_{reference['validation_step']:09d}" / f"scene_{index:05d}.json"
+            if listed[index] != {"path": str(path), "sha256": digest(path)}:
+                raise ValueError("I0试点验证摘要case顺序、路径或SHA不一致")
+            items.append({"path": str(path), "sha256": listed[index]["sha256"],
+                          "scene_index": index, "repeat_index": 0,
+                          "method": "I0_validation", "scene_sha256": sha,
+                          "action_seed": 53001,
+                          "beam_count": int(dataset["files"][index]["beam_count"]),
+                          "scene_metadata": dataset["files"][index],
+                          "case_id": path.stem})
+    elif reference["format"] == "s2p19_inline_validation_v1":
         for index, (_, sha) in enumerate(files):
             path = directory / "validation_cases" / f"step_{reference['validation_step']:09d}" / f"scene_{index:05d}_r0.json"
             items.append({"path": str(path), "sha256": digest(path), "scene_index": index,
@@ -275,4 +374,15 @@ def prepare_source(app, body):
     expected = {(sha, repeat) for _, sha in files for repeat in range(reference["repeats"])}
     if set(indexed) != expected:
         raise ValueError("S2-P19初解未覆盖冻结分区场景×动作全集")
+    if reference.get("source_kind") == "i0_train_validation":
+        summary = read_json(reference["summary_path"], {})
+        actual_si = float(np.mean([row["metrics"]["final_si_mean"] for row in indexed.values()]))
+        actual_sgm = float(np.mean([row["metrics"]["final_sgm_mean"] for row in indexed.values()]))
+        initial = [_number(read_json(item["path"], {}).get("metrics", {}).get("initial_si"),
+                           "I0原始SI") for item in items]
+        actual_delta = actual_si - float(np.mean(initial))
+        if (abs(actual_si - _number(summary.get("mean_si"), "I0平均SI")) > 1e-7 or
+                abs(actual_sgm - _number(summary.get("mean_sgm"), "I0平均SGM")) > 1e-7 or
+                abs(actual_delta - _number(summary.get("mean_si_delta_vs_b1"), "I0平均改善")) > 1e-7):
+            raise ValueError("I0试点摘要指标与完整逐景结果不一致")
     return job, model_config, dataset, reference
