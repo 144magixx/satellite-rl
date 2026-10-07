@@ -34,6 +34,25 @@ S2P17_SOURCE_ALLOWLIST = {
     "src/satellite_rl/workbench/power_refinement.py",
 }
 
+S2P19_REPLAY_REPAIR_ID = "s2p19_replay_actual_counts_tail_v1"
+S2P19_ORIGIN_COMMIT = "47da239910485508f7c978461314dff92f8672ec"
+S2P19_REPLAY_RUNS = {
+    "train_sac_20261007_152717_479365fb": {
+        "arm": "C0", "request_id": "s2p19-c0-train-51001",
+        "config_sha256": "ac3a9f831944ccf4014617a91941f57779196be754b8280ab3554085710cfa8f",
+        "checkpoint_sha256": "c4a19a63e78d1d7db8aac0d3f761c9ae3274ea2b565afdfb72180f6210998348"},
+    "train_sac_20261007_153047_1faf6d10": {
+        "arm": "C1", "request_id": "s2p19-c1-train-51001",
+        "config_sha256": "3c070ea2b50da4e962dc63b03d1a33f2814a4f74ef7e78293d1871ca83a399af",
+        "checkpoint_sha256": "5ec0be6d3fce7220ac0f87f53a4755d0bb9a4ccf00086b93ef70f510d4aff75f"},
+}
+S2P19_REPLAY_SOURCE_FILES = {
+    "src/satellite_rl/agents/workbench_algorithms.py",
+    "src/satellite_rl/workbench/recovery.py",
+    "src/satellite_rl/workbench/runtime.py",
+    "src/satellite_rl/workbench/learning_snapshots.py",
+}
+
 
 def _canonical_sha(value):
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True,
@@ -73,6 +92,50 @@ def verify_s2p17_boundary_chain(old_root, new_root, new_commit, validation):
             "source_file_sha256_after": {name: new["files"].get(name) for name in changed},
             "behavior_note": "Candidate basic-service boundary acceptance changed; final strict guard unchanged",
             "ast_equivalent": False}
+
+
+def verify_s2p19_replay_chain(old_root, new_root, new_commit, validation):
+    """Accept only the exact replay-tail fix and its same-state update proof."""
+    old = verified_manifest(old_root, S2P19_ORIGIN_COMMIT)
+    new = verified_manifest(new_root, new_commit)
+    names = set(old["files"]) | set(new["files"])
+    changed = {name for name in names if old["files"].get(name) != new["files"].get(name)}
+    if changed != S2P19_REPLAY_SOURCE_FILES:
+        raise ValueError("S2-P19回放修复源码超出精确算法/恢复入口名单")
+    if (validation.get("format") != "s2p19_replay_tail_validation_v1" or
+            validation.get("repair_id") != S2P19_REPLAY_REPAIR_ID or
+            validation.get("origin_science_commit") != S2P19_ORIGIN_COMMIT or
+            validation.get("repair_commit") != new_commit or
+            validation.get("tests_passed") is not True or
+            set(validation.get("runs", {})) != set(S2P19_REPLAY_RUNS)):
+        raise ValueError("S2-P19回放修复缺少双臂验证回执")
+    for run_id, expected in S2P19_REPLAY_RUNS.items():
+        item = validation["runs"][run_id]
+        if (item.get("checkpoint_sha256") != expected["checkpoint_sha256"] or
+                item.get("config_sha256") != expected["config_sha256"] or
+                item.get("env_step") != 100000 or item.get("update_step") != 98001 or
+                item.get("capacity") != 20000 or item.get("rows") != 20000 or
+                item.get("saved_counts") != 20001 or item.get("next_position") != 0 or
+                item.get("unused_tail_zero") is not True or
+                item.get("all_active_counts_match_state_and_bucket") is not True or
+                item.get("network_optimizer_rng_equivalent") is not True or
+                item.get("next_update_equivalent") is not True or
+                not re.fullmatch(r"[0-9a-f]{64}", str(item.get("normalized_counts_sha256", "")))):
+            raise ValueError("S2-P19回放修复的逐臂状态/更新等价验证不完整")
+    return {"repair_id": S2P19_REPLAY_REPAIR_ID,
+            "origin_science_commit": S2P19_ORIGIN_COMMIT,
+            "repair_commit": new_commit,
+            "old_commit": S2P19_ORIGIN_COMMIT,
+            "new_commit": new_commit,
+            "old_source_root": str(Path(old_root).resolve()),
+            "new_source_root": str(Path(new_root).resolve()),
+            "old_manifest_sha256": digest(Path(old_root) / "source_manifest.json"),
+            "new_manifest_sha256": digest(Path(new_root) / "source_manifest.json"),
+            "changed_files": sorted(changed),
+            "source_file_sha256_before": {name: old["files"][name] for name in sorted(changed)},
+            "source_file_sha256_after": {name: new["files"][name] for name in sorted(changed)},
+            "behavior_note": "Only one unused zero tail in the full replay ring is discarded; active rows and learning state are unchanged",
+            "learning_state_equivalent": True}
 
 
 def verified_manifest(root, commit):
@@ -232,6 +295,164 @@ def prepare_io_retry_recovery(store, job):
     updated.setdefault("original_git_commit", job["git_commit"])
     updated.setdefault("source_history", []).append(proof)
     updated.update(source_root=str(new_root), git_commit=new_commit, io_repair=proof)
+    return updated
+
+
+def prepare_s2p19_replay_recovery(store, job, validation_path, validation_sha256,
+                                  expected_repair_commit):
+    """Rebind only the two approved 100k pilots to an audited replay loader.
+
+    The trusted checkpoint is inspected but never rewritten. All workbench
+    metadata and the failed attempt are copied before the same run is queued.
+    """
+    import torch
+    from .checkpoints import config_hash
+
+    run_id = job.get("run_id")
+    expected = S2P19_REPLAY_RUNS.get(run_id)
+    if expected is None or not isinstance(expected_repair_commit, str) or not re.fullmatch(
+            r"[0-9a-f]{40}", expected_repair_commit):
+        raise ValueError("S2-P19回放修复只允许两个既有试点与精确新提交")
+    directory = store.job_dir(run_id)
+    previous = job.get("replay_repair") or {}
+    if previous:
+        proof_path = Path(previous.get("archive_path", "")) / "repair_proof.json"
+        if (previous.get("repair_id") != S2P19_REPLAY_REPAIR_ID or
+                previous.get("repair_commit") != expected_repair_commit or
+                previous.get("validation_receipt_sha256") != validation_sha256 or
+                job.get("git_commit") != expected_repair_commit or
+                job.get("source_root") != previous.get("new_source_root") or
+                read_json(proof_path) != previous or
+                digest(directory / "checkpoint.pt") != previous.get("checkpoint_sha256")):
+            raise ValueError("S2-P19先前修复准备状态不一致，禁止二次来源替换")
+        verified_manifest(job["source_root"], expected_repair_commit)
+        return job
+    if (job.get("request_id") != expected["request_id"] or job.get("kind") != "train" or
+            job.get("experiment_id") != "S2-P19" or job.get("git_commit") != S2P19_ORIGIN_COMMIT or
+            job.get("seed") != 51001 or job.get("total_steps") != 400000):
+        raise ValueError("S2-P19回放修复任务身份/预算与冻结试点不符")
+    status = read_json(directory / "status.json", {})
+    failure = read_json(directory / "failure.json", {})
+    checkpoint = directory / "checkpoint.pt"
+    checkpoint_sha = digest(checkpoint)
+    if (status.get("stage") != "failed" or status.get("env_step") != 100000 or
+            status.get("update_step") != 98001 or
+            status.get("stop_reason") != "s2p19_pilot_gate_pending" or
+            checkpoint_sha != expected["checkpoint_sha256"] or
+            "逐束实体档位的回放缺真实束数记录" not in failure.get("error", "") or
+            "Replay.load_state_dict" not in failure.get("traceback", "") or
+            (failure.get("last_normal_checkpoint") or {}).get("sha256") != checkpoint_sha or
+            (failure.get("last_normal_checkpoint") or {}).get("env_step") != 100000):
+        raise ValueError("S2-P19失败签名、完整试点断点或步数不符")
+    config_path = directory / "config.json"
+    config = read_json(config_path)
+    if digest(config_path) != expected["config_sha256"]:
+        raise ValueError("S2-P19冻结试点配置SHA发生变化")
+    pilot_dir = directory / "pilot_artifacts"
+    gate = read_json(directory / "pilot_gate.json", {})
+    pilot = read_json(pilot_dir / "manifest.json", {})
+    audit_path = Path(gate.get("audit_path", ""))
+    audit = read_json(audit_path, {})
+    if (gate.get("pass") is not True or gate.get("run_id") != run_id or
+            gate.get("checkpoint_step") != 100000 or gate.get("checkpoint_sha256") != checkpoint_sha or
+            pilot.get("run_id") != run_id or pilot.get("env_step") != 100000 or
+            pilot.get("git_commit") != S2P19_ORIGIN_COMMIT or
+            pilot.get("config_sha256") != expected["config_sha256"] or
+            pilot.get("checkpoint_sha256") != checkpoint_sha or
+            digest(pilot_dir / "checkpoint.pt") != checkpoint_sha or
+            not audit_path.is_file() or not audit_path.resolve().is_relative_to(store.archive_root.resolve()) or
+            gate.get("audit_sha256") != digest(audit_path) or
+            pilot.get("audit_sha256") != gate.get("audit_sha256") or
+            pilot.get("audit_path") != gate.get("audit_path") or
+            audit.get("experiment_id") != "S2-P19" or audit.get("run_id") != run_id or
+            audit.get("checkpoint_sha256") != checkpoint_sha or audit.get("passed") is not True or
+            not audit.get("source_files") or not audit.get("criteria") or
+            any(value is not True for value in audit["criteria"].values())):
+        raise ValueError("S2-P19试点审批与不可变100k断点/审计不一致")
+    for reference in audit["source_files"]:
+        if digest(reference["path"]) != reference["sha256"]:
+            raise ValueError("S2-P19试点审计原始证据SHA发生变化")
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    replay = (payload.get("agent") or {}).get("replay") or {}
+    counts = replay.get("slot_entity_counts")
+    rows = replay.get("rows")
+    if (payload.get("format") != "satellite_rl_workbench_checkpoint_v1" or
+            payload.get("config_hash") != config_hash(config) or
+            (payload.get("progress") or {}).get("env_step") != 100000 or
+            (payload.get("agent") or {}).get("update_step") != 98001 or
+            not isinstance(rows, list) or len(rows) != 20000 or
+            replay.get("capacity") != 20000 or replay.get("next_position") != 0 or
+            not isinstance(counts, list) or len(counts) != 20001 or counts[-1] != 0 or
+            any(type(value) is not int or not 50 <= value <= 200 for value in counts[:-1]) or
+            not payload.get("rng") or not (payload.get("agent") or {}).get("rng")):
+        raise ValueError("S2-P19断点并非唯一未使用零尾位的完整学习状态")
+    normalized_sha = _canonical_sha(counts[:-1])
+    del payload
+    validation_path = inside(validation_path, directory / "recoveries")
+    if digest(validation_path) != validation_sha256:
+        raise ValueError("S2-P19修复验证回执SHA不符")
+    validation = read_json(validation_path, {})
+    if (validation.get("runs", {}).get(run_id, {}).get("normalized_counts_sha256") != normalized_sha or
+            validation.get("runs", {}).get(run_id, {}).get("checkpoint_sha256") != checkpoint_sha):
+        raise ValueError("S2-P19验证回执与原始断点有效束数不符")
+    old_root = inside(job["source_root"], store.root / "source_snapshots")
+    new_root, new_commit = store.freeze_source()
+    if new_commit != expected_repair_commit or new_commit == S2P19_ORIGIN_COMMIT:
+        raise ValueError("S2-P19修复服务源码不是指定干净提交")
+    source_proof = verify_s2p19_replay_chain(old_root, new_root, new_commit, validation)
+    archive = inside(directory / "recoveries" /
+                     (S2P19_REPLAY_REPAIR_ID + "_" + new_commit[:12]), directory)
+    original = archive / "original"
+    backup_names = ("checkpoint.pt", "config.json", "job.json", "status.json",
+                    "failure.json", "pilot_gate.json", "pilot_artifacts/manifest.json")
+    if archive.exists():
+        proof = read_json(archive / "repair_proof.json", {})
+        backup = proof.get("backup_files_sha256") or {}
+        if (any(proof.get(key) != value for key, value in source_proof.items()) or
+                proof.get("run_id") != run_id or proof.get("arm") != expected["arm"] or
+                proof.get("archive_path") != str(archive) or
+                proof.get("checkpoint_sha256") != checkpoint_sha or
+                proof.get("normalized_counts_sha256") != normalized_sha or
+                proof.get("validation_receipt_sha256") != validation_sha256 or
+                proof.get("pilot_audit_sha256") != gate["audit_sha256"] or
+                set(backup) != set(backup_names) or
+                any(digest(original / name) != backup[name] or
+                    digest(directory / name) != backup[name] for name in backup_names) or
+                digest(archive / "validation_receipt.json") != validation_sha256):
+            raise ValueError("S2-P19已有修复归档不完整或证据变化；禁止覆盖")
+    else:
+        original.mkdir(parents=True)
+        backup = {}
+        for relative in backup_names:
+            source = inside(directory / relative, directory)
+            destination = original / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            if digest(source) != digest(destination):
+                raise RuntimeError("S2-P19恢复前证据归档SHA失败：" + relative)
+            backup[relative] = digest(source)
+        shutil.copy2(validation_path, archive / "validation_receipt.json")
+        if digest(archive / "validation_receipt.json") != validation_sha256:
+            raise RuntimeError("S2-P19验证回执归档SHA失败")
+        proof = {**source_proof, "run_id": run_id, "arm": expected["arm"], "at": now(),
+                 "archive_path": str(archive), "checkpoint_sha256": checkpoint_sha,
+                 "checkpoint_step": 100000, "checkpoint_update_step": 98001,
+                 "normalized_counts_sha256": normalized_sha,
+                 "config_sha256": expected["config_sha256"],
+                 "pilot_gate_sha256": backup["pilot_gate.json"],
+                 "pilot_manifest_sha256": backup["pilot_artifacts/manifest.json"],
+                 "pilot_audit_sha256": gate["audit_sha256"],
+                 "validation_receipt_path": str(validation_path),
+                 "validation_receipt_sha256": validation_sha256,
+                 "backup_files_sha256": backup,
+                 "reason": "full replay ring has exactly one unused zero entity-count tail"}
+        atomic_json(archive / "repair_proof.json", proof)
+    updated = deepcopy(job)
+    updated.setdefault("original_git_commit", S2P19_ORIGIN_COMMIT)
+    updated.setdefault("source_history", []).append(proof)
+    updated.update(source_root=str(new_root), git_commit=new_commit,
+                   scientific_origin_commit=S2P19_ORIGIN_COMMIT,
+                   replay_repair=proof)
     return updated
 
 

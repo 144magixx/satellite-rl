@@ -100,8 +100,10 @@ def _source_identity(provenance):
 
 
 def _verified_source_chain(saved, current, source_history):
-    """Accept only reverified I/O repair or approved performance source paths."""
-    from satellite_rl.workbench.recovery import REPAIR_ID, verify_io_retry_repair
+    """Accept only individually reverified, source-bound operational repairs."""
+    from satellite_rl.workbench.recovery import (REPAIR_ID, S2P19_REPLAY_REPAIR_ID,
+                                                 verify_io_retry_repair,
+                                                 verify_s2p19_replay_chain)
 
     prior = _source_identity(saved)
     target = _source_identity(current)
@@ -115,6 +117,7 @@ def _verified_source_chain(saved, current, source_history):
         seen.add(prior)
         matches = [item for item in source_history if isinstance(item, dict) and
                    (item.get("repair_id") == REPAIR_ID or
+                    item.get("repair_id") == S2P19_REPLAY_REPAIR_ID or
                     item.get("upgrade_type") == "async_telemetry_v1") and
                    (item.get("old_commit"), item.get("old_source_root"),
                     item.get("old_manifest_sha256")) == prior]
@@ -124,6 +127,14 @@ def _verified_source_chain(saved, current, source_history):
         if item.get("upgrade_type") == "async_telemetry_v1":
             from satellite_rl.workbench.performance_upgrade import verify_source_history_entry
             verified = verify_source_history_entry(item)
+        elif item.get("repair_id") == S2P19_REPLAY_REPAIR_ID:
+            receipt = Path(item.get("validation_receipt_path", ""))
+            if (not receipt.is_file() or hashlib.sha256(receipt.read_bytes()).hexdigest() !=
+                    item.get("validation_receipt_sha256")):
+                raise ValueError("S2-P19 replay repair validation receipt SHA changed")
+            verified = verify_s2p19_replay_chain(
+                item["old_source_root"], item["new_source_root"], item["repair_commit"],
+                json.loads(receipt.read_text(encoding="utf-8")))
         else:
             verified = verify_io_retry_repair(item["old_source_root"], item["old_commit"],
                                               item["new_source_root"], item["new_commit"])
