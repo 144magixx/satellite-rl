@@ -44,6 +44,14 @@ def _read_json(path, default=None):
         return default
 
 
+def s2p19_pilot_gate_passed(directory, run_id, checkpoint, pilot_stop_steps):
+    """Fail closed on a missing, stale or cross-task workbench gate receipt."""
+    gate = _read_json(Path(directory) / "pilot_gate.json", {})
+    return (gate.get("pass") is True and gate.get("run_id") == run_id and
+            gate.get("checkpoint_step") == pilot_stop_steps and
+            gate.get("checkpoint_sha256") == _sha256(checkpoint))
+
+
 def _jsonable(value):
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
@@ -484,6 +492,94 @@ def _zero_validation_case(path, contract, result=None):
     return body["result"]
 
 
+def _s2p19_validation_case(path, contract, result=None):
+    """Freeze one complete inline allocation for later SCA without inference."""
+    path = Path(path)
+    if path.exists():
+        envelope = _read_json(path, {})
+        body = envelope.get("body") or {}
+        saved = body.get("result") or {}
+        payload = json.dumps(body, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False).encode("utf-8")
+        if (envelope.get("sha256") != hashlib.sha256(payload).hexdigest() or
+                body.get("contract") != contract or
+                saved.get("action_seed") != contract["action_seed"] or
+                (saved.get("scene") or {}).get("source_sha256") != contract["source_scene_sha256"] or
+                len(saved.get("beams") or []) != saved.get("beam_count") or
+                len(saved.get("trace") or []) != saved.get("beam_count") or
+                saved.get("initial_allocation_seconds") is None):
+            raise ValueError("S2-P19 inline验证初解case损坏或来源不符；拒绝重算覆盖")
+        return saved
+    if result is None:
+        return None
+    body = {"contract": contract, "result": _jsonable(result)}
+    payload = json.dumps(body, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"), allow_nan=False).encode("utf-8")
+    _atomic_json(path, {"body": body, "sha256": hashlib.sha256(payload).hexdigest()})
+    return body["result"]
+
+
+def _policy_parameters_sha256(agent):
+    """Deterministic actor snapshot digest; copies no RNG or optimizer state."""
+    digest = hashlib.sha256()
+    for name, tensor in sorted(agent.policy_network().state_dict().items()):
+        value = tensor.detach().cpu().contiguous().numpy()
+        digest.update(name.encode("utf-8"))
+        digest.update(str(value.dtype).encode("ascii"))
+        digest.update(json.dumps(value.shape).encode("ascii"))
+        digest.update(value.tobytes(order="C"))
+    return digest.hexdigest()
+
+
+def _verify_c1_demonstration_provenance(job, config, train_record, scene_order, agent):
+    """Bind C1 to one completed workbench teacher, not arbitrary manifest bytes."""
+    from .s2p19_service import select_teacher_scenes
+    from .storage import validate_id
+
+    source = job.get("demonstration_source") or {}
+    required = ("run_id", "job_path", "job_sha256", "result_path", "result_sha256",
+                "manifest_path", "manifest_sha256")
+    if set(source) != set(required):
+        raise ValueError("C1任务缺完整教师工作台来源合同")
+    source_id = validate_id(source["run_id"])
+    archive = Path(job["archive_root"]).resolve(strict=True)
+    job_path = Path(source["job_path"]).resolve(strict=True)
+    teacher_dir = job_path.parent
+    if (teacher_dir.name != source_id or teacher_dir.parent != archive / "outputs" / "workbench" / "jobs" or
+            job_path.name != "job.json" or _sha256(job_path) != source["job_sha256"]):
+        raise ValueError("C1教师job身份、归属或SHA不符")
+    teacher_job = _read_json(job_path, {})
+    teacher_status = _read_json(teacher_dir / "status.json", {})
+    if (teacher_job.get("run_id") != source_id or teacher_job.get("kind") != "prepare" or
+            teacher_job.get("experiment_id") != "S2-P19" or
+            (teacher_job.get("scene_sets") or {}).get("train", {}).get("id") != train_record["id"] or
+            teacher_status.get("stage") != "completed"):
+        raise ValueError("C1教师工作台任务未完成或训练场景不一致")
+    result_path = Path(source["result_path"]).resolve(strict=True)
+    manifest_path = Path(source["manifest_path"]).resolve(strict=True)
+    if (result_path.parent != teacher_dir or result_path.name not in ("preparation_result.json", "results.json") or
+            manifest_path != teacher_dir / "teacher" / "manifest.json" or
+            _sha256(result_path) != source["result_sha256"] or
+            _sha256(manifest_path) != source["manifest_sha256"]):
+        raise ValueError("C1教师结果或manifest路径/SHA不符")
+    result = _read_json(result_path, {})
+    summary = result.get("summary", result)
+    demo = config["training"]["demonstrations"]
+    if (summary.get("manifest_path") != str(manifest_path) or
+            summary.get("manifest_sha256") != source["manifest_sha256"] or
+            summary.get("source_set_sha256") != scene_order.source_set_sha256 or
+            demo["manifest_path"] != str(manifest_path) or
+            demo["manifest_sha256"] != source["manifest_sha256"] or
+            demo["source_set_sha256"] != scene_order.source_set_sha256):
+        raise ValueError("C1配置/教师结果/冻结训练集来源不一致")
+    selected = select_teacher_scenes(train_record)
+    teacher_config = (_read_json(teacher_dir / "config.json", {}).get("preparation") or {})
+    if (teacher_config.get("preparation_type") != "demonstrations" or
+            teacher_config.get("selected_sha256") != selected or
+            [row["scene_sha256"] for row in agent.demonstrations.records] != selected):
+        raise ValueError("C1教师清单不是冻结训练集逐母预选的576条有序轨迹")
+
+
 def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step, ledger,
                     scene_set=None, zero_cache=None):
     from satellite_rl.workbench.environment import WorkbenchEnv
@@ -496,6 +592,9 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
             raise ValueError("冻结评价场景数量与配置不一致")
 
     results = []
+    p19_policy_sha = (_policy_parameters_sha256(agent)
+                      if config.get("experiment", {}).get("id") == "S2-P19" and group == "validation"
+                      else None)
     if zero_cache is not None and (group != "validation" or env_step != 0 or
                                    config["training"].get("beam_count_mode", "none") == "none" or
                                    config["evaluation"]["repeats"] != 1):
@@ -538,18 +637,31 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
                                  source_scene_id=scene_set["id"])
         for repeat in range(config["evaluation"]["repeats"]):
             action_seed = seed + repeat * 1000000
-            with isolated_rng(action_seed):
-                agent_rng = agent.rng.getstate()
-                agent.rng.seed(action_seed + 7321)
-                try:
-                    env = WorkbenchEnv(config)
-                    result = _evaluation_episode(env, agent, scene, f"{group}_{seed}_r{repeat}",
-                                                 action_seed, config["evaluation"]["action_mode"],
-                                                 None if zero_cache is not None else Path(directory) / "traces.jsonl",
-                                                 env_step, scene_sha256=scene_ref["sha256"], group=group,
-                                                 scene_metadata=(scene_set["files"][index] if files is not None else None))
-                finally:
-                    agent.rng.setstate(agent_rng)
+            p19_case = (Path(directory) / "validation_cases" / f"step_{env_step:09d}" /
+                        f"scene_{index:05d}_r{repeat}.json"
+                        if config.get("experiment", {}).get("id") == "S2-P19" and group == "validation"
+                        else None)
+            p19_contract = ({"config_hash": config_hash(config), "env_step": env_step,
+                             "scene_index": index, "repeat_index": repeat,
+                             "source_scene_sha256": files[index][1], "action_seed": action_seed,
+                             "policy_sha256": p19_policy_sha}
+                            if p19_case is not None else None)
+            result = (_s2p19_validation_case(p19_case, p19_contract)
+                      if p19_case is not None else None)
+            if result is None:
+                with isolated_rng(action_seed):
+                    agent_rng = agent.rng.getstate()
+                    agent.rng.seed(action_seed + 7321)
+                    try:
+                        env = WorkbenchEnv(config)
+                        result = _evaluation_episode(env, agent, scene, f"{group}_{seed}_r{repeat}",
+                                                     action_seed, config["evaluation"]["action_mode"],
+                                                     None if zero_cache is not None or p19_case is not None
+                                                     else Path(directory) / "traces.jsonl",
+                                                     env_step, scene_sha256=scene_ref["sha256"], group=group,
+                                                     scene_metadata=(scene_set["files"][index] if files is not None else None))
+                    finally:
+                        agent.rng.setstate(agent_rng)
             result["scene"] = scene_ref
             result["action_seed"] = action_seed
             result.setdefault("beam_count", len(scene["rate"]))
@@ -560,6 +672,10 @@ def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step,
             result.setdefault("initial_allocation_seconds", None)
             if zero_cache is not None:
                 result = _zero_validation_case(cache_path, cache_contract, result)
+                for trace in result["trace"]:
+                    _jsonl(Path(directory) / "traces.jsonl", trace)
+            if p19_case is not None:
+                result = _s2p19_validation_case(p19_case, p19_contract, result)
                 for trace in result["trace"]:
                     _jsonl(Path(directory) / "traces.jsonl", trace)
             _jsonl(Path(directory) / "evaluations.jsonl", {"env_step": env_step, "group": group,
@@ -631,6 +747,16 @@ def _training(directory, job, config, ledger, resume):
                     "wall_seconds": 0.0}
     env_step = progress["env_step"]
     episode = progress["episode"]
+    pilot_stop = (training["pilot_stop_steps"] if config["experiment"].get("id") == "S2-P19"
+                  else None)
+    if pilot_stop is not None and resume and pilot_stop <= env_step < training["total_steps"]:
+        if not s2p19_pilot_gate_passed(directory, job["run_id"], checkpoint, pilot_stop):
+            ledger.event("s2p19_pilot_gate_pending", env_step=env_step)
+            ledger.save_status(stage="stopped", env_step=env_step,
+                               stop_reason="s2p19_pilot_gate_pending",
+                               checkpoint_step=env_step)
+            return
+        ledger.status.pop("stop_reason", None)
     session_started = time.monotonic()
     session_base_steps = env_step
     session_base_updates = agent.update_step
@@ -687,6 +813,22 @@ def _training(directory, job, config, ledger, resume):
         scene_order = VariableBeamSceneOrder(
             variable_mode, training.get("scene_order_seed", 51001),
             [digest for _, digest in supplied_scenes], scene_sets["train"]["files"])
+        if config["experiment"].get("id") == "S2-P19" and config["experiment"].get("arm") == "C1":
+            demonstration = training["demonstrations"]
+            if demonstration["source_set_sha256"] != scene_order.source_set_sha256:
+                raise ValueError("C1示范来源与冻结训练场景集SHA不一致")
+            source_hashes = {digest for _, digest in supplied_scenes}
+            teacher_hashes = {row["scene_sha256"] for row in agent.demonstrations.records}
+            if not teacher_hashes.issubset(source_hashes):
+                raise ValueError("C1示范含不在冻结训练集中的场景")
+            if len(agent.demonstrations.records) != 576 or len(teacher_hashes) != 576:
+                raise ValueError("C1示范须为576个不同训练母场景各一条完整轨迹")
+            source_metadata = {digest: metadata for (_, digest), metadata in zip(
+                supplied_scenes, scene_sets["train"]["files"])}
+            mothers = [source_metadata[digest].get("mother_scene_id") for digest in teacher_hashes]
+            if None in mothers or len(set(mothers)) != 576:
+                raise ValueError("C1示范的576条轨迹未覆盖576个不同训练母场景")
+            _verify_c1_demonstration_provenance(job, config, scene_sets["train"], scene_order, agent)
     else:
         scene_order = SceneOrder(training.get("scene_order", "sequential"),
                                  training.get("scene_order_seed", 51001),
@@ -956,6 +1098,18 @@ def _training(directory, job, config, ledger, resume):
                            **({"learning_snapshots": snapshot_record} if snapshot_record else {}))
                 save_progress(checkpoint_step=env_step)
                 ledger.flush()
+                if pilot_stop is not None and env_step == pilot_stop:
+                    export_policy(model_dir / "latest", agent, config,
+                                  {**provenance, "env_step": env_step,
+                                   "selection": "s2p19_pilot_gate_pending"})
+                    _artifacts(directory, job, checkpoint=str(checkpoint),
+                               latest_policy=str(model_dir / "latest"))
+                    ledger.event("s2p19_pilot_gate_pending", env_step=env_step,
+                                 checkpoint_sha256=_sha256(checkpoint))
+                    save_progress("stopped", stop_reason="s2p19_pilot_gate_pending",
+                                  checkpoint_step=env_step)
+                    ledger.flush()
+                    return
         if config["algorithm"] == "ppo" and agent.rollout:
             diagnostics = agent.update()
             _ensure_finite_agent(agent)
@@ -1016,6 +1170,13 @@ def _training(directory, job, config, ledger, resume):
                        **({"learning_snapshots": snapshot_record} if snapshot_record else {}))
             save_progress(checkpoint_step=env_step, best_validation=progress["best_validation"])
             ledger.flush()
+        if pilot_stop is not None and env_step == pilot_stop:
+            ledger.event("s2p19_pilot_gate_pending", env_step=env_step,
+                         checkpoint_sha256=_sha256(checkpoint))
+            save_progress("stopped", stop_reason="s2p19_pilot_gate_pending",
+                          checkpoint_step=env_step)
+            ledger.flush()
+            return
         if stopped:
             ledger.event("training_stopped", env_step=env_step)
             save_progress("stopped")
@@ -1531,10 +1692,17 @@ def run_job(job_dir, *, resume=False):
     from satellite_rl.workbench.config import validate_config
 
     directory = Path(job_dir).resolve()
-    if _read_json(directory / "config.json", {}).get("research_stage") == "power_refinement":
+    research_stage = _read_json(directory / "config.json", {}).get("research_stage")
+    if research_stage == "sac_improvement":
+        from satellite_rl.sac_improvement import run_job as run_sac_improvement_job
+        return run_sac_improvement_job(directory, resume=resume)
+    if research_stage == "s2p19_preparation":
+        from satellite_rl.workbench.s2p19_preparation import run_job as run_s2p19_preparation_job
+        return run_s2p19_preparation_job(directory, resume=resume)
+    if research_stage == "power_refinement":
         from satellite_rl.power_refinement.runner import run_refinement_job
         return run_refinement_job(directory, resume=resume)
-    if _read_json(directory / "config.json", {}).get("research_stage") == "coverage":
+    if research_stage == "coverage":
         from satellite_rl.coverage.runner import run_coverage_job
         return run_coverage_job(directory, resume=resume)
     job = {}

@@ -14,6 +14,9 @@ SOURCE_GROUPS = ("model", "fixed", "greedy")
 
 def source_rows(reference):
     """Read saved allocations, never regenerate model or baseline actions."""
+    if reference.get("format") in ("s2p19_inline_validation_v1", "s2p19_i0_case_v1"):
+        from .s2p19_refinement_sources import source_rows as p19_source_rows
+        return p19_source_rows(reference)
     path = Path(reference["path"])
     if not path.is_file() or digest(path) != reference["sha256"]:
         raise ValueError("第二阶段原始结果SHA不一致")
@@ -75,13 +78,21 @@ def prepare_source(app, body):
     """Resolve only a completed variable-beam (S2-P17/S2-P18) evaluation in this workbench."""
     run_id = body.get("source_run_id")
     validate_id(run_id)
+    directory, readonly = app.resolve_run(run_id)
+    source_job = read_json(directory / "job.json", {})
+    if (not readonly and source_job.get("experiment_id") == "S2-P19" and
+            (source_job.get("kind") == "train" or
+             source_job.get("research_stage") == "sac_improvement")):
+        from .s2p19_refinement_sources import prepare_source as p19_prepare_source
+        return p19_prepare_source(app, body)
     group = body.get("source_group", "model")
     if group not in SOURCE_GROUPS:
         raise ValueError("初始分配来源须为model、fixed或greedy")
-    directory, readonly = app.resolve_run(run_id)
-    job = read_json(directory / "job.json", {})
+    job = source_job
     status = read_json(directory / "status.json", {})
     experiment_id = job.get("experiment_id")
+    if experiment_id == "S2-P19" and body.get("partition") != "test":
+        raise ValueError("S2-P19正式考核来源须显式声明test分区")
     if readonly or job.get("kind") != "evaluate" or not is_variable_beam_experiment(experiment_id):
         raise ValueError(f"须选择本工作台可变束数正式评价任务（{'/'.join(EXPERIMENT_IDS)}）")
     if status.get("stage") != "completed":
@@ -97,6 +108,8 @@ def prepare_source(app, body):
                  "repeats": job["repeats"] if group == "model" else 1,
                  "action_mode": job["action_mode"] if group == "model" else "deterministic",
                  "action_seed": job["action_seed"]}
+    if experiment_id == "S2-P19":
+        reference.update(experiment_id="S2-P19", partition="test")
     summary = read_json(path, {})
     selected = (summary.get("scenes", []) if group == "model" else
                 summary.get("baselines", {}).get(group, {}).get("scenes", []))

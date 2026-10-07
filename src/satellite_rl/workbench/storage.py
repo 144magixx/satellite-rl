@@ -160,8 +160,10 @@ class Store:
             return destination, commit
 
     def create_job(self, config, *, kind="train", request_id=None, extra=None):
-        if kind not in ("train", "evaluate", "refine"):
+        if kind not in ("train", "evaluate", "refine", "prepare"):
             raise ValueError("未知任务类型")
+        if kind == "prepare" and config.get("research_stage") != "s2p19_preparation":
+            raise ValueError("准备任务须声明受校验的S2-P19准备类型")
         if request_id is not None:
             validate_id(request_id)
         request_payload = {"kind": kind, "config": config, "extra": extra or {}}
@@ -181,6 +183,11 @@ class Store:
             model_dir = self.models_root / run_id
             model_dir.mkdir()
             frozen_extra = dict(extra or {})
+            if config.get("research_stage") == "s2p19_preparation":
+                from copy import deepcopy
+                from .s2p19_service import freeze_preparation
+                config = deepcopy(config)
+                config["preparation"] = freeze_preparation(config["preparation"], directory / "input_sources")
             is_coverage = config.get("research_stage") == "coverage"
             profile = (config["coverage"]["environment_profile"] if is_coverage else
                        config.get("environment", {}).get("profile", "china_legacy"))
@@ -215,7 +222,19 @@ class Store:
                     frozen_extra["balance_start_provenance"] = config["balance_starts"]
                 elif config.get("schema_version") == 4:
                     frozen_extra["reconstruction_start_provenance"] = config["reconstruction_starts"]
-            if kind in ("evaluate", "refine") and (not is_coverage or config["coverage"]["method"] == "ppo"):
+            improvement_baseline = (config.get("research_stage") == "sac_improvement"
+                                    and frozen_extra.get("mode") in ("gate", "baselines")
+                                    and frozen_extra.get("experiment_id") == "S2-P19")
+            source = frozen_extra.get("initial_source") or {}
+            p19_saved_without_model = (kind == "refine" and
+                                       frozen_extra.get("experiment_id") == "S2-P19" and
+                                       source.get("experiment_id") == "S2-P19" and
+                                       source.get("format") in ("s2p19_inline_validation_v1",
+                                                                "s2p19_i0_case_v1") and
+                                       source.get("group") in ("model", "greedy", "rule", "random") and
+                                       bool(source.get("case_files")) and
+                                       not frozen_extra.get("model_files"))
+            if kind in ("evaluate", "refine") and not improvement_baseline and not p19_saved_without_model and (not is_coverage or config["coverage"]["method"] == "ppo"):
                 model_target = directory / "model_input"
                 model_target.mkdir()
                 references = frozen_extra.get("model_files") or model_input_files(

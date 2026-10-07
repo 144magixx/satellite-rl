@@ -190,6 +190,32 @@ class PowerRefinementApplication:
         config.update(research_stage="power_refinement", power_refinement=controls,
                       name=f"{source_experiment} · {source_job['name']} · {reference['group']} · 原分配与SCA")
         config["training"]["total_steps"] = reference["scene_count"] * reference["repeats"] * 3
+        if source_experiment == "S2-P19":
+            if reference.get("partition") not in ("development", "validation", "test"):
+                raise ValueError("S2-P19 SCA来源缺显式冻结分区")
+            if body.get("partition") != reference["partition"] or body.get("source_group") != reference["group"]:
+                raise ValueError("S2-P19 SCA请求的分区或来源组与冻结初解不一致")
+            if reference["partition"] == "validation" and body.get("validation_step") != reference.get("validation_step"):
+                raise ValueError("S2-P19验证节点与冻结初解不一致")
+            if reference["partition"] != "validation" and body.get("validation_step") is not None:
+                raise ValueError("仅C0/C1 inline验证来源可指定validation_step")
+            if any(body.get(key) is not None for key in
+                   ("repair_profile", "scientific_origin_commit", "repair_reference_run_id", "repair_proof_sha256")):
+                raise ValueError("S2-P19不得借用S2-P17历史修复合同")
+            config["name"] = (f"S2-P19 · {reference['partition']} · {source_job['name']} · "
+                              f"{reference['group']} · 已保存初解+A+B")
+            source_files = deepcopy(source_job.get("model_files") or [])
+            return self.store.create_job(config, kind="refine", request_id=body.get("request_id"), extra={
+                "research_stage": "power_refinement", "experiment_id": "S2-P19",
+                "experiment_role": reference["partition"], "name": config["name"],
+                "model_id": source_job.get("model_id"), "model_path": source_job.get("model_path"),
+                "model_files": source_files, "model_config": model_config,
+                "model_provenance": source_job.get("model_provenance"),
+                "scene_id": dataset["id"], "scene_sets": {reference["partition"]: dataset},
+                "scene_path": dataset["path"], "initial_source": reference,
+                "power_refinement": controls, "evaluation_units": config["training"]["total_steps"],
+                "evaluation_units_label": "已保存初始分配/中间A/最终B；不新增初始动作",
+            })
         repair_extra = {}
         from .recovery import S2P17_FAILED_RUN
         existing_repair = read_json(self.store.job_dir(S2P17_FAILED_RUN) / "job.json", {}).get("boundary_repair")

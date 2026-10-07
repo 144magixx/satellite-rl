@@ -592,6 +592,14 @@ class WorkbenchEnv:
 
     def _reward(self, before, after, info, legacy_reward, requested, actual, done):
         preset = self.config["reward"]["preset"]
+        if preset == "terminal_si_delta":
+            # Both potentials use every target beam. Unserved beams contribute
+            # zero and earlier beams are recomputed after later interference.
+            # With gamma=1 the undiscounted episode sum telescopes exactly.
+            count = int(self.raw_env.beam_num)
+            delta = 100.0 * (float(after["si"]) - float(before["si"])) / count
+            return delta, {"terminal_si_delta": dict(
+                raw=delta, scaled=delta, weighted=delta, timing="step", preset=preset)}
         if preset != "custom":
             if preset == "fused":
                 components = {"basic_delta": after["basic"] - before["basic"],

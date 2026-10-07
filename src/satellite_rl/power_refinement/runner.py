@@ -392,7 +392,13 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
     else:
         policy = load_policy(job["model_path"], config=job["model_config"], device=device)
         physics_config = policy.config
-    dataset = job["scene_sets"]["test"]
+    source_partition = ((job.get("initial_source") or {}).get("partition", "test")
+                        if job.get("experiment_id") == "S2-P19" else "test")
+    if source_partition not in ("development", "validation", "test"):
+        raise ValueError("S2-P19 SCA来源分区无效")
+    dataset = job["scene_sets"][source_partition]
+    if (dataset.get("source") or {}).get("partition_role") != source_partition:
+        raise ValueError("SCA冻结场景分区与已保存初解分区不一致")
     assert_scene_profile(dataset, "europe_v1")
     files = scene_set_files(dataset)
     budget = len(files) * options["repeats"] * len(options["methods"])
@@ -666,10 +672,13 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                                        **({"reference_optimizer": reference["timing"]["optimizer_wall_seconds"],
                                            "reference_verification": reference["timing"]["verification_seconds"]}
                                           if reference is not None else {})))
+                source_model_sha = next((ref["sha256"] for ref in job["model_files"]
+                                         if Path(ref["path"]).name == "policy.pt"), None)
+                if saved is None and source_model_sha is None:
+                    raise ValueError("直接模型SCA缺冻结模型权重")
                 row = {"identity": case_identity, "run_id": job["run_id"],
                        "git_commit": job["git_commit"],
-                       "source_model_sha256": next(ref["sha256"] for ref in job["model_files"]
-                                                    if Path(ref["path"]).name == "policy.pt"),
+                       "source_model_sha256": source_model_sha,
                        "scene_id": initial["scene_id"],
                        "source_scene_sha256": source_sha, "source_scene_path": str(source),
                        "repeat": repeat, "method": method, "power_budget_mode": options["power_budget_mode"],
@@ -704,6 +713,7 @@ def evaluate_refinement(directory, job, config, *, device="cuda"):
                     row.update(initial_source_group=source_group,
                                initializer_kind="model" if source_group == "model" else "baseline_" + source_group,
                                source_evaluation_run_id=job["initial_source"]["run_id"],
+                               source_partition=source_partition,
                                source_workbench_model_sha256=row["source_model_sha256"],
                                source_initial_case_path=initial.get("original_case_path"),
                                source_initial_case_sha256=initial.get("original_case_file_sha256"))
@@ -767,7 +777,10 @@ def run_refinement_job(job_dir, *, resume=False):
                 config["power_refinement"].pop(key)
         preflight = strict_cuda_preflight(job)
         import scipy
-        preflight.update(scipy=scipy.__version__, optimizer_device="cpu", policy_device="cuda")
+        preflight.update(scipy=scipy.__version__, optimizer_device="cpu",
+                         policy_device=("saved_initial_no_policy_inference"
+                                        if job.get("experiment_id") == "S2-P19" and
+                                           job.get("initial_source") else "cuda"))
         from satellite_rl.power_refinement.config import SI_PRIORITY_METHODS
         if config["power_refinement"]["methods"] == list(SI_PRIORITY_METHODS):
             import cvxpy

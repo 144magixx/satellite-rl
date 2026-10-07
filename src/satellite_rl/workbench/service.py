@@ -189,6 +189,8 @@ class Application:
         from .config import validate_config
         from .legacy import load_legacy_policy, validate_legacy_config
         model = self.get_model(body["model_id"])
+        if model.get("config", {}).get("research_stage") == "sac_improvement":
+            raise ValueError("I0候选动作模型须从S2-P19专属页面评价，不能使用逐束策略入口")
         scene = self.store.get_record("scenes", body["scene_id"])
         config = validate_config(model["config"])
         experiment_id = body.get("experiment_id")
@@ -467,6 +469,9 @@ class Application:
         return output
 
     def api(self, method, parts, query, body):
+        if parts and parts[0] == "s2p19":
+            from .s2p19_service import S2P19Application
+            return S2P19Application(self).api(method, parts[1:], query, body)
         if parts and parts[0] == "power-refinement":
             from .power_refinement import PowerRefinementApplication
             return PowerRefinementApplication(self).api(method, parts[1:], query, body)
@@ -481,16 +486,29 @@ class Application:
         if parts == ["validate"] and method == "POST":
             from .checkpoints import describe_model
             config = validate_config(body)
+            if config.get("experiment", {}).get("id") == "S2-P19":
+                from .s2p19_service import assert_constructive_contract
+                assert_constructive_contract(config)
             return {"config": config, "summary": config_summary(config), "model": describe_model(config)}
         if parts == ["runs"]:
             if method == "GET":
                 return self.runs()
             if method == "POST":
                 config = validate_config(body["config"])
+                if config.get("experiment", {}).get("id") == "S2-P19":
+                    if body.get("experiment_id") != "S2-P19":
+                        raise ValueError("S2-P19配置与工作台实验身份不一致")
+                    from .s2p19_service import assert_constructive_contract
+                    assert_constructive_contract(config)
                 if config["training"]["device"] != "cuda":
                     raise ValueError("正式训练必须使用DQN/CUDA；CPU仅供代码单元检查，工作台不会静默更换设备")
                 sets = self.training_scene_sets(config, body)
                 extra = {"scene_sets": sets} if sets else {}
+                if config.get("experiment", {}).get("id") == "S2-P19":
+                    from .s2p19_service import bind_teacher_job
+                    teacher_source = bind_teacher_job(self, config, sets)
+                    if teacher_source is not None:
+                        extra["demonstration_source"] = teacher_source
                 if config["training"].get("beam_count_mode", "none") != "none":
                     requested_experiment = body.get("experiment_id", S2P17)
                     if not is_variable_beam_experiment(requested_experiment):
@@ -578,6 +596,8 @@ class Application:
                  "power_results.csv", "power_beams.csv", "power_scene_times.csv", "power_iterations.jsonl", "power_cases.jsonl",
                  "power_report.md", "starts.jsonl", "starts.partial.jsonl",
                  "results.partial.jsonl", "mechanism_gate.json", "mechanism_audit.json"}
+        allow.update({"preparation_progress.json", "preparation_result.json", "pilot_gate.json",
+                      "pilot_audit.json", "candidate_actions.jsonl", "beam_service.jsonl"})
         if filename == "report.md":
             detail, result = self.run_detail(identifier), self.results(identifier)
             lines = ["# 卫星资源分配实验报告", "", "运行：" + identifier,

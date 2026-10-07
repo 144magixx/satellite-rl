@@ -10,9 +10,10 @@ S2-P17（第一阶段可变波束数量训练）与 S2-P18（第二轮改进）�
 不改变该修复链的任何语义。
 """
 
-VARIABLE_BEAM_EXPERIMENTS = ("S2-P17", "S2-P18")
+VARIABLE_BEAM_EXPERIMENTS = ("S2-P17", "S2-P18", "S2-P19")
 S2P17 = "S2-P17"
 S2P18 = "S2-P18"
+S2P19 = "S2-P19"
 
 
 def is_variable_beam_experiment(experiment_id):

@@ -180,6 +180,8 @@ PRESETS = [
          description="保留原四项，另加 w_throughput×Δ有效承载/参考量与 w_spectrum×本步占用槽/本组可用槽；"
                      "权重默认0，必须显式配置才生效；原始奖励分量仍逐项记录"),
     dict(id="custom", label="自选奖励项", description="逐项计算并保存原值、缩放值与加权值"),
+    dict(id="terminal_si_delta", label="全束终态SI增量（S2-P19）",
+         description="每步100×全体目标波束当前SI均值变化；未服务束为0，γ=1时回合求和为100×终态SI"),
 ]
 
 
@@ -393,7 +395,17 @@ def _validate_reward_shaping(reward):
 
 
 def validate_config(raw):
-    c = _merge(default_config(), raw)
+    # New research-only fields are injected only for S2-P19. Historical fully
+    # materialized configurations keep their exact keys and checkpoint hashes.
+    p19_requested = (isinstance(raw, dict) and isinstance(raw.get("experiment"), dict)
+                     and raw["experiment"].get("id") == "S2-P19")
+    template = default_config()
+    if p19_requested:
+        template["training"]["demonstrations"] = dict(
+            mode="none", manifest_path="", manifest_sha256="", source_set_sha256="")
+        template["training"]["pilot_stop_steps"] = 100000
+    c = _merge(template, raw)
+    p19 = c["experiment"]["id"] == "S2-P19"
     if type(c["schema_version"]) is not int or c["schema_version"] != 1:
         raise ValueError("不支持的配置版本")
     if not isinstance(c["name"], str) or not c["name"].strip() or len(c["name"]) > 120:
@@ -489,11 +501,12 @@ def validate_config(raw):
         expected_features = list(natural_shapes(level)) + (["previous_actual_action"] if temporal else [])
         if c["state"]["demand_visibility"] != "known" or c["state"]["features"] != expected_features:
             raise ValueError("自然状态布局要求本档实际开放的状态特征及规范顺序")
-        allowed_presets = ("legacy_repaired", "legacy_repaired_throughput")
+        allowed_presets = (("terminal_si_delta",) if p19 else
+                           ("legacy_repaired", "legacy_repaired_throughput"))
         # 已登记的 S2-P18 臂（G0）把自然逐束布局用于可变束数四桶抽样，因此对该臂
         # 额外允许 variable_beams 场景顺序；未声明臂的配置仍要求每轮打乱。
         allowed_orders = (("shuffle_each_cycle", "variable_beams")
-                          if c["experiment"]["arm"] in VARIABLE_BEAM_ARMS
+                          if c["experiment"]["arm"] in VARIABLE_BEAM_ARMS or p19
                           else ("shuffle_each_cycle",))
         if n["dropout"] != 0 or c["reward"]["preset"] not in allowed_presets or \
                 c["training"]["scene_order"] not in allowed_orders:
@@ -596,7 +609,7 @@ def validate_config(raw):
     if t["beam_count_mode"] == "none":
         if t["scene_order"] == "variable_beams":
             raise ValueError("可变束数场景顺序只能用于V0/V1")
-    elif (t["scene_order"] != "variable_beams" or e["profile"] != "europe_v1"
+    elif not p19 and (t["scene_order"] != "variable_beams" or e["profile"] != "europe_v1"
           or e["beam_count_max"] != 200 or t["beam_count_min"] != 50
           or t["beam_count_max"] != 200 or held_out != [60, 90, 140, 180]
           or e["action_mask"] != "joint_feasible" or e["action_mode"] != "legacy_clip"
@@ -617,7 +630,7 @@ def validate_config(raw):
     # 试点预算 10 万步、逐束布局/读出/条件化、进度分层与折扣日程、奖励整形的
     # 非零权重。除这些「臂自身声明的差异」外，其余条件仍与 V0/V1 完全一致，
     # 并且只允许登记在案的取值集合，不做任意放宽。
-    if c["experiment"]["arm"]:
+    if c["experiment"]["arm"] and not p19:
         arm = c["experiment"]["arm"]
         if arm not in VARIABLE_BEAM_ARMS:
             raise ValueError("未知的S2-P18实验臂")
@@ -651,6 +664,46 @@ def validate_config(raw):
     for key in ("gamma", "gae_lambda", "clip_ratio", "eps_start", "eps_end"):
         _number(t[key], key, 0, 1)
     _validate_gamma_schedule(t)
+    if p19:
+        import re
+        if c["experiment"]["arm"] not in ("C0", "C1"):
+            raise ValueError("S2-P19 构造式SAC仅支持C0/C1")
+        if (c["algorithm"] != "sac" or n["kind"] != "transformer" or
+                n["transformer_layout"] != "tsac_natural_context" or
+                n["context_beam_count"] != "actual" or
+                c["state"]["context_level"] != "full" or
+                c["state"]["features"] != list(natural_shapes("full")) or
+                n["sac_policy_structure"] != "factorized" or
+                n["sac_critic_structure"] != "additive" or
+                n["temporal_mode"] != "none" or n["graph_mode"] != "none" or
+                e["profile"] != "europe_v1" or e["beam_count_max"] != 200 or
+                e["action_mask"] != "joint_feasible" or e["action_mode"] != "legacy_clip" or
+                r["preset"] != "terminal_si_delta" or r["shaping"] != template["reward"]["shaping"] or
+                t["gamma"] != 1 or t["gamma_schedule"]["mode"] not in ("none", "constant") or
+                resolve_gamma(t, 200) != 1 or t["scene_order"] != "variable_beams" or
+                t["beam_count_mode"] != "mixed_four_buckets" or
+                t["beam_count_min"] != 50 or t["beam_count_max"] != 200 or
+                t["held_out_beam_counts"] != [60, 90, 140, 180] or
+                t["seed"] != 51001 or t["total_steps"] != 400000 or
+                type(t["pilot_stop_steps"]) is not int or t["pilot_stop_steps"] != 100000 or
+                t["batch_size"] != 256 or t["replay_capacity"] != 20000 or
+                t["warmup_steps"] != 2000 or t["update_every"] != 1 or
+                t["gradient_steps"] != 1 or t["progress_strata"] != 1 or
+                t["checkpoint_interval"] != 10000):
+            raise ValueError("S2-P19 C0/C1状态、动作、奖励与学习预算必须使用冻结合同")
+        demo = t["demonstrations"]
+        if demo["mode"] != ("half" if c["experiment"]["arm"] == "C1" else "none"):
+            raise ValueError("C1要求半数示范回放，C0不得读取示范")
+        if demo["mode"] == "half":
+            if (not isinstance(demo["manifest_path"], str) or not demo["manifest_path"] or
+                    not all(isinstance(demo[key], str) and re.fullmatch(r"[0-9a-f]{64}", demo[key])
+                            for key in ("manifest_sha256", "source_set_sha256"))):
+                raise ValueError("C1示范必须冻结绝对清单路径、清单SHA和训练场景集SHA")
+            from pathlib import Path
+            if not Path(demo["manifest_path"]).is_absolute():
+                raise ValueError("C1示范清单须为绝对路径")
+        elif any(demo[key] for key in ("manifest_path", "manifest_sha256", "source_set_sha256")):
+            raise ValueError("C0不得声明示范来源")
     for key in ("entropy_coef", "value_coef"):
         _number(t[key], key, 0)
     _number(t["target_entropy"], "target_entropy")
@@ -672,7 +725,7 @@ def validate_config(raw):
         raise ValueError("场景种子超出NumPy允许范围")
     if ev["action_mode"] not in ("deterministic", "stochastic"):
         raise ValueError("不支持的评价动作方式")
-    if t["beam_count_mode"] != "none" and (
+    if t["beam_count_mode"] != "none" and not p19 and (
             ev["validation_count"] != 144 or ev["interval_steps"] != 20000
             or ev["extra_steps"] != [0] or ev["repeats"] != 1
             or ev["validation_seed"] != 53001 or ev["action_mode"] != "stochastic"
@@ -882,6 +935,7 @@ def config_summary(config):
                    "legacy_repaired_throughput":
                        "原公式四项 + w_throughput×ΔΣmin(C,D)/参考量 + w_spectrum×(本步占用槽/本组可用槽)"
                        " + w_shape×(γΦ(s')−Φ(s))；原始奖励分量仍逐项保存",
+                   "terminal_si_delta": "100×[全部目标波束当前SI均值的逐步变化]；γ=1时回合和为100×终态SI",
                    "fused": "2×Δ基本服务＋Δ需求满足率＋0.2×ΔSGM－实际功率/预算"}[r["preset"]]
         if r["terms"] != default_config()["reward"]["terms"]:
             warnings.append("当前预设使用固定公式；奖励项列表仅在 custom 预设生效。")

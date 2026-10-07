@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>S2-P19 · 超越贪心研究工作台</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/s2p19.js" defer></script>
+  <style>
+    .s2shell{max-width:1450px;margin:auto;min-height:100vh;background:#f7f9fb}
+    .s2main{padding:24px clamp(15px,3vw,38px)}.s2nav{padding:10px 24px;background:#fff;border-bottom:1px solid var(--line)}
+    .s2nav a{color:var(--accent);font-weight:650;text-decoration:none}.s2grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(310px,.7fr);gap:17px}
+    .s2stack{display:grid;gap:17px;align-content:start}.s2formgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .s2wide{grid-column:1/-1}.s2hint{font-size:12px;color:var(--muted);margin:6px 0 14px}.s2hint strong{color:var(--ink)}
+    .s2code{white-space:pre-wrap;overflow:auto;max-height:380px;background:#f4f8fa;padding:12px;border:1px solid var(--line);border-radius:8px;font:11px/1.5 Consolas,monospace}
+    .s2card{border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0;background:#f9fcfd;overflow-wrap:anywhere}
+    .s2card strong{display:block}.s2card small{color:var(--muted)}.s2card button{margin-top:7px}.s2status{margin:10px 0}.s2status[hidden],.s2conditional[hidden]{display:none!important}
+    .s2links{display:flex;flex-wrap:wrap;gap:10px}.s2links a{color:var(--accent)}.s2row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .s2codeinput{width:100%;min-height:150px;font:11px/1.5 Consolas,monospace;padding:10px;border:1px solid var(--line);border-radius:8px}
+    @media(max-width:950px){.s2grid{grid-template-columns:1fr}}@media(max-width:620px){.s2formgrid{grid-template-columns:1fr}.s2wide{grid-column:auto}}
+  </style>
+</head>
+<body>
+<div class="s2shell">
+  <header class="topbar"><div class="brand"><div class="brand-icon" aria-hidden="true">Ⅱ</div><div><strong>S2-P19 超越贪心研究工作台</strong><span>欧洲场景 · SAC 路线、准备任务与独立考核</span></div></div><span id="s2-connection">正在读取工作台…</span></header>
+  <nav class="s2nav"><a href="/">← 返回实验工作台</a></nav>
+  <main class="s2main">
+    <div class="page-heading"><div><p class="eyebrow">SECOND STAGE · S2-P19</p><h1>分阶段执行与真实任务状态</h1><p>三组试点为 C0 终态目标 SAC、C1 示范回放 SAC、I0 贪心起点局部改进 SAC。先在 100,000 步停止，闸门通过后沿同一任务与冻结配置续至 400,000 步。</p></div><button id="s2-refresh" type="button">刷新来源与任务</button></div>
+    <div id="s2-message" class="notice muted s2status" role="status">正在连接服务。</div>
+    <div class="s2grid">
+      <div class="s2stack">
+        <section class="panel" aria-labelledby="s2-prepare-title"><h2 id="s2-prepare-title">1. 准备与登记场景</h2><p class="s2hint">准备任务通过工作台保存来源、配置和日志。正式训练及评价只使用已登记的欧洲版场景。</p>
+          <div class="s2formgrid">
+            <label class="field">准备类型<select id="s2-preparation-type"><option value="dev_validation">开发/验证场景</option><option value="mother_sources">新考核母场景（Feb01/02）</option><option value="final">全新独立考核场景</option><option value="demonstrations">C1 贪心完整示范</option></select></label>
+            <label class="field">环境版本<select id="s2-profile"><option value="europe_v1">欧洲版 europe_v1</option></select></label>
+            <label class="field">源数据文件路径<input id="s2-source-path" placeholder="/home/.../source.csv"></label>
+            <label class="field">源数据 SHA-256<input id="s2-source-sha" inputmode="latin" maxlength="64" placeholder="64位十六进制校验值"></label>
+            <label class="field">准备种子<input id="s2-prep-seed" type="number" min="0" step="1" value="51001"></label>
+            <label class="field">已登记训练场景集<select id="s2-prep-scene"><option value="">读取中…</option></select></label>
+            <label class="field s2wide">教师逐母选取 SHA 列表（可留空，服务端按冻结规则选取）<textarea id="s2-selected-sha" class="s2codeinput" spellcheck="false" placeholder='可选：JSON数组，含576个场景SHA'></textarea></label>
+            <label class="field s2wide">官方资产声明（仅新考核母场景；从服务端模板载入）<textarea id="s2-official-assets" class="s2codeinput" spellcheck="false" placeholder='[{"date_utc":"..."},{"date_utc":"..."}]'></textarea></label>
+          </div><p id="s2-prep-note" class="s2hint"></p><button id="s2-prepare" type="button" class="primary">提交准备任务</button>
+        </section>
+        <section class="panel" aria-labelledby="s2-train-title"><h2 id="s2-train-title">2. C0 / C1 构造式 SAC</h2><p class="s2hint">C0 与 C1 使用同一可变束数集合状态、动作、终态 SI 增量奖励和 400,000 步冻结上限。C1 只增加 50:50 示范回放。页面显示试点闸门；不会自动越过 100,000 步。</p>
+          <div class="s2formgrid">
+            <label class="field">训练路线<select id="s2-arm"><option value="C0">C0 · 全束SI目标对齐</option><option value="C1">C1 · 同模型＋示范回放</option></select></label>
+            <label class="field">训练种子<input id="s2-seed" type="number" value="51001" readonly></label>
+            <label class="field">欧洲训练场景集<select id="s2-train-scene"><option value="">读取中…</option></select></label>
+            <label class="field">欧洲验证场景集<select id="s2-validation-scene"><option value="">读取中…</option></select></label>
+            <label class="field">试点停止步数<input id="s2-pilot" type="number" value="100000" readonly></label>
+            <label class="field">冻结总步数<input id="s2-total" type="number" value="400000" readonly></label>
+          </div>
+          <div id="s2-teacher-fields" class="s2conditional" hidden><p class="s2hint"><strong>C1 教师来源：</strong>先完成工作台示范准备。以下三个字段会写入冻结配置及断点来源，不能用历史测试集充当教师。</p><div class="s2formgrid">
+            <label class="field s2wide">教师 manifest 绝对路径<input id="s2-teacher-path" placeholder="/home/.../manifest.json"></label>
+            <label class="field">manifest SHA-256<input id="s2-teacher-sha" maxlength="64"></label>
+            <label class="field">冻结训练场景集 SHA-256<input id="s2-teacher-source-sha" maxlength="64"></label>
+          </div></div>
+          <details><summary>高级配置 JSON（仅勾选后覆盖表单生成的配置）</summary><label class="field"><input id="s2-use-json" type="checkbox"> 使用下方 JSON 覆盖</label><textarea id="s2-config-json" class="s2codeinput" spellcheck="false"></textarea></details>
+          <div class="s2row"><button id="s2-validate" type="button">服务端校验配置</button><button id="s2-train" type="button" class="primary">提交 C0/C1 工作台训练</button></div><div id="s2-config-message" class="s2status" role="status"></div>
+        </section>
+        <section class="panel" aria-labelledby="s2-improve-title"><h2 id="s2-improve-title">3. I0 完整解改进 SAC</h2><p class="s2hint">I0 从贪心可行解出发，在每景最多 32 次真实候选探测中修改频率槽；规则/随机路线须同预算对照。训练、闸门及评价均走独立工作台任务。</p>
+          <div class="s2formgrid">
+            <label class="field">任务模式<select id="s2-i0-mode"><option value="train">训练</option><option value="gate">A阶段开发闸门评价</option><option value="evaluate">独立评价</option></select></label>
+            <label class="field">已有 I0 任务/模型<select id="s2-i0-run"><option value="">先刷新任务</option></select></label>
+            <label class="field">场景集<select id="s2-i0-scene"><option value="">读取中…</option></select></label>
+            <label class="field">验证场景集<select id="s2-i0-validation"><option value="">读取中…</option></select></label>
+            <label class="field">每景动作次数<select id="s2-i0-repeats"><option value="1">1（验证/训练）</option><option value="3">3（共同考核）</option></select></label>
+            <label class="field">动作种子<input id="s2-i0-action-seed" type="number" value="53001" min="0" step="1"></label>
+            <label class="field">试点闸门（宏步）<input id="s2-i0-pilot" type="number" value="100000" readonly></label>
+            <label class="field">训练上限（宏步）<input id="s2-i0-total" type="number" value="400000" readonly></label>
+            <label class="field">每景候选真值探测上限<input id="s2-i0-probes" type="number" value="32" readonly></label>
+          </div><details><summary>I0 高级配置 JSON</summary><label class="field"><input id="s2-i0-use-json" type="checkbox"> 使用下方 JSON 覆盖</label><textarea id="s2-i0-json" class="s2codeinput" spellcheck="false"></textarea></details><button id="s2-i0-submit" type="button" class="primary">提交 I0 工作台任务</button>
+        </section>
+        <section class="panel" aria-labelledby="s2-gate-title"><h2 id="s2-gate-title">4. 试点科学闸门接续</h2><p class="s2hint">到100,000步时训练任务会完整保存断点并停止。只有工作台核验通过的原始审计文件可放行同一任务继续至400,000步；本页不会仅凭用户勾选放行。</p>
+          <div class="s2formgrid"><label class="field">已停C0/C1试点<select id="s2-gate-run"><option value="">先刷新任务</option></select></label>
+            <label class="field">审计文件绝对路径<input id="s2-gate-audit-path" placeholder="/home/.../pilot_audit.json"></label>
+            <label class="field s2wide">审计文件 SHA-256<input id="s2-gate-audit-sha" maxlength="64" placeholder="64位十六进制"></label></div>
+          <button id="s2-gate-approve" type="button">提交审计并请求续跑</button>
+        </section>
+        <section class="panel" aria-labelledby="s2-sca-title"><h2 id="s2-sca-title">5. 已保存初解 → 统一功率细调 B</h2><p class="s2hint">从已完成的开发/验证/考核任务读取完整初解case与SHA，保持频率槽不变，运行同一 none / SCA A / 最终B。来源分区必须如实填写；100,000步验证只使用当时已保存的inline初解，不重新推理。</p>
+          <div class="s2formgrid">
+            <label class="field s2wide">来源工作台任务<select id="s2-sca-source"><option value="">先刷新任务</option></select></label>
+            <label class="field">初解组<select id="s2-sca-group"><option value="model">模型</option><option value="greedy">贪心</option><option value="rule">规则搜索</option><option value="random">随机搜索</option><option value="fixed">固定分配（仅旧完整考核来源）</option></select></label>
+            <label class="field">实际分区<select id="s2-sca-partition"><option value="development">开发</option><option value="validation">验证</option><option value="test">全新独立考核</option></select></label>
+            <label class="field">C0/C1验证节点<select id="s2-sca-step"><option value="">非inline验证</option><option value="100000">100,000步试点</option><option value="400000">400,000步终点</option></select></label>
+            <label class="field">原动作方式<select id="s2-sca-action-mode"><option value="stochastic">随机</option><option value="deterministic">确定性</option></select></label>
+            <label class="field">已保存动作重复数<select id="s2-sca-repeats"><option value="1">每景1次</option><option value="3">每景3次</option></select></label>
+            <label class="field">原动作种子<input id="s2-sca-seed" type="number" value="53001" readonly></label>
+            <label class="field">完整B上限<input id="s2-sca-budget" value="4000容量调用 / 60秒" readonly></label>
+            <label class="field s2wide">统一方法顺序<input id="s2-sca-methods" value="原分配 none → SCA A → 最终B sca_si_lp" readonly></label>
+          </div><p id="s2-sca-note" class="s2hint">服务端将验证来源任务、分区、逐景SHA、动作次数及实际初解耗时。</p><button id="s2-sca-submit" type="button" class="primary">提交已保存初解的统一B任务</button>
+        </section>
+      </div>
+      <div class="s2stack"><section class="panel" aria-labelledby="s2-runs-title"><div class="panel-head"><h2 id="s2-runs-title">任务与闸门</h2><button id="s2-runs-refresh" type="button">刷新</button></div><div id="s2-runs" aria-live="polite">尚未读取任务。</div></section>
+        <section class="panel" aria-labelledby="s2-detail-title"><h2 id="s2-detail-title">选中任务详情</h2><div id="s2-run-summary" class="notice muted">请选择任务。</div><div id="s2-run-links" class="s2links"></div><details open><summary>冻结配置与实际进度</summary><pre id="s2-run-config" class="s2code">—</pre></details><details><summary>最近日志</summary><pre id="s2-run-logs" class="s2code">—</pre></details><details><summary>结果摘要</summary><pre id="s2-run-results" class="s2code">—</pre></details></section>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -508,6 +508,16 @@ class WorkbenchAgent:
                                   self.train.get("beam_count_mode", "none"),
                                   self.progress_strata,
                                   padded_width=state_dim if self.variable_width else None))
+            self.demonstrations = None
+            demonstration_config = self.train.get("demonstrations", {})
+            if demonstration_config.get("mode", "none") == "half":
+                if self.action_mask_mode != "joint_feasible" or not self.variable_width:
+                    raise ValueError("S2-P19 demonstrations require masked variable-N SAC")
+                from satellite_rl.workbench.s2p19_demonstrations import DemonstrationDataset
+                self.demonstrations = DemonstrationDataset(
+                    demonstration_config["manifest_path"],
+                    demonstration_config["manifest_sha256"], config,
+                    demonstration_config["source_set_sha256"], self.train["seed"] + 47)
         elif self.algorithm == "ppo":
             self.actor = MultiHeadNetwork(config, state_dim, action_dims).to(self.device)
             self.value = ScalarNetwork(config, state_dim).to(self.device)
@@ -708,9 +718,22 @@ class WorkbenchAgent:
                          all(self.replay.bucket_indices.values()))
         strata_ready = (self.replay.segment_indices is None or
                         all(all(cell for cell in bucket) for bucket in self.replay.segment_indices.values()))
+        online_minimum = (self.train["batch_size"] // 2 if getattr(self, "demonstrations", None)
+                          is not None else self.train["batch_size"])
         return (env_step >= self.train["warmup_steps"] and buckets_ready and strata_ready and
-                len(self.replay) >= self.train["batch_size"] and
+                len(self.replay) >= online_minimum and
                 env_step % self.train["update_every"] == 0)
+
+    def _sample_masked_replay(self):
+        """Return a real 50:50 C1 batch; offline rows never increment env_step."""
+        if self.demonstrations is None:
+            return self.replay.sample(self.train["batch_size"], self.device, self.action_dims)
+        half = self.train["batch_size"] // 2
+        online = self.replay.sample(half, self.device, self.action_dims)
+        teacher = self.demonstrations.sample(half, self.device, self.action_dims)
+        return tuple((torch.cat((a[0], b[0])), torch.cat((a[1], b[1])))
+                     if index in (7, 8) else torch.cat((a, b))
+                     for index, (a, b) in enumerate(zip(online, teacher)))
 
     def gamma_for(self, beam_count=None):
         """S2-P18 手段D：当前回合实际使用的折扣。"""
@@ -796,8 +819,7 @@ class WorkbenchAgent:
             return self._update_temporal_sac()
         if self.sac_policy_structure != "factorized" or self.sac_critic_structure != "additive":
             return self._update_joint_action_sac()
-        s, a, r, ns, d, lengths, next_lengths, current_masks, next_masks = self.replay.sample(
-            self.train["batch_size"], self.device, self.action_dims)
+        s, a, r, ns, d, lengths, next_lengths, current_masks, next_masks = self._sample_masked_replay()
         current_fl, current_power = current_masks
         next_fl, next_power = next_masks
         alpha = self.log_alpha.exp().detach()
@@ -1074,10 +1096,16 @@ class WorkbenchAgent:
             if self.temporal_enabled:
                 result["online_history"] = [np.asarray(row, dtype=np.float32).copy()
                                             for row in self.online_history]
+            if self.demonstrations is not None:
+                result["demonstrations"] = self.demonstrations.state_dict()
         return result
 
     def load_state_dict(self, data):
         if self.algorithm == "sac":
+            if self.demonstrations is not None and "demonstrations" not in data:
+                raise ValueError("C1 checkpoint lacks demonstration source and sampler state")
+            if self.demonstrations is None and "demonstrations" in data:
+                raise ValueError("C0 checkpoint cannot resume with C1 demonstration replay")
             if data.get("alpha_mode", "adaptive") != self.alpha_mode:
                 raise ValueError("SAC checkpoint alpha mode differs from configured mode")
             if (data.get("temporal_mode", "none") != self.temporal_mode or
@@ -1119,6 +1147,8 @@ class WorkbenchAgent:
             self.rollout = data["rollout"]
         self.rng.setstate(data["rng"])
         self.update_step = data["update_step"]
+        if self.algorithm == "sac" and self.demonstrations is not None:
+            self.demonstrations.load_state_dict(data["demonstrations"])
         if self.temporal_enabled:
             history = data.get("online_history")
             if not isinstance(history, list) or len(history) > self.temporal_window:

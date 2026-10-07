@@ -298,6 +298,8 @@ class Scheduler:
                 return status  # Unknown API outcome: the same job is already queued.
             saved_evaluation = bool(job and job.get("kind") == "evaluate" and
                                     is_variable_beam_experiment(job.get("experiment_id")))
+            resumable_preparation = bool(job and job.get("kind") == "prepare" and
+                job.get("experiment_id") == "S2-P19" and config.get("research_stage") == "s2p19_preparation")
             resumable_balance_eval = bool(job and job.get("kind") == "evaluate" and
                                           config.get("research_stage") == "coverage" and
                                           config.get("schema_version") == 3)
@@ -305,12 +307,22 @@ class Scheduler:
                                                  config.get("research_stage") == "coverage" and
                                                  config.get("schema_version") == 4)
             if not job or (job["kind"] not in ("train", "refine") and
-                           not (saved_evaluation or resumable_balance_eval or resumable_reconstruction_eval)):
+                           not (saved_evaluation or resumable_preparation or resumable_balance_eval or resumable_reconstruction_eval)):
                 raise ValueError("只有工作台训练或功率优化任务支持恢复")
             if status.get("stage") not in ("stopped", "failed", "interrupted"):
                 raise ValueError("该任务当前不能恢复；已完成任务请复制配置新建")
             if job["kind"] == "train" and not (directory / "checkpoint.pt").is_file():
                 raise ValueError("没有可恢复的训练断点，推理权重不能代替断点")
+            if job.get("experiment_id") == "S2-P19" and status.get("stop_reason") == "s2p19_pilot_gate_pending":
+                from .storage import digest
+                proof = read_json(directory / "pilot_gate.json", {})
+                audit = Path(proof.get("audit_path", ""))
+                if (proof.get("pass") is not True or proof.get("run_id") != run_id or
+                        proof.get("checkpoint_sha256") != digest(directory / "checkpoint.pt") or
+                        proof.get("checkpoint_step") != status.get("env_step") or
+                        not audit.is_file() or not audit.resolve().is_relative_to(self.store.archive_root.resolve()) or
+                        digest(audit) != proof.get("audit_sha256")):
+                    raise ValueError("S2-P19试点须有与当前断点绑定的科学闸门审计")
             if resumable_balance_eval:
                 route = config.get("coverage", {}).get("balance", {}).get("route")
                 partial_name = "starts.partial.jsonl" if route == "prepare" else "results.partial.jsonl"
