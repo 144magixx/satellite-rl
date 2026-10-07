@@ -213,6 +213,11 @@ class Application:
                 raise ValueError(f"{experiment_id}须使用V0/V1四十万步终点或冻结T0十五万步终点")
             if not is_variable_beam_experiment((scene.get("source") or {}).get("experiment_id")):
                 raise ValueError(f"{experiment_id}须选择本实验冻结场景")
+            if experiment_id == "S2-P19" and (
+                    (scene.get("source") or {}).get("experiment_id") != "S2-P19" or
+                    (scene.get("source") or {}).get("partition_role") != "test" or
+                    scene.get("count") != 880):
+                raise ValueError("S2-P19最终考核须使用本轮冻结的40母/880景test集合")
         from .datasets import assert_scene_profile
         profile = config["environment"].get("profile", "china_legacy")
         if model.get("legacy_type") and profile != "china_legacy":

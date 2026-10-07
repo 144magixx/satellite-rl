@@ -1426,8 +1426,86 @@ def _evaluate_job(directory, job, config, ledger, *, device="cuda"):
     eval_progress(completed_evaluations, "completed", metrics=summary)
 
 
+def _validate_variable_assessment_scene_set(experiment_id, scene_set, files):
+    """Keep P17/P18 440 and require the exact new P19 40×11×2 test grid."""
+    records = scene_set.get("files") or []
+    expected_count = 880 if experiment_id == "S2-P19" else 440
+    if len(files) != expected_count or len(records) != expected_count:
+        raise ValueError(f"{experiment_id} independent assessment requires all {expected_count} frozen scenarios")
+    counts = (50, 60, 75, 90, 100, 125, 140, 150, 175, 180, 200)
+    for index, (_, digest) in enumerate(files):
+        record = records[index]
+        if (record.get("beam_count") not in counts or
+                record.get("partition_role") != "test" or
+                record.get("sha256") != digest):
+            raise ValueError(f"{experiment_id} frozen scenario count/role/SHA differs")
+    if experiment_id != "S2-P19":
+        return
+    source = scene_set.get("source") or {}
+    dates = ("2024-02-01", "2024-02-02")
+    if (source.get("type") != "aviation_variable_beams_s2p19" or
+            source.get("experiment_id") != "S2-P19" or
+            source.get("partition_role") != "test" or
+            source.get("mother_scene_count") != 40 or
+            source.get("source_dates") != list(dates) or
+            source.get("snapshot_dates") != list(dates) or
+            source.get("load_multipliers") != [0.75, 1.25]):
+        raise ValueError("S2-P19考核来源不是冻结的Feb01/02双日期40母test分区")
+    mothers = source.get("mother_scene_inputs") or []
+    if len(mothers) != 40:
+        raise ValueError("S2-P19考核缺40个冻结母场景来源")
+    expected = {}
+    date_counts = {day: 0 for day in dates}
+    for index, mother in enumerate(mothers):
+        stamp = mother.get("selected_time_utc")
+        digest = mother.get("sha256")
+        day = stamp[:10] if isinstance(stamp, str) else None
+        if (day not in date_counts or not isinstance(stamp, str) or not stamp.endswith("Z") or
+                not isinstance(digest, str) or len(digest) != 64 or
+                any(char not in "0123456789abcdef" for char in digest) or
+                not isinstance(mother.get("path"), str) or not mother["path"]):
+            raise ValueError("S2-P19母场景日期、源路径或SHA不完整")
+        try:
+            parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("S2-P19母场景UTC时间戳格式无效") from error
+        if parsed.tzinfo != timezone.utc:
+            raise ValueError("S2-P19母场景时间戳须为UTC")
+        date_counts[day] += 1
+        mother_id = f"final_{index:05d}_{hashlib.sha256(stamp.encode()).hexdigest()[:12]}"
+        if mother_id in expected:
+            raise ValueError("S2-P19母场景身份重复")
+        expected[mother_id] = (index, stamp, digest)
+    timestamps = [row[1] for row in expected.values()]
+    if (date_counts != {day: 20 for day in dates} or len(set(timestamps)) != 40 or
+            timestamps != sorted(timestamps)):
+        raise ValueError("S2-P19考核母时刻须两日期各20个且全局不重复")
+    combinations = {mother_id: set() for mother_id in expected}
+    for record in records:
+        mother_id = record.get("mother_scene_id")
+        if mother_id not in expected:
+            raise ValueError("S2-P19衍生场景未绑定40个冻结母场景")
+        _, stamp, mother_sha = expected[mother_id]
+        n, load = record["beam_count"], record.get("load_multiplier")
+        if type(n) is not int or type(load) not in (int, float) or load not in (0.75, 1.25):
+            raise ValueError("S2-P19场景束数或负载档位无效")
+        # import_scenes and freeze_scene_set deliberately rename scene_id;
+        # scientific identity is the mother UTC/source SHA/N/load tuple plus
+        # the verified bytes of each imported/frozen NPZ.
+        if (record.get("selected_time_utc") != stamp or
+                record.get("source_sha256") != mother_sha):
+            raise ValueError("S2-P19衍生场景与母时刻、源SHA或身份不一致")
+        key = (n, load)
+        if key in combinations[mother_id]:
+            raise ValueError("S2-P19同母场景有重复N/负载组合")
+        combinations[mother_id].add(key)
+    required = {(n, load) for n in counts for load in (0.75, 1.25)}
+    if any(rows != required for rows in combinations.values()):
+        raise ValueError("S2-P19每个母场景必须完整覆盖11束数×2负载")
+
+
 def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
-    """Variable-beam (S2-P17/S2-P18) allocation cases survive interruption unchanged."""
+    """Variable-beam (S2-P17/S2-P18/S2-P19) cases survive interruption unchanged."""
     from satellite_rl.workbench.baselines import BaselinePolicy
     from satellite_rl.workbench.datasets import assert_scene_profile, scene_set_files
     from satellite_rl.workbench.environment import WorkbenchEnv
@@ -1462,8 +1540,7 @@ def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
         raise ValueError(f"{experiment_id} evaluation requires a frozen test set")
     assert_scene_profile(scene_set, "europe_v1")
     files = scene_set_files(scene_set)
-    if len(files) != 440 or len(scene_set["files"]) != 440:
-        raise ValueError(f"{experiment_id} independent assessment requires all 440 frozen scenarios")
+    _validate_variable_assessment_scene_set(experiment_id, scene_set, files)
     action_seed_base = int(job.get("action_seed", -1))
     repeats = int(job.get("repeats", 0))
     action_mode = job.get("action_mode")
@@ -1472,12 +1549,6 @@ def _evaluate_variable_job(directory, job, config, ledger, *, device="cuda"):
             len(set(baseline_names)) != len(baseline_names) or
             any(name not in ("fixed", "greedy") for name in baseline_names)):
         raise ValueError(f"{experiment_id} evaluation action budget or baseline list differs")
-    for index, (file, digest) in enumerate(files):
-        record = scene_set["files"][index]
-        if (record.get("beam_count") not in (50, 60, 75, 90, 100, 125, 140, 150, 175, 180, 200) or
-                record.get("partition_role") != "test" or
-                record.get("sha256") != digest):
-            raise ValueError(f"{experiment_id} frozen scenario count/role/SHA differs")
     model_root = Path(job["model_path"])
     if model_root.is_file():
         model_root = model_root.parent
