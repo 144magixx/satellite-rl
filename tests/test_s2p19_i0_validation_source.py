@@ -102,7 +102,101 @@ def _fixture(root, step=98765):
     return jobdir, summary_path, record
 
 
+def _complete_fixture(jobdir, *, due="episode_cap", episodes=12500):
+    """Mirror observed I0 terminal status: no checkpoint_step, fixed final pair."""
+    job_path, status_path = jobdir / "job.json", jobdir / "status.json"
+    job, status = (json.loads(path.read_text(encoding="utf-8"))
+                   for path in (job_path, status_path))
+    job.update(seed=51001, total_steps=400000, model_dir=str(jobdir / "models"))
+    _write(job_path, job)
+    final = Path(job["model_dir"]) / "final"
+    final.mkdir(parents=True)
+    model_path = final / "policy.pt"
+    model_path.write_bytes(b"fixed-terminal-policy-fixture")
+    policy_sha = digest(model_path)
+    status.update(run_id=job["run_id"], stage="completed", episodes=episodes,
+                  updates=395113, completed_due_to=due, model_path=str(model_path),
+                  model_sha256=policy_sha)
+    status.pop("checkpoint_step", None)
+    status.pop("stop_reason", None)
+    _write(status_path, status)
+    _write(final / "model.json", {"run_id": job["run_id"],
+        "env_step": status["env_step"], "episodes": episodes,
+        "updates": status["updates"], "config_sha256": digest(jobdir / "config.json"),
+        "policy_sha256": policy_sha,
+        "provenance": {"run_id": job["run_id"], "env_step": status["env_step"]}})
+    return status, final / "model.json"
+
+
 class I0PilotSavedSourceTests(unittest.TestCase):
+    def test_completed_12500_episode_terminal_uses_saved_72_cases_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobdir, _, record = _fixture(Path(tmp), step=397112)
+            status, model_meta = _complete_fixture(jobdir)
+
+            class App:
+                store = SimpleNamespace(create_job=lambda config, **kwargs:
+                                        {"config": config, **kwargs})
+
+                def resolve_run(self, run_id):
+                    self_run = "i0_train"
+                    if run_id != self_run:
+                        raise FileNotFoundError(run_id)
+                    return jobdir, False
+
+                def scene_dates(self, _record):
+                    return {"2024-01-12"}
+
+            body = {"source_run_id": "i0_train", "source_group": "model",
+                    "partition": "validation", "validation_step": 397112}
+            _, _, _, reference = prepare_source(App(), body)
+            self.assertEqual(reference["source_stage"], "final")
+            self.assertEqual(reference["source_checkpoint_sha256"],
+                             status["checkpoint_sha256"])
+            self.assertEqual(reference["source_model_sha256"], status["model_sha256"])
+            self.assertEqual(len(source_rows(reference)), 72)
+            controls = refinement_defaults()
+            controls.update(methods=list(VARIABLE_BEAM_METHODS), repeats=1,
+                            action_mode="stochastic", action_seed=53001)
+            submitted = PowerRefinementApplication(App()).submit_saved({
+                **body, "request_id": "i0-endpoint-refine-fixture", "config": controls})
+            self.assertEqual(submitted["extra"]["scene_sets"]["validation"]["id"], record["id"])
+            self.assertEqual(submitted["config"]["training"]["total_steps"], 216)
+            with self.assertRaises(ValueError):
+                prepare_source(App(), {**body, "validation_step": 200000})
+            saved = json.loads(model_meta.read_text(encoding="utf-8"))
+            saved["env_step"] = 200000
+            _write(model_meta, saved)
+            with self.assertRaises(ValueError):
+                prepare_source(App(), body)
+
+    def test_completed_exact_400k_and_false_terminal_claims(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jobdir, _, _ = _fixture(Path(tmp), step=400000)
+            _complete_fixture(jobdir, due="env_steps", episodes=12000)
+
+            class App:
+                def resolve_run(self, _run_id):
+                    return jobdir, False
+
+                def scene_dates(self, _record):
+                    return {"2024-01-12"}
+
+            body = {"source_run_id": "i0_train", "source_group": "model",
+                    "partition": "validation", "validation_step": 400000}
+            self.assertEqual(prepare_source(App(), body)[3]["source_stage"], "final")
+            status_path = jobdir / "status.json"
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            for key, value in (("completed_due_to", "episode_cap"),
+                               ("episodes", 12500),
+                               ("checkpoint_sha256", "0" * 64)):
+                altered = dict(status)
+                altered[key] = value
+                _write(status_path, altered)
+                with self.assertRaises(ValueError, msg=key):
+                    prepare_source(App(), body)
+            _write(status_path, status)
+
     def test_bounded_pilot_72_cases_reach_saved_refinement_endpoint(self):
         with tempfile.TemporaryDirectory() as tmp:
             jobdir, summary_path, record = _fixture(Path(tmp))
