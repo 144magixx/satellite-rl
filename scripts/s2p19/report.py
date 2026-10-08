@@ -9,15 +9,11 @@ Usage::
         --output D:/paper/outputs/experiments/sac_routes_s2p19_20261007/analysis
 
 The optional source-index binds each controller task ID to a locally archived
-results.json and its SHA256. Formal paired reporting additionally needs
-SHA-pinned job.json, config.json, source_manifest.json, a scene_root containing
-the exact source NPZ bytes, and local case mirrors when case_path is advertised.
-Its `jobs` mapping uses controller task IDs as keys, with `run_id`,
-`results_path/results_sha256`, `job_path/job_sha256`,
-`config_path/config_sha256`, `source_manifest_path/source_manifest_sha256`,
-`status_path/status_sha256`, `scene_root`, and optional `case_root`.
-Optional `training.C0/C1/I0` entries bind original `episodes` and `evaluations`
-JSONL paths/SHA for curves. Each required SHA is checked before reading.
+results.json and its SHA256. New archives store large results, cases, scene
+NPZs and training JSONL as ZIP-member references; plain references from older
+archives remain valid. Identity JSON stays materialized. ZIP container/member
+SHA is checked while large results and logs stream; cases/scenes are checked
+when read. The full original ZIP volumes remain the archive of record.
 The full canonical scene content and frozen physics source/config/unit contract
 must agree across arms, even when ZIP container SHA differs. This script
 never connects to remote hosts, runs a policy, or calls an optimizer. Missing
@@ -30,13 +26,17 @@ from __future__ import annotations
 import argparse
 from collections import Counter, defaultdict
 import csv
+import gzip
 from functools import lru_cache
 import hashlib
+import io
 import json
 import math
 from pathlib import Path
 import random
 import statistics
+
+from . import archive_sources
 
 
 EXPERIMENT = "S2-P19"
@@ -128,7 +128,7 @@ class _JsonStream:
 
 def iter_saved_scenes(path, info):
     """Stream results.scenes without copying saved raw beams into analysis."""
-    with Path(path).open(encoding="utf-8") as stream:
+    with archive_sources.open_text_source(path) as stream:
         reader = _JsonStream(stream)
         reader.take("{")
         found = False
@@ -257,12 +257,20 @@ SCENE_ARRAYS = ("beam_location", "beam_G_Tx_max", "UE_G_Rx_max",
 @lru_cache(maxsize=2048)
 def scene_content(path):
     """Hash every physical input array, independent of NPZ ZIP metadata."""
+    return _scene_content(path)
+
+
+def scene_content_bytes(payload):
+    return _scene_content(io.BytesIO(payload))
+
+
+def _scene_content(source):
     import numpy as np
 
     h = hashlib.sha256()
-    with np.load(path, allow_pickle=False) as data:
+    with np.load(source, allow_pickle=False) as data:
         require(set(data.files) == set(SCENE_ARRAYS),
-                f"源场景数组字段不完整：{path}")
+                "源场景数组字段不完整")
         arrays = {}
         for key in sorted(SCENE_ARRAYS):
             array = np.asarray(data[key])
@@ -351,10 +359,17 @@ def source_for_task(task_id, run_id, sources, controller, manifest,
     manifest_task = (manifest.get("tasks") or {}).get(task_id)
     if manifest_task and manifest_task.get("run_id"):
         require(manifest_task["run_id"] == run_id, f"{task_id}: 运行清单run_id不匹配")
-    path = Path(spec["results_path"]).resolve()
-    if not path.is_file():
+    result_ref = spec.get("results_source") or {"path": spec.get("results_path"),
+                                                 "sha256": spec.get("results_sha256")}
+    require(result_ref.get("sha256") == spec.get("results_sha256"),
+            f"{task_id}: results来源SHA不匹配")
+    if "zip_path" in result_ref:
+        archived = archive_sources.member_ref(receipt_path, "job/results.json") if receipt_path else None
+        require(archived == result_ref, f"{task_id}: results ZIP成员与收据不匹配")
+    elif not result_ref.get("path") or not Path(result_ref["path"]).is_file():
         return None, "missing_saved_results"
-    require(digest(path) == spec["results_sha256"], f"{task_id}: results SHA不匹配")
+    elif digest(result_ref["path"]) != spec["results_sha256"]:
+        raise AuditError(f"{task_id}: results SHA不匹配")
     job_path = spec.get("job_path")
     if job_path:
         job = read_json(job_path)
@@ -390,7 +405,9 @@ def source_for_task(task_id, run_id, sources, controller, manifest,
                 f"{task_id}: 冻结源码清单SHA不匹配")
     else:
         source_manifest = {}
-    return {"spec": spec, "path": str(path), "sha256": digest(path),
+    return {"spec": spec, "source": result_ref,
+            "path": archive_sources.source_label(result_ref),
+            "sha256": spec["results_sha256"],
             "job": job, "status": status, "config": config,
             "physical_contract_sha256": _physical_contract(config, job, source_manifest),
             "controller": controller}, None
@@ -405,17 +422,28 @@ def _resolve_case(row, spec, *, task_id):
     if spec.get("case_root"):
         candidates.append(Path(spec["case_root"]) / declared.name)
     local = next((path for path in candidates if path.is_file()), None)
-    require(local is not None, f"{task_id}: 保存case缺失 {declared.name}")
-    actual_sha = digest(local)
+    if local is not None:
+        payload = local.read_bytes()
+        source_label = str(local)
+    else:
+        receipt = spec.get("archive_receipt_path")
+        matches = ([archive_sources.member_ref(receipt, prefix + declared.name)
+                    for prefix in ("job/cases/", "job/validation_cases/",
+                                   "job/power_cases/")] if receipt else [])
+        matches = [ref for ref in matches if ref is not None]
+        require(len(matches) == 1, f"{task_id}: 保存case缺失或成员名重复 {declared.name}")
+        payload = archive_sources.read_bytes_source(matches[0])
+        source_label = archive_sources.source_label(matches[0])
+    actual_sha = hashlib.sha256(payload).hexdigest()
     expected_sha = row.get("case_sha256")
     if expected_sha:
         require(actual_sha == expected_sha, f"{task_id}: case SHA不匹配 {declared.name}")
-    case = read_json(local)
+    case = json.loads(payload.decode("utf-8"))
     require(case is not None, f"{task_id}: case JSON缺失")
     # Legacy workbench cases are envelopes; I0 uses a direct case object.
     if isinstance(case.get("body"), dict):
         case = case["body"].get("result", case["body"])
-    return case, str(local), actual_sha
+    return case, source_label, actual_sha
 
 
 def _resolve_scene_source(row, data, spec, expected_sha, task_id):
@@ -433,7 +461,20 @@ def _resolve_scene_source(row, data, spec, expected_sha, task_id):
             candidates.append(Path(spec["scene_root"]) / original.name)
     local = next((path for path in candidates if path.is_file() and path.suffix == ".npz"), None)
     if local is None:
-        return None, None, None
+        receipt = spec.get("archive_receipt_path")
+        role = spec.get("scene_role")
+        if not receipt or not role:
+            return None, None, None
+        names = {Path(name).name for name in names if name}
+        refs = [archive_sources.member_ref(receipt, f"scenes/{role}/{name}")
+                for name in names]
+        refs = [ref for ref in refs if ref is not None]
+        require(len(refs) == 1, f"{task_id}: 源场景ZIP成员缺失或身份重复")
+        payload = archive_sources.read_bytes_source(refs[0])
+        require(hashlib.sha256(payload).hexdigest() == expected_sha,
+                f"{task_id}: 完整源NPZ字节SHA与逐景记录不符")
+        content_sha, static_sha = scene_content_bytes(payload)
+        return archive_sources.source_label(refs[0]), content_sha, static_sha
     require(digest(local) == expected_sha,
             f"{task_id}: 完整源NPZ字节SHA与逐景记录不符")
     content_sha, static_sha = scene_content(str(local.resolve()))
@@ -880,19 +921,11 @@ def training_curves(sources, manifest):
         if expected_run:
             require(spec.get("run_id") == expected_run,
                     f"{arm}: 训练曲线run_id与清单不符")
-        update_ref = spec.get("updates")
-        if update_ref is not None:
-            update_path = Path(update_ref["path"])
-            require(update_path.is_file() and digest(update_path) == update_ref["sha256"],
-                    f"{arm}: updates原始日志SHA不符")
         for kind in ("evaluations", "episodes"):
             ref = spec.get(kind)
             if ref is None:
                 continue
-            path = Path(ref["path"])
-            require(path.is_file() and digest(path) == ref["sha256"],
-                    f"{arm}: {kind}原始日志SHA不符")
-            with path.open(encoding="utf-8") as stream:
+            with archive_sources.open_text_source(ref) as stream:
                 for line_number, line in enumerate(stream, 1):
                     if not line.strip():
                         continue
@@ -996,12 +1029,9 @@ def learning_diagnostics(sources, manifest, output, arms=("C0", "C1", "I0"),
             expected_run = ((manifest.get("tasks") or {}).get(arm) or {}).get("run_id")
             require(not expected_run or spec.get("run_id") == expected_run,
                     f"{arm}: updates训练run_id与清单不符")
-            path = Path(ref["path"])
-            require(path.is_file() and digest(path) == ref["sha256"],
-                    f"{arm}: updates原始日志SHA不符")
             found = Counter()
             points = {metric: ([], []) for metric in LEARNING_FIELDS[arm]}
-            with path.open(encoding="utf-8") as stream:
+            with archive_sources.open_text_source(ref) as stream:
                 for line_number, line in enumerate(stream, 1):
                     if not line.strip():
                         continue
@@ -1164,8 +1194,9 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
     ports = plan_ports(plan)
     receipts = controller.get("tasks") or {}
     actions, jobs, missing = [], {}, []
-    beam_staging = output / "per_beam.csv.tmp"
-    beam_stream = beam_staging.open("w", encoding="utf-8-sig", newline="")
+    beam_staging = output / "per_beam.csv.gz.tmp"
+    beam_stream = gzip.open(beam_staging, "wt", encoding="utf-8-sig",
+                            newline="", compresslevel=6)
     beam_writer = csv.DictWriter(beam_stream, fieldnames=BEAM_COLUMNS, extrasaction="ignore")
     beam_writer.writeheader()
     beam_rows_written = 0
@@ -1219,7 +1250,7 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
             optimizer_budget = number(refinement.get("max_time_seconds"))
             method_counts = Counter()
             result_info = {}
-            for row in iter_saved_scenes(source["path"], result_info):
+            for row in iter_saved_scenes(source["source"], result_info):
                 method_counts[row.get("method", "unknown")] += 1
                 jobs[task_id]["saved_fallback_rows"] += bool((row.get("solver") or {}).get(
                     "fallback_used"))
@@ -1237,7 +1268,7 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                 require(metadata_run == run_id, f"{task_id}: 结果元数据run_id不匹配")
     finally:
         beam_stream.close()
-    beam_staging.replace(output / "per_beam.csv")
+    beam_staging.replace(output / "per_beam.csv.gz")
     scenes = collapse_repeats(actions)
     nload = by_n_load(scenes)
     curves = training_curves(sources, manifest)
@@ -1346,7 +1377,7 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                "timing": timing, "scene_repeat_timing": scene_timing,
                "optimizer_cap": optimizer_cap_stats(actions),
                "per_beam_rows": beam_rows_written,
-               "per_beam_path": str(output / "per_beam.csv"),
+               "per_beam_path": str(output / "per_beam.csv.gz"),
                "timing_interpretation": ((manifest.get("common_assessment") or {}).get("timing_limitations")
                   or "四端并发、设备变化、重启与监测空窗须据现场记录解释；不可据此宣称严格同条件耗时。"),
                "training_curves": curves,

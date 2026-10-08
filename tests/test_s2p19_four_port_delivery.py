@@ -93,6 +93,32 @@ class FourPortDeliveryTests(unittest.TestCase):
                 archive.archive_completed(port, run_id, "validation_greedy_direct")
             remote.assert_not_called()
 
+    def test_large_archive_bounds_are_explicit_and_compression_is_pinned(self):
+        port, run_id = 20418, "refine_sac_fixture"
+        detail = {"job": {"run_id": run_id, "experiment_id": "S2-P19",
+                          "archive_root": ops.instance(port)["archive"]},
+                  "status": {"run_id": run_id, "stage": "completed"}}
+        with patch.object(ops, "api", return_value=detail) as api:
+            for options in ({"max_gib": 257}, {"part_mib": 8193},
+                            {"compression_level": 10},
+                            {"remote_timeout_seconds": 59}):
+                with self.assertRaises(ValueError):
+                    archive.archive_completed(port, run_id, "baseline_random_B_20418",
+                                              **options)
+            api.assert_not_called()
+        with patch.object(ops, "api", return_value=detail), \
+                patch.object(ops, "remote_python", return_value={
+                    "exit_code": 1, "stderr": "fixture stop"}) as remote:
+            with self.assertRaisesRegex(RuntimeError, "fixture stop"):
+                archive.archive_completed(port, run_id, "baseline_random_B_20418",
+                                          max_gib=128, part_mib=4096,
+                                          compression_level=6,
+                                          remote_timeout_seconds=21600)
+            code = remote.call_args.args[0]
+            self.assertIn('"compression_level":6', code)
+            self.assertIn('"max_bytes":137438953472', code)
+            self.assertEqual(remote.call_args.kwargs["timeout"], 21600)
+
     def test_report_merges_five_legacy_and_seven_four_lane_tasks(self):
         legacy = {
             "V2_final_direct_20418": "run_v2_direct",

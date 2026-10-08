@@ -18,17 +18,18 @@ import re
 import shutil
 import zipfile
 
-from . import ops
+from . import archive_sources, ops
 
 
 DEFAULT_DESTINATION = ops.LOCAL / "remote_archive"
 SOURCE_INDEX = ops.LOCAL / "analysis" / "source_index.json"
 MAX_FILES = 40000
 MAX_VOLUMES = 200
-MIRROR_PREFIXES = ("job/cases/", "job/validation_cases/", "scenes/")
+MAX_INPUT_GIB = 256
+MAX_PART_MIB = 8192
+LOCAL_RESERVE_GIB = 8
+MIRROR_PREFIXES = ()
 MIRROR_NAMES = {"job/job.json", "job/config.json", "job/status.json",
-                "job/results.json", "job/episodes.jsonl", "job/evaluations.jsonl",
-                "job/updates.jsonl",
                 "source/source_manifest.json"}
 
 
@@ -37,6 +38,7 @@ import datetime,hashlib,json,os,pathlib,sys,zipfile
 
 request=json.loads(REQUEST_JSON)
 instance=request['port'];run_id=request['run_id'];part_bytes=request['part_bytes']
+compression_level=request['compression_level']
 base=pathlib.Path('/home/u2024110224/second_stage_satellite_rl/sac_routes_s2p19')/str(instance)
 archive=(base/'archive').resolve()
 jobdir=archive/'outputs/workbench/jobs'/run_id
@@ -117,13 +119,14 @@ ordered=[items[name] for name in sorted(items)]
 inventory=hashlib.sha256(json.dumps(
  [(x['member'],x['bytes'],x['sha256']) for x in ordered],
  separators=(',',':')).encode()).hexdigest()
-package_id=inventory[:20]+'_'+str(part_bytes)
+package_id=inventory[:20]+'_'+str(part_bytes)+(('_c'+str(compression_level)) if compression_level!=1 else '')
 destination=base/'ops/archive_s2p19'/run_id/package_id
 receipt_path=destination/'receipt.json'
 if destination.exists():
  if not receipt_path.is_file():raise RuntimeError('preserved incomplete package; refusing overwrite')
  receipt=json.loads(receipt_path.read_text(encoding='utf-8'))
- if receipt.get('inventory_sha256')!=inventory or receipt.get('run_id')!=run_id:
+ if (receipt.get('inventory_sha256')!=inventory or receipt.get('run_id')!=run_id or
+     receipt.get('compression_level',1)!=compression_level):
   raise RuntimeError('existing package identity differs')
  for volume in receipt['volumes']:
   if digest(destination/volume['name'])!=volume['sha256']:
@@ -145,7 +148,7 @@ for idx,group in enumerate(groups,1):
  name='part_'+str(idx).zfill(4)+'.zip'
  path=destination/name
  with zipfile.ZipFile(str(path)+'.part','w',compression=zipfile.ZIP_DEFLATED,
-                      compresslevel=1,allowZip64=True) as output:
+                      compresslevel=compression_level,allowZip64=True) as output:
   for item in group:output.write(item['remote_path'],item['member'])
  pathlib.Path(str(path)+'.part').replace(path)
  volumes.append({'name':name,'remote_path':str(path),'bytes':path.stat().st_size,
@@ -156,6 +159,7 @@ receipt={'schema':'s2p19.archive.v1','created_utc':datetime.datetime.now(datetim
          'job_git_commit':job['git_commit'],'job_kind':job['kind'],
          'source_manifest_sha256':digest(source/'source_manifest.json'),
          'inventory_sha256':inventory,'total_input_bytes':total,'member_count':len(ordered),
+         'compression_level':compression_level,
          'scene_roles':scene_roles,'members':ordered,'volumes':volumes,
          'remote_package_directory':str(destination)}
 with (destination/'receipt.json.part').open('w',encoding='utf-8') as stream:
@@ -237,8 +241,15 @@ def source_spec(task_id: str, run_id: str, mirror: Path, receipt: dict) -> tuple
 
     def bound(name: str):
         value = members.get(name)
-        return ({"path": str(mirror / safe_member(name)), "sha256": value["sha256"]}
-                if value is not None else None)
+        if value is None:
+            return None
+        path = mirror / safe_member(name)
+        if path.is_file():
+            return {"path": str(path), "sha256": value["sha256"]}
+        ref = archive_sources.member_ref(mirror.parent / "receipt.json", name)
+        if ref is None or ref["sha256"] != value["sha256"]:
+            raise ValueError("archived ZIP member reference missing or differs: " + name)
+        return ref
 
     job = bound("job/job.json")
     config = bound("job/config.json")
@@ -253,7 +264,8 @@ def source_spec(task_id: str, run_id: str, mirror: Path, receipt: dict) -> tuple
     spec = None
     if results:
         spec = {"run_id": run_id, "port": receipt.get("port"),
-                "results_path": results["path"],
+                "results_source": results,
+                "results_path": results.get("path"),
                 "results_sha256": results["sha256"],
                 "job_path": job["path"], "job_sha256": job["sha256"],
                 "config_path": config["path"], "config_sha256": config["sha256"],
@@ -261,6 +273,7 @@ def source_spec(task_id: str, run_id: str, mirror: Path, receipt: dict) -> tuple
                 "source_manifest_path": manifest["path"],
                 "source_manifest_sha256": manifest["sha256"],
                 "scene_root": str(mirror / "scenes" / primary) if primary else None,
+                "scene_role": primary,
                 "case_root": str(mirror / "job" / "cases") if (mirror / "job" / "cases").is_dir() else None,
                 "archive_receipt_path": str(mirror.parent / "receipt.json"),
                 "archive_inventory_sha256": receipt["inventory_sha256"]}
@@ -383,12 +396,16 @@ def _enrich_legacy_port(task_id: str, prior: dict, incoming: dict) -> dict:
 def archive_completed(port: int, run_id: str, task_id: str, *,
                       destination: Path = DEFAULT_DESTINATION,
                       source_index: Path = SOURCE_INDEX,
-                      part_mib: int = 256, max_gib: int = 20) -> dict:
+                      part_mib: int = 256, max_gib: int = 20,
+                      compression_level: int = 1,
+                      remote_timeout_seconds: int = 1200) -> dict:
     tagged_port = re.search(r"_(20418|20424|20473|20474)$", task_id)
     if (port not in ops.SSH_PORTS or not re.fullmatch(r"[a-z0-9_]+", run_id) or
             not re.fullmatch(r"[A-Za-z0-9_]+", task_id) or
             (tagged_port is not None and int(tagged_port.group(1)) != port) or
-            not 1 <= part_mib <= 1024 or not 1 <= max_gib <= 64):
+            not 1 <= part_mib <= MAX_PART_MIB or not 1 <= max_gib <= MAX_INPUT_GIB or
+            not 1 <= compression_level <= 9 or
+            not 60 <= remote_timeout_seconds <= 43200):
         raise ValueError("S2-P19 archive scope or bounds invalid")
     detail = ops.api(port, "/api/runs/" + run_id)
     job, status = detail.get("job") or {}, detail.get("status") or {}
@@ -399,14 +416,14 @@ def archive_completed(port: int, run_id: str, task_id: str, *,
         raise ValueError("only a completed same-instance S2-P19 workbench job may be archived")
     request = {"port": port, "run_id": run_id, "part_bytes": part_mib * 1024 ** 2,
                "max_bytes": max_gib * 1024 ** 3, "max_files": MAX_FILES,
-               "max_volumes": MAX_VOLUMES}
+               "max_volumes": MAX_VOLUMES, "compression_level": compression_level}
     code = "REQUEST_JSON=" + repr(json.dumps(request, separators=(",", ":"))) + "\n" + REMOTE_BUILD
-    response = ops.remote_python(code, port, timeout=1200)
+    response = ops.remote_python(code, port, timeout=remote_timeout_seconds)
     if response["exit_code"]:
         raise RuntimeError("remote archive copy failed: " + response["stderr"][-1800:])
     handoff = json.loads(response["stdout"].splitlines()[-1])
     package_id = Path(handoff["receipt_path"]).parent.name
-    if not re.fullmatch(r"[0-9a-f]{20}_[0-9]+", package_id):
+    if not re.fullmatch(r"[0-9a-f]{20}_[0-9]+(?:_c[1-9])?", package_id):
         raise ValueError("remote archive package identity invalid")
     local = Path(destination) / str(port) / run_id / package_id
     local.mkdir(parents=True, exist_ok=True)
@@ -431,6 +448,15 @@ def archive_completed(port: int, run_id: str, task_id: str, *,
                     receipt.get("total_input_bytes", 0) > max_gib * 1024 ** 3 or
                     len(receipt.get("volumes") or []) > MAX_VOLUMES):
                 raise ValueError("remote archive receipt scope differs")
+            if receipt.get("compression_level", 1) != compression_level:
+                raise ValueError("remote archive compression identity differs")
+            missing_bytes = sum(volume["bytes"] for volume in receipt["volumes"]
+                                if not ((local / safe_member(volume["name"])).is_file() and
+                                        (local / safe_member(volume["name"])).stat().st_size == volume["bytes"] and
+                                        digest(local / safe_member(volume["name"])) == volume["sha256"]))
+            free_bytes = shutil.disk_usage(local).free
+            if free_bytes < missing_bytes + LOCAL_RESERVE_GIB * 1024 ** 3:
+                raise RuntimeError("local disk lacks compressed ZIP bytes plus reserve")
             members = {item["member"]: item for item in receipt["members"]}
             if len(members) != receipt["member_count"]:
                 raise ValueError("archive receipt has duplicate members")
@@ -490,11 +516,15 @@ def main() -> None:
     parser.add_argument("--source-index", type=Path, default=SOURCE_INDEX)
     parser.add_argument("--part-mib", type=int, default=256)
     parser.add_argument("--max-gib", type=int, default=20)
+    parser.add_argument("--compression-level", type=int, default=1)
+    parser.add_argument("--remote-timeout-seconds", type=int, default=1200)
     args = parser.parse_args()
     print(json.dumps(archive_completed(args.port, args.run_id, args.task_id,
                                        destination=args.destination,
                                        source_index=args.source_index,
-                                       part_mib=args.part_mib, max_gib=args.max_gib),
+                                       part_mib=args.part_mib, max_gib=args.max_gib,
+                                       compression_level=args.compression_level,
+                                       remote_timeout_seconds=args.remote_timeout_seconds),
                      ensure_ascii=False))
 
 
