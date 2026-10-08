@@ -10,7 +10,8 @@ import numpy as np
 from scripts.s2p19.report import (N_VALUES, LOADS, AuditError, _beam_audit,
                                    _physical_contract,
                                    build, collapse_repeats, iter_saved_scenes, mother_pair,
-                                   normalize_result, scene_content, task_role,
+                                   normalize_result, optimizer_cap_stats,
+                                   verified_beam_rows, scene_content, task_role,
                                    training_curves)
 
 
@@ -39,6 +40,54 @@ def action(role, stage, scene_sha, mother, n, load, repeat, si):
 
 
 class S2P19ReportTests(unittest.TestCase):
+    def test_optimizer_time_hit_uses_explicit_reason_only(self):
+        rows = [{"role": "C0", "stage": "final_B", "solver_termination": reason,
+                 "solver_elapsed_seconds": elapsed,
+                 "optimizer_time_budget_seconds": 30.0}
+                for reason, elapsed in (("time_limit", 29.8),
+                                        ("phase_reserve", 29.9),
+                                        ("iteration_limit", 12.0),
+                                        ("failed_attempt_fallback_to_A", None),
+                                        (None, None))]
+        rows.append({"role": "C0", "stage": "direct", "solver_termination": None})
+        stats = optimizer_cap_stats(rows)
+        final = stats["C0/final_B"]
+        self.assertEqual(final["eligible_optimizer_actions"], 5)
+        self.assertEqual(final["explicit_time_limit_count"], 1)
+        self.assertEqual(final["known_other_termination_count"], 3)
+        self.assertEqual(final["unknown_termination_count"], 1)
+        self.assertEqual(final["near_95pct_budget_count"], 2)
+        self.assertEqual(final["near_budget_known_denominator"], 3)
+        self.assertIsNone(stats["C0/direct"]["explicit_time_limit_fraction"])
+
+    def test_verified_beam_rows_preserve_identity_and_uncapped_ratio(self):
+        beams = [{"beam_id": 0, "original_index": 7, "group": 0,
+                  "lat": 45.0, "lon": 10.0, "required_bps": 100.0,
+                  "capacity_bps": 120.0, "sgm": 0.7, "power_w": 10.0,
+                  "freq": 0, "slots": 2},
+                 {"beam_id": 1, "original_index": 9, "group": 1,
+                  "lat": 46.0, "lon": 11.0, "required_bps": 100.0,
+                  "capacity_bps": 80.0, "sgm": 0.5, "power_w": 15.0,
+                  "freq": 0, "slots": 3}]
+        audit = _beam_audit(beams, 2, {"final_si_mean": 0.9,
+                                       "final_sgm_mean": 0.6}, "fixture")
+        self.assertTrue(audit["available"])
+        action_row = {"beam_audit_available": True, "task_id": "C0_final_direct_20473",
+                      "run_id": "run_c0", "role": "C0", "stage": "direct",
+                      "scene_sha256": "a" * 64, "mother_scene_id": "mother_1",
+                      "beam_count": 2, "load_multiplier": 0.75,
+                      "repeat_index": 1, "case_path": "saved/case.json",
+                      "case_sha256": "b" * 64, "result_path_sha256": "c" * 64}
+        saved = list(verified_beam_rows(action_row, beams))
+        self.assertEqual(len(saved), 2)
+        self.assertEqual(saved[0]["original_index"], 7)
+        self.assertEqual(saved[0]["capacity_demand_ratio"], 1.2)
+        self.assertEqual(saved[0]["si"], 1.0)
+        self.assertEqual(saved[0]["effective_carried_bps"], 100.0)
+        self.assertEqual(saved[1]["capacity_demand_ratio"], 0.8)
+        self.assertEqual(saved[1]["effective_carried_bps"], 80.0)
+        self.assertEqual(saved[1]["rate_unit"], "bit/s")
+
     def test_task_role_and_full_beam_audit(self):
         self.assertEqual(task_role("baseline_random_B_20418"), ("random", "final_B"))
         self.assertEqual(task_role("I0_final_direct_20418"), ("I0", "direct"))
@@ -210,6 +259,9 @@ class S2P19ReportTests(unittest.TestCase):
             self.assertFalse(summary["formal_ready"])
             self.assertEqual(summary["per_action_count"], 1)
             self.assertEqual(summary["per_scene_count"], 1)
+            self.assertEqual(summary["per_beam_rows"], 50)
+            self.assertEqual(len((root / "analysis/per_beam.csv").read_text(
+                encoding="utf-8-sig").splitlines()), 51)
             self.assertEqual(summary["jobs"][task_id]["run_id"], "evaluate_saved")
             sources["jobs"][task_id]["results_sha256"] = "0" * 64
             with self.assertRaises(AuditError):

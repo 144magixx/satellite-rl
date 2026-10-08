@@ -546,8 +546,80 @@ def _timing(row, metrics):
                     metrics.get("total_seconds", row.get("initial_allocation_seconds"))))}
 
 
+BEAM_COLUMNS = ("task_id", "run_id", "role", "stage", "scene_sha256",
+                "source_npz_local_path", "scene_content_sha256",
+                "physical_contract_sha256", "mother_source_sha256",
+                "selected_time_utc", "source_evaluation_run_id",
+                "mother_scene_id", "beam_count", "load_multiplier", "repeat_index",
+                "beam_id", "original_index", "group", "lat", "lon",
+                "required_bps", "capacity_bps", "effective_carried_bps",
+                "capacity_demand_ratio", "si", "sgm", "power_w", "freq", "slots",
+                "rate_unit", "power_unit", "case_path", "case_sha256",
+                "result_path_sha256")
+
+
+def verified_beam_rows(action, beams):
+    """Emit every audited target beam; SI is capped, rho is not."""
+    require(action["beam_audit_available"], "逐束原始记录未经完整审计")
+    for beam in beams:
+        demand = number(beam["required_bps"])
+        capacity = number(beam.get("capacity_bps", beam.get("rate_bps")))
+        rho = capacity / demand
+        yield {**{key: action.get(key) for key in (
+                   "task_id", "run_id", "role", "stage", "scene_sha256",
+                   "source_npz_local_path", "scene_content_sha256",
+                   "physical_contract_sha256", "mother_source_sha256",
+                   "selected_time_utc", "source_evaluation_run_id",
+                   "mother_scene_id", "beam_count", "load_multiplier", "repeat_index",
+                   "case_path", "case_sha256", "result_path_sha256")},
+               **{key: beam.get(key) for key in (
+                   "beam_id", "original_index", "group", "lat", "lon",
+                   "power_w", "freq", "slots", "sgm")},
+               "required_bps": demand, "capacity_bps": capacity,
+               "effective_carried_bps": min(capacity, demand),
+               "capacity_demand_ratio": rho, "si": min(rho, 1.0),
+               "rate_unit": "bit/s", "power_unit": "W"}
+
+
+KNOWN_NON_TIME_TERMINATIONS = {"completed", "stop_requested", "evaluation_limit",
+                               "phase_reserve", "si_stall", "no_active_beams",
+                               "trust_region_small", "surrogate_stationary_direction",
+                               "iteration_limit", "failed_attempt_fallback_to_A"}
+
+
+def optimizer_cap_stats(actions):
+    """Count exact solver time stops; proximity to budget is separate evidence."""
+    grouped = defaultdict(list)
+    for row in actions:
+        grouped[(row["role"], row["stage"])].append(row)
+    result = {}
+    for (role, stage), rows in sorted(grouped.items()):
+        eligible = rows if stage == "final_B" else []
+        hits = sum(row.get("solver_termination") == "time_limit" for row in eligible)
+        known_other = sum(row.get("solver_termination") in KNOWN_NON_TIME_TERMINATIONS
+                          for row in eligible)
+        unknown = len(eligible) - hits - known_other
+        budgets = [(number(row.get("solver_elapsed_seconds")),
+                    number(row.get("optimizer_time_budget_seconds"))) for row in eligible]
+        near = sum(elapsed is not None and limit is not None and limit > 0
+                   and elapsed >= 0.95 * limit for elapsed, limit in budgets)
+        near_known = sum(elapsed is not None and limit is not None and limit > 0
+                         for elapsed, limit in budgets)
+        result[f"{role}/{stage}"] = {
+            "eligible_optimizer_actions": len(eligible),
+            "explicit_time_limit_count": hits,
+            "known_other_termination_count": known_other,
+            "unknown_termination_count": unknown,
+            "explicit_time_limit_fraction": hits / len(eligible) if eligible else None,
+            "near_95pct_budget_count": near,
+            "near_budget_known_denominator": near_known,
+            "near_budget_fraction": near / near_known if near_known else None,
+            "near_budget_is_not_time_limit": True}
+    return result
+
+
 def normalize_result(task_id, role, stage, row, spec, run_id, result_sha,
-                     physical_contract_sha256=None):
+                     physical_contract_sha256=None, beam_sink=None):
     if stage == "final_B" and row.get("method") != "sca_si_lp":
         return None
     if stage == "direct" and role == "baseline":
@@ -588,7 +660,7 @@ def normalize_result(task_id, role, stage, row, spec, run_id, result_sha,
     if source_static_sha and audit.get("scene_semantic_sha256"):
         require(source_static_sha == audit["scene_semantic_sha256"],
                 f"{task_id}: 保存逐束静态身份与完整源NPZ不一致")
-    return {"task_id": task_id, "run_id": run_id, "role": role,
+    action = {"task_id": task_id, "run_id": run_id, "role": role,
             "stage": stage, "method": row.get("method", role),
             "scene_sha256": scene_sha, "mother_scene_id": mother,
             "source_npz_local_path": scene_path,
@@ -618,8 +690,12 @@ def normalize_result(task_id, role, stage, row, spec, run_id, result_sha,
             "zero_capacity_count": audit.get("zero_capacity_count"),
             "fallback_used": (row.get("solver") or {}).get("fallback_used"),
             "solver_termination": (row.get("solver") or {}).get("termination_reason"),
+            "solver_elapsed_seconds": number((row.get("solver") or {}).get("elapsed_seconds")),
             "missing_exact_cost": (row.get("failed_attempt_fallback") or {}).get(
                 "original_attempt_exact_cost_unknown"), **_timing(row, metrics)}
+    if beam_sink is not None and action["beam_audit_available"]:
+        beam_sink(action, beams)
+    return action
 
 
 def collapse_repeats(actions):
@@ -947,6 +1023,9 @@ def _material(summary):
     for arm, training in summary["training_status"].items():
         if training["run_id"]:
             lines.append(f"{arm}训练：{training.get('env_step')}/{training.get('budget_env_steps')}步，阶段{training.get('stage')}，终止原因{training.get('completed_due_to') or training.get('stop_reason') or '未记录'}。")
+    for group, cap in summary["optimizer_cap"].items():
+        if cap["eligible_optimizer_actions"]:
+            lines.append(f"{group}优化器明确time_limit：{cap['explicit_time_limit_count']}/{cap['eligible_optimizer_actions']}；终止原因未知{cap['unknown_termination_count']}，接近95%预算{cap['near_95pct_budget_count']}/{cap['near_budget_known_denominator']}（仅耗时标记，不算超时）。")
     lines += ["", "候选生成、初解、物理准备、优化器、核验及重复动作合计时间按保存字段分段；缺失精确成本维持null，不补零。并发条件若任务记录没有现场证据则列为未知，不做跨臂速度排名。",
               "本轮计时条件限制：" + summary["timing_interpretation"], ""]
     return "\n".join(lines)
@@ -963,61 +1042,80 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
     ports = plan_ports(plan)
     receipts = controller.get("tasks") or {}
     actions, jobs, missing = [], {}, []
-    for task_id, (role, stage) in planned.items():
-        receipt = receipts.get(task_id) or {}
-        legacy_run = (plan.get("completed_legacy") or {}).get(task_id)
-        if legacy_run:
-            require(not receipt.get("run_id") or receipt["run_id"] == legacy_run,
-                    f"{task_id}: 历史完成任务与控制器run_id不匹配")
-            receipt = {"run_id": legacy_run, "state": "completed"}
-        run_id = receipt.get("run_id")
-        planned_run = next((item.get("adopted_run_id") for item in plan.get("tasks", [])
-                            if item["id"] == task_id), None)
-        if planned_run and run_id:
-            require(run_id == planned_run, f"{task_id}: 实际run_id与四端计划不匹配")
-        if receipt.get("state") != "completed" or not run_id:
-            missing.append(f"{task_id}: controller尚未完成")
-            continue
-        source, reason = source_for_task(
-            task_id, run_id, sources, receipt, manifest, ports[task_id],
-            require_port_evidence=bool(plan.get("completed_legacy")) and not legacy_run)
-        if source is None:
-            missing.append(f"{task_id}: {reason}")
-            continue
-        jobs[task_id] = {"run_id": run_id, "results_path": source["path"],
-                         "results_sha256": source["sha256"],
-                         "physical_contract_sha256": source["physical_contract_sha256"],
-                         "saved_method_counts": {},
-                         "saved_fallback_rows": 0,
-                         "unknown_exact_cost_rows": 0,
-                         "port": ports[task_id],
-                         "concurrency": source["status"].get("concurrency") or
-                         source["job"].get("concurrency"),
-                         "concurrent_run_ids": source["status"].get("concurrent_run_ids"),
-                         "concurrency_observed_at": source["status"].get("concurrency_observed_at"),
-                         "thread_count": source["status"].get("threads") or
-                         source["job"].get("threads"),
-                         "device": source["status"].get("gpu") or
-                         (source["status"].get("preflight") or {}).get("gpu") or
-                         source["job"].get("device"),
-                         "software_preflight": source["status"].get("preflight")}
-        method_counts = Counter()
-        result_info = {}
-        for row in iter_saved_scenes(source["path"], result_info):
-            method_counts[row.get("method", "unknown")] += 1
-            jobs[task_id]["saved_fallback_rows"] += bool((row.get("solver") or {}).get(
-                "fallback_used"))
-            jobs[task_id]["unknown_exact_cost_rows"] += bool((row.get(
-                "failed_attempt_fallback") or {}).get("original_attempt_exact_cost_unknown"))
-            normalized = normalize_result(task_id, role, stage, row,
-                                          source["spec"], run_id, source["sha256"],
-                                          source["physical_contract_sha256"])
-            if normalized is not None:
-                actions.append(normalized)
-        jobs[task_id]["saved_method_counts"] = dict(method_counts)
-        metadata_run = (result_info.get("metadata") or {}).get("run_id")
-        if metadata_run is not None:
-            require(metadata_run == run_id, f"{task_id}: 结果元数据run_id不匹配")
+    beam_staging = output / "per_beam.csv.tmp"
+    beam_stream = beam_staging.open("w", encoding="utf-8-sig", newline="")
+    beam_writer = csv.DictWriter(beam_stream, fieldnames=BEAM_COLUMNS, extrasaction="ignore")
+    beam_writer.writeheader()
+    beam_rows_written = 0
+
+    def save_beams(action, beams):
+        nonlocal beam_rows_written
+        for beam_row in verified_beam_rows(action, beams):
+            beam_writer.writerow(beam_row)
+            beam_rows_written += 1
+
+    try:
+        for task_id, (role, stage) in planned.items():
+            receipt = receipts.get(task_id) or {}
+            legacy_run = (plan.get("completed_legacy") or {}).get(task_id)
+            if legacy_run:
+                require(not receipt.get("run_id") or receipt["run_id"] == legacy_run,
+                        f"{task_id}: 历史完成任务与控制器run_id不匹配")
+                receipt = {"run_id": legacy_run, "state": "completed"}
+            run_id = receipt.get("run_id")
+            planned_run = next((item.get("adopted_run_id") for item in plan.get("tasks", [])
+                                if item["id"] == task_id), None)
+            if planned_run and run_id:
+                require(run_id == planned_run, f"{task_id}: 实际run_id与四端计划不匹配")
+            if receipt.get("state") != "completed" or not run_id:
+                missing.append(f"{task_id}: controller尚未完成")
+                continue
+            source, reason = source_for_task(
+                task_id, run_id, sources, receipt, manifest, ports[task_id],
+                require_port_evidence=bool(plan.get("completed_legacy")) and not legacy_run)
+            if source is None:
+                missing.append(f"{task_id}: {reason}")
+                continue
+            jobs[task_id] = {"run_id": run_id, "results_path": source["path"],
+                             "results_sha256": source["sha256"],
+                             "physical_contract_sha256": source["physical_contract_sha256"],
+                             "saved_method_counts": {},
+                             "saved_fallback_rows": 0,
+                             "unknown_exact_cost_rows": 0,
+                             "port": ports[task_id],
+                             "concurrency": source["status"].get("concurrency") or
+                             source["job"].get("concurrency"),
+                             "concurrent_run_ids": source["status"].get("concurrent_run_ids"),
+                             "concurrency_observed_at": source["status"].get("concurrency_observed_at"),
+                             "thread_count": source["status"].get("threads") or
+                             source["job"].get("threads"),
+                             "device": source["status"].get("gpu") or
+                             (source["status"].get("preflight") or {}).get("gpu") or
+                             source["job"].get("device"),
+                             "software_preflight": source["status"].get("preflight")}
+            refinement = (source["config"].get("power_refinement") or {})
+            optimizer_budget = number(refinement.get("max_time_seconds"))
+            method_counts = Counter()
+            result_info = {}
+            for row in iter_saved_scenes(source["path"], result_info):
+                method_counts[row.get("method", "unknown")] += 1
+                jobs[task_id]["saved_fallback_rows"] += bool((row.get("solver") or {}).get(
+                    "fallback_used"))
+                jobs[task_id]["unknown_exact_cost_rows"] += bool((row.get(
+                    "failed_attempt_fallback") or {}).get("original_attempt_exact_cost_unknown"))
+                normalized = normalize_result(task_id, role, stage, row,
+                                              source["spec"], run_id, source["sha256"],
+                                              source["physical_contract_sha256"], save_beams)
+                if normalized is not None:
+                    normalized["optimizer_time_budget_seconds"] = optimizer_budget
+                    actions.append(normalized)
+            jobs[task_id]["saved_method_counts"] = dict(method_counts)
+            metadata_run = (result_info.get("metadata") or {}).get("run_id")
+            if metadata_run is not None:
+                require(metadata_run == run_id, f"{task_id}: 结果元数据run_id不匹配")
+    finally:
+        beam_stream.close()
+    beam_staging.replace(output / "per_beam.csv")
     scenes = collapse_repeats(actions)
     nload = by_n_load(scenes)
     curves = training_curves(sources, manifest)
@@ -1117,6 +1215,9 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                "per_action_count": len(actions), "per_scene_count": len(scenes),
                "by_n_load": nload, "comparisons": comparisons,
                "timing": timing, "scene_repeat_timing": scene_timing,
+               "optimizer_cap": optimizer_cap_stats(actions),
+               "per_beam_rows": beam_rows_written,
+               "per_beam_path": str(output / "per_beam.csv"),
                "timing_interpretation": ((manifest.get("common_assessment") or {}).get("timing_limitations")
                   or "四端并发、设备变化、重启与监测空窗须据现场记录解释；不可据此宣称严格同条件耗时。"),
                "training_curves": curves,
@@ -1135,7 +1236,8 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                "rho_max", "rho_below_08_fraction", "rho_below_1_fraction",
                    "resource_legal", "zero_capacity_count",
                    "beam_audit_available", "beam_audit_missing_reason", "fallback_used",
-                   "solver_termination", "missing_exact_cost", "initial_seconds",
+                   "solver_termination", "solver_elapsed_seconds",
+                   "optimizer_time_budget_seconds", "missing_exact_cost", "initial_seconds",
                    "candidate_seconds", "physical_probe_seconds", "physics_setup_seconds",
                    "optimizer_seconds", "verification_seconds", "total_seconds")
     scene_cols = tuple(scenes[0]) if scenes else ("role", "stage", "scene_sha256",
@@ -1144,6 +1246,14 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
     nload_cols = tuple(nload[0]) if nload else ("role", "stage", "beam_count",
                                                "load_multiplier", "scene_count")
     write_csv(output / "per_action.csv", actions, action_cols)
+    write_csv(output / "optimizer_cap.csv",
+              [{"role": key.split("/")[0], "stage": key.split("/")[1], **value}
+               for key, value in summary["optimizer_cap"].items()],
+              ("role", "stage", "eligible_optimizer_actions",
+               "explicit_time_limit_count", "known_other_termination_count",
+               "unknown_termination_count", "explicit_time_limit_fraction",
+               "near_95pct_budget_count", "near_budget_known_denominator",
+               "near_budget_fraction", "near_budget_is_not_time_limit"))
     write_csv(output / "per_scene.csv", scenes, scene_cols)
     write_csv(output / "by_n_load.csv", nload, nload_cols)
     write_csv(output / "training_curves.csv", curves,
