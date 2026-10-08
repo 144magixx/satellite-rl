@@ -542,6 +542,9 @@ def _timing(row, metrics):
             "physics_setup_seconds": number(timing.get("physics_setup_seconds")),
             "optimizer_seconds": number(timing.get("optimizer_wall_seconds")),
             "verification_seconds": number(timing.get("verification_seconds")),
+            "reference_optimizer_seconds": number(timing.get("reference_optimizer_wall_seconds")),
+            "reference_verification_seconds": number(timing.get("reference_verification_seconds")),
+            "reference_total_seconds": number(timing.get("reference_total_seconds")),
             "total_seconds": number(timing.get("total_pipeline_seconds",
                     metrics.get("total_seconds", row.get("initial_allocation_seconds"))))}
 
@@ -599,6 +602,7 @@ def optimizer_cap_stats(actions):
         known_other = sum(row.get("solver_termination") in KNOWN_NON_TIME_TERMINATIONS
                           for row in eligible)
         unknown = len(eligible) - hits - known_other
+        known = hits + known_other
         budgets = [(number(row.get("solver_elapsed_seconds")),
                     number(row.get("optimizer_time_budget_seconds"))) for row in eligible]
         near = sum(elapsed is not None and limit is not None and limit > 0
@@ -610,7 +614,9 @@ def optimizer_cap_stats(actions):
             "explicit_time_limit_count": hits,
             "known_other_termination_count": known_other,
             "unknown_termination_count": unknown,
-            "explicit_time_limit_fraction": hits / len(eligible) if eligible else None,
+            "known_termination_denominator": known,
+            "known_termination_coverage": known / len(eligible) if eligible else None,
+            "explicit_time_limit_fraction": hits / known if known else None,
             "near_95pct_budget_count": near,
             "near_budget_known_denominator": near_known,
             "near_budget_fraction": near / near_known if near_known else None,
@@ -708,6 +714,8 @@ def collapse_repeats(actions):
                "rho_below_08_fraction", "rho_below_1_fraction")
     timing = ("initial_seconds", "candidate_seconds", "physical_probe_seconds",
               "physics_setup_seconds", "optimizer_seconds", "verification_seconds",
+              "reference_optimizer_seconds", "reference_verification_seconds",
+              "reference_total_seconds",
               "total_seconds")
     for (role, stage, scene_sha), rows in sorted(groups.items()):
         first = rows[0]
@@ -741,7 +749,7 @@ def collapse_repeats(actions):
         for key in numeric:
             item[key] = mean(row[key] for row in rows)
         for key in timing:
-            values = [row[key] for row in rows]
+            values = [row.get(key) for row in rows]
             item[key + "_mean_per_action"] = mean(values)
             item[key + "_sum_repeats"] = sum(values) if all(value is not None for value in values) else None
         result.append(item)
@@ -928,6 +936,120 @@ def training_curves(sources, manifest):
                                          row["line_number"]))
 
 
+LEARNING_FIELDS = {
+    "C0": {"actor_loss": "actor_loss", "critic1_loss": "critic_1_loss",
+           "critic2_loss": "critic_2_loss", "alpha": "alpha"},
+    "C1": {"actor_loss": "actor_loss", "critic1_loss": "critic_1_loss",
+           "critic2_loss": "critic_2_loss", "alpha": "alpha"},
+    "I0": {"actor_loss": "actor_loss", "critic1_loss": "critic1_loss",
+           "critic2_loss": "critic2_loss", "alpha": "alpha"},
+}
+
+
+LEARNING_COLUMNS = ("arm", "run_id", "seed", "step_unit", "env_step",
+                    "update_step", "metric", "value", "source_field",
+                    "source_sha256", "line_number", "series_kind")
+
+
+def _learning_plot(arm, points, output):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    folder = output / "figures"
+    folder.mkdir(exist_ok=True)
+    fig, axes = plt.subplots(1, 3, figsize=(13, 3.8))
+    groups = (("actor_loss",), ("critic1_loss", "critic2_loss"), ("alpha",))
+    labels = ("Actor loss (raw)", "Critic loss (raw)", "Alpha (raw)")
+    unit = "Beam decisions" if arm in ("C0", "C1") else "Macro decisions"
+    for ax, metrics, ylabel in zip(axes, groups, labels):
+        for metric in metrics:
+            x, y = points[metric]
+            ax.plot(x, y, linewidth=0.65, alpha=0.65, label=metric)
+        ax.set(xlabel=unit, ylabel=ylabel)
+        ax.grid(alpha=0.25)
+        ax.legend(fontsize=7)
+    fig.suptitle(f"{arm} | seed 51001 | raw updates | arm-specific scale")
+    fig.tight_layout()
+    path = folder / f"{arm.lower()}_learning_raw.png"
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+    return str(path)
+
+
+def learning_diagnostics(sources, manifest, output, arms=("C0", "C1", "I0"),
+                         *, render_plots=False):
+    """Stream raw SHA-pinned diagnostics; keep only one arm's plot arrays."""
+    output = Path(output)
+    staging = output / "learning_diagnostics.csv.tmp"
+    missing, figures, counts = [], [], {}
+    handle = staging.open("w", encoding="utf-8-sig", newline="")
+    writer = csv.DictWriter(handle, fieldnames=LEARNING_COLUMNS)
+    writer.writeheader()
+    try:
+        for arm in arms:
+            spec = (sources.get("training") or {}).get(arm) or {}
+            ref = spec.get("updates")
+            if ref is None:
+                missing.append(f"{arm}: updates学习诊断来源缺失")
+                continue
+            expected_run = ((manifest.get("tasks") or {}).get(arm) or {}).get("run_id")
+            require(not expected_run or spec.get("run_id") == expected_run,
+                    f"{arm}: updates训练run_id与清单不符")
+            path = Path(ref["path"])
+            require(path.is_file() and digest(path) == ref["sha256"],
+                    f"{arm}: updates原始日志SHA不符")
+            found = Counter()
+            points = {metric: ([], []) for metric in LEARNING_FIELDS[arm]}
+            with path.open(encoding="utf-8") as stream:
+                for line_number, line in enumerate(stream, 1):
+                    if not line.strip():
+                        continue
+                    item = json.loads(line)
+                    step = item.get("env_step")
+                    require(type(step) is int and step >= 0,
+                            f"{arm}: updates:{line_number} 缺实际交互步")
+                    values = item.get("values") if arm in ("C0", "C1") else item
+                    require(isinstance(values, dict),
+                            f"{arm}: updates:{line_number} 诊断结构错误")
+                    update_step = (item.get("update_step") if arm in ("C0", "C1")
+                                   else item.get("updates"))
+                    if update_step is not None:
+                        require(type(update_step) is int and update_step >= 0,
+                                f"{arm}: updates:{line_number} 更新编号无效")
+                    for metric, source_key in LEARNING_FIELDS[arm].items():
+                        value = number(values.get(source_key))
+                        if value is None:
+                            continue
+                        found[metric] += 1
+                        writer.writerow({"arm": arm, "run_id": spec.get("run_id"),
+                            "seed": 51001,
+                            "step_unit": "beam_decision" if arm in ("C0", "C1") else "macro_decision",
+                            "env_step": step, "update_step": update_step,
+                            "metric": metric, "value": value,
+                            "source_field": ("values." if arm in ("C0", "C1") else "") + source_key,
+                            "source_sha256": ref["sha256"], "line_number": line_number,
+                            "series_kind": "raw"})
+                        if render_plots:
+                            points[metric][0].append(step)
+                            points[metric][1].append(value)
+            counts[arm] = dict(found)
+            for metric in LEARNING_FIELDS[arm]:
+                if not found[metric]:
+                    missing.append(f"{arm}: updates.{metric}真实记录缺失")
+            if render_plots and all(found[metric] for metric in LEARNING_FIELDS[arm]):
+                figures.append(_learning_plot(arm, points, output))
+    finally:
+        handle.close()
+    staging.replace(output / "learning_diagnostics.csv")
+    if missing:
+        for figure in figures:
+            Path(figure).unlink()
+        figures = []
+    return {"metric_counts": counts, "raw_row_count": sum(sum(x.values()) for x in counts.values()),
+            "csv_path": str(output / "learning_diagnostics.csv")}, missing, figures
+
+
 def _plots(summary, output):
     import matplotlib
     matplotlib.use("Agg")
@@ -1025,7 +1147,7 @@ def _material(summary):
             lines.append(f"{arm}训练：{training.get('env_step')}/{training.get('budget_env_steps')}步，阶段{training.get('stage')}，终止原因{training.get('completed_due_to') or training.get('stop_reason') or '未记录'}。")
     for group, cap in summary["optimizer_cap"].items():
         if cap["eligible_optimizer_actions"]:
-            lines.append(f"{group}优化器明确time_limit：{cap['explicit_time_limit_count']}/{cap['eligible_optimizer_actions']}；终止原因未知{cap['unknown_termination_count']}，接近95%预算{cap['near_95pct_budget_count']}/{cap['near_budget_known_denominator']}（仅耗时标记，不算超时）。")
+            lines.append(f"{group}优化器明确time_limit：{cap['explicit_time_limit_count']}/{cap['known_termination_denominator']}个已知终止原因；全体{cap['eligible_optimizer_actions']}次中未知{cap['unknown_termination_count']}。接近95%预算{cap['near_95pct_budget_count']}/{cap['near_budget_known_denominator']}（仅耗时标记，不算超时）。")
     lines += ["", "候选生成、初解、物理准备、优化器、核验及重复动作合计时间按保存字段分段；缺失精确成本维持null，不补零。并发条件若任务记录没有现场证据则列为未知，不做跨臂速度排名。",
               "本轮计时条件限制：" + summary["timing_interpretation"], ""]
     return "\n".join(lines)
@@ -1171,6 +1293,10 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
         for metric in ("episode_return", "validation_si"):
             if (arm, metric) not in curve_methods:
                 missing.append(f"{arm}: {metric}原始训练曲线缺失")
+    diagnostics, diagnostic_missing, diagnostic_figures = learning_diagnostics(
+        sources, manifest, output, retained,
+        render_plots=matrix_ready and render_plots)
+    missing.extend(diagnostic_missing)
     formal_ready = matrix_ready and not missing
     comparisons = {}
     if formal_ready:
@@ -1192,14 +1318,17 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                                                    if row["role"] == role and row["stage"] == stage])
                                  for key in ("initial_seconds", "candidate_seconds",
                                              "physical_probe_seconds", "physics_setup_seconds",
-                                             "optimizer_seconds", "verification_seconds", "total_seconds")}
+                                             "optimizer_seconds", "verification_seconds",
+                                             "reference_optimizer_seconds", "reference_verification_seconds",
+                                             "reference_total_seconds", "total_seconds")}
               for role in expected_roles for stage in ("direct", "final_B")}
     scene_timing = {f"{role}/{stage}": {key: timing_stats([
         row[key + "_sum_repeats"] for row in scenes
         if row["role"] == role and row["stage"] == stage])
         for key in ("initial_seconds", "candidate_seconds", "physical_probe_seconds",
                     "physics_setup_seconds", "optimizer_seconds", "verification_seconds",
-                    "total_seconds")}
+                    "reference_optimizer_seconds", "reference_verification_seconds",
+                    "reference_total_seconds", "total_seconds")}
         for role in expected_roles for stage in ("direct", "final_B")}
     summary = {"schema": "s2p19_report_material_v1", "experiment_id": EXPERIMENT,
                "formal_ready": formal_ready,
@@ -1221,6 +1350,7 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                "timing_interpretation": ((manifest.get("common_assessment") or {}).get("timing_limitations")
                   or "四端并发、设备变化、重启与监测空窗须据现场记录解释；不可据此宣称严格同条件耗时。"),
                "training_curves": curves,
+               "learning_diagnostics": diagnostics,
                "metric_semantics": "all target beams after last action and later interference; C is modeled link capacity; min(C,D) is estimated carried demand",
                "statistical_unit": "actions average within derivative scene; 22 derivatives average within mother; bootstrap resamples 40 mothers; four-mother date-stratified blocks are sensitivity only",
                "concurrency_limit": "actual job-level concurrency retained when available; missing is unknown, never inferred from ports"}
@@ -1239,7 +1369,9 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                    "solver_termination", "solver_elapsed_seconds",
                    "optimizer_time_budget_seconds", "missing_exact_cost", "initial_seconds",
                    "candidate_seconds", "physical_probe_seconds", "physics_setup_seconds",
-                   "optimizer_seconds", "verification_seconds", "total_seconds")
+                   "optimizer_seconds", "verification_seconds",
+                   "reference_optimizer_seconds", "reference_verification_seconds",
+                   "reference_total_seconds", "total_seconds")
     scene_cols = tuple(scenes[0]) if scenes else ("role", "stage", "scene_sha256",
                                               "mother_scene_id", "beam_count", "load_multiplier",
                                               "repeats_observed", "repeats_expected", "complete_repeats")
@@ -1251,7 +1383,8 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                for key, value in summary["optimizer_cap"].items()],
               ("role", "stage", "eligible_optimizer_actions",
                "explicit_time_limit_count", "known_other_termination_count",
-               "unknown_termination_count", "explicit_time_limit_fraction",
+               "unknown_termination_count", "known_termination_denominator",
+               "known_termination_coverage", "explicit_time_limit_fraction",
                "near_95pct_budget_count", "near_budget_known_denominator",
                "near_budget_fraction", "near_budget_is_not_time_limit"))
     write_csv(output / "per_scene.csv", scenes, scene_cols)
@@ -1269,7 +1402,7 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
               ("comparison", "mother_scene_id", "stage", "delta_si",
                "overall_delta_si", "ci95_low", "ci95_high"))
     if matrix_ready and render_plots:
-        summary["figures"] = _plots(summary, output)
+        summary["figures"] = _plots(summary, output) + diagnostic_figures
     else:
         summary["figures"] = []
     atomic_json(output / "summary.json", summary)
