@@ -27,6 +27,7 @@ MAX_VOLUMES = 200
 MIRROR_PREFIXES = ("job/cases/", "job/validation_cases/", "scenes/")
 MIRROR_NAMES = {"job/job.json", "job/config.json", "job/status.json",
                 "job/results.json", "job/episodes.jsonl", "job/evaluations.jsonl",
+                "job/updates.jsonl",
                 "source/source_manifest.json"}
 
 
@@ -265,7 +266,7 @@ def source_spec(task_id: str, run_id: str, mirror: Path, receipt: dict) -> tuple
     training = None
     if task_id in ("C0", "C1", "I0"):
         training = {"run_id": run_id}
-        for kind in ("episodes", "evaluations"):
+        for kind in ("episodes", "evaluations", "updates"):
             ref = bound(f"job/{kind}.jsonl")
             if ref:
                 training[kind] = ref
@@ -300,10 +301,10 @@ def archive_completed(port: int, run_id: str, task_id: str, *,
                       destination: Path = DEFAULT_DESTINATION,
                       source_index: Path = SOURCE_INDEX,
                       part_mib: int = 256, max_gib: int = 20) -> dict:
+    tagged_port = re.search(r"_(20418|20424|20473|20474)$", task_id)
     if (port not in ops.SSH_PORTS or not re.fullmatch(r"[a-z0-9_]+", run_id) or
             not re.fullmatch(r"[A-Za-z0-9_]+", task_id) or
-            (task_id not in ("C0", "C1", "I0") and
-             not task_id.endswith("_" + str(port))) or
+            (tagged_port is not None and int(tagged_port.group(1)) != port) or
             not 1 <= part_mib <= 1024 or not 1 <= max_gib <= 64):
         raise ValueError("S2-P19 archive scope or bounds invalid")
     detail = ops.api(port, "/api/runs/" + run_id)

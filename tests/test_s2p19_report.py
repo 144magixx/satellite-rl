@@ -106,6 +106,7 @@ class S2P19ReportTests(unittest.TestCase):
             self.assertEqual(summary["training_status"]["C0"]["env_step"], 1234)
             self.assertGreaterEqual(len(summary["missing"]), 4)
             self.assertTrue(any("episode_return" in item for item in summary["missing"]))
+            self.assertTrue(any("updates原始学习日志缺失" in item for item in summary["missing"]))
             self.assertTrue((Path(temp) / "summary.json").is_file())
             self.assertFalse((Path(temp) / "figures").exists())
 
@@ -147,18 +148,26 @@ class S2P19ReportTests(unittest.TestCase):
             evaluation = root / "evaluations.jsonl"
             evaluation.write_text(json.dumps({"env_step": 0, "mean_si": 0.75}) + "\n",
                                   encoding="utf-8")
+            updates = root / "updates.jsonl"
+            updates.write_text(json.dumps({"env_step": 50, "values": {"alpha": 0.01}}) + "\n",
+                               encoding="utf-8")
             import hashlib
             sources = {"training": {"I0": {"run_id": "train_i0",
                 "episodes": {"path": str(episodes),
                              "sha256": hashlib.sha256(episodes.read_bytes()).hexdigest()},
                 "evaluations": {"path": str(evaluation),
-                                "sha256": hashlib.sha256(evaluation.read_bytes()).hexdigest()}}}}
+                                "sha256": hashlib.sha256(evaluation.read_bytes()).hexdigest()},
+                "updates": {"path": str(updates),
+                            "sha256": hashlib.sha256(updates.read_bytes()).hexdigest()}}}}
             rows = training_curves(sources, {"tasks": {"I0": {"run_id": "train_i0"}}})
             self.assertEqual(len([r for r in rows if r["metric"] == "episode_return"]), 3)
             smooth = [r for r in rows if r["metric"] == "episode_return_trailing_mean"]
             self.assertEqual([r["smooth_window"] for r in smooth], [1, 2, 3])
             self.assertAlmostEqual(smooth[-1]["value"], 2.0)
             self.assertEqual(len([r for r in rows if r["metric"] == "validation_si"]), 1)
+            sources["training"]["I0"]["updates"]["sha256"] = "0" * 64
+            with self.assertRaises(AuditError):
+                training_curves(sources, {"tasks": {"I0": {"run_id": "train_i0"}}})
 
     def test_controller_source_index_sha_and_case_mirror(self):
         import hashlib

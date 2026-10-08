@@ -8,7 +8,8 @@ import unittest
 import zipfile
 
 from scripts.s2p19.archive import (
-    digest, materialize_mirror, merge_index, safe_member, source_spec, verify_volume)
+    digest, materialize_mirror, merge_index, mirror_member, safe_member,
+    source_spec, verify_volume)
 
 
 def _sha(data):
@@ -41,7 +42,8 @@ class S2P19ArchiveTests(unittest.TestCase):
             files = {
                 "job/job.json": b"{}", "job/config.json": b"{}",
                 "job/status.json": b"{}", "job/results.json": b"{}",
-                "job/episodes.jsonl": b"{}\n", "source/source_manifest.json": b"{}",
+                "job/episodes.jsonl": b"{}\n", "job/updates.jsonl": b"{}\n",
+                "source/source_manifest.json": b"{}",
                 "job/cases/scene_00000.json": b"{}",
                 "scenes/validation/scene_00000.npz": b"npz",
             }
@@ -58,6 +60,8 @@ class S2P19ArchiveTests(unittest.TestCase):
             self.assertEqual(spec["case_root"], str(mirror / "job/cases"))
             self.assertEqual(spec["results_sha256"], _sha(b"{}"))
             self.assertEqual(training["episodes"]["sha256"], _sha(b"{}\n"))
+            self.assertEqual(training["updates"]["sha256"], _sha(b"{}\n"))
+            self.assertTrue(mirror_member("job/updates.jsonl"))
             index = root / "source_index.json"
             merge_index(index, "C0", spec, training)
             saved = json.loads(index.read_text(encoding="utf-8"))

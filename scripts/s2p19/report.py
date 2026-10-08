@@ -239,7 +239,8 @@ def final_tasks(plan):
 
 
 def plan_ports(plan):
-    ports = {task["id"]: task["port"] for task in plan.get("tasks", [])}
+    ports = {task["id"]: task["port"] for task in plan.get("tasks", [])
+             if task_role(task["id"]) is not None}
     for task_id in plan.get("completed_legacy", {}):
         ports[task_id] = 20418
     for task_id, port in ports.items():
@@ -337,13 +338,13 @@ def source_for_task(task_id, run_id, sources, controller, manifest,
     if require_port_evidence:
         require(spec.get("port") == expected_port and spec.get("archive_receipt_path"),
                 f"{task_id}: 四端归档缺少实例端口或回执")
-    if spec.get("port") is not None:
+    if expected_port is not None and spec.get("port") is not None:
         require(spec["port"] == expected_port, f"{task_id}: 归档端口与计划不匹配")
     receipt_path = spec.get("archive_receipt_path")
     if receipt_path:
         receipt = read_json(receipt_path)
         require(receipt is not None and receipt.get("run_id") == run_id and
-                receipt.get("port") == expected_port and
+                (expected_port is None or receipt.get("port") == expected_port) and
                 receipt.get("job_stage") == "completed" and
                 receipt.get("inventory_sha256") == spec.get("archive_inventory_sha256"),
                 f"{task_id}: 归档回执归属或完成状态不匹配")
@@ -795,6 +796,11 @@ def training_curves(sources, manifest):
         if expected_run:
             require(spec.get("run_id") == expected_run,
                     f"{arm}: 训练曲线run_id与清单不符")
+        update_ref = spec.get("updates")
+        if update_ref is not None:
+            update_path = Path(update_ref["path"])
+            require(update_path.is_file() and digest(update_path) == update_ref["sha256"],
+                    f"{arm}: updates原始日志SHA不符")
         for kind in ("evaluations", "episodes"):
             ref = spec.get(kind)
             if ref is None:
@@ -1062,6 +1068,8 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                     missing.append(f"{role}/{stage}: 母时刻或母来源SHA缺失")
     curve_methods = {(row["arm"], row["metric"]) for row in curves}
     for arm in retained:
+        if not ((sources.get("training") or {}).get(arm) or {}).get("updates"):
+            missing.append(f"{arm}: updates原始学习日志缺失")
         for metric in ("episode_return", "validation_si"):
             if (arm, metric) not in curve_methods:
                 missing.append(f"{arm}: {metric}原始训练曲线缺失")
