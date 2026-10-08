@@ -250,7 +250,8 @@ def source_spec(task_id: str, run_id: str, mirror: Path, receipt: dict) -> tuple
                     if role in scene_roles), None)
     spec = None
     if results:
-        spec = {"run_id": run_id, "results_path": results["path"],
+        spec = {"run_id": run_id, "port": receipt.get("port"),
+                "results_path": results["path"],
                 "results_sha256": results["sha256"],
                 "job_path": job["path"], "job_sha256": job["sha256"],
                 "config_path": config["path"], "config_sha256": config["sha256"],
@@ -301,12 +302,16 @@ def archive_completed(port: int, run_id: str, task_id: str, *,
                       part_mib: int = 256, max_gib: int = 20) -> dict:
     if (port not in ops.SSH_PORTS or not re.fullmatch(r"[a-z0-9_]+", run_id) or
             not re.fullmatch(r"[A-Za-z0-9_]+", task_id) or
+            (task_id not in ("C0", "C1", "I0") and
+             not task_id.endswith("_" + str(port))) or
             not 1 <= part_mib <= 1024 or not 1 <= max_gib <= 64):
         raise ValueError("S2-P19 archive scope or bounds invalid")
     detail = ops.api(port, "/api/runs/" + run_id)
     job, status = detail.get("job") or {}, detail.get("status") or {}
     if (detail.get("read_only") or job.get("run_id") != run_id or
-            job.get("experiment_id") != "S2-P19" or status.get("stage") != "completed"):
+            job.get("experiment_id") != "S2-P19" or
+            job.get("archive_root") != ops.instance(port)["archive"] or
+            status.get("run_id") != run_id or status.get("stage") != "completed"):
         raise ValueError("only a completed same-instance S2-P19 workbench job may be archived")
     request = {"port": port, "run_id": run_id, "part_bytes": part_mib * 1024 ** 2,
                "max_bytes": max_gib * 1024 ** 3, "max_files": MAX_FILES,
@@ -321,7 +326,7 @@ def archive_completed(port: int, run_id: str, task_id: str, *,
         raise ValueError("remote archive package identity invalid")
     local = Path(destination) / str(port) / run_id / package_id
     local.mkdir(parents=True, exist_ok=True)
-    transport = ops.transport.connect(port)
+    transport = ops.connect(port)
     try:
         import paramiko
         with paramiko.SFTPClient.from_transport(transport.get_transport()) as sftp:

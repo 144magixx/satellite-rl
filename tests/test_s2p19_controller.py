@@ -70,8 +70,8 @@ class ControllerContractTests(unittest.TestCase):
             self.assertIn(("train_c0", True), reviewed)
 
     def test_pilot_audit_accepts_sha_bound_sources_from_both_isolated_archives(self):
-        archives = {20418: "/shared/s2p19/20418/archive",
-                    20424: "/shared/s2p19/20424/archive"}
+        archives = {port: f"/shared/s2p19/{port}/archive"
+                    for port in controller.ops.SSH_PORTS}
         audit = {"experiment_id": "S2-P19", "run_id": "train_c0", "passed": True,
                  "criteria": {"same_cases": True}, "checkpoint_sha256": "c" * 64,
                  "source_files": [

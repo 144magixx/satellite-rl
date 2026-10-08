@@ -228,8 +228,25 @@ def task_role(task_id):
 
 
 def final_tasks(plan):
-    return {task["id"]: task_role(task["id"]) for task in (plan or {}).get("tasks", [])
-            if task_role(task["id"]) is not None}
+    tasks = {task["id"]: task_role(task["id"]) for task in (plan or {}).get("tasks", [])
+             if task_role(task["id"]) is not None}
+    for task_id in (plan or {}).get("completed_legacy", {}):
+        role = task_role(task_id)
+        require(role is not None and task_id not in tasks,
+                f"历史完成任务ID重复或无效：{task_id}")
+        tasks[task_id] = role
+    return tasks
+
+
+def plan_ports(plan):
+    ports = {task["id"]: task["port"] for task in plan.get("tasks", [])}
+    for task_id in plan.get("completed_legacy", {}):
+        ports[task_id] = 20418
+    for task_id, port in ports.items():
+        require(port in (20418, 20424, 20473, 20474) and
+                task_id.endswith("_" + str(port)),
+                f"{task_id}: 计划端口与任务归属不匹配")
+    return ports
 
 
 SCENE_ARRAYS = ("beam_location", "beam_G_Tx_max", "UE_G_Rx_max",
@@ -311,11 +328,25 @@ def _physical_contract(config, job, source_manifest):
                                      separators=(",", ":")).encode()).hexdigest()
 
 
-def source_for_task(task_id, run_id, sources, controller, manifest):
+def source_for_task(task_id, run_id, sources, controller, manifest,
+                    expected_port=None, require_port_evidence=False):
     spec = (sources.get("jobs") or {}).get(task_id)
     if spec is None:
         return None, "missing_local_results_reference"
     require(spec.get("run_id") == run_id, f"{task_id}: source-index run_id不匹配")
+    if require_port_evidence:
+        require(spec.get("port") == expected_port and spec.get("archive_receipt_path"),
+                f"{task_id}: 四端归档缺少实例端口或回执")
+    if spec.get("port") is not None:
+        require(spec["port"] == expected_port, f"{task_id}: 归档端口与计划不匹配")
+    receipt_path = spec.get("archive_receipt_path")
+    if receipt_path:
+        receipt = read_json(receipt_path)
+        require(receipt is not None and receipt.get("run_id") == run_id and
+                receipt.get("port") == expected_port and
+                receipt.get("job_stage") == "completed" and
+                receipt.get("inventory_sha256") == spec.get("archive_inventory_sha256"),
+                f"{task_id}: 归档回执归属或完成状态不匹配")
     manifest_task = (manifest.get("tasks") or {}).get(task_id)
     if manifest_task and manifest_task.get("run_id"):
         require(manifest_task["run_id"] == run_id, f"{task_id}: 运行清单run_id不匹配")
@@ -910,7 +941,8 @@ def _material(summary):
     for arm, training in summary["training_status"].items():
         if training["run_id"]:
             lines.append(f"{arm}训练：{training.get('env_step')}/{training.get('budget_env_steps')}步，阶段{training.get('stage')}，终止原因{training.get('completed_due_to') or training.get('stop_reason') or '未记录'}。")
-    lines += ["", "候选生成、初解、物理准备、优化器、核验及重复动作合计时间按保存字段分段；缺失精确成本维持null，不补零。并发条件若任务记录没有现场证据则列为未知，不做跨臂速度排名。", ""]
+    lines += ["", "候选生成、初解、物理准备、优化器、核验及重复动作合计时间按保存字段分段；缺失精确成本维持null，不补零。并发条件若任务记录没有现场证据则列为未知，不做跨臂速度排名。",
+              "本轮计时条件限制：" + summary["timing_interpretation"], ""]
     return "\n".join(lines)
 
 
@@ -922,15 +954,27 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     planned = final_tasks(plan)
+    ports = plan_ports(plan)
     receipts = controller.get("tasks") or {}
     actions, jobs, missing = [], {}, []
     for task_id, (role, stage) in planned.items():
         receipt = receipts.get(task_id) or {}
+        legacy_run = (plan.get("completed_legacy") or {}).get(task_id)
+        if legacy_run:
+            require(not receipt.get("run_id") or receipt["run_id"] == legacy_run,
+                    f"{task_id}: 历史完成任务与控制器run_id不匹配")
+            receipt = {"run_id": legacy_run, "state": "completed"}
         run_id = receipt.get("run_id")
+        planned_run = next((item.get("adopted_run_id") for item in plan.get("tasks", [])
+                            if item["id"] == task_id), None)
+        if planned_run and run_id:
+            require(run_id == planned_run, f"{task_id}: 实际run_id与四端计划不匹配")
         if receipt.get("state") != "completed" or not run_id:
             missing.append(f"{task_id}: controller尚未完成")
             continue
-        source, reason = source_for_task(task_id, run_id, sources, receipt, manifest)
+        source, reason = source_for_task(
+            task_id, run_id, sources, receipt, manifest, ports[task_id],
+            require_port_evidence=bool(plan.get("completed_legacy")) and not legacy_run)
         if source is None:
             missing.append(f"{task_id}: {reason}")
             continue
@@ -940,7 +984,7 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                          "saved_method_counts": {},
                          "saved_fallback_rows": 0,
                          "unknown_exact_cost_rows": 0,
-                         "port": next((item["port"] for item in plan["tasks"] if item["id"] == task_id), None),
+                         "port": ports[task_id],
                          "concurrency": source["status"].get("concurrency") or
                          source["job"].get("concurrency"),
                          "concurrent_run_ids": source["status"].get("concurrent_run_ids"),
@@ -1065,6 +1109,8 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
                "per_action_count": len(actions), "per_scene_count": len(scenes),
                "by_n_load": nload, "comparisons": comparisons,
                "timing": timing, "scene_repeat_timing": scene_timing,
+               "timing_interpretation": ((manifest.get("common_assessment") or {}).get("timing_limitations")
+                  or "四端并发、设备变化、重启与监测空窗须据现场记录解释；不可据此宣称严格同条件耗时。"),
                "training_curves": curves,
                "metric_semantics": "all target beams after last action and later interference; C is modeled link capacity; min(C,D) is estimated carried demand",
                "statistical_unit": "actions average within derivative scene; 22 derivatives average within mother; bootstrap resamples 40 mothers; four-mother date-stratified blocks are sensitivity only",
