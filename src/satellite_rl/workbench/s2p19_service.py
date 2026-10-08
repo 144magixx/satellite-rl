@@ -15,6 +15,74 @@ from .storage import digest, read_json, now, validate_id
 
 EXPERIMENT = "S2-P19"
 
+# This operational bridge is limited to the already completed I0 endpoint.
+# It never imports a training job into the destination workbench.
+I0_SOURCE_ARCHIVE = Path("/home/u2024110224/second_stage_satellite_rl/sac_routes_s2p19/20418/archive")
+I0_EVALUATION_ARCHIVE = Path("/home/u2024110224/second_stage_satellite_rl/sac_routes_s2p19/20474/archive")
+I0_SOURCE_RUN = "train_sac_20261007_174121_7d0b687c"
+I0_SOURCE_COMMIT = "62e33c1baa066c2a577a351cd18ecb487f4e11e8"
+I0_SOURCE_SHAS = {
+    "config.json": "fdd0b03f742324c166c98bc0a70bc833820cbd516d84a15e1446b98e55a383fe",
+    "checkpoint.pt": "4910076c627738283fdaa34f9ba8ac64ba336bf6c539cfafff18c67b2cbb6d2a",
+    "policy.pt": "a055aabebb05cefb4cd6332a3afc10228ce2235f1df1d0f923ba416af6c48c9b",
+    "model.json": "f2a5af189fe59389d0b14efcf8ae5f0a9716ed1c9f529514a4556337c8a20838",
+}
+
+
+def external_i0_endpoint(store, archive, run_id, controls):
+    """Audit the one completed source before Store freezes its model pair."""
+    if (store.archive_root.resolve() != I0_EVALUATION_ARCHIVE.resolve() or
+            Path(archive).resolve() != I0_SOURCE_ARCHIVE.resolve() or
+            run_id != I0_SOURCE_RUN):
+        raise ValueError("I0跨工作台来源仅允许本轮20418终点至20474评价")
+    source = I0_SOURCE_ARCHIVE / "outputs" / "workbench" / "jobs" / run_id
+    model_dir = I0_SOURCE_ARCHIVE / "models" / "runs" / "workbench" / run_id / "final"
+    if source.resolve() != source or model_dir.resolve() != model_dir:
+        raise ValueError("I0跨工作台来源路径不能为符号链接")
+    job, status = read_json(source / "job.json", {}), read_json(source / "status.json", {})
+    config = read_json(source / "config.json", {})
+    model = read_json(model_dir / "model.json", {})
+    from satellite_rl.sac_improvement import validate_config
+    if (job.get("run_id") != run_id or job.get("archive_root") != str(I0_SOURCE_ARCHIVE) or
+            job.get("model_dir") != str(model_dir.parent) or
+            job.get("experiment_id") != EXPERIMENT or job.get("kind") != "train" or
+            job.get("git_commit") != I0_SOURCE_COMMIT or
+            job.get("research_stage") != "sac_improvement" or job.get("mode") != "train" or
+            job.get("seed") != 51001 or job.get("action_seed") != 53001 or
+            job.get("repeats") != 1 or job.get("total_steps") != 400000 or
+            job.get("i0_config") != controls or
+            config.get("research_stage") != "sac_improvement" or
+            validate_config(config.get("i0")) != controls):
+        raise ValueError("I0跨工作台训练身份或冻结配置不一致")
+    if (status.get("run_id") != run_id or status.get("stage") != "completed" or
+            status.get("completed_due_to") != "episode_cap" or
+            status.get("env_step") != 397112 or status.get("episodes") != 12500 or
+            status.get("updates") != 395113 or status.get("budget_env_steps") != 400000 or
+            status.get("checkpoint_sha256") != I0_SOURCE_SHAS["checkpoint.pt"] or
+            status.get("model_path") != str(model_dir / "policy.pt") or
+            status.get("model_sha256") != I0_SOURCE_SHAS["policy.pt"]):
+        raise ValueError("I0跨工作台来源不是已完成397112步固定终点")
+    for filename, expected in I0_SOURCE_SHAS.items():
+        path = (model_dir if filename in ("policy.pt", "model.json") else source) / filename
+        if not path.is_file() or digest(path) != expected:
+            raise ValueError("I0跨工作台来源文件缺失或SHA不符：" + filename)
+    if (model.get("run_id") != run_id or model.get("env_step") != 397112 or
+            model.get("episodes") != 12500 or model.get("updates") != 395113 or
+            model.get("git_commit") != I0_SOURCE_COMMIT or
+            model.get("format") != "satellite_rl_s2p19_improvement_v1" or
+            model.get("config_sha256") != I0_SOURCE_SHAS["config.json"] or
+            model.get("policy_sha256") != I0_SOURCE_SHAS["policy.pt"] or
+            (model.get("provenance") or {}).get("run_id") != run_id or
+            (model.get("provenance") or {}).get("env_step") != 397112):
+        raise ValueError("I0跨工作台模型元数据与原训练来源不一致")
+    from .storage import model_input_files
+    return str(model_dir), model_input_files(model_dir), {
+        "source_archive": str(I0_SOURCE_ARCHIVE), "source_run_id": run_id,
+        "source_job_sha256": digest(source / "job.json"),
+        "source_status_sha256": digest(source / "status.json"),
+        "source_files_sha256": dict(I0_SOURCE_SHAS), "source_env_step": 397112,
+    }
+
 
 def constructive_config(arm="C0"):
     from .config import default_config, validate_config
@@ -216,13 +284,19 @@ class S2P19Application:
             config["training"]["total_steps"] = record["count"] * sum(method_repeats.values())
         if mode == "evaluate":
             run_id = validate_id(body["model_run_id"])
-            directory, readonly = self.app.resolve_run(run_id)
-            job, status = read_json(directory / "job.json"), read_json(directory / "status.json")
-            if readonly or job.get("experiment_id") != EXPERIMENT or status.get("stage") != "completed":
-                raise ValueError("I0评价须引用本工作台已完成固定终点模型")
-            from .storage import model_input_files
-            path = Path(job["model_dir"]) / "final"
-            extra.update(model_path=str(path), model_files=model_input_files(path), model_run_id=run_id)
+            if body.get("model_source_archive") is not None:
+                path, files, source = external_i0_endpoint(
+                    self.store, body["model_source_archive"], run_id, controls)
+                extra["external_model_source"] = source
+            else:
+                directory, readonly = self.app.resolve_run(run_id)
+                job, status = read_json(directory / "job.json"), read_json(directory / "status.json")
+                if readonly or job.get("experiment_id") != EXPERIMENT or status.get("stage") != "completed":
+                    raise ValueError("I0评价须引用本工作台已完成固定终点模型")
+                from .storage import model_input_files
+                path = Path(job["model_dir"]) / "final"
+                files = model_input_files(path)
+            extra.update(model_path=str(path), model_files=files, model_run_id=run_id)
         return self.store.create_job(config, kind="train" if mode == "train" else "evaluate",
                                      request_id=body.get("request_id"), extra=extra)
 
