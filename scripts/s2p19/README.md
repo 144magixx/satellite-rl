@@ -165,3 +165,37 @@ does not submit the final matrix. An uncertain launch is inspected by exact
 service identity before any retry; an already saved same-target switch is a
 no-op. The final receipt is
 `outputs/experiments/sac_routes_s2p19_20261007/preflight/final_timing_switch/switch_receipt.json`.
+
+### Four-instance core delivery archive
+
+`python -m scripts.s2p19.archive_core --list` reads the frozen local four-lane
+plan, its state, the historical plan and run manifest without contacting a
+workbench. It lists the exact 12 final task IDs plus the C0/C1/I0 training
+run IDs, instance ownership, original unique request IDs, frozen commits and
+expected method/interaction counts. The five historical final runs come from
+`completed_legacy`; seven four-lane runs come from their current state. A
+changed plan SHA or duplicated run/request is rejected.
+
+`python -m scripts.s2p19.archive_core` is a read-only live check: it GETs each
+of those 15 workbench runs and reports incomplete or mismatched jobs. It does
+not use local controller completion as proof. Only after all 15 live jobs are
+completed with the exact run, request, source commit, archive owner, and
+budget may an operator run `python -m scripts.s2p19.archive_core --execute`.
+The optional `--part-mib` and `--max-gib` retain the bounded archive.py limits;
+increase the latter only after verifying a real job exceeds the default 20 GiB.
+That mode repeats all GET checks before any copy, then calls the existing
+completed-only, per-source and per-ZIP-member SHA archive one task at a time.
+The shared `analysis/source_index.json` merge has an exclusive file lock and
+rejects a task already bound to another run, port or inventory. Earlier smoke
+keys are preserved. Each verified copy is committed to
+`remote_archive/core_archive_ledger.json`; a failed transfer records an error
+and stops. A retry rechecks all live jobs and the existing receipts. An
+unknown partial remote package is never deleted or overwritten automatically.
+
+This core ledger covers only the 12 final tasks and three training runs.
+Preparation, development, pilot and endpoint-B jobs from the historical
+controller plan may be copied later in completed-only batches under their
+real task/run/port identities; they do not become complete by appearing in
+this checklist. Failed preparation, ops, controller and monitoring evidence
+remains independent in `analysis/supplemental_archive_plan.json`. Neither
+supplemental archive nor formal report milestone is marked complete here.
