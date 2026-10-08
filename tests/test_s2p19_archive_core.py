@@ -37,6 +37,70 @@ def fake_detail(item, *, stage="completed"):
 
 
 class CoreArchiveTests(unittest.TestCase):
+    def test_legacy_smoke_port_enrichment_requires_receipt_and_zip_sha(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            volume = root / "part_0001.zip"
+            with zipfile.ZipFile(volume, "w") as bundle:
+                bundle.writestr("job/status.json", b"completed")
+            run_id = "evaluate_smoke"
+            inventory = "a" * 64
+            receipt_path = root / "receipt.json"
+            receipt_path.write_text(json.dumps({
+                "schema": "s2p19.archive.v1", "experiment_id": "S2-P19",
+                "run_id": run_id, "port": 20418, "job_stage": "completed",
+                "inventory_sha256": inventory,
+                "volumes": [{"name": volume.name, "sha256": archive.digest(volume)}]}),
+                encoding="utf-8")
+            (root / "download_receipt.json").write_text(json.dumps({
+                "task_id": "validation_greedy_direct", "run_id": run_id,
+                "port": 20418, "all_volume_and_member_shas_verified": True,
+                "remote_receipt_sha256": archive.digest(receipt_path)}), encoding="utf-8")
+            prior = {"run_id": run_id, "archive_inventory_sha256": inventory,
+                     "archive_receipt_path": str(receipt_path),
+                     "results_sha256": "b" * 64}
+            incoming = {**prior, "port": 20418}
+            index = root / "source_index.json"
+
+            def reset():
+                index.write_text(json.dumps({"schema": "s2p19.source_index.v1",
+                    "jobs": {"validation_greedy_direct": prior,
+                             "another_smoke": {"run_id": "other"}},
+                    "training": {}}), encoding="utf-8")
+
+            reset()
+            archive.merge_index(index, "validation_greedy_direct", incoming, None)
+            saved = archive_core.read_json(index)["jobs"]
+            self.assertEqual(saved["validation_greedy_direct"]["port"], 20418)
+            self.assertEqual(saved["validation_greedy_direct"]["archive_receipt_path"],
+                             str(receipt_path))
+            self.assertIn("another_smoke", saved)
+            reset()
+            with self.assertRaises(ValueError):
+                archive.merge_index(index, "validation_greedy_direct",
+                                    {**incoming, "port": 20424}, None)
+            reset()
+            volume.write_bytes(volume.read_bytes() + b"corrupt")
+            with self.assertRaises(ValueError):
+                archive.merge_index(index, "validation_greedy_direct", incoming, None)
+            reset()
+            with self.assertRaises(ValueError):
+                archive.merge_index(index, "validation_greedy_direct",
+                                    {**incoming, "archive_inventory_sha256": "c" * 64}, None)
+            self.assertIsNone(archive_core.read_json(index)["jobs"]
+                              ["validation_greedy_direct"].get("port"))
+            reset()
+            receipt_path.unlink()
+            with self.assertRaises(ValueError):
+                archive.merge_index(index, "validation_greedy_direct", incoming, None)
+            index.write_text(json.dumps({"schema": "s2p19.source_index.v1",
+                "jobs": {}, "training": {"C0": {"run_id": "run_c0",
+                    "archive_inventory_sha256": inventory}}}), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                archive.merge_index(index, "C0", None,
+                    {"run_id": "run_c0", "port": 20418,
+                     "archive_inventory_sha256": inventory})
+
     def test_live_gate_blocks_every_copy_until_all_fifteen_complete(self):
         jobs = fixture_jobs()
         by_run = {item["run_id"]: item for item in jobs}
@@ -52,6 +116,7 @@ class CoreArchiveTests(unittest.TestCase):
         self.assertEqual(len(calls), 15)
         self.assertFalse(gate["ready"])
         self.assertEqual(gate["completed"], 14)
+        self.assertTrue(all(row.get("observed_utc") for row in gate["jobs"].values()))
         copier = Mock()
         with self.assertRaises(ValueError):
             archive_core.execute(jobs, gate, archive_job=copier)
