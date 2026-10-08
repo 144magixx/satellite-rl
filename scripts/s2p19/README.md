@@ -214,3 +214,20 @@ real task/run/port identities; they do not become complete by appearing in
 this checklist. Failed preparation, ops, controller and monitoring evidence
 remains independent in `analysis/supplemental_archive_plan.json`. Neither
 supplemental archive nor formal report milestone is marked complete here.
+
+`python -m scripts.s2p19.archive_waiter --check` (also the default) and
+`--list` read only the local four-lane state. Only explicit `--run` starts a
+locked persistent waiter: it requires all seven new local task states to be
+completed, then rechecks all 15 real workbench runs, records per-job metadata
+member names/bytes and remote statvfs free space (not a quota), and checks
+256 GiB input, 40,000 files, 200 volumes at 1024 MiB, remote 12 GiB and local
+8 GiB reserves. It then calls the serial core archive with compression level
+6 and a 43,200-second per-job remote timeout. The original
+`2026-10-09T17:51:53Z` deadline stops waiting/gating; once correctly started,
+archive time is bounded separately to 72 hours, checked before each job.
+Status/phase times, PID, source commit, plan SHA and each inventory are saved
+under `remote_archive/`. Limited network retries retain incomplete packages
+for review; a capacity or identity failure enters `attention`. The actual ZIP
+byte guard in archive.py remains authoritative because compression ratio is
+unknown. This waiter still does not copy supplemental evidence or finish the
+formal report.

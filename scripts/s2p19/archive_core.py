@@ -188,7 +188,8 @@ def execute(jobs: list[dict], gate: dict, *, ledger_path: Path = DEFAULT_LEDGER,
             source_index: Path = archive.SOURCE_INDEX,
             destination: Path = archive.DEFAULT_DESTINATION,
             archive_job=archive.archive_completed,
-            archive_options: dict | None = None) -> dict:
+            archive_options: dict | None = None,
+            deadline_utc: datetime | None = None) -> dict:
     if (not gate.get("ready") or gate.get("completed") != 15 or
             gate.get("pending") or len(jobs) != 15 or
             any((gate.get("jobs") or {}).get(item["task_id"], {}).get("reasons") != [] or
@@ -203,6 +204,8 @@ def execute(jobs: list[dict], gate: dict, *, ledger_path: Path = DEFAULT_LEDGER,
         raise ValueError("unknown core archive ledger")
     completed = ledger.setdefault("completed", {})
     for task in jobs:
+        if deadline_utc is not None and datetime.now(timezone.utc) >= deadline_utc:
+            raise TimeoutError("bounded core archive deadline reached before next job")
         task_id = task["task_id"]
         if task_id in completed:
             verify_prior(task, completed[task_id], source_index)
