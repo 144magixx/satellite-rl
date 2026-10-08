@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -30,6 +31,10 @@ ACTIVE = {"queued", "running", "training", "evaluating", "preparing"}
 FINAL_IDS = ("baseline_random_B_20418", "C0_final_direct_20473",
              "C0_final_B_20473", "C1_final_direct_20424", "C1_final_B_20424",
              "I0_final_direct_20474", "I0_final_B_20474")
+
+
+class HostKeyMismatch(RuntimeError):
+    """A pinned-host identity failure must halt dispatch."""
 
 
 def now() -> str:
@@ -61,13 +66,20 @@ def api(port: int, endpoint: str, body: dict | None = None) -> dict:
         def missing_host_key(self, client, hostname, key):
             actual = base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip("=")
             if actual != HOST_KEY:
-                raise paramiko.SSHException("SSH host key differs from pinned host")
+                raise HostKeyMismatch("SSH host key differs from pinned host")
 
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(Pinned())
-    client.connect(HOST, port=port, username=USER, password=password,
-                   allow_agent=False, look_for_keys=False, timeout=15,
-                   banner_timeout=20, auth_timeout=20)
+    try:
+        client.connect(HOST, port=port, username=USER, password=password,
+                       allow_agent=False, look_for_keys=False, timeout=15,
+                       banner_timeout=20, auth_timeout=20)
+    except (paramiko.SSHException, EOFError) as error:
+        client.close()
+        raise ConnectionError(f"{port} SSH connection/banner unavailable") from error
+    except BaseException:
+        client.close()
+        raise
     payload = json.dumps(body, ensure_ascii=False) if body is not None else None
     code = f'''
 import json,urllib.error,urllib.request
@@ -78,7 +90,11 @@ request=urllib.request.Request('http://127.0.0.1:{API_PORTS[port]}{endpoint}',
  headers={{'Content-Type':'application/json','Cache-Control':'no-cache'}})
 try:
  with urllib.request.urlopen(request,timeout=180) as response:
-  print(json.dumps({{'status':response.status,'body':json.loads(response.read().decode('utf-8'))}}))
+  result=json.loads(response.read().decode('utf-8'))
+  if {endpoint!r}=='/api/s2p19/runs':
+   keys=('run_id','request_id','git_commit','stage','env_step','budget_env_steps','error')
+   result={{'runs':[{{key:row.get(key) for key in keys}} for row in result['runs']]}}
+  print(json.dumps({{'status':response.status,'body':result}}))
 except urllib.error.HTTPError as error:
  print(json.dumps({{'status':error.code,'error':error.read().decode('utf-8','replace')[:2000]}}))
 '''
@@ -216,14 +232,17 @@ def poll(plan_path: Path, state_path: Path, dispatch: bool) -> dict:
         raise ValueError("plan changed after coordinator state was created")
     rows = {}
     errors = {}
-    for port in PORTS:
-        try:
-            result = api(port, "/api/s2p19/runs")
-            if not isinstance(result.get("runs"), list):
-                raise ValueError("run catalog malformed")
-            rows[port] = result["runs"]
-        except (ConnectionError, TimeoutError, OSError) as error:
-            errors[str(port)] = str(error)
+    with ThreadPoolExecutor(max_workers=len(PORTS)) as pool:
+        calls = {pool.submit(api, port, "/api/s2p19/runs"): port for port in PORTS}
+        for future in as_completed(calls):
+            port = calls[future]
+            try:
+                result = future.result()
+                if not isinstance(result.get("runs"), list):
+                    raise ValueError("run catalog malformed")
+                rows[port] = result["runs"]
+            except (ConnectionError, TimeoutError, OSError) as error:
+                errors[str(port)] = str(error)
     planned_requests = {task["request_id"] for task in tasks}
     observed_requests = {}
     for port, catalog in rows.items():
@@ -253,6 +272,15 @@ def poll(plan_path: Path, state_path: Path, dispatch: bool) -> dict:
                 raise RuntimeError(f"{key}: science job {stage}; operator attention required")
             if stage not in ACTIVE | {"completed"}:
                 raise RuntimeError(f"{key}: unknown workbench stage {stage}")
+            expected_steps = 7920 if task["kind"] == "refine" else 2640
+            budget = row.get("budget_env_steps")
+            if budget != expected_steps:
+                raise RuntimeError(f"{key}: workbench budget {budget} differs from {expected_steps}")
+            steps = row.get("env_step")
+            if type(steps) is not int or steps < 0 or steps > expected_steps:
+                raise RuntimeError(f"{key}: invalid method/action progress {steps}")
+            if stage == "completed" and steps != expected_steps:
+                raise RuntimeError(f"{key}: completed job has only {steps}/{expected_steps} records")
             state["tasks"][key] = {"state": stage, "run_id": row["run_id"],
                                     "request_id": request, "observed_utc": now()}
             continue
