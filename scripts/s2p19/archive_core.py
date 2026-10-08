@@ -236,10 +236,15 @@ def main() -> None:
     parser.add_argument("--destination", type=Path, default=archive.DEFAULT_DESTINATION)
     parser.add_argument("--part-mib", type=int, default=256)
     parser.add_argument("--max-gib", type=int, default=20)
+    parser.add_argument("--compression-level", type=int, default=1)
+    parser.add_argument("--remote-timeout-seconds", type=int, default=1200)
     parser.add_argument("--list", action="store_true", help="local plan only; no workbench GET")
     parser.add_argument("--execute", action="store_true", help="copy after all live GET gates pass")
     args = parser.parse_args()
-    if not 1 <= args.part_mib <= 1024 or not 1 <= args.max_gib <= 64:
+    if (not 1 <= args.part_mib <= archive.MAX_PART_MIB or
+            not 1 <= args.max_gib <= archive.MAX_INPUT_GIB or
+            not 1 <= args.compression_level <= 9 or
+            not 60 <= args.remote_timeout_seconds <= 43200):
         parser.error("archive part/size bound outside archive.py limits")
     active = read_json(args.plan)
     state = read_json(args.state)
@@ -259,7 +264,9 @@ def main() -> None:
         ledger = execute(jobs, gate, ledger_path=args.ledger,
                          source_index=args.source_index, destination=args.destination,
                          archive_options={"part_mib": args.part_mib,
-                                          "max_gib": args.max_gib})
+                                          "max_gib": args.max_gib,
+                                          "compression_level": args.compression_level,
+                                          "remote_timeout_seconds": args.remote_timeout_seconds})
         print(json.dumps({"core_archive_completed": len(ledger["completed"]),
                           "ledger": str(args.ledger)}, ensure_ascii=False))
 

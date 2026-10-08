@@ -181,8 +181,20 @@ of those 15 workbench runs and reports incomplete or mismatched jobs. It does
 not use local controller completion as proof. Only after all 15 live jobs are
 completed with the exact run, request, source commit, archive owner, and
 budget may an operator run `python -m scripts.s2p19.archive_core --execute`.
-The optional `--part-mib` and `--max-gib` retain the bounded archive.py limits;
-increase the latter only after verifying a real job exceeds the default 20 GiB.
+The optional `--part-mib` (maximum 8192 MiB), `--max-gib` (maximum 256 GiB),
+`--compression-level` (1–9) and `--remote-timeout-seconds` (60–43200) retain
+explicit archive.py bounds. The defaults remain 256 MiB, 20 GiB, level 1 and
+1200 seconds for smaller jobs. Large results must use values chosen from the
+actual inventory and available remote/local disk, rather than assuming a
+compression ratio. A volume count over 200 or insufficient local compressed
+bytes plus the 8 GiB reserve blocks copying. Changing compression level gives
+a distinct immutable package identity; old level-1 packages remain readable.
+The archive keeps every original job/source/scene/weight member in verified
+ZIP volumes. Only small job/config/status/source-manifest identity files are
+unpacked locally. The source index points at SHA-pinned ZIP members for large
+results, cases, scenes and training JSONL; the report reads those streams and
+checks member SHA without creating plain duplicates. Derived per-beam output
+is gzip CSV. The original remote workbench archive remains untouched.
 That mode repeats all GET checks before any copy, then calls the existing
 completed-only, per-source and per-ZIP-member SHA archive one task at a time.
 The shared `analysis/source_index.json` merge has an exclusive file lock and

@@ -17,6 +17,26 @@ def _sha(data):
 
 
 class S2P19ArchiveTests(unittest.TestCase):
+    def test_mirror_keeps_only_small_identity_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            volume = root / "part_0001.zip"
+            files = {"job/job.json": b"{}", "job/results.json": b"x" * 1000,
+                     "job/cases/case_1.json": b"{}", "job/updates.jsonl": b"{}\n",
+                     "scenes/test/scene_1.npz": b"npz"}
+            with zipfile.ZipFile(volume, "w") as bundle:
+                for name, payload in files.items():
+                    bundle.writestr(name, payload)
+            items = [{"member": name, "bytes": len(payload), "sha256": _sha(payload)}
+                     for name, payload in files.items()]
+            mirror = root / "mirror"
+            self.assertEqual(materialize_mirror(volume, items, mirror), 1)
+            self.assertTrue((mirror / "job/job.json").is_file())
+            self.assertFalse((mirror / "job/results.json").exists())
+            self.assertFalse((mirror / "job/cases/case_1.json").exists())
+            self.assertFalse((mirror / "job/updates.jsonl").exists())
+            self.assertFalse((mirror / "scenes/test/scene_1.npz").exists())
+
     def test_volume_member_sha_and_safe_path_are_required(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -61,7 +81,8 @@ class S2P19ArchiveTests(unittest.TestCase):
             self.assertEqual(spec["results_sha256"], _sha(b"{}"))
             self.assertEqual(training["episodes"]["sha256"], _sha(b"{}\n"))
             self.assertEqual(training["updates"]["sha256"], _sha(b"{}\n"))
-            self.assertTrue(mirror_member("job/updates.jsonl"))
+            self.assertFalse(mirror_member("job/updates.jsonl"))
+            self.assertFalse(mirror_member("job/results.json"))
             index = root / "source_index.json"
             merge_index(index, "C0", spec, training)
             saved = json.loads(index.read_text(encoding="utf-8"))

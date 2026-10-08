@@ -2,6 +2,7 @@
 
 import json
 import hashlib
+import gzip
 from pathlib import Path
 import tempfile
 import unittest
@@ -288,8 +289,9 @@ class S2P19ReportTests(unittest.TestCase):
             self.assertAlmostEqual(smooth[-1]["value"], 2.0)
             self.assertEqual(len([r for r in rows if r["metric"] == "validation_si"]), 1)
             sources["training"]["I0"]["updates"]["sha256"] = "0" * 64
-            with self.assertRaises(AuditError):
-                training_curves(sources, {"tasks": {"I0": {"run_id": "train_i0"}}})
+            with self.assertRaises(ValueError):
+                learning_diagnostics(sources, {"tasks": {"I0": {"run_id": "train_i0"}}},
+                                     root, arms=("I0",))
 
     def test_controller_source_index_sha_and_case_mirror(self):
         import hashlib
@@ -333,8 +335,9 @@ class S2P19ReportTests(unittest.TestCase):
             self.assertEqual(summary["per_action_count"], 1)
             self.assertEqual(summary["per_scene_count"], 1)
             self.assertEqual(summary["per_beam_rows"], 50)
-            self.assertEqual(len((root / "analysis/per_beam.csv").read_text(
-                encoding="utf-8-sig").splitlines()), 51)
+            with gzip.open(root / "analysis/per_beam.csv.gz", "rt",
+                           encoding="utf-8-sig") as stream:
+                self.assertEqual(len(stream.readlines()), 51)
             self.assertEqual(summary["jobs"][task_id]["run_id"], "evaluate_saved")
             sources["jobs"][task_id]["results_sha256"] = "0" * 64
             with self.assertRaises(AuditError):
