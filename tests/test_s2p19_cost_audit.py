@@ -69,7 +69,7 @@ class S2P19CostAuditTests(unittest.TestCase):
             "beam_count": beams, "metrics": {"decisions": decisions,
                                                 "probes": probes},
             "terminal_snapshot": {"complete_episode": True}}
-        one, two = complete(0, 2, 1, 50), complete(1, 1, 0, 60)
+        one, two = complete(0, 2, 1, 50), complete(1, 1, 0, 101)
         episodes = b"\n".join(map(_json_bytes, (one, two, one))) + b"\n"
         files = {"job/job.json": _json_bytes({"run_id": "run_i0"}),
                  "job/config.json": _json_bytes({"i0": {"max_decisions": 32,
@@ -98,7 +98,7 @@ class S2P19CostAuditTests(unittest.TestCase):
             self.assertEqual(result["resume_snapshot_rows_not_added_to_cost"], 1)
             self.assertEqual(result["macro_decisions_in_unique_episode_rows"], 3)
             self.assertEqual(result["candidate_truth_probes_in_unique_episode_rows_lower_bound"], 1)
-            self.assertEqual(result["greedy_initializer_beam_decisions_in_unique_episode_rows_lower_bound"], 110)
+            self.assertEqual(result["greedy_initializer_beam_decisions_in_unique_episode_rows_lower_bound"], 151)
             self.assertIsNone(result["unlogged_recovery_repeat_cost"])
             self.assertFalse(result["macro_decisions_match_status"])
 
