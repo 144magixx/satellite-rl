@@ -122,6 +122,17 @@ class FourPortDeliveryTests(unittest.TestCase):
                                        {"jobs": {"C0_final_direct_20473": spec}},
                                        {}, {}, 20473)
 
+    def test_report_rejects_run_that_differs_from_adopted_plan(self):
+        task_id = "C0_final_direct_20473"
+        plan = {"experiment_id": "S2-P19", "tasks": [
+            {"id": task_id, "port": 20473, "adopted_run_id": "expected_run"}]}
+        manifest = {"experiment_id": "S2-P19", "authorization": {"scope": ["C0"]}}
+        controller = {"tasks": {task_id: {"state": "completed", "run_id": "other_run"}}}
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(report.AuditError):
+                report.build(manifest, controller, plan, {}, Path(temp),
+                             render_plots=False)
+
 
 if __name__ == "__main__":
     unittest.main()
