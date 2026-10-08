@@ -6,10 +6,11 @@ import gzip
 from pathlib import Path
 import tempfile
 import unittest
+import zipfile
 import numpy as np
 
 from scripts.s2p19.report import (N_VALUES, LOADS, AuditError, _beam_audit, _timing,
-                                   _physical_contract,
+                                   _physical_contract, _physical_contract_with_evidence,
                                    build, collapse_repeats, iter_saved_scenes, mother_pair,
                                    learning_diagnostics, normalize_result, optimizer_cap_stats,
                                    verified_beam_rows, scene_content, task_role,
@@ -382,6 +383,99 @@ class S2P19ReportTests(unittest.TestCase):
         wrong_units = dict(job, scene_sets={"test": dict(job["scene_sets"]["test"],
                                units={"rate": "Mbps", "beam_location": "degrees"})})
         self.assertIsNone(_physical_contract(config, wrong_units, source))
+        float_budget = {"environment": {**config["environment"],
+                                        "power_budget_w": 3000.0}}
+        self.assertEqual(accepted, _physical_contract(float_budget, job, source))
+        for invalid in (2999.99, 3000.01, 3100):
+            changed_budget = {"environment": {**config["environment"],
+                                              "power_budget_w": invalid}}
+            self.assertIsNone(_physical_contract(changed_budget, job, source))
+
+    def test_physics_contract_units_from_sha_bound_record_or_frozen_source(self):
+        physics = {"src/satellite_rl/envs/satellite.py": "1" * 64,
+                   "src/satellite_rl/envs/regions.py": "2" * 64,
+                   "src/satellite_rl/power_refinement/physics.py": "3" * 64}
+        source_text = ('def run_preparation():\n'
+                       '    dataset = {"units": {"rate": "bit/s", '
+                       '"beam_location": "degrees", '
+                       '"covered_demand_bps": "bit/s"}}\n')
+        source_bytes = source_text.encode()
+        source_name = "src/satellite_rl/workbench/s2p19_data.py"
+        source_sha = hashlib.sha256(source_bytes).hexdigest()
+        source = {"git_commit": "a" * 40,
+                  "files": {**physics, source_name: source_sha}}
+        scene = {"id": "s2p19_final_20261007", "count": 880,
+                 "profile": "europe_v1", "environment_version": "europe_geo13_v1",
+                 "environment_profile": {"id": "europe_v1"},
+                 "source": {"type": "aviation_variable_beams_s2p19",
+                            "reimport": {"record_id": "s2p19_final_20261007"}}}
+        job = {"git_commit": "a" * 40, "scene_sets": {"test": scene}}
+        config = {"environment": {"profile": "europe_v1",
+                                  "power_budget_w": 3000, "basic_fraction": 0.1}}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "part_0001.zip"
+            record = dict(scene)
+            record_bytes = json.dumps(record).encode()
+            members = {"scenes/test/record.json": record_bytes,
+                       "source/" + source_name: source_bytes}
+            with zipfile.ZipFile(archive, "w") as output:
+                for name, payload in members.items():
+                    output.writestr(name, payload)
+            receipt = root / "receipt.json"
+            receipt.write_text(json.dumps({
+                "members": [{"member": name, "bytes": len(payload),
+                             "sha256": hashlib.sha256(payload).hexdigest()}
+                            for name, payload in members.items()],
+                "volumes": [{"name": archive.name,
+                             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}]}))
+            result, evidence = _physical_contract_with_evidence(
+                config, job, source, receipt)
+            self.assertEqual(len(result), 64)
+            self.assertEqual(evidence[0]["sha256"], source_sha)
+            unbound_source = {**source, "files": {**source["files"],
+                                                  source_name: "0" * 64}}
+            self.assertIsNone(_physical_contract(config, job, unbound_source, receipt))
+            # A complete record is independently sufficient when the source
+            # record's frozen units are present.
+            record["units"] = {"rate": "bit/s", "beam_location": "degrees"}
+            record_bytes = json.dumps(record).encode()
+            with zipfile.ZipFile(archive, "w") as output:
+                output.writestr("scenes/test/record.json", record_bytes)
+                output.writestr("source/" + source_name, source_bytes)
+            receipt.write_text(json.dumps({
+                "members": [{"member": "scenes/test/record.json",
+                             "bytes": len(record_bytes),
+                             "sha256": hashlib.sha256(record_bytes).hexdigest()},
+                            {"member": "source/" + source_name,
+                             "bytes": len(source_bytes), "sha256": source_sha}],
+                "volumes": [{"name": archive.name,
+                             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}]}))
+            from scripts.s2p19.archive_sources import receipt_members, _zip_digest
+            receipt_members.cache_clear()
+            _zip_digest.cache_clear()
+            with_record, evidence = _physical_contract_with_evidence(
+                config, job, source, receipt)
+            self.assertEqual(with_record, result)
+            self.assertEqual({row["kind"] for row in evidence},
+                             {"frozen_scene_record", "frozen_preparation_source"})
+            record["units"]["rate"] = "Mbps"
+            record_bytes = json.dumps(record).encode()
+            with zipfile.ZipFile(archive, "w") as output:
+                output.writestr("scenes/test/record.json", record_bytes)
+                output.writestr("source/" + source_name, source_bytes)
+            receipt.write_text(json.dumps({
+                "members": [{"member": "scenes/test/record.json",
+                             "bytes": len(record_bytes),
+                             "sha256": hashlib.sha256(record_bytes).hexdigest()},
+                            {"member": "source/" + source_name,
+                             "bytes": len(source_bytes), "sha256": source_sha}],
+                "volumes": [{"name": archive.name,
+                             "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}]}))
+            receipt_members.cache_clear()
+            _zip_digest.cache_clear()
+            self.assertIsNone(_physical_contract(config, job, source, receipt))
+        self.assertIsNone(_physical_contract(config, job, source))
 
     def test_incremental_result_reader_crosses_chunk_boundary(self):
         with tempfile.TemporaryDirectory() as temp:

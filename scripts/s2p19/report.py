@@ -24,6 +24,7 @@ final cases remain missing; figures are written only for a complete independent
 from __future__ import annotations
 
 import argparse
+import ast
 from collections import Counter, defaultdict
 import csv
 import gzip
@@ -300,18 +301,97 @@ def _scene_content(source):
 PHYSICS_SOURCE_FILES = ("src/satellite_rl/envs/satellite.py",
                         "src/satellite_rl/envs/regions.py",
                         "src/satellite_rl/power_refinement/physics.py")
+PREPARATION_SOURCE = "src/satellite_rl/workbench/s2p19_data.py"
+EXPECTED_UNITS = {"rate": "bit/s", "beam_location": "degrees"}
 
 
-def _physical_contract(config, job, source_manifest):
+def _preparation_source_units(payload):
+    """Read the literal dataset units from frozen source, without executing it."""
+    try:
+        module = ast.parse(payload.decode("utf-8"))
+    except (UnicodeDecodeError, SyntaxError):
+        return None
+    functions = [node for node in module.body if isinstance(node, ast.FunctionDef)
+                 and node.name == "run_preparation"]
+    if len(functions) != 1:
+        return None
+    candidates = []
+    for node in ast.walk(functions[0]):
+        if not isinstance(node, ast.Assign) or not any(
+                isinstance(target, ast.Name) and target.id == "dataset"
+                for target in node.targets) or not isinstance(node.value, ast.Dict):
+            continue
+        for key, value in zip(node.value.keys, node.value.values):
+            if isinstance(key, ast.Constant) and key.value == "units":
+                try:
+                    candidates.append(ast.literal_eval(value))
+                except (ValueError, TypeError, SyntaxError):
+                    return None
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _contract_units(scene_set, source_manifest, receipt_path, job_sha256):
+    """Resolve units only from SHA-bound scene records or frozen source."""
+    sources = []
+    inline = scene_set.get("units")
+    if inline is not None:
+        sources.append((inline, {"kind": "frozen_job_scene_set",
+                                 "sha256": job_sha256}))
+    if receipt_path:
+        record_ref = archive_sources.member_ref(receipt_path, "scenes/test/record.json")
+        source = scene_set.get("source") or {}
+        if source.get("type") == "aviation_variable_beams_s2p19" and record_ref is None:
+            return None, None
+        if record_ref is not None:
+            record = json.loads(archive_sources.read_bytes_source(record_ref))
+            if (record.get("id") != scene_set.get("id") or
+                    record.get("count") != scene_set.get("count") or
+                    record.get("source") != scene_set.get("source") or
+                    record.get("profile") != scene_set.get("profile") or
+                    record.get("environment_version") != scene_set.get("environment_version")):
+                return None, None
+            if record.get("units") is not None:
+                sources.append((record["units"], {"kind": "frozen_scene_record",
+                                                  "sha256": record_ref["sha256"]}))
+        if (source.get("type") == "aviation_variable_beams_s2p19" and
+                (source.get("reimport") or {}).get("record_id") ==
+                "s2p19_final_20261007"):
+            expected = (source_manifest.get("files") or {}).get(PREPARATION_SOURCE)
+            source_ref = archive_sources.member_ref(
+                receipt_path, "source/" + PREPARATION_SOURCE)
+            if not expected or source_ref is None or source_ref["sha256"] != expected:
+                return None, None
+            frozen_units = _preparation_source_units(
+                archive_sources.read_bytes_source(source_ref))
+            if frozen_units is None:
+                return None, None
+            sources.append((frozen_units, {"kind": "frozen_preparation_source",
+                                           "sha256": expected,
+                                           "member": source_ref["member"]}))
+    if not sources or any(not isinstance(units, dict) or
+                          any(units.get(key) != value for key, value in EXPECTED_UNITS.items()) or
+                          any(key not in (*EXPECTED_UNITS, "covered_demand_bps") for key in units) or
+                          ("covered_demand_bps" in units and units["covered_demand_bps"] != "bit/s")
+                          for units, _ in sources):
+        return None, None
+    return dict(EXPECTED_UNITS), [evidence for _, evidence in sources]
+
+
+def _physical_contract_with_evidence(config, job, source_manifest, receipt_path=None,
+                                     job_sha256=None):
     scene_sets = job.get("scene_sets") or {}
     scene_set = scene_sets.get("test")
     if not isinstance(scene_set, dict) or not isinstance(source_manifest, dict):
-        return None
+        return None, None
     files = source_manifest.get("files") or {}
     if (source_manifest.get("git_commit") != job.get("git_commit") or
             any(not isinstance(files.get(name), str) or len(files[name]) != 64
                 for name in PHYSICS_SOURCE_FILES)):
-        return None
+        return None, None
+    units, evidence = _contract_units(scene_set, source_manifest, receipt_path,
+                                      job_sha256)
+    if units is None:
+        return None, None
     env = config.get("environment") or {}
     i0 = config.get("i0") or {}
     profile = env.get("profile", i0.get("profile"))
@@ -321,20 +401,30 @@ def _physical_contract(config, job, source_manifest):
               "basic_fraction": basic,
               "environment_version": scene_set.get("environment_version"),
               "environment_profile": scene_set.get("environment_profile"),
-              "units": scene_set.get("units"),
+              "units": units,
               "physics_source_sha256": {name: files[name] for name in PHYSICS_SOURCE_FILES},
               "group_rule": "beam_id_mod_8",
               "slots_per_group": 100, "max_contiguous_slots": 10}
     if (values["profile"] != "europe_v1" or values["power_budget_w"] != 3000
             or values["basic_fraction"] != 0.1 or
             not values["environment_version"] or not values["environment_profile"] or
-            values["units"] != {"rate": "bit/s", "beam_location": "degrees"}):
-        return None
+            values["units"] != EXPECTED_UNITS):
+        return None, None
+    # The direct I0 baseline records 3000.0 while refinement records 3000.
+    # They pass the same budget gate and must have the same contract digest.
+    values["power_budget_w"] = 3000
     refinement = config.get("power_refinement") or {}
     if refinement and refinement.get("total_power_w") != 3000:
-        return None
-    return hashlib.sha256(json.dumps(values, sort_keys=True, ensure_ascii=False,
-                                     separators=(",", ":")).encode()).hexdigest()
+        return None, None
+    return (hashlib.sha256(json.dumps(values, sort_keys=True, ensure_ascii=False,
+                                      separators=(",", ":")).encode()).hexdigest(),
+            evidence)
+
+
+def _physical_contract(config, job, source_manifest, receipt_path=None,
+                       job_sha256=None):
+    return _physical_contract_with_evidence(config, job, source_manifest,
+                                            receipt_path, job_sha256)[0]
 
 
 def source_for_task(task_id, run_id, sources, controller, manifest,
@@ -405,11 +495,14 @@ def source_for_task(task_id, run_id, sources, controller, manifest,
                 f"{task_id}: 冻结源码清单SHA不匹配")
     else:
         source_manifest = {}
+    contract_sha, contract_evidence = _physical_contract_with_evidence(
+        config, job, source_manifest, receipt_path, spec.get("job_sha256"))
     return {"spec": spec, "source": result_ref,
             "path": archive_sources.source_label(result_ref),
             "sha256": spec["results_sha256"],
             "job": job, "status": status, "config": config,
-            "physical_contract_sha256": _physical_contract(config, job, source_manifest),
+            "physical_contract_sha256": contract_sha,
+            "physical_contract_unit_evidence": contract_evidence,
             "controller": controller}, None
 
 
@@ -1232,6 +1325,8 @@ def build(manifest, controller, plan, sources, output, *, render_plots=True):
             jobs[task_id] = {"run_id": run_id, "results_path": source["path"],
                              "results_sha256": source["sha256"],
                              "physical_contract_sha256": source["physical_contract_sha256"],
+                             "physical_contract_unit_evidence": source[
+                                 "physical_contract_unit_evidence"],
                              "saved_method_counts": {},
                              "saved_fallback_rows": 0,
                              "unknown_exact_cost_rows": 0,
