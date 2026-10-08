@@ -41,20 +41,78 @@ class FourPortDeliveryTests(unittest.TestCase):
                 observed["host"] = host
                 observed["port"] = kwargs["port"]
 
+            def get_transport(self):
+                return types.SimpleNamespace(set_keepalive=lambda seconds:
+                                             observed.setdefault("keepalive", seconds))
+
         fake = types.SimpleNamespace(MissingHostKeyPolicy=object,
                                      SSHException=SSHException, SSHClient=FakeClient)
         with patch.dict(sys.modules, {"paramiko": fake}), \
                 patch.object(ops.transport, "_password", return_value="fixture-secret"):
-            ops.connect(20474)
-            self.assertEqual(observed["port"], 20474)
-            key = types.SimpleNamespace(asbytes=lambda: b"wrong-key")
-            with self.assertRaises(SSHException):
-                observed["policy"].missing_host_key(None, "host", key)
-            raw = b"matching-key"
-            pin = base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
-            with patch.object(ops, "NEW_HOST_KEY", pin):
-                observed["policy"].missing_host_key(
-                    None, "host", types.SimpleNamespace(asbytes=lambda: raw))
+            for port in (20473, 20474):
+                ops.connect(port)
+                self.assertEqual(observed["port"], port)
+                self.assertEqual(observed["keepalive"], ops.KEEPALIVE_SECONDS)
+                key = types.SimpleNamespace(asbytes=lambda: b"wrong-key")
+                with self.assertRaises(SSHException):
+                    observed["policy"].missing_host_key(None, "host", key)
+                raw = b"matching-key"
+                pin = base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
+                with patch.object(ops, "NEW_HOST_KEY", pin):
+                    observed["policy"].missing_host_key(
+                        None, "host", types.SimpleNamespace(asbytes=lambda: raw))
+
+    def test_old_ports_keep_original_pinned_connector_and_add_keepalive(self):
+        for port in (20418, 20424):
+            observed = []
+
+            class FakeClient:
+                def get_transport(self):
+                    return types.SimpleNamespace(set_keepalive=lambda seconds:
+                                                 observed.append(("keepalive", seconds)))
+
+            with patch.object(ops.transport, "connect", return_value=FakeClient()) as old:
+                ops.connect(port)
+            old.assert_called_once_with(port)
+            self.assertEqual(observed, [("keepalive", 30)])
+
+    def test_remote_python_and_upload_use_group_connector_for_all_ports(self):
+        class FakeClient:
+            def get_transport(self):
+                return self
+
+            def close(self):
+                pass
+
+        class FakeSftp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def put(self, *args):
+                pass
+
+            def posix_rename(self, *args):
+                pass
+
+        fake_paramiko = types.SimpleNamespace(SFTPClient=types.SimpleNamespace(
+            from_transport=lambda _: FakeSftp()))
+        for port in ops.SSH_PORTS:
+            with patch.object(ops, "connect", return_value=FakeClient()) as connect, \
+                    patch.object(ops.transport, "execute", return_value={
+                        "exit_code": 0, "stdout": "a" * 64 + "  path\n",
+                        "stderr": ""}) as execute, \
+                    patch.object(ops.transport, "sha256_file", return_value="b" * 64), \
+                    patch.object(ops.transport, "remote_python", side_effect=AssertionError), \
+                    patch.object(ops.transport, "upload", side_effect=AssertionError), \
+                    patch.dict(sys.modules, {"paramiko": fake_paramiko}):
+                self.assertEqual(ops.remote_python("print(1)", port)["exit_code"], 0)
+                self.assertEqual(ops.upload(Path("fixture"), "/remote/fixture", port)["remote"],
+                                 "a" * 64)
+            self.assertEqual(connect.call_count, 2)
+            self.assertEqual(execute.call_count, 2)
 
     def test_archive_rejects_cross_port_and_archive_root_before_copy(self):
         port = 20473

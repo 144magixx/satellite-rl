@@ -15,6 +15,7 @@ EXPERIMENT = "S2-P19"
 SSH_PORTS = (20418, 20424, 20473, 20474)
 API_PORTS = {20418: 8900, 20424: 8901, 20473: 8904, 20474: 8905}
 NEW_HOST_KEY = "a6ym3EfC35pPdkqWO8lg+4As2nLDI1eKu8cur4P7WDc"
+KEEPALIVE_SECONDS = 30
 REMOTE_BASE = "/home/u2024110224/second_stage_satellite_rl/sac_routes_s2p19"
 LOCAL = Path("D:/paper/outputs/experiments/sac_routes_s2p19_20261007")
 DQN = transport.DQN
@@ -35,28 +36,36 @@ def instance(port: int) -> dict:
 def connect(port: int):
     instance(port)
     if port in transport.PORTS:
-        return transport.connect(port)
-    import paramiko
+        client = transport.connect(port)
+    else:
+        import paramiko
 
-    class PinnedKey(paramiko.MissingHostKeyPolicy):
-        def missing_host_key(self, client, hostname, key):
-            actual = base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip("=")
-            if actual != NEW_HOST_KEY:
-                raise paramiko.SSHException("Unexpected S2-P19 SSH host key")
+        class PinnedKey(paramiko.MissingHostKeyPolicy):
+            def missing_host_key(self, client, hostname, key):
+                actual = base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip("=")
+                if actual != NEW_HOST_KEY:
+                    raise paramiko.SSHException("Unexpected S2-P19 SSH host key")
 
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(PinnedKey())
-    client.connect(transport.HOST, port=port, username=transport.USER,
-                   password=transport._password(), allow_agent=False,
-                   look_for_keys=False, timeout=15, banner_timeout=20,
-                   auth_timeout=20)
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(PinnedKey())
+        client.connect(transport.HOST, port=port, username=transport.USER,
+                       password=transport._password(), allow_agent=False,
+                       look_for_keys=False, timeout=15, banner_timeout=20,
+                       auth_timeout=20)
+    connection = client.get_transport()
+    if connection is None:
+        client.close()
+        raise RuntimeError("S2-P19 SSH transport unavailable")
+    try:
+        connection.set_keepalive(KEEPALIVE_SECONDS)
+    except Exception:
+        client.close()
+        raise
     return client
 
 
 def remote_python(code: str, port: int, timeout: int = 120) -> dict:
     instance(port)
-    if port in transport.PORTS:
-        return transport.remote_python(code, port, timeout=timeout)
     payload = base64.b64encode(code.encode("utf-8")).decode("ascii")
     command = f'{DQN} -c "import base64;exec(base64.b64decode(\'{payload}\').decode(\'utf-8\'))"'
     client = connect(port)
@@ -68,8 +77,6 @@ def remote_python(code: str, port: int, timeout: int = 120) -> dict:
 
 def upload(path: Path, remote_path: str, port: int) -> dict:
     instance(port)
-    if port in transport.PORTS:
-        return transport.upload(path, remote_path, port)
     import paramiko
     client = connect(port)
     try:
