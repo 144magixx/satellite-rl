@@ -314,7 +314,14 @@ def main() -> None:
         print(json.dumps({"plan": args.output, "task_count": len(result["tasks"])}))
     else:
         while True:
-            report = poll(Path(args.plan), Path(args.state), args.action == "run")
+            try:
+                report = poll(Path(args.plan), Path(args.state), args.action == "run")
+            except Exception as error:
+                if args.action == "run":
+                    save(Path(args.state).with_name("four_lane_attention.json"),
+                         {"observed_utc": now(), "plan": args.plan,
+                          "error_type": type(error).__name__, "error": str(error)})
+                raise
             print(json.dumps(report, ensure_ascii=False), flush=True)
             if args.action == "once" or report["complete"]:
                 return
