@@ -7,10 +7,10 @@ import tempfile
 import unittest
 import numpy as np
 
-from scripts.s2p19.report import (N_VALUES, LOADS, AuditError, _beam_audit,
+from scripts.s2p19.report import (N_VALUES, LOADS, AuditError, _beam_audit, _timing,
                                    _physical_contract,
                                    build, collapse_repeats, iter_saved_scenes, mother_pair,
-                                   normalize_result, optimizer_cap_stats,
+                                   learning_diagnostics, normalize_result, optimizer_cap_stats,
                                    verified_beam_rows, scene_content, task_role,
                                    training_curves)
 
@@ -40,6 +40,72 @@ def action(role, stage, scene_sha, mother, n, load, repeat, si):
 
 
 class S2P19ReportTests(unittest.TestCase):
+    def test_learning_diagnostics_nested_top_level_and_missing_fields(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            c0 = root / "c0_updates.jsonl"
+            c0.write_text(json.dumps({"env_step": 2000, "update_step": 1,
+                "values": {"actor_loss": 0.2, "critic_1_loss": 1.2,
+                           "critic_2_loss": 1.1}}) + "\n", encoding="utf-8")
+            i0 = root / "i0_updates.jsonl"
+            i0.write_text(json.dumps({"env_step": 2000, "updates": 1,
+                "actor_loss": 0.3, "critic1_loss": 0.8,
+                "critic2_loss": 0.9, "alpha": 0.01}) + "\n", encoding="utf-8")
+            sources = {"training": {arm: {"run_id": "run_" + arm,
+                "updates": {"path": str(path),
+                            "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}}
+                for arm, path in (("C0", c0), ("I0", i0))}}
+            manifest = {"tasks": {arm: {"run_id": "run_" + arm}
+                                  for arm in ("C0", "I0")}}
+            summary, missing, figures = learning_diagnostics(
+                sources, manifest, root, render_plots=True)
+            self.assertEqual(summary["raw_row_count"], 7)
+            self.assertIn("C0: updates.alpha真实记录缺失", missing)
+            self.assertIn("C1: updates学习诊断来源缺失", missing)
+            self.assertEqual(figures, [])
+            self.assertFalse((root / "figures/i0_learning_raw.png").exists())
+            text = (root / "learning_diagnostics.csv").read_text(encoding="utf-8-sig")
+            self.assertIn("values.critic_1_loss", text)
+            self.assertIn("macro_decision", text)
+            self.assertNotIn("values.alpha", text)
+            _, complete_missing, complete_figures = learning_diagnostics(
+                sources, manifest, root, arms=("I0",), render_plots=True)
+            self.assertEqual(complete_missing, [])
+            self.assertEqual(len(complete_figures), 1)
+            self.assertTrue(Path(complete_figures[0]).is_file())
+
+    def test_reference_a_timing_is_preserved_without_double_charge(self):
+        raw = {"timing": {"initialization_seconds": 2.0,
+                          "physics_setup_seconds": 3.0,
+                          "reference_optimizer_wall_seconds": 4.0,
+                          "reference_verification_seconds": 5.0,
+                          "reference_total_seconds": 9.0,
+                          "optimizer_wall_seconds": 6.0,
+                          "verification_seconds": 7.0,
+                          "total_pipeline_seconds": 27.0}}
+        values = _timing(raw, {})
+        self.assertEqual(values["reference_total_seconds"], 9.0)
+        self.assertEqual(values["total_seconds"], 27.0)
+        self.assertEqual(sum(values[key] for key in (
+            "initial_seconds", "physics_setup_seconds",
+            "reference_optimizer_seconds", "reference_verification_seconds",
+            "optimizer_seconds", "verification_seconds")), values["total_seconds"])
+        missing = _timing({"timing": {"total_pipeline_seconds": 2.0}}, {})
+        self.assertIsNone(missing["reference_optimizer_seconds"])
+        self.assertIsNone(missing["reference_verification_seconds"])
+        self.assertIsNone(missing["reference_total_seconds"])
+        repeated = []
+        for repeat in range(3):
+            item = action("C0", "final_B", "a" * 64, "mother_00",
+                          50, 0.75, repeat, 0.9)
+            item.update(reference_optimizer_seconds=4.0,
+                        reference_verification_seconds=5.0,
+                        reference_total_seconds=9.0)
+            repeated.append(item)
+        grouped = collapse_repeats(repeated)[0]
+        self.assertEqual(grouped["reference_total_seconds_mean_per_action"], 9.0)
+        self.assertEqual(grouped["reference_total_seconds_sum_repeats"], 27.0)
+
     def test_optimizer_time_hit_uses_explicit_reason_only(self):
         rows = [{"role": "C0", "stage": "final_B", "solver_termination": reason,
                  "solver_elapsed_seconds": elapsed,
@@ -56,9 +122,16 @@ class S2P19ReportTests(unittest.TestCase):
         self.assertEqual(final["explicit_time_limit_count"], 1)
         self.assertEqual(final["known_other_termination_count"], 3)
         self.assertEqual(final["unknown_termination_count"], 1)
+        self.assertEqual(final["known_termination_denominator"], 4)
+        self.assertEqual(final["explicit_time_limit_fraction"], 0.25)
         self.assertEqual(final["near_95pct_budget_count"], 2)
         self.assertEqual(final["near_budget_known_denominator"], 3)
         self.assertIsNone(stats["C0/direct"]["explicit_time_limit_fraction"])
+        unknown = optimizer_cap_stats([{"role": "I0", "stage": "final_B",
+                                       "solver_termination": None}])["I0/final_B"]
+        self.assertEqual(unknown["unknown_termination_count"], 1)
+        self.assertEqual(unknown["known_termination_denominator"], 0)
+        self.assertIsNone(unknown["explicit_time_limit_fraction"])
 
     def test_verified_beam_rows_preserve_identity_and_uncapped_ratio(self):
         beams = [{"beam_id": 0, "original_index": 7, "group": 0,
