@@ -79,7 +79,9 @@ def read_json(path, default=None):
 
 
 class _JsonStream:
-    """Bounded-buffer decoder: one complete case object is the largest value."""
+    """Bounded decoder: retain one case object plus one read chunk."""
+
+    READ_CHARS = 4 * 1024 * 1024
 
     def __init__(self, stream):
         self.stream = stream
@@ -92,7 +94,7 @@ class _JsonStream:
         if self.pos:
             self.buffer = self.buffer[self.pos:]
             self.pos = 0
-        chunk = self.stream.read(65536)
+        chunk = self.stream.read(self.READ_CHARS)
         if chunk:
             self.buffer += chunk
         else:
@@ -121,6 +123,11 @@ class _JsonStream:
             except json.JSONDecodeError as error:
                 if self.eof:
                     raise AuditError("保存结果JSON损坏") from error
+                self._more()
+                continue
+            # A number may continue in the next chunk (for example 12e3).
+            # Confirm the token boundary before accepting the decoded value.
+            if end == len(self.buffer) and not self.eof:
                 self._more()
                 continue
             self.pos = end
