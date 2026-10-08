@@ -8,6 +8,7 @@ local experiment outputs. No policy, environment, or optimizer is run.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -265,7 +266,9 @@ def source_spec(task_id: str, run_id: str, mirror: Path, receipt: dict) -> tuple
                 "archive_inventory_sha256": receipt["inventory_sha256"]}
     training = None
     if task_id in ("C0", "C1", "I0"):
-        training = {"run_id": run_id}
+        training = {"run_id": run_id, "port": receipt.get("port"),
+                    "archive_inventory_sha256": receipt["inventory_sha256"],
+                    "archive_receipt_path": str(mirror.parent / "receipt.json")}
         for kind in ("episodes", "evaluations", "updates"):
             ref = bound(f"job/{kind}.jsonl")
             if ref:
@@ -275,6 +278,39 @@ def source_spec(task_id: str, run_id: str, mirror: Path, receipt: dict) -> tuple
 
 def merge_index(path: Path, task_id: str, spec: dict | None,
                 training: dict | None) -> None:
+    with index_lock(path):
+        _merge_index_locked(path, task_id, spec, training)
+
+
+@contextmanager
+def index_lock(path: Path):
+    """Cross-process lock for the single shared source index."""
+    lock = Path(path).with_name(Path(path).name + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+            if handle.seek(0, os.SEEK_END) == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _merge_index_locked(path: Path, task_id: str, spec: dict | None,
+                        training: dict | None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     original = path.read_bytes() if path.is_file() else None
     data = json.loads(original) if original else {"schema": "s2p19.source_index.v1", "jobs": {}, "training": {}}
@@ -282,13 +318,19 @@ def merge_index(path: Path, task_id: str, spec: dict | None,
         raise ValueError("existing S2-P19 source index has unknown schema")
     if spec:
         prior = data.setdefault("jobs", {}).get(task_id)
-        if prior and prior.get("run_id") != spec["run_id"]:
-            raise ValueError("task ID already bound to another archived run")
+        if prior and (prior.get("run_id") != spec["run_id"] or
+                      prior.get("port") != spec.get("port") or
+                      prior.get("archive_inventory_sha256") != spec.get("archive_inventory_sha256")):
+            raise ValueError("task ID already bound to another run/port/inventory")
         data["jobs"][task_id] = spec
     if training:
         prior = data.setdefault("training", {}).get(task_id)
-        if prior and prior.get("run_id") != training["run_id"]:
-            raise ValueError("training arm already bound to another archived run")
+        if prior and (prior.get("run_id") != training["run_id"] or
+                      prior.get("port") != training.get("port") or
+                      prior.get("archive_inventory_sha256") != training.get("archive_inventory_sha256") or
+                      any(prior.get(kind, {}).get("sha256") != training.get(kind, {}).get("sha256")
+                          for kind in ("episodes", "evaluations", "updates"))):
+            raise ValueError("training arm already bound to different archived evidence")
         data["training"][task_id] = training
     if path.is_file() and path.read_bytes() != original:
         raise RuntimeError("source index changed during archive merge")
