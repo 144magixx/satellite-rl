@@ -11,7 +11,7 @@ import numpy as np
 
 from scripts.s2p19.report import (N_VALUES, LOADS, AuditError, _beam_audit, _timing,
                                    _physical_contract, _physical_contract_with_evidence,
-                                   build, collapse_repeats, iter_saved_scenes, mother_pair,
+                                   _JsonStream, build, collapse_repeats, iter_saved_scenes, mother_pair,
                                    learning_diagnostics, normalize_result, optimizer_cap_stats,
                                    verified_beam_rows, scene_content, task_role,
                                    training_curves)
@@ -481,13 +481,34 @@ class S2P19ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "results.json"
             value = {"summary": {"note": "small"},
-                     "scenes": [{"id": 1, "long_note": "x" * 140000}, {"id": 2}],
+                     "scenes": [{"id": 1,
+                                 "long_note": "x" * (_JsonStream.READ_CHARS + 17) +
+                                              '雪"\\\n',
+                                 "nested": {"items": [1.25e-7, True, None,
+                                                      {"value": -42}]}},
+                                {"id": 2}],
                      "metadata": {"run_id": "saved_run"}}
-            path.write_text(json.dumps(value), encoding="utf-8")
+            path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
             info = {}
             rows = list(iter_saved_scenes(path, info))
-            self.assertEqual([row["id"] for row in rows], [1, 2])
+            self.assertEqual(rows, value["scenes"])
             self.assertEqual(info["metadata"]["run_id"], "saved_run")
+
+    def test_incremental_reader_number_boundary_and_malformed_tails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "results.json"
+            prefix = '{"padding":"'
+            before_number = '","counter":12'
+            padding = "x" * (_JsonStream.READ_CHARS - len(prefix) -
+                             len(before_number))
+            valid = prefix + padding + before_number + 'e3,"scenes":[{"id":1}]}'
+            path.write_text(valid, encoding="utf-8")
+            self.assertEqual(list(iter_saved_scenes(path, {})), [{"id": 1}])
+            for malformed in (valid[:-1], valid + " trailing",
+                              valid.replace('e3,"scenes"', 'e,"scenes"')):
+                path.write_text(malformed, encoding="utf-8")
+                with self.assertRaises(AuditError):
+                    list(iter_saved_scenes(path, {}))
 
 
 if __name__ == "__main__":
