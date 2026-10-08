@@ -171,7 +171,8 @@ def probe_inventory(item: dict) -> dict:
 
 
 def inventory_gate(jobs: list[dict], probe=probe_inventory, *,
-                   destination: Path = archive.DEFAULT_DESTINATION) -> dict:
+                   destination: Path = archive.DEFAULT_DESTINATION,
+                   expected_count: int = 15) -> dict:
     """Mirror archive member names/bytes without hashing or compression."""
     observed, pending = {}, []
     for item in jobs:
@@ -218,7 +219,7 @@ def inventory_gate(jobs: list[dict], probe=probe_inventory, *,
     local_free = shutil.disk_usage(destination).free
     if local_free < LOCAL_RESERVE_GIB * 1024 ** 3:
         pending.append("local compressed ZIP reserve unavailable")
-    return {"ready": not pending and len(observed) == 15,
+    return {"ready": not pending and len(observed) == expected_count,
             "checked_utc": utc_now(), "jobs": observed, "pending": pending,
             "local_free_bytes": local_free,
             "local_reserve_bytes": LOCAL_RESERVE_GIB * 1024 ** 3,

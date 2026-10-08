@@ -231,3 +231,33 @@ for review; a capacity or identity failure enters `attention`. The actual ZIP
 byte guard in archive.py remains authoritative because compression ratio is
 unknown. This waiter still does not copy supplemental evidence or finish the
 formal report.
+
+### Completed ancillary workbench jobs
+
+`python -m scripts.s2p19.supplemental_completed --list` and the default
+`--check` are local-only. The checked-in
+`scripts/s2p19/supplemental_completed_contract.json` freezes the 16 completed
+ancillary run IDs, owner ports, unique request IDs, source commits, job kinds
+and exact saved work budgets. It is derived from the local ancillary plan,
+historical controller/validation records, both pilot audits and a dated
+read-only live identity snapshot; hashes of those sources are part of the
+contract. The two C0/C1 pilot-B requests absent from the original list are
+explicitly frozen with their pilot-audit run identities and the historical
+plan's 13ea service commit. `--derive-contract` rebuilds that contract from
+local evidence for review; it does not accept fresh API values as new
+expectations.
+
+`--execute` alone acquires both the inactive core waiter's lock and a separate
+ancillary lock, requires the core status/ledger to show all 15 jobs complete,
+and revalidates the 15 core receipts. It then GETs all 16 owning workbenches
+and checks run/request/commit/archive/kind/completed/budget against the
+contract. A stat-only inventory of the 15 new copies plus a local verification
+of the existing smoke ZIP must pass the same bounded member, volume and space
+rules before serial copy-only archiving with level 6,
+1024 MiB parts, a 256 GiB input ceiling and a 43,200-second remote timeout.
+The separate ledger records each completed package and errors for manual
+restart; no original or unknown partial package is deleted. The previously
+archived validation greedy direct run is verified against its existing
+download/ZIP receipts and referenced, without creating a second package.
+The failed mother-source parent and ops/monitor/controller evidence remain in
+their separate supplemental plan and are not marked complete by this tool.
