@@ -92,6 +92,14 @@ def main():
     import matplotlib.pyplot as plt
     plt.rcParams.update({'font.sans-serif': ['Microsoft YaHei', 'SimHei'], 'axes.unicode_minus': False, 'font.size': 11})
     OUT.mkdir(parents=True, exist_ok=True)
+    with (OUT / 'timing_summary.csv').open('w', encoding='utf-8-sig', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['role', 'stage', 'unit', 'segment', 'n', 'missing', 'mean', 'median', 'p95'])
+        writer.writeheader()
+        for unit, source in [('single_action_seconds', summary['timing']), ('same_scene_repeat_sum_seconds', summary['scene_repeat_timing'])]:
+            for key_, segments in source.items():
+                role, stage = key_.split('/')
+                for segment, values in segments.items():
+                    writer.writerow({'role': role, 'stage': stage, 'unit': unit, 'segment': segment, **values})
     for metric, title, factor in [('si', '全束平均需求满足率 SI（%）', 100), ('sgm', '供需匹配程度 SGM', 1), ('rho_below_08_fraction', 'C/D < 0.8 的波束比例（%）', 100)]:
         fig, axes = plt.subplots(1, 2, figsize=(13, 5.8), sharex=True)
         for ax, stage, heading in zip(axes, ['direct', 'final_B'], ['直接分配', '相同完整功率细调 B 后']):
