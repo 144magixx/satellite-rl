@@ -292,7 +292,7 @@ def _training_rows(arm, spec, receipt_path):
                                                     "I0 episode probes", limit=32)
                 require(detail["probes"] <= detail["decisions"] and
                         type(detail["beam_count"]) is int and
-                        detail["beam_count"] in report.N_VALUES,
+                        50 <= detail["beam_count"] <= 200,
                         "I0 episode physical/scene cost fields missing")
             episodes[number] = detail
     completed = [row for row in episodes.values() if row["complete"]]
