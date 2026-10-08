@@ -130,6 +130,13 @@ class _JsonStream:
             if end == len(self.buffer) and not self.eof:
                 self._more()
                 continue
+            if type(value) in (int, float):
+                suffix = self.buffer[end:]
+                if suffix in (".", "e", "E", "e+", "e-", "E+", "E-"):
+                    if self.eof:
+                        raise AuditError("保存结果JSON数字不完整")
+                    self._more()
+                    continue
             self.pos = end
             return value
 
