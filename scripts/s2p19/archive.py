@@ -318,9 +318,11 @@ def _merge_index_locked(path: Path, task_id: str, spec: dict | None,
         raise ValueError("existing S2-P19 source index has unknown schema")
     if spec:
         prior = data.setdefault("jobs", {}).get(task_id)
-        if prior and (prior.get("run_id") != spec["run_id"] or
-                      prior.get("port") != spec.get("port") or
-                      prior.get("archive_inventory_sha256") != spec.get("archive_inventory_sha256")):
+        if prior and prior.get("port") is None and spec.get("port") is not None:
+            spec = _enrich_legacy_port(task_id, prior, spec)
+        elif prior and (prior.get("run_id") != spec["run_id"] or
+                        prior.get("port") != spec.get("port") or
+                        prior.get("archive_inventory_sha256") != spec.get("archive_inventory_sha256")):
             raise ValueError("task ID already bound to another run/port/inventory")
         data["jobs"][task_id] = spec
     if training:
@@ -337,6 +339,45 @@ def _merge_index_locked(path: Path, task_id: str, spec: dict | None,
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+def _enrich_legacy_port(task_id: str, prior: dict, incoming: dict) -> dict:
+    """Add only a missing port after rechecking the prior local package."""
+    port = incoming.get("port")
+    if (port not in ops.SSH_PORTS or prior.get("run_id") != incoming.get("run_id") or
+            not prior.get("archive_inventory_sha256") or
+            prior.get("archive_inventory_sha256") != incoming.get("archive_inventory_sha256")):
+        raise ValueError("legacy archive run/port/inventory differs")
+    receipt_path = Path(prior.get("archive_receipt_path") or "")
+    if not receipt_path.is_file() or receipt_path.name != "receipt.json":
+        raise ValueError("legacy archive receipt missing; port enrichment refused")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    download_path = receipt_path.with_name("download_receipt.json")
+    if not download_path.is_file():
+        raise ValueError("legacy verified download receipt missing")
+    download = json.loads(download_path.read_text(encoding="utf-8"))
+    if (receipt.get("schema") != "s2p19.archive.v1" or
+            receipt.get("experiment_id") != "S2-P19" or
+            receipt.get("run_id") != prior["run_id"] or receipt.get("port") != port or
+            receipt.get("job_stage") != "completed" or
+            receipt.get("inventory_sha256") != prior["archive_inventory_sha256"] or
+            download.get("task_id") != task_id or download.get("run_id") != prior["run_id"] or
+            download.get("port") != port or
+            download.get("all_volume_and_member_shas_verified") is not True or
+            download.get("remote_receipt_sha256") != digest(receipt_path) or
+            len(receipt.get("volumes") or []) == 0):
+        raise ValueError("legacy archive receipt identity/integrity differs")
+    for volume in receipt["volumes"]:
+        member = safe_member(volume["name"])
+        if digest(receipt_path.parent / member) != volume["sha256"]:
+            raise ValueError("legacy archive ZIP SHA differs")
+    for name in ("results", "job", "config", "status", "source_manifest"):
+        key = name + "_sha256"
+        if prior.get(key) and incoming.get(key) and prior[key] != incoming[key]:
+            raise ValueError("legacy archived source member SHA differs: " + name)
+    enriched = dict(prior)
+    enriched["port"] = port
+    return enriched
 
 
 def archive_completed(port: int, run_id: str, task_id: str, *,

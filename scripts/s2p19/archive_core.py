@@ -110,10 +110,12 @@ def planned_jobs(active: dict, state: dict, historical: dict, manifest: dict) ->
 def live_gate(jobs: list[dict], api_get=ops.api) -> dict:
     """Read all fifteen real GETs; never infer completion from local state."""
     observed, pending = {}, []
+    started_utc = datetime.now(timezone.utc).isoformat()
     for item in jobs:
         task_id, port, run_id = item["task_id"], item["port"], item["run_id"]
         try:
             detail = api_get(port, "/api/runs/" + run_id)
+            observed_utc = datetime.now(timezone.utc).isoformat()
             job, status = detail.get("job") or {}, detail.get("status") or {}
             reasons = []
             if detail.get("read_only") or job.get("run_id") != run_id or status.get("run_id") != run_id:
@@ -136,6 +138,7 @@ def live_gate(jobs: list[dict], api_get=ops.api) -> dict:
                                                 status.get("episodes") != 12500):
                 reasons.append("I0 episode-cap endpoint")
             observed[task_id] = {"port": port, "run_id": run_id,
+                                 "observed_utc": observed_utc,
                                  "stage": status.get("stage"),
                                  "env_step": status.get("env_step"),
                                  "budget_env_steps": status.get("budget_env_steps"),
@@ -144,9 +147,11 @@ def live_gate(jobs: list[dict], api_get=ops.api) -> dict:
                 pending.append(task_id + ": " + ", ".join(reasons))
         except Exception as error:
             observed[task_id] = {"port": port, "run_id": run_id,
+                                 "observed_utc": datetime.now(timezone.utc).isoformat(),
                                  "reasons": ["GET failed: " + str(error)]}
             pending.append(task_id + ": GET failed")
     return {"schema": "s2p19.core_archive_gate.v1",
+            "started_utc": started_utc,
             "checked_utc": datetime.now(timezone.utc).isoformat(),
             "ready": not pending and len(observed) == 15,
             "completed": sum(not row["reasons"] for row in observed.values()),

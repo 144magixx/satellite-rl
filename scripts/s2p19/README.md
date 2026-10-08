@@ -187,7 +187,10 @@ That mode repeats all GET checks before any copy, then calls the existing
 completed-only, per-source and per-ZIP-member SHA archive one task at a time.
 The shared `analysis/source_index.json` merge has an exclusive file lock and
 rejects a task already bound to another run, port or inventory. Earlier smoke
-keys are preserved. Each verified copy is committed to
+keys are preserved; an older key without a port is enriched only after its
+local completed receipt, verified download receipt and ZIP volume SHA match
+the same run/port/inventory. Each live GET has its own observation timestamp.
+Each verified copy is committed to
 `remote_archive/core_archive_ledger.json`; a failed transfer records an error
 and stops. A retry rechecks all live jobs and the existing receipts. An
 unknown partial remote package is never deleted or overwritten automatically.
