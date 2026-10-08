@@ -510,6 +510,29 @@ class S2P19ReportTests(unittest.TestCase):
                 with self.assertRaises(AuditError):
                     list(iter_saved_scenes(path, {}))
 
+    def test_incremental_reader_all_numeric_split_positions(self):
+        class SplitStream:
+            def __init__(self, chunks):
+                self.chunks = iter(chunks)
+
+            def read(self, _):
+                return next(self.chunks, "")
+
+        for number in ("12e3", "-12.5e-3", "0.125", "-0.0E+2"):
+            for split in range(1, len(number) + 1):
+                with self.subTest(number=number, split=split):
+                    stream = SplitStream((number[:split], number[split:] + ","))
+                    reader = _JsonStream(stream)
+                    self.assertEqual(reader.value(), json.loads(number))
+                    self.assertEqual(reader.peek(), ",")
+        for bad in ("12e", "12e+", "-12.", "12e+x", "12x", "01"):
+            with self.subTest(bad=bad):
+                reader = _JsonStream(SplitStream((bad, ",")))
+                with self.assertRaises(AuditError):
+                    value = reader.value()
+                    if reader.peek() != ",":
+                        raise AuditError(f"数字后缀无效：{value}")
+
 
 if __name__ == "__main__":
     unittest.main()
