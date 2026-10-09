@@ -416,7 +416,7 @@ EVIDENCE = {
     "pool_packet_state_rng.json": "preflight/throughput_pool_summary.json",
     "trajectory_128.json": "preflight/runner_equivalence_128/summary.json",
     "spawn_short_runner.json": "preflight/processpool_short_runner/verification.json",
-    "same_gpu_update.json": "preflight/gpu_one_rollout_audit_final.json",
+    "same_gpu_update.json": "preflight/gpu_one_rollout_audit_partial_loader.json",
     "frozen_checkpoint_loader.json": "preflight/frozen_checkpoint_dev_loader_compatibility.json",
     "throughput_diagnosis.json": "preflight/throughput_diagnosis.json",
 }
