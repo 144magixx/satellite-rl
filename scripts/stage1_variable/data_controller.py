@@ -329,6 +329,49 @@ print(json.dumps({{'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).h
     return json.loads(REGISTRY.read_text(encoding="utf-8"))
 
 
+def stage_throughput_canonical_contract(repair_commit):
+    """Create an immutable same-data, learned-evaluation-only sidecar."""
+    from satellite_rl.workbench.variable_throughput_recovery import (
+        DATA_CONTRACT_SHA256, ORIGIN_COMMIT, REPAIR_ID)
+    if not isinstance(repair_commit, str) or len(repair_commit) != 40:
+        raise ValueError("exact throughput repair commit required")
+    original = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    if (hashlib.sha256(CONTRACT.read_bytes()).hexdigest() != DATA_CONTRACT_SHA256 or
+            original.get("scientific_commit") != ORIGIN_COMMIT or
+            original.get("datasets") is None):
+        raise RuntimeError("original S1-V10 canonical dataset contract differs")
+    continuation = {**original,
+                    "format": "s1v10_throughput_canonical_continuation_v1",
+                    "repair_id": REPAIR_ID,
+                    "origin_commit": ORIGIN_COMMIT,
+                    "repair_commit": repair_commit,
+                    "origin_contract_sha256": DATA_CONTRACT_SHA256,
+                    "allowed_eval_only": True,
+                    "allowed_route_port": {"R08": "20418", "R09": "20424"},
+                    "scientific_commit": repair_commit}
+    local = CONTRACT.with_name(f"canonical_dataset_contract_throughput_{repair_commit}.json")
+    save(local, continuation)
+    payload = local.read_bytes()
+    remote_path = f"{ops.BASE}/source/{local.name}"
+    import base64
+    encoded = base64.b64encode(payload).decode("ascii")
+    code = f'''
+import base64,hashlib,json,pathlib
+path=pathlib.Path({remote_path!r});payload=base64.b64decode({encoded!r})
+if path.exists() and path.read_bytes()!=payload:raise RuntimeError('throughput canonical sidecar changed')
+if not path.exists():path.write_bytes(payload)
+print(json.dumps({{'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}}))
+'''
+    result = ops.remote_python(code, 20418, timeout=120)
+    if result["exit_code"]:
+        raise RuntimeError("throughput canonical sidecar write failed: " + result["stderr"][-500:])
+    receipt = json.loads(result["stdout"].splitlines()[-1])
+    if receipt["sha256"] != hashlib.sha256(payload).hexdigest():
+        raise RuntimeError("throughput canonical sidecar remote SHA differs")
+    save(ops.LOCAL / "controller" / "throughput_canonical_contract_receipt.json", receipt)
+    return receipt
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("submit-prepares", "register-datasets"))

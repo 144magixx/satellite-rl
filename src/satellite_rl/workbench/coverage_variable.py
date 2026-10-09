@@ -12,7 +12,7 @@ import subprocess
 import numpy as np
 
 from satellite_rl.coverage.variable_config import ROUTES, VariableConfig
-from satellite_rl.workbench.storage import digest, new_id, now
+from satellite_rl.workbench.storage import digest, new_id, now, read_json
 
 
 ROLES = ("train", "development", "validation", "test", "sequence")
@@ -289,13 +289,41 @@ def freeze_variable_dataset_contract(source, destination):
     return {**source, "source_path": str(path), "path": str(target)}
 
 
-def _canonical_contract(store):
+def _canonical_contract(store, *, route=None, kind=None):
     path = ARCHIVE_PARENT / "source" / "canonical_dataset_contract.json"
     if not path.is_file():
         raise ValueError("S1-V10 canonical dataset contract not registered")
     contract = json.loads(path.read_text(encoding="utf-8"))
     head = subprocess.run(["git", "-C", str(store.source_root), "rev-parse", "HEAD"],
                           capture_output=True, text=True, check=True).stdout.strip()
+    if contract.get("scientific_commit") != head:
+        from .variable_throughput_recovery import (DATA_CONTRACT_SHA256, ORIGIN_COMMIT,
+                                                   REPAIR_ID, TARGETS)
+
+        original = contract
+        if (kind != "evaluate" or route not in LEARNED or
+                store.archive_root.name not in LANES or
+                not any(item["port"] == store.archive_root.name and
+                        item["route"] == route for item in TARGETS.values()) or
+                original.get("scientific_commit") != ORIGIN_COMMIT or
+                digest(path) != DATA_CONTRACT_SHA256):
+            raise ValueError("S1-V10 throughput source continuation permits only matching learned evaluation")
+        continuation_path = (ARCHIVE_PARENT / "source" /
+                             f"canonical_dataset_contract_throughput_{head}.json")
+        continuation = read_json(continuation_path, {})
+        if (continuation.get("format") != "s1v10_throughput_canonical_continuation_v1" or
+                continuation.get("repair_id") != REPAIR_ID or
+                continuation.get("origin_commit") != ORIGIN_COMMIT or
+                continuation.get("repair_commit") != head or
+                continuation.get("origin_contract_sha256") != DATA_CONTRACT_SHA256 or
+                continuation.get("allowed_eval_only") is not True or
+                continuation.get("allowed_route_port") != {"R08": "20418", "R09": "20424"} or
+                continuation.get("datasets") != original.get("datasets") or
+                continuation.get("source_dates") != original.get("source_dates") or
+                continuation.get("historical_source_sha256") !=
+                original.get("historical_source_sha256")):
+            raise ValueError("S1-V10 throughput dataset contract changes original scenes or scope")
+        contract, path = continuation, continuation_path
     if (contract.get("experiment_id") != "S1-V10" or
             contract.get("plan_revision") != PLAN_REVISION or
             contract.get("scientific_commit") != head or
@@ -422,7 +450,7 @@ def submit_variable(application, body, config):
     purpose = body.get("experiment_role", "formal")
     if purpose not in ("formal", "verification"):
         raise ValueError("experiment role must be formal or verification")
-    contract, contract_ref = _canonical_contract(application.store)
+    contract, contract_ref = _canonical_contract(application.store, route=route, kind=kind)
     if kind == "train" and config["training"]["total_steps"] != (
             2048 if purpose == "verification" else 262144):
         raise ValueError("verification training is 2048 decisions; formal training is 262144")
