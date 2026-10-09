@@ -44,13 +44,14 @@ def upload(path: Path, remote_path: str, port: int) -> dict:
 
 
 def api(port: int, path: str, body: dict | None = None,
-        method: str = "GET", timeout: int = 60) -> dict:
+        method: str | None = None, timeout: int = 60) -> dict:
     """Call the instance-local workbench with a caller-supplied request ID."""
     instance(port)
     import re
     if not re.fullmatch(r"/api/[A-Za-z0-9_/-]+", path):
         raise ValueError("invalid S1-D12A API path")
-    if method not in ("GET", "POST") or (method == "POST" and body is None):
+    method = method or ("POST" if body is not None else "GET")
+    if method not in ("GET", "POST") or (method == "POST" and body is None) or (method == "GET" and body is not None):
         raise ValueError("invalid S1-D12A API method/body")
     payload = json.dumps(body, ensure_ascii=False) if body is not None else None
     code = f'''\
