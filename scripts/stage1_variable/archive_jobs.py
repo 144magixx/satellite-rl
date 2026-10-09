@@ -480,8 +480,27 @@ def archive_completed(key, *, part_mib=PART_MIB, compression_level=5,
                 members = {item["member"]: item for item in receipt["members"]}
                 if len(members) != receipt["member_count"] or not receipt["volumes"]:
                     raise RuntimeError("S1-V10 receipt member/volume identity differs")
-                local, volume_paths, capacity = _select_volume_locations(
-                    receipt, port, run_id, package_id, len(receipt_bytes))
+                try:
+                    local, volume_paths, capacity = _select_volume_locations(
+                        receipt, port, run_id, package_id, len(receipt_bytes))
+                except RuntimeError as error:
+                    # The remote immutable ZIPs and receipt stay intact.  This
+                    # local receipt makes a later split-volume decision auditable.
+                    fallback = next((root for root in (LOCAL, BACKUP_LOCAL)
+                                     if shutil.disk_usage(root).free >= LOCAL_RESERVE_BYTES +
+                                     len(receipt_bytes) + (1 << 20)), None)
+                    if fallback is not None:
+                        failure_dir = fallback / "blocked_handoffs" / str(port) / run_id / package_id
+                        failure_dir.mkdir(parents=True, exist_ok=True)
+                        (failure_dir / "receipt.json").write_bytes(receipt_bytes)
+                        (failure_dir / "space_failure.json").write_text(json.dumps({
+                            "error": str(error), "remote_receipt_path": handoff["receipt_path"],
+                            "remote_receipt_sha256": handoff["receipt_sha256"],
+                            "volumes": receipt["volumes"],
+                            "observed_utc": datetime.now(timezone.utc).isoformat()},
+                            ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                    raise RuntimeError(str(error) + "; remote receipt preserved at " +
+                                       handoff["receipt_path"]) from error
                 local.mkdir(parents=True, exist_ok=True)
                 receipt_path = local / "receipt.json"
                 pending = local / "receipt.json.part"

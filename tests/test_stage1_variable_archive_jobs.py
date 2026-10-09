@@ -204,6 +204,14 @@ class CompletedJobArchiveTests(unittest.TestCase):
             self.assertTrue(paths["part_0001.zip"].is_relative_to(droot))
             self.assertTrue(paths["part_0002.zip"].is_relative_to(croot))
             self.assertEqual(gate["reserved_bytes_each_drive"], 8 * gib)
+            receipt["volumes"] = [{"name": "part_0001.zip", "bytes": 7 * gib,
+                                   "sha256": "c" * 64}]
+            with patch.object(archive_jobs, "LOCAL", droot), \
+                 patch.object(archive_jobs, "BACKUP_LOCAL", croot), \
+                 patch.object(archive_jobs.shutil, "disk_usage", side_effect=usage):
+                with self.assertRaisesRegex(RuntimeError, "actual ZIP volume exceeds"):
+                    archive_jobs._select_volume_locations(receipt, 20418, RUN,
+                                                          "package", 2000)
 
 
 if __name__ == "__main__":
