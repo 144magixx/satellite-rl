@@ -382,6 +382,15 @@ class Application:
         result = read_json(directory / "results.json")
         if result:
             return result
+        job = read_json(directory / "job.json", {})
+        if job.get("experiment_id") == "S1-D12A":
+            return {"stage": read_json(directory / "status.json", {}).get("stage"),
+                    "summary": read_json(directory / "summary.json", {}),
+                    "artifacts": read_json(directory / "artifacts.json", {}),
+                    "scenes": [], "metadata": {"variant": job.get("variant"),
+                    "dataset_sha256": job.get("dataset_sha256"),
+                    "shard_id": job.get("shard_id"),
+                    "source_commit": job.get("git_commit")}}
         return {"stage": read_json(directory / "status.json", {}).get("stage"), "summary": None,
                 "scenes": [], "message": "该运行尚无工作台格式的逐束结果；历史标量仍可在训练监控中查看"}
 
@@ -601,6 +610,8 @@ class Application:
                  "power_results.csv", "power_beams.csv", "power_scene_times.csv", "power_iterations.jsonl", "power_cases.jsonl",
                  "power_report.md", "starts.jsonl", "starts.partial.jsonl",
                  "results.partial.jsonl", "mechanism_gate.json", "mechanism_audit.json"}
+        allow.update({"results.jsonl", "actions.jsonl", "teacher_manifest.json",
+                      "bc_updates.jsonl", "pilot_gate.json"})
         allow.update({"preparation_progress.json", "preparation_result.json", "pilot_gate.json",
                       "pilot_audit.json", "candidate_actions.jsonl", "beam_service.jsonl"})
         if filename == "report.md":

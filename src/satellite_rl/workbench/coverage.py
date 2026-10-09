@@ -122,6 +122,9 @@ class CoverageApplication:
         return rows
 
     def import_dataset(self, body):
+        if body.get("schema_version") == 6:
+            from .coverage_drl_r04 import import_dataset
+            return import_dataset(self, body)
         if body.get("schema_version") == 5:
             from .coverage_variable import import_variable_dataset
             return import_variable_dataset(self, body)
@@ -157,6 +160,9 @@ class CoverageApplication:
 
     def submit(self, body):
         config = validate_config(body["config"])
+        if config["schema_version"] == 6:
+            from .coverage_drl_r04 import submit
+            return submit(self, body, config)
         if config["schema_version"] == 5:
             from .coverage_variable import submit_variable
             return submit_variable(self, body, config)
@@ -555,16 +561,24 @@ class CoverageApplication:
     def api(self, method, parts, query, body):
         if parts == ["catalog"] and method == "GET":
             from .coverage_variable import ARCHIVE_PARENT, LANES, variable_default_config
+            from .coverage_drl_r04 import PARENT as DRL_PARENT, PORTS as DRL_PORTS, default_drl_r04_config
             current_group = next((name for name, parent in RECONSTRUCTION_ARCHIVE_PARENTS.items()
                                   if self.store.archive_root.resolve().parent == parent.resolve()), None)
             archive = self.store.archive_root.resolve()
             variable_port = (archive.name if archive.parent == ARCHIVE_PARENT.resolve() and
                              archive.name in LANES and os.environ.get("SATELLITE_RL_SSH_PORT") == archive.name
                              else None)
+            drl_port = (archive.parent.name if archive.name == "archive" and
+                        archive.parent.parent == DRL_PARENT.resolve() and
+                        archive.parent.name in DRL_PORTS and
+                        os.environ.get("SATELLITE_RL_SSH_PORT") == archive.parent.name else None)
             return {"defaults": default_config(), "summary": summary(default_config()),
                     "balance_defaults": balance_default_config(),
                     "reconstruction_defaults": reconstruction_default_config(),
                     "variable_defaults": variable_default_config(),
+                    "drl_r04_defaults": default_drl_r04_config(),
+                    "drl_r04_current_port": drl_port,
+                    "drl_r04_methods": ["I0", "H1", "H2", "BC", "P0", "P1"],
                     "variable_routes": [f"R{i:02d}" for i in range(1, 13)],
                     "variable_current_port": variable_port,
                     "variable_roles": ["train", "development", "validation", "test", "sequence"],
@@ -582,6 +596,9 @@ class CoverageApplication:
                                 {"id": "ppo", "label": "PPO微调"}]}
         if parts == ["validate"] and method == "POST":
             config = validate_config(body)
+            if config["schema_version"] == 6:
+                from .coverage_drl_r04 import drl_r04_summary
+                return {"config": config, "summary": drl_r04_summary(config)}
             if config["schema_version"] == 5:
                 from .coverage_variable import variable_summary
                 return {"config": config, "summary": variable_summary(config)}
@@ -591,6 +608,9 @@ class CoverageApplication:
         if parts == ["datasets", "import"] and method == "POST":
             return self.import_dataset(body)
         if parts == ["datasets", "merge"] and method == "POST":
+            if body.get("schema_version") == 6:
+                from .coverage_drl_r04 import merge_test_datasets
+                return merge_test_datasets(self, body)
             from .coverage_variable import merge_variable_datasets
             return merge_variable_datasets(self, body)
         if parts == ["reconstruction", "import-start"] and method == "POST":
@@ -606,6 +626,13 @@ class CoverageApplication:
                                if r.get("record_type") == "reconstruction_imported_model"]}
         if len(parts) == 3 and parts[0] == "runs" and parts[2] == "mechanism-gate" and method == "POST":
             return self.approve_reconstruction_gate(parts[1], body)
+        if len(parts) == 3 and parts[0] == "runs" and parts[2] == "pilot-gate" and method == "POST":
+            from .drl_r04_gate import approve_pilot_gate
+            return approve_pilot_gate(self, parts[1], body)
+        if len(parts) == 3 and parts[0] == "runs" and parts[2] == "pilot-gate" and method == "GET":
+            directory = self.store.job_dir(validate_id(parts[1]))
+            proof = read_json(directory / "pilot_gate.json", {})
+            return {"proof": proof, "audit": read_json(proof.get("audit_path", ""), {})}
         if len(parts) == 3 and parts[0] == "runs" and parts[2] == "mechanism-gate" and method == "GET":
             directory = self.store.job_dir(validate_id(parts[1]))
             return {"proof": read_json(directory / "mechanism_gate.json", {}),

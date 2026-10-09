@@ -163,7 +163,7 @@ class Store:
         if kind not in ("train", "evaluate", "refine", "prepare"):
             raise ValueError("未知任务类型")
         if kind == "prepare" and not (config.get("research_stage") == "s2p19_preparation" or
-                (config.get("research_stage") == "coverage" and config.get("schema_version") == 5)):
+                (config.get("research_stage") == "coverage" and config.get("schema_version") in (5, 6))):
             raise ValueError("准备任务须声明受校验的S2-P19准备类型")
         if request_id is not None:
             validate_id(request_id)
@@ -197,6 +197,9 @@ class Store:
                 from .coverage_variable import freeze_variable_dataset_contract
                 frozen_extra["variable_dataset_contract"] = freeze_variable_dataset_contract(
                     frozen_extra["variable_dataset_contract"], directory / "input_sources")
+            if config.get("research_stage") == "coverage" and config.get("schema_version") == 6:
+                from .coverage_drl_r04 import freeze_drl_r04_sources
+                frozen_extra = freeze_drl_r04_sources(frozen_extra, directory / "input_sources")
             is_coverage = config.get("research_stage") == "coverage"
             profile = (config["coverage"]["environment_profile"] if is_coverage else
                        config.get("environment", {}).get("profile", "china_legacy"))
@@ -274,7 +277,9 @@ class Store:
             atomic_json(directory / "status.json", {
                 "run_id": run_id, "stage": "queued", "created_at": now(),
                 "env_step": 0, "update_step": 0, "episode": 0,
-                "budget_env_steps": config["training"]["total_steps"],
+                "budget_env_steps": (0 if config.get("schema_version") == 6 and
+                                     (kind == "prepare" or frozen_extra.get("train_mode") == "BC")
+                                     else config["training"]["total_steps"]),
                 "heartbeat_at": now(), "queue_reason": "等待后台调度",
             })
             # Publish the discoverable job last so the scheduler cannot observe

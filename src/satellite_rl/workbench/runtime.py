@@ -346,15 +346,49 @@ class Scheduler:
             resumable_variable_eval = bool(job and job.get("kind") == "evaluate" and
                                            config.get("research_stage") == "coverage" and
                                            config.get("schema_version") == 5)
+            is_drl_r04 = bool(job and job.get("experiment_id") == "S1-D12A" and
+                              config.get("research_stage") == "coverage" and
+                              config.get("schema_version") == 6)
+            resumable_drl_r04_prepare = is_drl_r04 and job.get("kind") == "prepare"
+            resumable_drl_r04_eval = is_drl_r04 and job.get("kind") == "evaluate"
             if not job or (job["kind"] not in ("train", "refine") and
                            not (saved_evaluation or resumable_preparation or resumable_variable_preparation or
                                 resumable_balance_eval or
-                                resumable_reconstruction_eval or resumable_variable_eval)):
+                                resumable_reconstruction_eval or resumable_variable_eval or
+                                resumable_drl_r04_prepare or resumable_drl_r04_eval)):
                 raise ValueError("只有工作台训练或功率优化任务支持恢复")
-            if status.get("stage") not in ("stopped", "failed", "interrupted"):
+            if status.get("stage") not in (("stopped", "failed", "interrupted", "pilot_pending")
+                                                   if is_drl_r04 else ("stopped", "failed", "interrupted")):
                 raise ValueError("该任务当前不能恢复；已完成任务请复制配置新建")
-            if job["kind"] == "train" and not (directory / "checkpoint.pt").is_file():
+            if is_drl_r04 and status.get("scientific_stop") is True:
+                raise ValueError("S1-D12A已达到冻结科学停止门槛，不能恢复追加预算")
+            if job["kind"] == "train" and not (directory / (
+                    "bc_checkpoint.pt" if is_drl_r04 and job.get("train_mode") == "BC"
+                    else "checkpoint.pt")).is_file():
                 raise ValueError("没有可恢复的训练断点，推理权重不能代替断点")
+            if is_drl_r04 and status.get("stage") == "pilot_pending":
+                from .storage import digest
+                proof = read_json(directory / "pilot_gate.json", {})
+                checkpoint = directory / "checkpoint.pt"
+                audit_path = Path(proof.get("audit_path", ""))
+                audit = read_json(audit_path, {})
+                if (job.get("train_mode") not in ("P0", "P1") or
+                        status.get("stop_reason") != "pilot_gate" or
+                        status.get("env_step") != 65536 or
+                        proof.get("passed") is not True or
+                        proof.get("run_id") != run_id or
+                        proof.get("checkpoint_sha256") != digest(checkpoint) or
+                        proof.get("env_step") != 65536 or
+                        not audit_path.is_file() or
+                        not audit_path.resolve().is_relative_to(self.store.archive_root.resolve()) or
+                        proof.get("audit_sha256") != digest(audit_path) or
+                        audit.get("passed") is not True or
+                        audit.get("run_id") != run_id or
+                        audit.get("env_step") != 65536 or
+                        audit.get("checkpoint_sha256") != digest(checkpoint)):
+                    raise ValueError("S1-D12A pilot continuation lacks checkpoint-bound science audit")
+            if resumable_drl_r04_eval and not (directory / "results.partial.jsonl").is_file():
+                raise ValueError("S1-D12A evaluation lacks complete-row resume evidence")
             if (source_repair is None and job.get("run_id") in S2P19_REPLAY_RUNS and
                     job.get("git_commit") == S2P19_ORIGIN_COMMIT and
                     status.get("stage") == "failed" and status.get("env_step") == 100000):
@@ -396,7 +430,7 @@ class Scheduler:
                     (job["kind"] == "refine" and not boundary_repair) or
                     saved_evaluation or resumable_variable_preparation or
                     resumable_balance_eval or resumable_reconstruction_eval or
-                    resumable_variable_eval):
+                    resumable_variable_eval or is_drl_r04):
                 raise ValueError("功率优化按冻结源码及完整场景记录恢复，不支持训练源码替换")
             if boundary_repair and (job.get("run_id") != S2P17_FAILED_RUN or
                     expected_origin_commit != S2P17_ORIGIN_COMMIT or
@@ -468,6 +502,14 @@ class Scheduler:
                 job = prepare_io_retry_recovery(self.store, job)
             (directory / "stop.request").unlink(missing_ok=True)
             if resumable_variable_preparation:
+                history = directory / "recovery_history" / f"attempt_{int(job.get('resume_attempt', 0)) + 1:03d}"
+                history.mkdir(parents=True, exist_ok=False)
+                atomic_json(history / "status_before_resume.json", status)
+                failure = directory / "failure.json"
+                if failure.is_file():
+                    (history / "failure_before_resume.json").write_bytes(failure.read_bytes())
+                job["resume_attempt"] = int(job.get("resume_attempt", 0)) + 1
+            if resumable_drl_r04_prepare:
                 history = directory / "recovery_history" / f"attempt_{int(job.get('resume_attempt', 0)) + 1:03d}"
                 history.mkdir(parents=True, exist_ok=False)
                 atomic_json(history / "status_before_resume.json", status)

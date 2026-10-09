@@ -100,6 +100,10 @@ def validate_config(config):
     if not isinstance(config, dict):
         raise ValueError("配置须为对象")
     version = config.get("schema_version", 2)
+    if version == 6:
+        from satellite_rl.workbench.coverage_drl_r04 import validate_drl_r04_config
+
+        return validate_drl_r04_config(config)
     if version == 5:
         from satellite_rl.workbench.coverage_variable import validate_variable_config
         return validate_variable_config(config)

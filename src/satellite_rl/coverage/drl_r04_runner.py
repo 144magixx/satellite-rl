@@ -1115,8 +1115,10 @@ def _evaluate(directory, job, config, resume, preflight):
     _write_json(directory / "summary.json", {"scene_count": len(all_rows),
                 "result_sha256": _sha256(output), "model": metadata,
                 "method": job.get("variant"),
-                "mean_best_j": float(np.mean([x["best_j"] for x in all_rows
-                                              if x["best_j"] is not None]))})
+                "mean_best_j": (float(np.mean([x["best_j"] for x in all_rows
+                                               if x["best_j"] is not None]))
+                                if any(x["best_j"] is not None for x in all_rows)
+                                else None)})
     _status(directory, job, stage="completed", scene_count=len(all_rows),
             results=str(output))
 
