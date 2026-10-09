@@ -6,7 +6,7 @@ import tempfile
 from unittest.mock import patch
 
 from scripts.stage1_variable.archive_inventory import bundle_local_path, fetch_completed_analysis
-from scripts.stage1_variable import archive_inventory, controller
+from scripts.stage1_variable import archive_inventory, archive_jobs, controller
 
 
 class VariableArchiveTests(unittest.TestCase):
@@ -24,7 +24,7 @@ class VariableArchiveTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bundle_local_path(99999, "/tmp/s1v10_final_a.zip")
 
-    def test_completed_only_sync_does_not_require_final_archive_gate(self):
+    def test_completed_only_archive_delegates_without_final_gate(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             state = root / "controller" / "state.json"
@@ -33,13 +33,66 @@ class VariableArchiveTests(unittest.TestCase):
                                          "phase": "execution", "tasks": {},
                                          "audits": {}}))
             with patch.object(controller, "STATE", state), \
-                 patch.object(archive_inventory.ops, "LOCAL", root), \
-                 patch.object(archive_inventory, "LOCAL", root / "delivery"):
+                 patch.object(archive_inventory, "STATE", state), \
+                 patch.object(archive_jobs, "archive_all_completed",
+                              return_value={"archived": 0, "tasks": {}}) as archive:
                 result = fetch_completed_analysis("a" * 40)
-            self.assertEqual(result["tasks"], 0)
-            self.assertFalse(result["formal_final_archive"])
-            manifest = json.loads((root / "synced_jobs" / "manifest.json").read_text())
-            self.assertEqual(manifest["sync_kind"], "audited_completed_tasks_only")
+            self.assertEqual(result["archived"], 0)
+            archive.assert_called_once_with()
+
+    def test_lane_wide_final_bundle_is_refused(self):
+        with patch.object(archive_inventory, "_state", return_value={}):
+            with self.assertRaisesRegex(RuntimeError, "job ZIP64 packages"):
+                archive_inventory.bundle_download("a" * 40)
+
+    def test_shared_raw_source_chooses_disk_from_actual_zip_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            droot, croot = base / "D", base / "C"
+            gib = 1 << 30
+            def usage(path):
+                amount = 12 * gib if Path(path).is_relative_to(droot) else 14 * gib
+                return type("Usage", (), {"free": amount})()
+            remote = {"bytes": 5 * gib, "sha256": "a" * 64,
+                      "path": "/remote/one_raw_source.zip"}
+            with patch.object(archive_inventory, "LOCAL", droot), \
+                 patch.object(archive_jobs, "BACKUP_LOCAL", croot), \
+                 patch.object(archive_inventory.shutil, "disk_usage", side_effect=usage):
+                target, gate = archive_inventory.source_bundle_target("b" * 40, remote)
+            self.assertTrue(target.is_relative_to(croot))
+            self.assertEqual(gate["missing_compressed_bytes"], 5 * gib)
+            self.assertEqual(gate["reserved_bytes_each_drive"], 8 * gib)
+
+    def test_verified_shared_source_moves_once_to_c_and_removes_d_copy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            delivery, croot = base / "D/delivery", base / "C/job_archives"
+            commit = "b" * 40
+            original = delivery / "bundles/source" / f"s1v10_raw_source_{commit}.zip"
+            original.parent.mkdir(parents=True)
+            original.write_bytes(b"verified source zip bytes")
+            checksum = archive_inventory.file_sha(original)
+            archive_inventory.save(delivery / "source_inventory.json",
+                                   {"scientific_commit": commit})
+            archive_inventory.save(delivery / "source_bundle_receipt.json", {
+                "schema": "s1v10.shared_source_bundle.v1",
+                "scientific_commit": commit, "all_member_shas_verified": True,
+                "local_path": str(original), "sha256": checksum,
+                "bytes": original.stat().st_size,
+                "source_inventory_sha256": archive_inventory.file_sha(
+                    delivery / "source_inventory.json")})
+            gib = 1 << 30
+            with patch.object(archive_inventory, "LOCAL", delivery), \
+                 patch.object(archive_jobs, "LOCAL", base / "D/jobs"), \
+                 patch.object(archive_jobs, "BACKUP_LOCAL", croot), \
+                 patch.object(archive_inventory.shutil, "disk_usage",
+                              return_value=type("Usage", (), {"free": 12 * gib})()):
+                moved = archive_inventory.relocate_shared_source_to_backup(commit)
+                again = archive_inventory.relocate_shared_source_to_backup(commit)
+            self.assertFalse(original.exists())
+            self.assertEqual(archive_inventory.file_sha(moved["local_path"]), checksum)
+            self.assertEqual(again["local_path"], moved["local_path"])
+            self.assertTrue(moved["relocation"]["old_removed"])
 
 
 if __name__ == "__main__":

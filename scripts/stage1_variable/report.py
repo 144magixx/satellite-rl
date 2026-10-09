@@ -14,11 +14,13 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import zipfile
 
 import numpy as np
 
 from satellite_rl.power_refinement.physics import _sgm
 from scripts.stage1_variable import controller, ops
+from scripts.s2p19 import archive_sources
 
 
 MULTIPLIERS = (0.75, 1.0, 1.25)
@@ -70,10 +72,29 @@ def _json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _iter_jsonl(path, *, with_line_number=False):
+def _source_ref(source):
+    if isinstance(source, (str, Path)):
+        return {"path": str(source)}
+    if "source_ref" in source:
+        return source["source_ref"]
+    if "zip_path" in source:
+        return source
+    path = Path(source["path"])
+    if "bytes" in source and path.stat().st_size != source["bytes"]:
+        raise ValueError(f"plain source byte count differs: {path}")
+    return {"path": str(path), "sha256": source.get("sha256")}
+
+
+def _json_source(source):
+    with archive_sources.open_text_source(_source_ref(source)) as stream:
+        return json.load(stream)
+
+
+def _iter_jsonl(source, *, with_line_number=False):
     """Parse one row at a time, retaining the exact bad-file line number."""
-    path = Path(path)
-    with path.open("r", encoding="utf-8") as stream:
+    ref = _source_ref(source)
+    label = archive_sources.source_label(ref)
+    with archive_sources.open_text_source(ref) as stream:
         for number, line in enumerate(stream, 1):
             if not line.strip():
                 continue
@@ -83,9 +104,9 @@ def _iter_jsonl(path, *, with_line_number=False):
                     raise ValueError("JSONL row must be an object")
                 yield (number, row) if with_line_number else row
             except json.JSONDecodeError as error:
-                raise ValueError(f"{path}:{number}: malformed JSONL: {error.msg}") from error
+                raise ValueError(f"{label}:{number}: malformed JSONL: {error.msg}") from error
             except ValueError as error:
-                raise ValueError(f"{path}:{number}: {error}") from error
+                raise ValueError(f"{label}:{number}: {error}") from error
 
 
 def _save(path, value):
@@ -471,49 +492,110 @@ def _grid(task, rows):
 
 
 def _task_sources(state, mirror_root, sync_manifest):
-    """Map only controller-owned IDs to locally mirrored, SHA-verified files."""
+    """Map controller-owned logical names to one SHA-pinned plain/ZIP source."""
     mapped = {}
     manifest_files = {}
+    fixed_names = {"job.json", "config.json", "status.json", "artifacts.json",
+                   "results.json", "results.partial.jsonl", "actions.jsonl",
+                   "episodes.jsonl", "updates.jsonl", "evaluations.jsonl"}
+
+    def recognized(name):
+        return name in fixed_names or (name.startswith("validation_") and
+                                       name.endswith(".jsonl") and
+                                       name[len("validation_"):-len(".jsonl")].isdigit())
+
+    def entry(record, name):
+        expected, size = record.get("sha256"), record.get("bytes")
+        if (not isinstance(expected, str) or len(expected) != 64 or
+                any(ch not in "0123456789abcdef" for ch in expected.lower()) or
+                type(size) is not int or size < 0):
+            raise ValueError(f"{name}: manifest SHA or byte count invalid")
+        ref = record.get("source_ref")
+        if ref is None:
+            if not record.get("path"):
+                raise ValueError(f"{name}: plain manifest source lacks path")
+            path = Path(record["path"]).resolve()
+            if not path.is_file() or path.stat().st_size != size or _sha(path) != expected:
+                raise ValueError(f"{name}: plain source bytes or SHA differ from manifest")
+            return {"path": str(path), "source_ref": {"path": str(path),
+                    "sha256": expected}, "sha256": expected, "bytes": size}
+        if not isinstance(ref, dict) or ref.get("sha256") != expected or ref.get("bytes") != size:
+            raise ValueError(f"{name}: ZIP member SHA/bytes differ from logical file")
+        zip_path = Path(ref.get("zip_path", ""))
+        if (not zip_path.is_absolute() or not zip_path.is_file() or
+                not isinstance(ref.get("zip_sha256"), str) or
+                len(ref["zip_sha256"]) != 64 or
+                any(ch not in "0123456789abcdef" for ch in ref["zip_sha256"].lower())):
+            raise ValueError(f"{name}: ZIP path or SHA invalid")
+        if not isinstance(ref.get("member"), str):
+            raise ValueError(f"{name}: ZIP member name missing")
+        member = archive_sources.safe_member(ref["member"])
+        if Path(member).name != name:
+            raise ValueError(f"{name}: ZIP member has another logical filename")
+        normalized = {"zip_path": str(zip_path.resolve()),
+                      "zip_sha256": ref["zip_sha256"], "member": member,
+                      "sha256": expected, "bytes": size}
+        # Cache the whole-volume SHA only while size/mtime remain unchanged.
+        archive_sources._check_zip(normalized)
+        with zipfile.ZipFile(zip_path) as bundle:
+            try:
+                member_info = bundle.getinfo(member)
+            except KeyError as error:
+                raise ValueError(f"{name}: ZIP member missing") from error
+            if member_info.is_dir() or member_info.file_size != size:
+                raise ValueError(f"{name}: ZIP member size/type differs")
+        result = {"source_ref": normalized, "sha256": expected, "bytes": size}
+        if record.get("path"):
+            path = Path(record["path"]).resolve()
+            if path.is_file():
+                if path.stat().st_size != size or _sha(path) != expected:
+                    raise ValueError(f"{name}: optional plain mirror differs from ZIP source")
+                result["path"] = str(path)
+        return result
+
     if sync_manifest is not None:
         if sync_manifest.get("scientific_commit") != state["scientific_commit"]:
             raise ValueError("Synchronized analysis manifest scientific commit differs")
+        seen_logical = set()
         for row in sync_manifest.get("files", []):
-            key = (str(row["port"]), row["run_id"], Path(row["path"]).name)
-            if key in manifest_files:
-                raise ValueError("Synchronized manifest repeats an analysis filename")
+            name = row.get("name") or Path(row.get("path", "")).name
+            if not isinstance(name, str) or not name:
+                raise ValueError("Synchronized manifest has unsafe logical filename")
+            archive_sources.safe_member(name)  # Source/weights may use nested logical names.
+            key = (str(row["port"]), row["run_id"], name)
+            if key in seen_logical:
+                raise ValueError("Synchronized manifest repeats a logical analysis filename")
+            seen_logical.add(key)
+            if not recognized(name):
+                continue
             manifest_files[key] = row
         for key, record in sync_manifest.get("tasks", {}).items():
             task = state.get("tasks", {}).get(key)
+            if task is None and key.startswith("prepare_"):
+                continue  # Preparation provenance belongs to the data ledger.
             if task is None or task["port"] != record["port"] or task["run_id"] != record["run_id"]:
                 raise ValueError("Synchronized task identity differs from controller")
     for key, task in state.get("tasks", {}).items():
         port, run_id = str(task["port"]), task["run_id"]
         directory = mirror_root / port / run_id
         files = {}
-        for name in ("job.json", "config.json", "status.json", "artifacts.json",
-                     "results.json", "results.partial.jsonl", "actions.jsonl", "episodes.jsonl",
-                     "updates.jsonl", "evaluations.jsonl"):
-            path = directory / name
-            if not path.is_file():
-                continue
-            digest = _sha(path)
-            receipt = manifest_files.get((port, run_id, name))
-            if sync_manifest is not None and (receipt is None or
-                                               Path(receipt["path"]).resolve() != path.resolve() or
-                                               digest != receipt["sha256"]):
-                raise ValueError(f"{key}: local mirror SHA differs from verified archive")
-            files[name] = {"path": str(path.resolve()), "sha256": digest,
-                           "bytes": path.stat().st_size}
-        # Validation nodes are raw inputs and receive the same SHA check.
-        for path in sorted(directory.glob("validation_*.jsonl")):
-            digest = _sha(path)
-            receipt = manifest_files.get((port, run_id, path.name))
-            if sync_manifest is not None and (receipt is None or
-                                               Path(receipt["path"]).resolve() != path.resolve() or
-                                               digest != receipt["sha256"]):
-                raise ValueError(f"{key}: validation node SHA differs")
-            files[path.name] = {"path": str(path.resolve()), "sha256": digest,
-                                "bytes": path.stat().st_size}
+        local_names = {name for name in fixed_names if (directory / name).is_file()}
+        local_names.update(path.name for path in directory.glob("validation_*.jsonl")
+                           if recognized(path.name))
+        if sync_manifest is not None:
+            declared = {name for p, r, name in manifest_files if p == port and r == run_id}
+            extra_local = local_names - declared
+            if extra_local:
+                raise ValueError(f"{key}: local analysis files absent from synchronized manifest: {sorted(extra_local)}")
+            for name in sorted(declared):
+                files[name] = entry(manifest_files[(port, run_id, name)], name)
+        else:
+            for name in sorted(local_names):
+                path = (directory / name).resolve()
+                digest = _sha(path)
+                files[name] = {"path": str(path), "source_ref": {"path": str(path),
+                               "sha256": digest}, "sha256": digest,
+                               "bytes": path.stat().st_size}
         mapped[key] = {"task": task | {"source_commit": controller.expected_task_source(state, key)},
                        "directory": str(directory), "files": files}
     return mapped
@@ -524,17 +606,18 @@ def _task_rows(key, source):
     files = source["files"]
     if task["kind"] != "evaluate" or "results.partial.jsonl" not in files:
         return [], None
-    raw_path = Path(files["results.partial.jsonl"]["path"])
+    raw_source = files["results.partial.jsonl"]
+    raw_label = archive_sources.source_label(_source_ref(raw_source))
     if "results.json" in files:
-        result = _json(files["results.json"]["path"])
+        result = _json_source(files["results.json"])
         if result.get("run_id") != task["run_id"] or result.get("rows_sha256") != files["results.partial.jsonl"]["sha256"]:
             raise ValueError(f"{key}: finalized results SHA or run identity differs")
     rows = []
-    for number, raw in _iter_jsonl(raw_path, with_line_number=True):
+    for number, raw in _iter_jsonl(raw_source, with_line_number=True):
         try:
             rows.append(_scene_row(task, raw))
         except (KeyError, TypeError, ValueError) as error:
-            raise ValueError(f"{raw_path}:{number}: {error}") from error
+            raise ValueError(f"{raw_label}:{number}: {error}") from error
     grid = _grid(task, rows)
     if grid["complete"] and "results.json" not in files:
         raise ValueError(f"{key}: full raw rows lack finalized results.json")
@@ -550,7 +633,8 @@ def _train_rows(key, source):
     trace_index = defaultdict(lambda: {"count": 0, "first": None, "last": None})
     action_count = 0
     if "actions.jsonl" in files:
-        for number, action in _iter_jsonl(files["actions.jsonl"]["path"], with_line_number=True):
+        source_ref = files["actions.jsonl"]
+        for number, action in _iter_jsonl(source_ref, with_line_number=True):
             try:
                 action_count += 1
                 if action["env_step"] != action_count:
@@ -562,21 +646,23 @@ def _train_rows(key, source):
                     value["first"] = action_count
                 value["last"] = action_count
             except (KeyError, TypeError, ValueError) as error:
-                raise ValueError(f"{files['actions.jsonl']['path']}:{number}: {error}") from error
+                raise ValueError(f"{archive_sources.source_label(_source_ref(source_ref))}:{number}: {error}") from error
     if "updates.jsonl" in files:
-        for number, row in _iter_jsonl(files["updates.jsonl"]["path"], with_line_number=True):
+        source_ref = files["updates.jsonl"]
+        for number, row in _iter_jsonl(source_ref, with_line_number=True):
             try:
                 updates.append({"env_step": int(row["env_step"]),
                                 "policy_loss": _finite(row.get("policy_loss"), "policy_loss"),
                                 "entropy": _finite(row.get("entropy"), "entropy")})
             except (KeyError, TypeError, ValueError) as error:
-                raise ValueError(f"{files['updates.jsonl']['path']}:{number}: {error}") from error
+                raise ValueError(f"{archive_sources.source_label(_source_ref(source_ref))}:{number}: {error}") from error
     steps = [row["env_step"] for row in updates]
     if any(b <= a or b - a != 2048 for a, b in zip([0] + steps[:-1], steps)):
         raise ValueError(f"{key}: PPO update step ledger is not 2048-decision spaced")
     completed_episodes = partial_episodes = 0
     if "episodes.jsonl" in files:
-        for number, row in _iter_jsonl(files["episodes.jsonl"]["path"], with_line_number=True):
+        source_ref = files["episodes.jsonl"]
+        for number, row in _iter_jsonl(source_ref, with_line_number=True):
             try:
                 if int(row["terminal_env_step"]) > (steps[-1] if steps else 0):
                     raise ValueError("episode terminates beyond observed training steps")
@@ -605,11 +691,12 @@ def _train_rows(key, source):
                                  "coverage_100": coverage_value,
                                  "completed_episode": bool(row.get("completed_episode"))})
             except (KeyError, TypeError, ValueError) as error:
-                raise ValueError(f"{files['episodes.jsonl']['path']}:{number}: {error}") from error
+                raise ValueError(f"{archive_sources.source_label(_source_ref(source_ref))}:{number}: {error}") from error
     interval = 2048 if task["purpose"] == "verification" else 16384
     due = list(range(interval, (steps[-1] if steps else 0) + 1, interval))
     if "evaluations.jsonl" in files:
-        for number, row in _iter_jsonl(files["evaluations.jsonl"]["path"], with_line_number=True):
+        source_ref = files["evaluations.jsonl"]
+        for number, row in _iter_jsonl(source_ref, with_line_number=True):
             try:
                 summary = row["summary"]
                 evaluations.append({"env_step": int(row["env_step"]),
@@ -619,7 +706,7 @@ def _train_rows(key, source):
                                     "rows_sha256": row["rows_sha256"],
                                     "downstream_allocation_calls": int(row["downstream_allocation_calls"])})
             except (KeyError, TypeError, ValueError) as error:
-                raise ValueError(f"{files['evaluations.jsonl']['path']}:{number}: {error}") from error
+                raise ValueError(f"{archive_sources.source_label(_source_ref(source_ref))}:{number}: {error}") from error
     nodes = [row["env_step"] for row in evaluations]
     if len(nodes) != len(set(nodes)) or any(node not in due for node in nodes):
         raise ValueError(f"{key}: duplicate or unscheduled validation node")
@@ -629,7 +716,8 @@ def _train_rows(key, source):
             raise ValueError(f"{key}: validation node lacks 20 mothers × 3 demands")
         mother = defaultdict(set)
         count = 0
-        for number, row in _iter_jsonl(files[name]["path"], with_line_number=True):
+        source_ref = files[name]
+        for number, row in _iter_jsonl(source_ref, with_line_number=True):
             try:
                 count += 1
                 if row["demand_multiplier"] not in MULTIPLIERS:
@@ -639,7 +727,7 @@ def _train_rows(key, source):
                     raise ValueError("validation node physical allocation call ledger differs")
                 mother[(row["scene_id"], row["scene_sha256"])].add(row["demand_multiplier"])
             except (KeyError, TypeError, ValueError) as error:
-                raise ValueError(f"{files[name]['path']}:{number}: {error}") from error
+                raise ValueError(f"{archive_sources.source_label(_source_ref(source_ref))}:{number}: {error}") from error
         if count != 60:
             raise ValueError(f"{key}: validation node has {count}/60 mother×tier rows")
         if len(mother) != 20 or any(levels != set(MULTIPLIERS) for levels in mother.values()):
@@ -1000,7 +1088,7 @@ def build_report(state_path, synced_root, output_dir, *, strict=False):
             if required not in files:
                 issues.append(f"{key}：本地缺少{required}")
         if "job.json" in files:
-            frozen_job = _json(files["job.json"]["path"])
+            frozen_job = _json_source(files["job.json"])
             if (frozen_job.get("run_id") != task["run_id"] or
                     frozen_job.get("git_commit") != controller.expected_task_source(state, key)):
                 raise ValueError(f"{key}: job ID or frozen code commit differs")
@@ -1018,15 +1106,19 @@ def build_report(state_path, synced_root, output_dir, *, strict=False):
                 if frozen_job.get("variable_dataset_contract", {}).get("sha256") != override.get("dataset_contract_sha256"):
                     raise ValueError(f"{key}: learned test uses another canonical input contract")
         if "config.json" in files:
-            frozen_config = _json(files["config.json"]["path"])
+            frozen_config = _json_source(files["config.json"])
             actual = {role: record.get("sha256") for role, record in
                       frozen_config.get("datasets", {}).items()}
             if task.get("dataset_sha256") and actual != task["dataset_sha256"]:
                 raise ValueError(f"{key}: config dataset SHA differs from controller")
         if "status.json" in files:
-            status = _json(files["status.json"]["path"])
+            status = _json_source(files["status.json"])
             if key in state.get("audits", {}) and status.get("stage") != "completed":
                 raise ValueError(f"{key}: audited task local status is not completed")
+        if "artifacts.json" in files:
+            artifacts = _json_source(files["artifacts.json"])
+            if artifacts.get("run_id") not in (None, task["run_id"]):
+                raise ValueError(f"{key}: artifact run ID differs from controller")
         rows, grid = _task_rows(key, source)
         if grid is not None:
             grids[key] = grid

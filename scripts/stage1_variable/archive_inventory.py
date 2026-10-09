@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import shutil
+import zipfile
 
 from scripts.stage1_variable import ops
 from scripts.stage1_variable.controller import STATE, save
@@ -139,197 +140,27 @@ def fetch_small(commit, threshold=2_000_000):
 
 
 def fetch_analysis(commit):
-    """Sync each audited run's text ledgers once for local plots and reporting."""
-    state = _state(commit)
-    allowed = {".json", ".jsonl", ".csv", ".md", ".txt", ".log"}
-    result = {"scientific_commit": commit, "tasks": {}, "files": []}
-    for port in ops.SSH_PORTS:
-        inventory = json.loads((LOCAL / f"inventory_{port}.json").read_text(encoding="utf-8"))
-        rows = {row["relative"]: row for row in inventory["files"]}
-        run_ids = {task["run_id"] for task in state["tasks"].values() if task["port"] == port}
-        for task in state["tasks"].values():
-            if task["port"] == port:
-                result["tasks"][task["key"]] = {"port": port, "run_id": task["run_id"]}
-        client = ops.connect(port)
-        try:
-            with client.open_sftp() as sftp:
-                for run_id in run_ids:
-                    prefix = f"outputs/workbench/jobs/{run_id}/"
-                    selected = [row for relative, row in rows.items()
-                                if relative.startswith(prefix) and
-                                PurePosixPath(relative).suffix.lower() in allowed and
-                                "scene_inputs/" not in relative and
-                                "source_snapshots/" not in relative]
-                    for row in selected:
-                        relative = row["relative"][len(prefix):]
-                        parts = PurePosixPath(relative).parts
-                        if not parts or ".." in parts:
-                            raise RuntimeError("unsafe analysis relative path")
-                        target = ops.LOCAL / "synced_jobs" / str(port) / run_id / Path(*parts)
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        if not target.exists() or file_sha(target) != row["sha256"]:
-                            sftp.get(inventory["root"] + "/" + row["relative"], str(target))
-                        if file_sha(target) != row["sha256"]:
-                            raise RuntimeError(f"{port} {run_id}: analysis file SHA differs")
-                        result["files"].append({"port": port, "run_id": run_id,
-                                                "path": str(target),
-                                                "source_relative": row["relative"],
-                                                "sha256": row["sha256"],
-                                                "bytes": row["bytes"]})
-        finally:
-            client.close()
-        save(ops.LOCAL / "synced_jobs" / "manifest.json", result)
-    return {"tasks": len(result["tasks"]), "files": len(result["files"]),
-            "manifest": str(ops.LOCAL / "synced_jobs" / "manifest.json")}
+    """Archive all audited jobs as verified ZIP members for report streaming."""
+    _state(commit)
+    from scripts.stage1_variable.archive_jobs import archive_all_completed
+
+    return archive_all_completed()
 
 
 def fetch_completed_analysis(commit):
-    """Incrementally sync only immutable audited/completed task text ledgers."""
-    from scripts.stage1_variable import controller
-
-    state = json.loads(controller.STATE.read_text(encoding="utf-8"))
+    """Archive only currently audited, completed and exited jobs."""
+    state = json.loads(STATE.read_text(encoding="utf-8"))
     if state.get("scientific_commit") != commit:
-        raise RuntimeError("partial sync controller source differs")
-    selected = {}
-    for key, audit in state.get("audits", {}).items():
-        task = state.get("tasks", {}).get(key)
-        if not task or audit.get("run_id") != task["run_id"]:
-            raise RuntimeError("partial sync audit and controller task differ")
-        port, run_id = task["port"], task["run_id"]
-        response = ops.api(port, "/api/runs/" + run_id)
-        if response["status"] != 200:
-            raise RuntimeError(f"{key}: live task API unavailable")
-        detail = response["body"]
-        if (detail["status"].get("stage") != "completed" or
-                detail["status"].get("process_alive") is True or
-                detail["job"].get("git_commit") != controller.expected_task_source(state, key) or
-                detail["job"].get("run_id") != run_id):
-            raise RuntimeError(f"{key}: task is not immutable/completed at its mapped source")
-        if task["kind"] == "evaluate" and (
-                detail["artifacts"].get("raw_results_sha256") != audit.get("sha256")):
-            raise RuntimeError(f"{key}: live raw result SHA differs from controller audit")
-        selected[key] = {"port": port, "run_id": run_id,
-                         "source_commit": detail["job"]["git_commit"],
-                         "archive_root": detail["job"]["archive_root"]}
-    allowed = {"job.json", "config.json", "status.json", "artifacts.json",
-               "results.json", "results.partial.jsonl", "actions.jsonl",
-               "episodes.jsonl", "updates.jsonl", "evaluations.jsonl"}
-    manifest = {"scientific_commit": commit,
-                "sync_kind": "audited_completed_tasks_only",
-                "created_utc": __import__("datetime").datetime.now(
-                    __import__("datetime").timezone.utc).isoformat(),
-                "tasks": {key: {"port": row["port"], "run_id": row["run_id"],
-                                "source_commit": row["source_commit"]}
-                          for key, row in selected.items()},
-                "files": []}
-    for port in ops.SSH_PORTS:
-        tasks = {key: row for key, row in selected.items() if row["port"] == port}
-        if not tasks:
-            continue
-        info = ops.instance(port)
-        run_ids = [row["run_id"] for row in tasks.values()]
-        code = f'''
-import hashlib,json,pathlib
-root=pathlib.Path({info['root']!r}).resolve();runs={run_ids!r};rows=[]
-allowed={sorted(allowed)!r}
-for run_id in runs:
- directory=root/'outputs/workbench/jobs'/run_id
- for file in sorted(directory.iterdir()):
-  if not file.is_file() or not (file.name in allowed or
-      file.name.startswith('validation_') and file.name.endswith('.jsonl')):continue
-  h=hashlib.sha256()
-  with file.open('rb') as stream:
-   for block in iter(lambda:stream.read(8<<20),b''):h.update(block)
-  rows.append({{'run_id':run_id,'name':file.name,'path':str(file),
-               'sha256':h.hexdigest(),'bytes':file.stat().st_size}})
-print(json.dumps(rows))
-'''
-        response = ops.remote_python(code, port, timeout=300)
-        if response["exit_code"]:
-            raise RuntimeError(f"{port}: partial analysis SHA inventory failed: {response['stderr'][-700:]}")
-        rows = json.loads(response["stdout"].splitlines()[-1])
-        client = ops.connect(port)
-        try:
-            with client.open_sftp() as sftp:
-                for row in rows:
-                    target = ops.LOCAL / "synced_jobs" / str(port) / row["run_id"] / row["name"]
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    if not target.exists() or file_sha(target) != row["sha256"]:
-                        sftp.get(row["path"], str(target))
-                    if file_sha(target) != row["sha256"]:
-                        raise RuntimeError(f"{port} {row['run_id']}: partial synced file SHA differs")
-                    manifest["files"].append({"port": port, "run_id": row["run_id"],
-                                              "path": str(target),
-                                              "source_relative": row["path"].removeprefix(info["root"] + "/"),
-                                              "sha256": row["sha256"], "bytes": row["bytes"]})
-        finally:
-            client.close()
-        save(ops.LOCAL / "synced_jobs" / "manifest.json", manifest)
-    save(ops.LOCAL / "synced_jobs" / "manifest.json", manifest)
-    receipt = {"tasks": len(manifest["tasks"]), "files": len(manifest["files"]),
-               "bytes": sum(row["bytes"] for row in manifest["files"]),
-               "manifest": str(ops.LOCAL / "synced_jobs" / "manifest.json"),
-               "formal_final_archive": False}
-    save(LOCAL / "completed_analysis_receipt.json", receipt)
-    return receipt
+        raise RuntimeError("partial archive controller source differs")
+    from scripts.stage1_variable.archive_jobs import archive_all_completed
+
+    return archive_all_completed()
 
 
 def bundle_download(commit):
+    """Prevent a second lane-wide copy of the same large job evidence."""
     _state(commit)
-    result = {}
-    for port in ops.SSH_PORTS:
-        manifest = json.loads((LOCAL / f"inventory_{port}.json").read_text(encoding="utf-8"))
-        if manifest["commit"] != commit:
-            raise RuntimeError("bundle commit differs")
-        info = ops.instance(port)
-        remote_manifest = f"{info['ops']}/inventory_{commit}.json"
-        sent = ops.upload(LOCAL / f"inventory_{port}.json", remote_manifest, port)
-        if sent["local_sha256"] != sent["remote"]:
-            raise RuntimeError("remote inventory SHA differs")
-        code = f'''
-import hashlib,json,pathlib,shutil,zipfile
-root=pathlib.Path({info['root']!r}).resolve();manifest=json.loads(pathlib.Path({remote_manifest!r}).read_text())
-target=root/'ops'/('s1v10_final_{commit}.zip')
-tmp=target.with_suffix('.zip.part')
-required=sum(int(row['bytes']) for row in manifest['files'])+2*(1<<30)
-if shutil.disk_usage(root).free<required:
- raise RuntimeError('remote final ZIP lacks uncompressed-size plus 2GiB free-space reserve')
-text_suffix={{'.json','.jsonl','.csv','.log','.md','.txt','.py','.html','.js','.css'}}
-with zipfile.ZipFile(tmp,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=5,allowZip64=True) as bundle:
- for row in manifest['files']:
-  file=(root/row['relative']).resolve()
-  if not file.is_relative_to(root) or not file.is_file():raise RuntimeError('inventory member absent')
-  h=hashlib.sha256()
-  with file.open('rb') as stream:
-   for block in iter(lambda:stream.read(8<<20),b''):h.update(block)
-  h=h.hexdigest()
-  if h!=row['sha256']:raise RuntimeError('inventory member SHA changed')
-  mode=zipfile.ZIP_DEFLATED if file.suffix.lower() in text_suffix else zipfile.ZIP_STORED
-  bundle.write(file,row['relative'],compress_type=mode,compresslevel=5 if mode==zipfile.ZIP_DEFLATED else None)
- bundle.write({remote_manifest!r},'inventory.json')
-tmp.replace(target)
-h=hashlib.sha256()
-with target.open('rb') as stream:
- for block in iter(lambda:stream.read(8<<20),b''):h.update(block)
-print(json.dumps({{'path':str(target),'bytes':target.stat().st_size,'sha256':h.hexdigest(),
-                  'file_count':len(manifest['files'])}}))
-'''
-        remote = _remote(port, code, timeout=3600)
-        local = bundle_local_path(port, remote["path"])
-        local.parent.mkdir(parents=True, exist_ok=True)
-        if shutil.disk_usage(local.parent).free < remote["bytes"] + 2 * (1 << 30):
-            raise RuntimeError(f"{port}: local ZIP needs payload plus 2GiB free-space reserve")
-        client = ops.connect(port)
-        try:
-            with client.open_sftp() as sftp:
-                sftp.get(remote["path"], str(local))
-        finally:
-            client.close()
-        if local.stat().st_size != remote["bytes"] or file_sha(local) != remote["sha256"]:
-            raise RuntimeError(f"{port}: final ZIP SHA differs")
-        result[str(port)] = {**remote, "local_path": str(local)}
-        save(LOCAL / "bundle_receipt.json", result)
-    return result
+    raise RuntimeError("S1-V10 job ZIP64 packages are the final local archive; use archive_jobs")
 
 
 def source_inventory(commit):
@@ -337,27 +168,44 @@ def source_inventory(commit):
     from scripts.stage1_variable.data_controller import (
         PREPARATION_ARCHIVE_SHA, SOURCE_CONTRACT_SHA, SOURCE_PREFLIGHT_SHA)
 
-    _state(commit)
+    state = json.loads(STATE.read_text(encoding="utf-8"))
+    if (state.get("scientific_commit") != commit or
+            set(state.get("prepares", {})) != {str(port) for port in ops.SSH_PORTS}):
+        raise RuntimeError("shared S1-V10 source inventory lacks four frozen prepare jobs")
+    for port in ops.SSH_PORTS:
+        prepared = state["prepares"][str(port)]
+        response = ops.api(port, "/api/runs/" + prepared["run_id"])
+        if response["status"] != 200:
+            raise RuntimeError("shared S1-V10 preparation API unavailable")
+        job, status = response["body"]["job"], response["body"]["status"]
+        if (job.get("run_id") != prepared["run_id"] or
+                job.get("request_id") != prepared["request_id"] or
+                job.get("git_commit") != prepared["git_commit"] or
+                status.get("stage") != "completed" or
+                status.get("process_alive") is not False):
+            raise RuntimeError("shared S1-V10 source needs four completed exited preparations")
     code = f'''
 import hashlib,json,pathlib
 base=pathlib.Path({ops.BASE!r})/'source';days={PREPARATION_ARCHIVE_SHA!r};rows={{}}
 for day,expected in days.items():
  folder=base/day;pin=json.loads((folder/'source_preflight.json').read_text());status=json.loads((folder/'download_status.json').read_text())
-archive=folder/pin['archive_name'];h=hashlib.sha256()
-with archive.open('rb') as stream:
- for block in iter(lambda:stream.read(8<<20),b''):h.update(block)
-if status.get('status')!='completed' or status.get('sha256')!=expected or h.hexdigest()!=expected:
- raise RuntimeError('original daily archive SHA/complete receipt differs: '+day)
-files=[]
-for path in sorted(folder.iterdir()):
- if path.is_file() and path!=archive and path.suffix!='.part':
-  files.append({{'path':str(path),'bytes':path.stat().st_size,
-                'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}})
-rows[day]={{'archive':str(archive),'bytes':archive.stat().st_size,'sha256':expected,
-            'asset_id':pin['asset_id'],'metadata_files':files}}
+ archive=folder/pin['archive_name'];h=hashlib.sha256()
+ with archive.open('rb') as stream:
+  for block in iter(lambda:stream.read(8<<20),b''):h.update(block)
+ if status.get('status')!='completed' or status.get('sha256')!=expected or h.hexdigest()!=expected:
+  raise RuntimeError('original daily archive SHA/complete receipt differs: '+day)
+ files=[]
+ for path in sorted(folder.iterdir()):
+  if path.is_file() and path!=archive and path.suffix!='.part':
+   files.append({{'path':str(path),'bytes':path.stat().st_size,
+                 'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}})
+ rows[day]={{'archive':str(archive),'bytes':archive.stat().st_size,'sha256':expected,
+             'asset_id':pin['asset_id'],'metadata_files':files}}
 print(json.dumps(rows))
 '''
     observed = _remote(20418, code, timeout=600)
+    if set(observed) != set(PREPARATION_ARCHIVE_SHA):
+        raise RuntimeError("shared S1-V10 source inventory omits one of four pinned days")
     for day, row in observed.items():
         mapped = {Path(item["path"]).name: item["sha256"] for item in row["metadata_files"]}
         if (row["sha256"] != PREPARATION_ARCHIVE_SHA[day] or
@@ -373,6 +221,70 @@ print(json.dumps(rows))
     return result
 
 
+def source_bundle_target(commit, remote):
+    """Choose one verified D/C location from actual compressed ZIP bytes."""
+    from scripts.stage1_variable import archive_jobs
+
+    candidates = (LOCAL / "bundles" / "source",
+                  archive_jobs.BACKUP_LOCAL / "_shared_source")
+    for directory in candidates:
+        directory.mkdir(parents=True, exist_ok=True)
+    free = {str(path): shutil.disk_usage(path).free for path in candidates}
+    if any(value < archive_jobs.LOCAL_RESERVE_BYTES for value in free.values()):
+        raise RuntimeError("raw-source archive requires D and C each to retain 8 GiB")
+    name = f"s1v10_raw_source_{commit}.zip"
+    target = next((directory / name for directory in candidates
+                   if (directory / name).is_file() and
+                   (directory / name).stat().st_size == remote["bytes"] and
+                   file_sha(directory / name) == remote["sha256"]), None)
+    missing = 0 if target is not None else remote["bytes"]
+    if target is None:
+        target = next((directory / name for directory in candidates
+                       if free[str(directory)] >= missing +
+                       archive_jobs.LOCAL_RESERVE_BYTES), None)
+    if target is None:
+        raise RuntimeError("actual raw-source ZIP bytes do not fit D/C with 8 GiB reserves; "
+                           "remote receipt remains at " + remote["path"])
+    return target, {"free_bytes_before": free,
+                    "missing_compressed_bytes": missing,
+                    "reserved_bytes_each_drive": archive_jobs.LOCAL_RESERVE_BYTES}
+
+
+def verify_shared_source_zip(path, inventory, inventory_path, expected_zip_sha):
+    """Verify the sole raw-source ZIP and every uncompressed daily member."""
+    from scripts.s2p19.archive_sources import safe_member
+
+    if file_sha(path) != expected_zip_sha:
+        raise RuntimeError("S1-V10 shared raw-source ZIP SHA differs")
+    expected = {"source_inventory.json": {
+        "sha256": file_sha(inventory_path), "bytes": Path(inventory_path).stat().st_size}}
+    for day, row in inventory["days"].items():
+        archive = Path(row["archive"])
+        expected[safe_member(day + "/" + archive.name)] = {
+            "sha256": row["sha256"], "bytes": row["bytes"]}
+        for item in row["metadata_files"]:
+            member = safe_member(day + "/" + Path(item["path"]).name)
+            if member in expected:
+                raise RuntimeError("S1-V10 shared source ZIP repeats a pinned member")
+            expected[member] = {"sha256": item["sha256"], "bytes": item["bytes"]}
+    with zipfile.ZipFile(path) as bundle:
+        infos = bundle.infolist()
+        if len(infos) != len(expected) or {info.filename for info in infos} != set(expected):
+            raise RuntimeError("S1-V10 shared source ZIP member set differs")
+        for info in infos:
+            safe_member(info.filename)
+            row = expected[info.filename]
+            if info.is_dir() or info.file_size != row["bytes"]:
+                raise RuntimeError("S1-V10 shared source ZIP member size differs")
+            value = hashlib.sha256()
+            with bundle.open(info) as stream:
+                for block in iter(lambda: stream.read(8 << 20), b""):
+                    value.update(block)
+            if value.hexdigest() != row["sha256"]:
+                raise RuntimeError("S1-V10 shared source ZIP member SHA differs")
+    return [{"member": member, **record} for member, record in sorted(expected.items())]
+
+
 def source_bundle_download(commit):
     """Create one ZIP64 raw-source package, never four duplicate daily sets."""
     inventory = source_inventory(commit)
@@ -381,11 +293,6 @@ def source_bundle_download(commit):
     uploaded = ops.upload(local_inventory, remote_inventory, 20418)
     if uploaded["remote"] != file_sha(local_inventory):
         raise RuntimeError("raw source inventory transfer SHA differs")
-    estimated = inventory["raw_bytes_once"]
-    target_local = LOCAL / "bundles" / "source" / f"s1v10_raw_source_{commit}.zip"
-    target_local.parent.mkdir(parents=True, exist_ok=True)
-    if shutil.disk_usage(target_local.parent).free < estimated + 2 * (1 << 30):
-        raise RuntimeError("local raw-source ZIP requires daily payload plus 2GiB reserve")
     code = f'''
 import hashlib,json,pathlib,shutil,zipfile
 base=pathlib.Path({ops.BASE!r})/'source';manifest=json.loads(pathlib.Path({remote_inventory!r}).read_text())
@@ -412,18 +319,96 @@ with target.open('rb') as stream:
 print(json.dumps({{'path':str(target),'bytes':target.stat().st_size,'sha256':h.hexdigest()}}))
 '''
     remote = _remote(20418, code, timeout=3600)
+    target_local, gate = source_bundle_target(commit, remote)
     client = ops.connect(20418)
     try:
         with client.open_sftp() as sftp:
-            sftp.get(remote["path"], str(target_local))
+            if gate["missing_compressed_bytes"]:
+                pending = target_local.with_name(target_local.name + ".part")
+                sftp.get(remote["path"], str(pending))
+                if pending.stat().st_size != remote["bytes"] or file_sha(pending) != remote["sha256"]:
+                    raise RuntimeError("single raw-source ZIP staging SHA differs")
+                pending.replace(target_local)
     finally:
         client.close()
     if target_local.stat().st_size != remote["bytes"] or file_sha(target_local) != remote["sha256"]:
         raise RuntimeError("single raw-source ZIP local SHA differs")
-    receipt = {**remote, "local_path": str(target_local),
+    members = verify_shared_source_zip(target_local, inventory, local_inventory, remote["sha256"])
+    receipt = {**remote, "schema": "s1v10.shared_source_bundle.v1",
+               "scientific_commit": commit,
+               "local_path": str(target_local),
+               "local_space_gate": gate,
                "source_inventory_sha256": file_sha(local_inventory),
+               "all_member_shas_verified": True, "members": members,
                "daily_archives_copied_once": 4}
     save(LOCAL / "source_bundle_receipt.json", receipt)
+    return receipt
+
+
+def relocate_shared_source_to_backup(commit):
+    """Keep one verified source ZIP on C when it preserves D for large jobs."""
+    from scripts.stage1_variable import archive_jobs
+
+    receipt_path = LOCAL / "source_bundle_receipt.json"
+    if not receipt_path.is_file():
+        raise RuntimeError("verified shared source receipt absent")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    inventory_path = LOCAL / "source_inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8")) if inventory_path.is_file() else {}
+    name = f"s1v10_raw_source_{commit}.zip"
+    original = (LOCAL / "bundles" / "source" / name).resolve()
+    backup = (archive_jobs.BACKUP_LOCAL / "_shared_source" / name).resolve()
+    if ((archive_jobs.LOCAL / "shared_source_closure_receipt.json").is_file() or
+            receipt.get("schema") != "s1v10.shared_source_bundle.v1" or
+            receipt.get("all_member_shas_verified") is not True or
+            receipt.get("scientific_commit", commit) != commit or
+            inventory.get("scientific_commit") != commit or
+            receipt.get("source_inventory_sha256") != file_sha(inventory_path) or
+            receipt.get("bytes", 0) <= 0 or
+            Path(receipt.get("local_path") or "").resolve() not in (original, backup)):
+        raise RuntimeError("shared source ZIP is already closed or has another identity")
+    expected = receipt["sha256"]
+    if (Path(receipt["local_path"]).resolve() == backup and backup.is_file() and
+            file_sha(backup) == expected and not original.exists()):
+        return receipt
+    if not original.is_file() or original.is_symlink() or file_sha(original) != expected:
+        raise RuntimeError("original D shared source ZIP SHA/path differs")
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    source_free = shutil.disk_usage(original.parent).free
+    backup_free = shutil.disk_usage(backup.parent).free
+    if (source_free < archive_jobs.LOCAL_RESERVE_BYTES or
+            backup_free < receipt["bytes"] + archive_jobs.LOCAL_RESERVE_BYTES):
+        raise RuntimeError("C cannot hold shared source ZIP while retaining both 8 GiB reserves")
+    if not backup.is_file() or file_sha(backup) != expected:
+        pending = backup.with_name(backup.name + ".part")
+        shutil.copy2(original, pending)
+        if pending.stat().st_size != receipt["bytes"] or file_sha(pending) != expected:
+            raise RuntimeError("shared source ZIP copy to C failed SHA/size verification")
+        pending.replace(backup)
+    if file_sha(backup) != expected or backup.stat().st_size != receipt["bytes"]:
+        raise RuntimeError("verified C shared source ZIP differs")
+    migration = {"schema": "s1v10.shared_source_relocation.v1",
+                 "old_path": str(original), "new_path": str(backup),
+                 "sha256": expected, "bytes": receipt["bytes"],
+                 "D_free_before": source_free, "C_free_before": backup_free,
+                 "verified_copy_utc": __import__("datetime").datetime.now(
+                     __import__("datetime").timezone.utc).isoformat(),
+                 "old_removed": False}
+    receipt = {**receipt, "scientific_commit": commit,
+               "local_path": str(backup), "relocation": migration}
+    save(receipt_path, receipt)
+    if (original.resolve() != (LOCAL / "bundles" / "source" / name).resolve() or
+            file_sha(original) != expected):
+        raise RuntimeError("D source ZIP changed before duplicate removal")
+    original.unlink()
+    migration.update({"old_removed": True,
+                      "D_free_after": shutil.disk_usage(original.parent).free,
+                      "C_free_after": shutil.disk_usage(backup.parent).free,
+                      "completed_utc": __import__("datetime").datetime.now(
+                          __import__("datetime").timezone.utc).isoformat()})
+    receipt["relocation"] = migration
+    save(receipt_path, receipt)
+    save(LOCAL / "source_relocation_receipt.json", migration)
     return receipt
 
 
@@ -431,7 +416,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("inventory", "fetch-small", "fetch-analysis",
                                            "fetch-completed-analysis", "bundle-download",
-                                           "source-inventory", "source-bundle-download"))
+                                           "source-inventory", "source-bundle-download",
+                                           "source-relocate-backup"))
     parser.add_argument("--commit", required=True)
     args = parser.parse_args()
     result = (inventory(args.commit) if args.action == "inventory" else
@@ -440,7 +426,8 @@ def main():
               fetch_completed_analysis(args.commit) if args.action == "fetch-completed-analysis" else
               bundle_download(args.commit) if args.action == "bundle-download" else
               source_inventory(args.commit) if args.action == "source-inventory" else
-              source_bundle_download(args.commit))
+              source_bundle_download(args.commit) if args.action == "source-bundle-download" else
+              relocate_shared_source_to_backup(args.commit))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

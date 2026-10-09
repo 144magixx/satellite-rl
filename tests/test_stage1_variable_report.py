@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import replace
 from copy import deepcopy
 import csv
+import hashlib
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 import numpy as np
 
@@ -161,6 +163,119 @@ class VariableReportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "registry file SHA differs"):
                 report.build_report(snapshot, mirror, base / "analysis2")
 
+    def test_zip_member_matches_plain_report_without_extracting_raw_jsonl(self):
+        rows = [self._raw(factor=factor) for factor in report.MULTIPLIERS]
+        with tempfile.TemporaryDirectory() as temp:
+            state, mirror, plain_output, raw_path = self._fixture(temp, rows)
+            plain = report.build_report(state, mirror, plain_output)
+            plain_csv = (plain_output / "per_scene.csv").read_bytes()
+            raw_bytes = raw_path.read_bytes()
+            volume = Path(temp) / "completed_job.zip"
+            member = "job/results.partial.jsonl"
+            with zipfile.ZipFile(volume, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+                bundle.writestr(member, raw_bytes)
+            manifest_path = mirror / "manifest.json"
+            manifest = report._json(manifest_path)
+            manifest["files"] = [{"port": 20473, "run_id": "run-1",
+                                  "name": "results.partial.jsonl",
+                                  "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                                  "bytes": len(raw_bytes),
+                                  "source_relative": "job/results.partial.jsonl",
+                                  "source_ref": {"zip_path": str(volume.resolve()),
+                                                 "zip_sha256": report._sha(volume),
+                                                 "member": member,
+                                                 "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                                                 "bytes": len(raw_bytes)}}]
+            manifest["tasks"]["prepare_20418"] = {"port": 20418, "run_id": "prepare-1"}
+            # The authoritative large raw file exists only inside the ZIP.
+            raw_path.unlink()
+            report._save(manifest_path, manifest)
+            zipped = report.build_report(state, mirror, Path(temp) / "zip_analysis")
+            self.assertEqual(plain["grids"], zipped["grids"])
+            self.assertEqual(plain["groups"], zipped["groups"])
+            self.assertEqual(plain_csv, (Path(temp) / "zip_analysis" / "per_scene.csv").read_bytes())
+            self.assertFalse(raw_path.exists())
+            inputs = report._json(Path(temp) / "zip_analysis" / "inputs.json")
+            source = inputs["tasks"]["test_R01"]["files"]["results.partial.jsonl"]
+            self.assertEqual(source["source_ref"]["member"], member)
+
+    def test_zip_sha_member_sha_duplicate_and_missing_member_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state, mirror, output, raw_path = self._fixture(temp, [self._raw()])
+            raw = raw_path.read_bytes()
+            volume = Path(temp) / "source.zip"
+            with zipfile.ZipFile(volume, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+                bundle.writestr("job/results.partial.jsonl", raw)
+            manifest_path = mirror / "manifest.json"
+            manifest = report._json(manifest_path)
+            entry = {"port": 20473, "run_id": "run-1", "name": "results.partial.jsonl",
+                     "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw),
+                     "source_ref": {"zip_path": str(volume.resolve()),
+                                    "zip_sha256": report._sha(volume),
+                                    "member": "job/results.partial.jsonl",
+                                    "sha256": hashlib.sha256(raw).hexdigest(),
+                                    "bytes": len(raw)}}
+            raw_path.unlink()
+            manifest["files"] = [entry]
+            report._save(manifest_path, manifest)
+            changed = deepcopy(manifest)
+            changed["files"][0]["source_ref"]["zip_sha256"] = "0" * 64
+            report._save(manifest_path, changed)
+            with self.assertRaisesRegex(ValueError, "ZIP SHA differs"):
+                report.build_report(state, mirror, output)
+            changed = deepcopy(manifest)
+            changed["files"][0]["sha256"] = "0" * 64
+            changed["files"][0]["source_ref"]["sha256"] = "0" * 64
+            report._save(manifest_path, changed)
+            with self.assertRaisesRegex(ValueError, "ZIP member SHA differs"):
+                report.build_report(state, mirror, output)
+            changed = deepcopy(manifest)
+            changed["files"].append(deepcopy(entry))
+            report._save(manifest_path, changed)
+            with self.assertRaisesRegex(ValueError, "repeats a logical"):
+                report.build_report(state, mirror, output)
+            changed = deepcopy(manifest)
+            changed["files"][0]["source_ref"]["member"] = "other/results.partial.jsonl"
+            report._save(manifest_path, changed)
+            with self.assertRaisesRegex(ValueError, "ZIP member missing"):
+                report.build_report(state, mirror, output)
+            changed = deepcopy(manifest)
+            changed["files"] = []
+            report._save(manifest_path, changed)
+            with self.assertRaisesRegex(RuntimeError, "incomplete"):
+                report.build_report(state, mirror, output, strict=True)
+
+    def test_small_job_json_can_be_read_from_same_zip_as_large_raw_member(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state, mirror, output, raw_path = self._fixture(temp, [self._raw()])
+            payloads = {"results.partial.jsonl": raw_path.read_bytes(),
+                        "job.json": json.dumps({"run_id": "run-1", "git_commit": "a" * 40}).encode(),
+                        "config.json": json.dumps({"datasets": {}}).encode(),
+                        "status.json": json.dumps({"stage": "evaluating"}).encode(),
+                        "artifacts.json": json.dumps({"run_id": "run-1"}).encode()}
+            volume = Path(temp) / "all_job_files.zip"
+            with zipfile.ZipFile(volume, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+                for name, payload in payloads.items():
+                    bundle.writestr("job/" + name, payload)
+            manifest = report._json(mirror / "manifest.json")
+            manifest["files"] = [{"port": 20473, "run_id": "run-1", "name": name,
+                                  "sha256": hashlib.sha256(payload).hexdigest(),
+                                  "bytes": len(payload),
+                                  "source_ref": {"zip_path": str(volume.resolve()),
+                                                 "zip_sha256": report._sha(volume),
+                                                 "member": "job/" + name,
+                                                 "sha256": hashlib.sha256(payload).hexdigest(),
+                                                 "bytes": len(payload)}}
+                                 for name, payload in payloads.items()]
+            raw_path.unlink()
+            report._save(mirror / "manifest.json", manifest)
+            result = report.build_report(state, mirror, output)
+            self.assertEqual(result["grids"]["test_R01"]["observed_rows"], 1)
+            self.assertFalse(any("缺少job.json" in issue for issue in result["issues"]))
+            inputs = report._json(output / "inputs.json")
+            self.assertEqual(inputs["tasks"]["test_R01"]["files"]["job.json"]
+                             ["source_ref"]["member"], "job/job.json")
+
     def test_repaired_learning_source_does_not_relabel_legacy_baseline(self):
         with tempfile.TemporaryDirectory() as temp:
             state = {"scientific_commit": "a" * 40,
@@ -260,6 +375,7 @@ class VariableReportTests(unittest.TestCase):
             altered = deepcopy(base)
             altered["users"][0]["carried_bps"] += 1e6
             (root / "episodes.jsonl").write_text(json.dumps(altered) + "\n", encoding="utf-8")
+            files["episodes.jsonl"]["sha256"] = report._sha(root / "episodes.jsonl")
             with self.assertRaisesRegex(ValueError, "min\(C,D\)"):
                 report._train_rows("verify_R08", source)
             tail = deepcopy(base)
@@ -268,6 +384,7 @@ class VariableReportTests(unittest.TestCase):
             for beam in tail["beams"]:
                 beam["capacity_bps"] = None
             (root / "episodes.jsonl").write_text(json.dumps(tail) + "\n", encoding="utf-8")
+            files["episodes.jsonl"]["sha256"] = report._sha(root / "episodes.jsonl")
             partial = report._train_rows("verify_R08", source)
             self.assertEqual(partial["partial_episodes"], 1)
 
@@ -312,6 +429,7 @@ class VariableReportTests(unittest.TestCase):
                              {"mean_coverage_users", "mean_load_cv"})
             rows[1]["beams"][0]["sgm"] *= .5
             node.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+            source["files"][node.name]["sha256"] = report._sha(node)
             with self.assertRaisesRegex(ValueError, r"validation_2048\.jsonl:2:.*SGM"):
                 report._train_rows("verify_R08", source)
 
