@@ -8,6 +8,7 @@ receipts and the two small final policies.  ``plan`` is safe before publication;
 from __future__ import annotations
 
 import argparse
+import base64
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -44,6 +45,26 @@ MAX_TOTAL_BYTES = 2 * (1 << 30)
 LOCAL_RESERVE_BYTES = 8 * (1 << 30)
 ALLOWED_SUFFIXES = {".md", ".json", ".csv", ".png", ".svg", ".pdf",
                     ".py", ".txt", ".pt"}
+LEARNING_EVIDENCE = {
+    "scripts/build_report08_text.py": "analysis/build_report08_text.py",
+    "evidence/report08_text_receipt.json": "analysis/report08_text_receipt.json",
+    "diagnostics/final_learning_diagnostics.md": "analysis/final_learning_diagnostics.md",
+    "diagnostics/final_learning_diagnostics_R08.json": "analysis/final_learning_diagnostics_R08.json",
+    "diagnostics/final_learning_diagnostics_R09.json": "analysis/final_learning_diagnostics_R09.json",
+    "diagnostics/final_learning_validation_pair_R08.json": "analysis/final_learning_validation_pair_R08.json",
+    "diagnostics/final_learning_validation_pair_R09.json": "analysis/final_learning_validation_pair_R09.json",
+    "diagnostics/reward_objective_audit.md": "analysis/reward_objective_audit.md",
+    "scripts/final_learning_actions_remote.py": "analysis/final_learning_actions_remote.py",
+    "scripts/final_learning_stream_remote.py": "analysis/final_learning_stream_remote.py",
+    "scripts/final_learning_actions_driver.py": "analysis/final_learning_actions_driver.py",
+    "scripts/final_learning_stream_driver.py": "analysis/final_learning_stream_driver.py",
+    "scripts/final_learning_audit_probe.py": "preflight/final_learning_audit_probe.py",
+    "evidence/final_learning_actions_receipt.json": "analysis/final_learning_actions_receipt.json",
+    "evidence/final_learning_stream_receipt.json": "analysis/final_learning_stream_receipt.json",
+    "evidence/final_learning_audit.json": "preflight/final_learning_audit.json",
+    "evidence/final_learning_audit_api.json": "preflight/final_learning_audit_api.json",
+    "evidence/final_learning_audit_manifest.json": "preflight/final_learning_audit_manifest.json",
+}
 
 
 def now():
@@ -116,7 +137,8 @@ def gate_state(report_md=REPORT_MD, publication=PUBLICATION):
              "science_audit": FINAL_REPORT / "science_audit/science_audit.json",
              "report_gate": GATE, "archive_acceptance": ACCEPTANCE,
              "root_verification": ROOT_VERIFY, "archive_manifest": MANIFEST,
-             "publication_receipt": Path(publication) / "publication_receipt.json"}
+             "publication_receipt": Path(publication) / "publication_receipt.json",
+             "learning_audit": BASE / "preflight/final_learning_audit.json"}
     for label, path in paths.items():
         if not path.is_file():
             errors.append(label + " absent: " + str(path))
@@ -131,6 +153,7 @@ def gate_state(report_md=REPORT_MD, publication=PUBLICATION):
         report_gate, summary, science = read(GATE), read(FINAL_REPORT / "summary.json"), read(
             FINAL_REPORT / "science_audit/science_audit.json")
         publication_receipt = read(paths["publication_receipt"])
+        learning = read(paths["learning_audit"])
         manifest_sha = sha(MANIFEST)
         if (acceptance.get("passed") is not True or acceptance.get("package_count") != 32 or
                 acceptance.get("science_packages") != 28 or
@@ -156,6 +179,8 @@ def gate_state(report_md=REPORT_MD, publication=PUBLICATION):
                 science.get("formal_ready") is not True or science.get("static_rows") != 3600 or
                 science.get("temporal_rows") != 720):
             errors.append("formal science report grid/readiness differs")
+        if learning.get("all_checks_passed") is not True or learning.get("issues"):
+            errors.append("final R08/R09 learning evidence audit differs")
         if (publication_receipt.get("formal_ready_input") is not True or
                 publication_receipt.get("test_rows") != 3600 or
                 publication_receipt.get("sequence_rows") != 720 or
@@ -325,6 +350,10 @@ def _members(report_md, publication, metadata):
         "diagnostics/repair_downtime.json": BASE / "ops/throughput_repair/downtime_summary.json",
     }.items():
         files[name] = _file(path)
+    for name, relative in LEARNING_EVIDENCE.items():
+        if name in files:
+            raise ValueError("duplicate learning evidence member: " + name)
+        files[name] = _file(BASE / relative, root=BASE)
     for name, path in metadata["paths"].items():
         files["indexes/" + name] = _file(path)
     if len(files) > MAX_FILES or sum(path.stat().st_size for path in files.values()) > MAX_TOTAL_BYTES:
@@ -471,6 +500,32 @@ print(json.dumps({{'port':{port},'remote_path':str(path),'zip_sha256':actual,
     return json.loads(result["stdout"].splitlines()[-1])
 
 
+def _remote_receipt_identity(receipt):
+    """Ignore observation timestamps; bind immutable package/member identity."""
+    lanes = receipt.get("four_lane_access") or {}
+    if (receipt.get("schema") != "s1v10.final_delivery_remote.v1" or
+            receipt.get("single_shared_physical_copy") is not True or
+            receipt.get("raw_job_zips_embedded") is not False or
+            set(lanes) != {str(port) for port in ops.SSH_PORTS}):
+        raise ValueError("S1-V10 remote delivery receipt structure differs")
+    bound = {}
+    for port, row in lanes.items():
+        if row.get("all_member_shas_verified") is not True:
+            raise ValueError("S1-V10 lane lacks full ZIP/member verification")
+        bound[port] = {key: row.get(key) for key in
+                       ("remote_path", "zip_sha256", "zip_bytes", "member_count")}
+        if (bound[port]["remote_path"] != receipt.get("shared_remote_path") or
+                bound[port]["zip_sha256"] != receipt.get("zip_sha256") or
+                bound[port]["zip_bytes"] != receipt.get("zip_bytes") or
+                bound[port]["member_count"] != receipt.get("member_count")):
+            raise ValueError("S1-V10 lane receipt differs from shared delivery")
+    return {"package_id": receipt.get("package_id"),
+            "shared_remote_path": receipt.get("shared_remote_path"),
+            "zip_sha256": receipt.get("zip_sha256"),
+            "zip_bytes": receipt.get("zip_bytes"),
+            "member_count": receipt.get("member_count"), "lanes": bound}
+
+
 def upload(local_receipt):
     local = Path(local_receipt["zip_path"])
     package_id = local_receipt["package_id"]
@@ -530,25 +585,39 @@ print(json.dumps({{'exists':path.exists(),'sha256':h.hexdigest() if path.exists(
                       "raw_job_zips_embedded": False}
     remote_receipt_path = target / "remote_delivery_receipt.json"
     if remote_receipt_path.is_file():
-        if read(remote_receipt_path) != remote_receipt:
+        existing_local = read(remote_receipt_path)
+        if _remote_receipt_identity(existing_local) != _remote_receipt_identity(remote_receipt):
             raise RuntimeError("existing immutable S1-V10 remote receipt differs")
+        remote_receipt = existing_local
     else:
         save(remote_receipt_path, remote_receipt)
     remote_receipt_target = remote_dir + "/remote_delivery_receipt.json"
     code = f'''
-import hashlib,json,pathlib
+import base64,hashlib,json,pathlib
 p=pathlib.Path({remote_receipt_target!r})
 if p.is_symlink() or not p.resolve().is_relative_to((pathlib.Path({ops.BASE!r})/'delivery').resolve()):
  raise RuntimeError('S1-V10 remote delivery receipt escaped isolated root')
 print(json.dumps({{'exists':p.exists(),
- 'sha256':hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None}}))
+ 'sha256':hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None,
+ 'base64':base64.b64encode(p.read_bytes()).decode('ascii') if p.exists() else None}}))
 '''
     current_receipt = ops.remote_python(code, 20418, timeout=60)
     if current_receipt["exit_code"]:
         raise RuntimeError("S1-V10 remote delivery receipt inspection failed")
     existing_receipt = json.loads(current_receipt["stdout"].splitlines()[-1])
     if existing_receipt["exists"] and existing_receipt["sha256"] != sha(remote_receipt_path):
-        raise RuntimeError("immutable S1-V10 remote delivery receipt already differs")
+        remote_bytes = base64.b64decode(existing_receipt["base64"], validate=True)
+        if hashlib.sha256(remote_bytes).hexdigest() != existing_receipt["sha256"]:
+            raise RuntimeError("existing remote receipt transfer SHA differs")
+        remote_saved = json.loads(remote_bytes)
+        if _remote_receipt_identity(remote_saved) != _remote_receipt_identity(remote_receipt):
+            raise RuntimeError("immutable S1-V10 remote delivery receipt has another package identity")
+        previous = target / "remote_delivery_receipt_previous.json"
+        if not previous.exists():
+            previous.write_bytes(remote_receipt_path.read_bytes())
+        pending = remote_receipt_path.with_suffix(".json.part")
+        pending.write_bytes(remote_bytes)
+        pending.replace(remote_receipt_path)
     if not existing_receipt["exists"]:
         sent = ops.upload(remote_receipt_path, remote_receipt_target, 20418)
         if sent["remote"] != sha(remote_receipt_path):
@@ -575,14 +644,52 @@ print(json.dumps({{'path':str(p),'sha256':h,'bytes':p.stat().st_size}}))
              "archive_acceptance_sha256": local_receipt["archive_acceptance_sha256"],
              "manifest_sha256": inventory["archive_manifest_sha256"],
              "raw_job_zips_embedded": False}
-    return save(target / "final_delivery_receipt.json", final), final
+    final_path = target / "final_delivery_receipt.json"
+    if final_path.is_file():
+        previous = read(final_path)
+        stable = ("package_id", "local_zip_sha256", "remote_zip_sha256",
+                  "remote_receipt_sha256", "report_sha256", "archive_acceptance_sha256",
+                  "manifest_sha256", "member_count")
+        if (previous.get("schema") != final["schema"] or
+                previous.get("all_four_lanes_readback_verified") is not True or
+                previous.get("raw_job_zips_embedded") is not False or
+                any(previous.get(key) != final.get(key) for key in stable)):
+            raise RuntimeError("existing S1-V10 completed delivery receipt has another identity")
+        return final_path, previous
+    return save(final_path, final), final
+
+
+def resume_upload(local_receipt_path, report_md=REPORT_MD, publication=PUBLICATION):
+    """Resume only the existing SHA-pinned local package; never repackage it."""
+    gates = gate_state(report_md, publication)
+    if not gates["ready"]:
+        raise RuntimeError("S1-V10 resume-upload formal gates incomplete: " +
+                           "; ".join(gates["errors"]))
+    path = _inside(local_receipt_path, DELIVERY)
+    receipt = read(path)
+    if (path.name != "local_package_receipt.json" or
+            path.parent.name != "final_" + str(receipt.get("package_id")) or
+            receipt.get("schema") != "s1v10.final_delivery_local.v1" or
+            Path(receipt.get("zip_path") or "").resolve().parent != path.parent or
+            Path(receipt.get("inventory_path") or "").resolve() != path.parent / "inventory.json" or
+            receipt.get("archive_acceptance_sha256") != sha(ACCEPTANCE) or
+            receipt.get("report_gate_sha256") != sha(GATE) or
+            receipt.get("publication_receipt_sha256") != sha(Path(publication) /
+                                                              "publication_receipt.json") or
+            receipt.get("formal_report_sha256") != sha(report_md) or
+            read(receipt.get("inventory_path"))["archive_manifest_sha256"] !=
+            gates["manifest_sha256"]):
+        raise RuntimeError("S1-V10 existing local package no longer binds formal inputs")
+    return upload(receipt)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("plan", "deliver"))
+    parser.add_argument("action", choices=("plan", "deliver", "resume-upload"))
     parser.add_argument("--report-md", type=Path, default=REPORT_MD)
     parser.add_argument("--publication-dir", type=Path, default=PUBLICATION)
+    parser.add_argument("--local-receipt", type=Path,
+                        help="existing final_<id>/local_package_receipt.json for resume-upload")
     args = parser.parse_args()
     if args.action == "plan":
         plan = {"schema": "s1v10.final_delivery_plan.v1", "observed_utc": now(),
@@ -593,6 +700,7 @@ def main():
                 "remote_shared_root": ops.BASE + "/delivery",
                 "four_lane_ports": list(ops.SSH_PORTS),
                 "deliver_command": "python -m scripts.stage1_variable.final_delivery deliver",
+                "resume_command": "python -m scripts.stage1_variable.final_delivery resume-upload --local-receipt <existing local_package_receipt.json>",
                 "delivery_script_path": str(Path(__file__).resolve()),
                 "delivery_script_sha256": sha(__file__),
                 "file_count_limit": MAX_FILES, "per_file_bytes_limit": MAX_FILE_BYTES,
@@ -643,8 +751,14 @@ def main():
             "raw_job_zips_embedded": False})
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         return
-    receipt = package(args.report_md, args.publication_dir)
-    path, result = upload(receipt)
+    if args.action == "resume-upload":
+        if args.local_receipt is None:
+            parser.error("resume-upload requires --local-receipt")
+        path, result = resume_upload(args.local_receipt, args.report_md,
+                                     args.publication_dir)
+    else:
+        receipt = package(args.report_md, args.publication_dir)
+        path, result = upload(receipt)
     print(json.dumps({"receipt": str(path), **result}, ensure_ascii=False, indent=2))
 
 
