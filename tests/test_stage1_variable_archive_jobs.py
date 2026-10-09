@@ -305,7 +305,9 @@ class CompletedJobArchiveTests(unittest.TestCase):
                 "task_key": "verify_R08", "run_id": RUN, "port": 20418})
             manifest = base / "manifest.json"
             _json(manifest, {"tasks": {"verify_R08": {"archive_receipt": str(receipt),
-                                                       "run_id": RUN, "port": 20418}}})
+                                                       "run_id": RUN, "port": 20418},
+                                      "verify_R09": {"run_id": "plain_unarchived",
+                                                     "port": 20424}}})
             with patch.object(archive_jobs.controller, "STATE", state), \
                  patch.object(archive_jobs, "ANALYSIS_MANIFEST", manifest), \
                  patch.object(archive_jobs, "archive_completed",

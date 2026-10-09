@@ -677,7 +677,10 @@ def archive_all_completed(*, limit=None, on_task=None):
     manifest = json.loads(ANALYSIS_MANIFEST.read_text(encoding="utf-8")) if ANALYSIS_MANIFEST.is_file() else {}
     archived = set()
     for key, task in (manifest.get("tasks") or {}).items():
-        receipt_path = Path(task.get("archive_receipt") or "")
+        receipt_value = task.get("archive_receipt")
+        if not receipt_value:
+            continue
+        receipt_path = Path(receipt_value)
         download = receipt_path.with_name("download_receipt.json")
         proof = json.loads(download.read_text(encoding="utf-8")) if download.is_file() else {}
         if (receipt_path.is_file() and proof.get("all_volume_and_member_shas_verified") is True and
