@@ -8,9 +8,11 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import ExitStack
 from dataclasses import replace
+import gzip
 import hashlib
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import sys
 import time
@@ -22,7 +24,7 @@ from .drl_r04_config import DrlR04Config
 from .drl_r04_core import (DrlR04Env, h1_teacher_label,
                            run_h1, run_h2, run_i0)
 from .drl_r04_policy import DrlR04Policy, Transition, collate, ppo_update
-from .runner import (_event, _jsonl, _jsonl_many, _load_torch, _now, _read, _restore_rng,
+from .runner import (_event, _jsonable, _jsonl, _jsonl_many, _load_torch, _now, _read, _restore_rng,
                      _rng_state, _save_torch, _seed, _sha256, _status,
                      _stop_requested, _write_json)
 from .variable_dataset import load_variable_dataset
@@ -40,6 +42,42 @@ def _config_hash(config):
     """Canonical schema-6 hash; legacy config_hash validates only older schemas."""
     return hashlib.sha256(json.dumps(config, sort_keys=True, ensure_ascii=False,
                                      separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
+def _learner_hash(config):
+    learning_keys = ("seed", "num_envs", "rollout_steps", "minibatch_size", "epochs",
+                     "lr", "gamma", "gae_lambda", "clip_ratio", "entropy_coef",
+                     "value_coef", "max_grad_norm")
+    return _config_hash({"policy_format": POLICY_FORMAT,
+                         "observation_shape": {"beam": 12, "candidate": 16, "global": 14},
+                         "network": config["network"],
+                         "training": {key: config["training"][key] for key in learning_keys},
+                         "core": config["coverage"]["drl_r04"]})
+
+
+def _write_observation_shard(directory, step, observations):
+    """Keep every dynamic network input once, compressed and content-addressed."""
+    folder = directory / "observations"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"rollout_{step:06d}.jsonl.gz"
+    if path.exists():
+        orphan = path.with_name(path.name + ".interrupted." + _sha256(path)[:16])
+        if orphan.exists():
+            raise FileExistsError("D12-A interrupted observation shard already exists")
+        path.replace(orphan)
+    temp = path.with_name(path.name + f".tmp.{os.getpid()}")
+    try:
+        with temp.open("wb") as raw:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=raw,
+                               compresslevel=3, mtime=0) as packed:
+                for item in observations:
+                    packed.write((json.dumps(_jsonable(item), ensure_ascii=False,
+                                             allow_nan=False, separators=(",", ":")) + "\n").encode())
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+    return {"file": str(path.relative_to(directory)),
+            "sha256": _sha256(path), "rows": len(observations)}
 
 
 def _dataset(config, role):
@@ -62,6 +100,25 @@ def _core_config(config):
     values = config.get("coverage", {}).get("drl_r04", {})
     return DrlR04Config(**{key: value for key, value in values.items()
                            if key in DrlR04Config.__dataclass_fields__})
+
+
+def _reachability_contract(job, config):
+    frozen = job.get("reachability_contract")
+    if not isinstance(frozen, dict):
+        raise ValueError("D12-A formal PPO requires pretraining H1/H2 reachability proof")
+    path = Path(frozen.get("path", ""))
+    indices = frozen.get("reachable_mother_indices")
+    if (not path.is_file() or _sha256(path) != frozen.get("sha256") or
+            frozen.get("validation_dataset_sha256") != config["datasets"]["validation"]["sha256"] or
+            not isinstance(indices, list) or not indices or
+            len(indices) != len(set(indices)) or
+            any(type(index) is not int or not 0 <= index < 20 for index in indices)):
+        raise ValueError("D12-A frozen reachability proof differs")
+    source = _read(path, {})
+    if (source.get("reachable_mother_indices") != indices or
+            source.get("validation_dataset_sha256") != frozen["validation_dataset_sha256"]):
+        raise ValueError("D12-A reachability content differs from frozen job")
+    return indices
 
 
 def _validate_training(config, job, preflight):
@@ -237,12 +294,32 @@ def _resident_tail(last_step):
     rows = []
     for stream_id, stream in _RESIDENT_STREAMS.items():
         if stream["action_count"] == 0:
+            env = stream["env"]
+            row = env.result()
+            row.pop("ledger", None)
+            row.update(_scene_reference(env.scene, MULTIPLIERS[stream["level"]]))
+            row.update({"stream_id": stream_id,
+                        "stream_episode_serial": stream["episode_serial"],
+                        "purpose": "budget_tail_snapshot", "episode": None,
+                        "completed_episode": False,
+                        "stop_reason": "no_action_since_reset",
+                        "terminal_env_step": None,
+                        "action_trace": {"file": "actions.jsonl", "stream_id": stream_id,
+                                         "stream_episode_serial": stream["episode_serial"],
+                                         "first_env_step": None, "last_env_step": None,
+                                         "count": 0},
+                        "terminal_physics": {
+                            "status": "not_run_no_action_since_reset",
+                            "missing_reason": "no_action_since_reset",
+                            "physical_allocation_calls": 0}})
+            rows.append(row)
             continue
         last_action_step = last_step - 32 + stream_id + 1
         row = _terminal(stream, env_step=last_action_step, stream_id=stream_id,
                         reason="budget_truncated", complete=False)
         row["terminal_physics"] = _terminal_physics(stream["env"])
         row["episode"] = None
+        row["purpose"] = "budget_tail_snapshot"
         rows.append(row)
     return rows
 
@@ -294,6 +371,7 @@ def _save_checkpoint(directory, job, config, policy, optimizer, *, streams,
     path = directory / "checkpoint.pt"
     payload = {"format": CHECKPOINT_FORMAT, "run_id": job["run_id"],
                "source_commit": job["git_commit"], "config_hash": _config_hash(config),
+               "learner_hyperparameter_hash": _learner_hash(config),
                "policy_format": POLICY_FORMAT, "policy": policy.state_dict(),
                "optimizer": optimizer.state_dict(), "rng": _rng_state(),
                "cpu_workers": config["training"].get("cpu_workers"),
@@ -310,6 +388,7 @@ def _load_checkpoint(directory, job, config, policy, optimizer):
     for key, value in (("format", CHECKPOINT_FORMAT), ("run_id", job["run_id"]),
                        ("source_commit", job["git_commit"]),
                        ("config_hash", _config_hash(config)),
+                       ("learner_hyperparameter_hash", _learner_hash(config)),
                        ("policy_format", POLICY_FORMAT),
                        ("cpu_workers", config.get("training", {}).get("cpu_workers"))):
         if payload.get(key) != value:
@@ -324,6 +403,14 @@ def _load_checkpoint(directory, job, config, policy, optimizer):
             raise ValueError(f"D12-A ledger shorter than checkpoint: {name}")
         if len(rows) > count:
             path.write_text("\n".join(rows[:count]) + "\n", encoding="utf-8")
+    updates_path = directory / "updates.jsonl"
+    for line in (updates_path.read_text(encoding="utf-8").splitlines()
+                 if updates_path.exists() else []):
+        shard = json.loads(line).get("observation_shard", {})
+        path = (directory / shard.get("file", "")).resolve()
+        if (not path.is_relative_to(directory.resolve()) or not path.is_file() or
+                _sha256(path) != shard.get("sha256") or shard.get("rows") != 2048):
+            raise ValueError("D12-A committed observation shard differs")
     return payload
 
 
@@ -336,14 +423,15 @@ def _model_metadata(path, job, config, *, step, selection, preflight):
             "cpu_workers": config["training"].get("cpu_workers"),
             "cpu_worker_backend": "spawn_resident" if selection != "bc_endpoint" else None,
             "source_commit": job["git_commit"], "config_hash": _config_hash(config),
+            "learner_hyperparameter_hash": _learner_hash(config),
             "policy_sha256": _sha256(path), "gpu": (preflight or {}).get("gpu"),
             "torch_version": torch.__version__, "numpy_version": np.__version__,
             "created_at": _now()}
 
 
 def _save_model(directory, job, config, policy, *, step, selection, preflight):
-    target = Path(job["model_dir"]) / ("final" if selection == "fixed_budget_endpoint"
-                                             else selection)
+    folder = {"fixed_budget_endpoint": "final"}.get(selection, selection)
+    target = Path(job["model_dir"]) / folder
     target.mkdir(parents=True, exist_ok=True)
     _save_torch(target / "policy.pt", policy.state_dict())
     metadata = _model_metadata(target / "policy.pt", job, config, step=step,
@@ -368,12 +456,29 @@ def _load_model(job, config, device):
     if (metadata.get("policy_format") != POLICY_FORMAT or
             metadata.get("route") != "D12A" or
             metadata.get("network") != config["network"] or
+            metadata.get("learner_hyperparameter_hash") != _learner_hash(config) or
             metadata.get("policy_sha256") != _sha256(source / "policy.pt")):
         raise ValueError("D12-A model provenance differs; old R08 is prohibited")
     policy = DrlR04Policy().to(device)
     policy.load_state_dict(_load_torch(source / "policy.pt", device), strict=True)
     policy.eval()
     return policy, metadata
+
+
+def _initialize_p1_from_bc(job, config, policy):
+    teacher = Path(job["bc_model_dir"])
+    metadata = _read(teacher / "model.json", {})
+    if (metadata.get("policy_format") != POLICY_FORMAT or
+            metadata.get("route") != "D12A" or
+            metadata.get("network") != config["network"] or
+            metadata.get("learner_hyperparameter_hash") != _learner_hash(config) or
+            metadata.get("selection") != "bc_endpoint" or
+            metadata.get("rl_env_step") != 0 or
+            metadata.get("policy_sha256") != _sha256(teacher / "policy.pt")):
+        raise ValueError("P1 requires frozen D12-A BC endpoint")
+    policy.load_state_dict(_load_torch(teacher / "policy.pt",
+                                       next(policy.parameters()).device), strict=True)
+    return metadata
 
 
 def _evaluate_policy(policy, dataset, core, *, device, step, output,
@@ -661,21 +766,94 @@ def _validate_if_due(directory, job, config, policy, core, dataset, *, step,
     rows = _evaluate_policy(policy, dataset, core, device="cuda", step=step, output=output)
     if len(rows) != 60:
         raise ValueError("D12-A validation node must contain 20 mothers × three levels")
+    def refreshed(row):
+        return any(item["action"]["operation"] != "stop" and
+                   item["best_j"] < row["initial_j"] - 1e-10
+                   for item in row.get("ledger", []))
+
+    by_mother = [rows[start:start + 3] for start in range(0, 60, 3)]
+    reachable = (_reachability_contract(job, config)
+                 if job.get("experiment_role", "formal") == "formal" else [])
+    improved_mothers = sum(
+        all(row["initial_j"] is not None and row["best_j"] is not None and
+            np.isfinite(row["initial_j"]) and np.isfinite(row["best_j"])
+            for row in group) and
+        float(np.mean([row["initial_j"] - row["best_j"] for row in group])) > 1e-8 and
+        any(refreshed(row) for row in group)
+        for group in by_mother)
+    feasible_rows = sum(
+        bool(row.get("initialization", {}).get("metrics", {}).get("coverage_100")) and
+        bool(row.get("initialization", {}).get("metrics", {}).get("demand_conserved")) and
+        row["best_j"] is not None and np.isfinite(row["best_j"]) and
+        row["geometry_calls"] <= core.max_geometry_calls and
+        row["trials"] <= core.max_trials and row["commits"] <= core.max_commits
+        for row in rows)
     summary = {"env_step": step, "rows": len(rows), "path": str(output),
                "sha256": _sha256(output),
-               "mean_best_j": float(np.mean([row["best_j"] for row in rows
-                                              if row["best_j"] is not None])),
+               "mean_best_j": (float(np.mean([row["best_j"] for row in rows
+                                               if row["best_j"] is not None]))
+                               if any(row["best_j"] is not None for row in rows) else None),
                "first_step_stop_count": sum(bool(row.get("ledger") and
                                             row["ledger"][0]["action"]["operation"] == "stop")
                                             for row in rows),
                "best_j_improved_count": sum(row["best_j"] is not None and
                                             row["best_j"] < row["initial_j"] - 1e-10
-                                            for row in rows)}
+                                            for row in rows),
+               "three_level_improved_mother_count": int(improved_mothers),
+               "reachable_mother_indices": reachable,
+               "reachable_mother_count": len(reachable),
+               "reachable_subset_first_stop_zero_progress": bool(reachable) and all(
+                    row.get("ledger") and row["ledger"][0]["action"]["operation"] == "stop" and
+                    row["best_j"] is not None and row["initial_j"] is not None and
+                    abs(row["best_j"] - row["initial_j"]) <= 1e-10
+                    for index in reachable for row in by_mother[index]),
+               "nonstop_best_refresh_rows": sum(refreshed(row) for row in rows),
+               "feasible_row_count": feasible_rows,
+               "all_60_first_step_stop_zero_progress": all(
+                    row.get("ledger") and row["ledger"][0]["action"]["operation"] == "stop" and
+                    row["best_j"] is not None and row["initial_j"] is not None and
+                    abs(row["best_j"] - row["initial_j"]) <= 1e-10
+                    for row in rows)}
     _jsonl(directory / "evaluations.jsonl", summary)
     ledgers["evaluations.jsonl"] += 1
     _status(directory, job, stage="training", env_step=step,
             last_validation_step=step, latest_validation=summary)
     return step
+
+
+def _scientific_stop_if_due(directory, job, config, policy, *, step, preflight,
+                            checkpoint_sha256):
+    if job.get("experiment_role", "formal") != "formal":
+        return False
+    _reachability_contract(job, config)
+    path = directory / "evaluations.jsonl"
+    if not path.is_file():
+        return False
+    nodes = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    if len(nodes) < 2 or [row["env_step"] for row in nodes[-2:]] != [
+            step - config["training"]["validation_interval"], step]:
+        return False
+    for row in nodes[-2:]:
+        result_path = Path(row["path"])
+        if (row.get("rows") != 60 or not result_path.is_file() or
+                _sha256(result_path) != row.get("sha256")):
+            raise ValueError("D12-A scientific-stop validation evidence differs")
+    if not all(row.get("all_60_first_step_stop_zero_progress") and
+               row.get("reachable_subset_first_stop_zero_progress") and
+               row.get("best_j_improved_count") == 0 and
+               row.get("feasible_row_count") == 60 for row in nodes[-2:]):
+        return False
+    selection = ("pilot_endpoint" if step == config["training"]["pilot_step"]
+                 else "scientific_stop_endpoint")
+    endpoint = _save_model(directory, job, config, policy, step=step,
+                           selection=selection, preflight=preflight)
+    _status(directory, job, stage="stopped", env_step=step,
+            stop_reason="consecutive_validation_all_stop_zero_progress",
+            checkpoint_sha256=checkpoint_sha256, final_policy=str(endpoint),
+            scientific_stop_validation_nodes=[row["env_step"] for row in nodes[-2:]])
+    _event(directory, job, "d12a_scientific_stop", env_step=step,
+           endpoint=str(endpoint))
+    return True
 
 
 def _train_resident(directory, job, config, preflight, settings, core,
@@ -708,13 +886,19 @@ def _train_resident(directory, job, config, preflight, settings, core,
                                                validation_set, step=step,
                                                last_validation=last_validation,
                                                ledgers=ledgers)
-            _save_checkpoint(directory, job, config, policy, optimizer,
+            sha = _save_checkpoint(directory, job, config, policy, optimizer,
                              streams=streams, env_step=step, update_step=updates,
                              episode=episode, last_validation=last_validation,
                              ledgers=ledgers)
+            if _scientific_stop_if_due(directory, job, config, policy, step=step,
+                                       preflight=preflight, checkpoint_sha256=sha):
+                return
             if step == settings["pilot_step"] and job.get("experiment_role", "formal") == "formal":
+                pilot = _save_model(directory, job, config, policy, step=step,
+                                    selection="pilot_endpoint", preflight=preflight)
                 _status(directory, job, stage="pilot_pending", env_step=step,
-                        stop_reason="pilot_gate")
+                        stop_reason="pilot_gate", checkpoint_sha256=sha,
+                        pilot_policy=str(pilot))
                 return
 
         while step < settings["total_steps"]:
@@ -753,12 +937,17 @@ def _train_resident(directory, job, config, preflight, settings, core,
                                  epochs=4, minibatch_size=64, num_envs=count)
             step += len(transitions)
             updates += summary["minibatch_updates"]
+            shard = _write_observation_shard(directory, step,
+                                             [item.observation for item in transitions])
+            for row_index, row in enumerate(action_rows):
+                row["observation_ref"] = {**shard, "row": row_index}
             _jsonl_many(directory / "actions.jsonl", action_rows)
             _jsonl_many(directory / "episodes.jsonl", episode_rows)
             _jsonl(directory / "updates.jsonl", {"env_step": step,
                     "update_step": updates, "episode": episode,
                     "rollout_seconds": time.monotonic() - began,
                     "cpu_worker_backend": "spawn_resident", "cpu_workers": workers,
+                    "observation_shard": shard,
                     **summary})
             ledgers["actions.jsonl"] += len(action_rows)
             ledgers["episodes.jsonl"] += len(episode_rows)
@@ -783,13 +972,19 @@ def _train_resident(directory, job, config, preflight, settings, core,
                                        streams=streams, env_step=step, update_step=updates,
                                        episode=episode, last_validation=last_validation,
                                        ledgers=ledgers)
+                if _scientific_stop_if_due(directory, job, config, policy, step=step,
+                                           preflight=preflight, checkpoint_sha256=sha):
+                    return
             if _stop_requested(directory):
                 _status(directory, job, stage="stopped", env_step=step,
                         stop_reason="requested", checkpoint_sha256=sha)
                 return
             if step == settings["pilot_step"] and job.get("experiment_role", "formal") == "formal":
+                pilot = _save_model(directory, job, config, policy, step=step,
+                                    selection="pilot_endpoint", preflight=preflight)
                 _status(directory, job, stage="pilot_pending", env_step=step,
-                        stop_reason="pilot_gate", checkpoint_sha256=sha)
+                        stop_reason="pilot_gate", checkpoint_sha256=sha,
+                        pilot_policy=str(pilot))
                 return
         if step == settings["total_steps"] and ledgers.get("budget_tails.jsonl", 0) == 0:
             tasks = [pool.submit(_resident_tail, step) for pool in pools]
@@ -820,6 +1015,8 @@ def _train(directory, job, config, resume, preflight):
     train_set, validation_set = _dataset(config, "train"), _dataset(config, "validation")
     if len(validation_set.scenes) != 20:
         raise ValueError("D12-A validation must have 20 mother scenes")
+    if job.get("experiment_role", "formal") == "formal":
+        _reachability_contract(job, config)
     _seed(settings["seed"])
     policy = DrlR04Policy().to("cuda")
     optimizer = torch.optim.Adam(policy.parameters(), lr=settings["lr"])
@@ -850,16 +1047,7 @@ def _train(directory, job, config, resume, preflight):
                                                       for name in ledger_names):
             raise FileExistsError("D12-A run directory requires same-ID resume")
         if job.get("train_mode") == "P1":
-            teacher = Path(job["bc_model_dir"])
-            metadata = _read(teacher / "model.json", {})
-            if (metadata.get("policy_format") != POLICY_FORMAT or
-                    metadata.get("route") != "D12A" or
-                    metadata.get("network") != config["network"] or
-                    metadata.get("selection") != "bc_endpoint" or
-                    metadata.get("rl_env_step") != 0 or
-                    metadata.get("policy_sha256") != _sha256(teacher / "policy.pt")):
-                raise ValueError("P1 requires frozen D12-A BC endpoint")
-            policy.load_state_dict(_load_torch(teacher / "policy.pt", "cuda"), strict=True)
+            _initialize_p1_from_bc(job, config, policy)
         elif job.get("train_mode") != "P0":
             raise ValueError("D12-A train_mode must be P0 or P1")
         streams = [_fresh_stream(train_set, core, settings["seed"] + 101 + i * 1009)

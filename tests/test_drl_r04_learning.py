@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
+import gzip
+import json
 import multiprocessing
 
 import numpy as np
@@ -17,10 +19,13 @@ from satellite_rl.coverage.drl_r04_runner import (_load_checkpoint, _save_checkp
                                                    _resident_init, _resident_step,
                                                    _resident_state, _resident_tail,
                                                    _worker_teacher,
-                                                   _evaluate_policy)
+                                                   _evaluate_policy,
+                                                   _write_observation_shard,
+                                                   _scientific_stop_if_due)
 from satellite_rl.coverage.drl_r04_config import DrlR04Config
 from satellite_rl.coverage.variable_dataset import save_variable_dataset, load_variable_dataset
 from satellite_rl.coverage.scenes import CoverageDataset, CoverageScene
+from satellite_rl.workbench.coverage_drl_r04 import default_drl_r04_config
 from satellite_rl.coverage.runner import _write_json, _save_torch, _sha256
 
 
@@ -51,6 +56,7 @@ class DrlR04LearningTest(unittest.TestCase):
                                      mp_context=multiprocessing.get_context("spawn"),
                                      initializer=_resident_init,
                                      initargs=([(0, stream)], record, core)) as pool:
+                empty_tail = pool.submit(_resident_tail, 0).result()[0]
                 first = pool.submit(_resident_step, (0, [(0, 1)])).result()[0]
                 state = pool.submit(_resident_state, None).result()[0][1]
                 tail = pool.submit(_resident_tail, 32).result()[0]
@@ -63,6 +69,9 @@ class DrlR04LearningTest(unittest.TestCase):
                 replay = resumed.submit(_resident_step, (32, [(0, 0)])).result()[0]
                 replay_state = resumed.submit(_resident_state, None).result()[0][1]
             self.assertEqual(first[0], 0)
+            self.assertEqual(empty_tail["purpose"], "budget_tail_snapshot")
+            self.assertEqual(empty_tail["stop_reason"], "no_action_since_reset")
+            self.assertEqual(empty_tail["terminal_physics"]["physical_allocation_calls"], 0)
             self.assertFalse(tail["completed_episode"])
             self.assertEqual(tail["stop_reason"], "budget_truncated")
             self.assertFalse(tail["terminated"])
@@ -174,9 +183,7 @@ class DrlR04LearningTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             job = {"run_id": "d12_short", "git_commit": "abc"}
-            config = {"research_stage": "coverage", "network":
-                      {"kind": "drl_r04_set_ppo", "hidden_size": 128},
-                      "training": {"cpu_workers": 16}}
+            config = default_drl_r04_config()
             policy = DrlR04Policy()
             optimizer = torch.optim.Adam(policy.parameters())
             (directory / "actions.jsonl").write_text("{}\n", encoding="utf-8")
@@ -198,6 +205,72 @@ class DrlR04LearningTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 _load_model({"model_path": str(model_dir), "model_dir": str(model_dir)},
                             config, "cpu")
+
+    def test_compressed_observation_shard_is_complete_and_hashed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            shard = _write_observation_shard(directory, 2048,
+                                             [observation() for _ in range(2048)])
+            path = directory / shard["file"]
+            self.assertEqual(shard["rows"], 2048)
+            self.assertEqual(shard["sha256"], _sha256(path))
+            with gzip.open(path, "rt", encoding="utf-8") as stream:
+                rows = [json.loads(line) for line in stream]
+            self.assertEqual(len(rows), 2048)
+            self.assertEqual(len(rows[0]["global"]), 14)
+            self.assertEqual(len(rows[-1]["candidate"][0]), 16)
+            config = default_drl_r04_config()
+            job = {"run_id": "observed-run", "git_commit": "abc"}
+            policy = DrlR04Policy()
+            optimizer = torch.optim.Adam(policy.parameters())
+            (directory / "updates.jsonl").write_text(
+                json.dumps({"observation_shard": shard}) + "\n", encoding="utf-8")
+            _save_checkpoint(directory, job, config, policy, optimizer, streams=[],
+                             env_step=2048, update_step=1, episode=0,
+                             last_validation=0, ledgers={"updates.jsonl": 1})
+            _load_checkpoint(directory, job, config, DrlR04Policy(),
+                             torch.optim.Adam(DrlR04Policy().parameters()))
+            with path.open("ab") as stream:
+                stream.write(b"tamper")
+            with self.assertRaises(ValueError):
+                _load_checkpoint(directory, job, config, DrlR04Policy(),
+                                 torch.optim.Adam(DrlR04Policy().parameters()))
+
+    def test_two_committed_all_stop_nodes_save_actual_scientific_endpoint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            config = default_drl_r04_config()
+            config["datasets"]["validation"] = {"sha256": "validation-sha"}
+            contract = directory / "reachability.json"
+            _write_json(contract, {"reachable_mother_indices": [0, 3, 7],
+                                   "validation_dataset_sha256": "validation-sha"})
+            model_root = directory / "models"
+            job = {"run_id": "science-stop", "git_commit": "abc",
+                   "model_dir": str(model_root), "experiment_role": "formal",
+                   "reachability_contract": {"path": str(contract),
+                                            "sha256": _sha256(contract),
+                                            "reachable_mother_indices": [0, 3, 7],
+                                            "validation_dataset_sha256": "validation-sha"}}
+            with (directory / "evaluations.jsonl").open("w", encoding="utf-8") as out:
+                for step in (16384, 32768):
+                    path = directory / f"validation_{step}.jsonl"
+                    path.write_text("{}\n" * 60, encoding="utf-8")
+                    out.write(json.dumps({"env_step": step, "rows": 60,
+                                          "path": str(path), "sha256": _sha256(path),
+                                          "all_60_first_step_stop_zero_progress": True,
+                                          "reachable_subset_first_stop_zero_progress": True,
+                                          "best_j_improved_count": 0,
+                                          "feasible_row_count": 60}) + "\n")
+            self.assertTrue(_scientific_stop_if_due(
+                directory, job, config, DrlR04Policy(), step=32768,
+                preflight={"gpu": "unit"}, checkpoint_sha256="checkpoint"))
+            metadata = json.loads((model_root / "scientific_stop_endpoint" /
+                                   "model.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["env_step"], 32768)
+            self.assertEqual(metadata["selection"], "scientific_stop_endpoint")
+            status = json.loads((directory / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["stop_reason"],
+                             "consecutive_validation_all_stop_zero_progress")
 
 
 if __name__ == "__main__":
