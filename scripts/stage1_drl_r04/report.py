@@ -196,6 +196,9 @@ def _audit_row(row):
     if beams and not _near(total_d, expected_d, atol=1e-2):
         errors.append("beam_demand_not_conserved")
     physical = best.get("metrics", {})
+    aircraft_service = best.get("aircraft_service", {})
+    if beams and not _number(aircraft_service.get("demand_weighted_carried_fraction")):
+        errors.append("aircraft_tdma_carried_fraction_missing")
     if beams and (not _near(carried, physical.get("carried_bps"), atol=1e-2) or
                   not _near(physical.get("total_demand_bps"), expected_d, atol=1e-2)):
         errors.append("physical_summary_differs_from_beams")
@@ -239,11 +242,11 @@ def _plot(output, scene_rows, training, validation):
     if scene_rows:
         fig, ax = plt.subplots(figsize=(9, 5))
         for method in METHODS:
-            values = [x["carried_fraction"] for x in scene_rows
-                      if x["method"] == method and _number(x["carried_fraction"])]
+            values = [x["aircraft_tdma_carried_fraction"] for x in scene_rows
+                      if x["method"] == method and _number(x["aircraft_tdma_carried_fraction"])]
             if values:
                 ax.plot(sorted(values), label=f"{method} (n={len(values)})")
-        ax.set(xlabel="Sorted scene result", ylabel="Demand-weighted carried fraction",
+        ax.set(xlabel="Sorted scene result", ylabel="Aircraft TDMA demand-weighted carried fraction",
                title="Independent test distributions; three levels per mother")
         ax.legend()
         fig.tight_layout()
@@ -361,6 +364,7 @@ def analyze(state, source, output):
                     elif row.get("checkpoint_step") != model.get("env_step"):
                         errors.append("evaluation_model_step_differs")
                     physical = best.get("metrics", {})
+                    aircraft_service = best.get("aircraft_service", {})
                     beam_demands = [b["demand_bps"] for b in best.get("beams", [])
                                     if _number(b.get("demand_bps"))]
                     average_load = mean(beam_demands) if beam_demands else None
@@ -372,7 +376,9 @@ def analyze(state, source, output):
                             "checkpoint_step": row.get("checkpoint_step"),
                             "initial_j": row.get("initial_j"), "best_j": row.get("best_j"),
                             "beam_count": len((row.get("best_layout") or {}).get("centers", [])),
-                            "carried_fraction": physical.get("demand_weighted_carried_fraction"),
+                            "beam_carried_fraction": physical.get("demand_weighted_carried_fraction"),
+                            "aircraft_tdma_carried_fraction":
+                                aircraft_service.get("demand_weighted_carried_fraction"),
                             "load_cv": best_cv,
                             "beam_mean_si": physical.get("beam_mean_si"),
                             "beam_mean_sgm": physical.get("beam_mean_sgm"),
@@ -543,7 +549,9 @@ def analyze(state, source, output):
                 summary[f"{method}@{level}"] = {"scene_count": len(subset),
                     "mother_count": len({r["dataset_index"] for r in subset}),
                     "best_j": _stats(r["best_j"] for r in subset),
-                    "carried_fraction": _stats(r["carried_fraction"] for r in subset),
+                    "beam_carried_fraction": _stats(r["beam_carried_fraction"] for r in subset),
+                    "aircraft_tdma_carried_fraction":
+                        _stats(r["aircraft_tdma_carried_fraction"] for r in subset),
                     "load_cv": _stats(r["load_cv"] for r in subset),
                     "beam_mean_si": _stats(r["beam_mean_si"] for r in subset),
                     "beam_mean_sgm": _stats(r["beam_mean_sgm"] for r in subset),
@@ -559,15 +567,22 @@ def analyze(state, source, output):
                     mothers.append({"method": method, "dataset_index": index,
                                     "mean_best_j": mean(r["best_j"] for r in group if _number(r["best_j"]))
                                     if all(_number(r["best_j"]) for r in group) else None,
-                                    "mean_carried_fraction": mean(r["carried_fraction"] for r in group
-                                                                  if _number(r["carried_fraction"]))
-                                    if all(_number(r["carried_fraction"]) for r in group) else None})
+                                    "mean_aircraft_tdma_carried_fraction":
+                                        mean(r["aircraft_tdma_carried_fraction"] for r in group
+                                             if _number(r["aircraft_tdma_carried_fraction"]))
+                                        if all(_number(r["aircraft_tdma_carried_fraction"]) for r in group)
+                                        else None})
         plots, plot_error = _plot(output, rows, training, validation)
         if plot_error:
             issues.append(plot_error)
         if not plots or not {"test_carried_distribution.png", "train_episode_reward_raw.png",
                              "validation_best_j.png"}.issubset(plots):
             issues.append("required real-data curves incomplete")
+        # Independent exact best-layout geometry, aircraft TDMA/SGM replay,
+        # positive-demand SI band, N strata, power/slot constraints, and
+        # segment-time reconciliation are still a separate strict audit.
+        # Even a complete bundle remains QA until those checks are implemented.
+        issues.append("strict_physics_and_timing_replay_pending")
         for name, data in (("per_scene.json", rows), ("per_mother.json", mothers),
                            ("summary.json", summary), ("task_audit.json", task_audit)):
             (output / name).write_text(json.dumps(data, ensure_ascii=False, indent=2,
