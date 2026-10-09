@@ -252,6 +252,14 @@ root=pathlib.Path({directory!r});status=json.loads((root/'status.json').read_tex
 path=root/'checkpoint.pt';h=hashlib.sha256()
 with path.open('rb') as stream:
  for chunk in iter(lambda:stream.read(8<<20),b''):h.update(chunk)
+validation_files={{}}
+for file in sorted(root.glob('validation_*.jsonl')):
+ vh=hashlib.sha256();rows=0
+ with file.open('rb') as stream:
+  for chunk in iter(lambda:stream.read(8<<20),b''):vh.update(chunk)
+ with file.open('rb') as stream:
+  rows=sum(1 for line in stream if line.strip())
+ validation_files[file.name]={{'sha256':vh.hexdigest(),'rows':rows}}
 pid=launch['pid'];p=pathlib.Path('/proc')/str(pid);alive=False
 if p.exists():
  raw=(p/'stat').read_text();ticks=int(raw[raw.rfind(')')+2:].split()[19]);boot=next(int(x.split()[1]) for x in pathlib.Path('/proc/stat').read_text().splitlines() if x.startswith('btime '));start=boot+ticks/os.sysconf('SC_CLK_TCK')
@@ -262,7 +270,7 @@ orphan=[line for line in sessions if line.split(None,2) and line.split(None,2)[0
 print(json.dumps({{'sha256':h.hexdigest(),'bytes':path.stat().st_size,
  'worker_alive_same_birth':alive,'launch_pid':pid,'launch_start':launch['process_start_time'],
  'step':status['env_step'],'updates':status['update_step'],'episode':status['episode'],
- 'stop_reason':status.get('stop_reason'),
+ 'stop_reason':status.get('stop_reason'),'validation_files':validation_files,
  'orphan_session_processes':orphan}}))
 '''
     remote_state = remote(port, code)
@@ -292,7 +300,11 @@ def _check_stopped_and_held():
     for run_id in TARGETS:
         current = stopped_checkpoint(run_id)
         if (current["checkpoint"]["sha256"] != saved[run_id]["checkpoint"]["sha256"] or
-                current["checkpoint"]["step"] != saved[run_id]["checkpoint"]["step"]):
+                current["checkpoint"]["step"] != saved[run_id]["checkpoint"]["step"] or
+                current["checkpoint"]["stop_reason"] !=
+                saved[run_id]["checkpoint"]["stop_reason"] or
+                current["checkpoint"]["validation_files"] !=
+                saved[run_id]["checkpoint"]["validation_files"]):
             raise RuntimeError("stopped checkpoint changed while awaiting repair")
     return saved
 
@@ -517,12 +529,18 @@ def stage_validation_receipt(run_id, new_commit, approval_commit):
         evidence.append(_upload_immutable(port, path, remote_path))
     actual = _actual_state(port, detail["directory"])
     state = actual["state"]
+    expected_validation_files = {
+        f"validation_{node['env_step']}.jsonl": {
+            "sha256": node["sha256"], "rows": node["rows"]}
+        for node in state["saved_validation_nodes"] if node["sha256"] is not None}
     if (actual["job_git_commit"] != ORIGIN_COMMIT or
             actual["request_id"] != TARGETS[run_id]["request_id"] or
             actual["dataset_sha256"] != {"train": TRAIN_SHA256,
                                          "validation": VALIDATION_SHA256} or
             state["checkpoint_sha256"] != stopped["checkpoint"]["sha256"] or
-            state["checkpoint_step"] != stopped["checkpoint"]["step"]):
+            state["checkpoint_step"] != stopped["checkpoint"]["step"] or
+            state["stop_reason"] != stopped["checkpoint"]["stop_reason"] or
+            expected_validation_files != stopped["checkpoint"]["validation_files"]):
         raise RuntimeError("actual stopped checkpoint differs from prior identity receipt")
     new_root = deployment["lanes"][str(port)]["new_frozen_source"]["source_root"]
     if new_root != f"{ops.instance(port)['root']}/outputs/workbench/source_snapshots/{new_commit}":
