@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-10 03:17传输修复已持久接续，正式学习仍待数据。**本地HTTPS→远端SFTP流式传输PID21532继续，Feb08/09已有持续字节增长，Feb07官方CDN慢且不稳定，准备严格Content-Range分块等价传输后备；不更换日期/抽样。旧relay36616已按出生单独停止，修复API恢复中starting调度态后新relay9172持唯一锁，逐日长度/SHA通过后自动同ID恢复prepare、再启动唯一launcher；准确现态以[恢复回执](outputs/experiments/first_stage_s1_d12a_20261010/preflight/stream_transfer/relay_resume_workflow.json)及[根复核](outputs/experiments/first_stage_s1_d12a_20261010/preflight/root_relay_live.json)为准，不重启旧PID。已保存每次失败与脚本SHA，小时跟进仍ACTIVE。
+
+新归档工具与报告QA已并main3fc507c/c65ce98并通过10项机械检查，科学源仍dfe不变。最终完整任务预计37项，含3prepare和24个考核分片；当前尚无新科学结果。报告formal_ready由strict_physics_and_timing_replay_pending硬门槛保持false，独立几何/逐束代数/逐机TDMA/资源与时间回放仍在补齐，不能以机械测试冒充报告交付。
+
 **2026-10-10 03:09后 S1-D12A数据下载遇远端出口超时，正在按原来源修复传输，PPO尚未启动。**Feb08/20474及Feb09/20418 prepare在官方GitHub连接20秒超时×8且0字节后failed；唯一launcher44772按规则退出attention_required，不能凭前文running重起第二实例。原任务ID、失败和冻结源码保留。本机可访问同一官方asset，当前采用本地无落盘流式转发至已锁定远端共享源、逐长度/SHA核验后通过原工作台同IDresume；不更改数据日期/抽样/科学预算。第三Feb07状态须现场核查，修复与重启看后续回执。
 
 远端16常驻CPU/32流实际GPU工程核已独立完成：2048交互、198完整回合、采样44.32秒（46.21步/秒）、一次PPO更新128小批1.09秒且参数确变，3个固定训练母子集；工程消耗单列，不计正式P0/P1预算，也不作效果结论。[短供给核验](outputs/experiments/first_stage_s1_d12a_20261010/preflight/remote_gpu_smoke_result.json)。四实例各可见60GiB内存和16 CPU affinity，其中CPU编号有部分交叠，保存[资源记录](outputs/experiments/first_stage_s1_d12a_20261010/preflight/root_resource_limits.json)，不能宣传四个完全隔离CPU宿主或严格异机速度排名。后续仍尽快自动接续已授权训练与考核，不需用户确认。
