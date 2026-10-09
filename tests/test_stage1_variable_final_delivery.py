@@ -72,6 +72,12 @@ class FinalDeliveryTests(unittest.TestCase):
             acceptance.parent.mkdir()
             (base / "preflight/final_learning_audit.json").write_text(json.dumps({
                 "all_checks_passed": True, "issues": []}), encoding="utf-8")
+            (base / "preflight/final_report_numeric_figure_qa.json").write_text("{}",
+                                                                              encoding="utf-8")
+            for name in final_delivery.CORRECTED_PUBLICATION_FILES:
+                path = publication / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"frozen corrected artifact")
             acceptance.write_text(json.dumps({
                 "passed": True, "package_count": 32, "science_packages": 28,
                 "preparation_packages": 4, "manifest_sha256": final_delivery.sha(manifest),
@@ -107,7 +113,9 @@ class FinalDeliveryTests(unittest.TestCase):
                  patch.object(final_delivery, "GATE", gate), \
                  patch.object(final_delivery, "ACCEPTANCE", acceptance), \
                  patch.object(final_delivery, "ROOT_VERIFY", root_check), \
-                 patch.object(final_delivery, "MANIFEST", manifest):
+                 patch.object(final_delivery, "MANIFEST", manifest), \
+                 patch.object(final_delivery, "_figure_correction_errors",
+                              return_value=[]):
                 self.assertTrue(final_delivery.gate_state(report, publication)["ready"])
                 changed = json.loads(acceptance.read_text(encoding="utf-8"))
                 changed["manifest_sha256"] = "0" * 64
@@ -318,6 +326,13 @@ class FinalDeliveryTests(unittest.TestCase):
                     "evidence/final_learning_audit_api.json",
                     "evidence/final_learning_audit_manifest.json"}
         self.assertTrue(required <= set(final_delivery.LEARNING_EVIDENCE))
+        self.assertTrue({"scripts/complete_episode_curves.py",
+                         "scripts/learning_metric_panels.py",
+                         "scripts/final_report_numeric_figure_qa.py",
+                         "evidence/final_report_numeric_figure_qa.json"} <=
+                        set(final_delivery.LEARNING_EVIDENCE))
+        self.assertIn("training_corrected/train_R09_学习指标与固定验证.png",
+                      final_delivery.CORRECTED_PUBLICATION_FILES)
         self.assertFalse(any("draft" in name or name.endswith((".zip", ".jsonl"))
                              for name in final_delivery.LEARNING_EVIDENCE))
 

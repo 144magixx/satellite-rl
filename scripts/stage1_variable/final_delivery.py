@@ -64,6 +64,18 @@ LEARNING_EVIDENCE = {
     "evidence/final_learning_audit.json": "preflight/final_learning_audit.json",
     "evidence/final_learning_audit_api.json": "preflight/final_learning_audit_api.json",
     "evidence/final_learning_audit_manifest.json": "preflight/final_learning_audit_manifest.json",
+    "scripts/complete_episode_curves.py": "analysis/publication_figures/complete_episode_curves.py",
+    "scripts/learning_metric_panels.py": "analysis/publication_figures/learning_metric_panels.py",
+    "scripts/final_report_numeric_figure_qa.py": "analysis/final_report_numeric_figure_qa.py",
+    "evidence/final_report_numeric_figure_qa.json": "preflight/final_report_numeric_figure_qa.json",
+}
+CORRECTED_PUBLICATION_FILES = {
+    "training_corrected/corrected_training_curve_receipt.json",
+    "training_corrected/train_R09_完整回合终态曲线.png",
+    "training_corrected/verify_R08_完整回合终态曲线.png",
+    "training_corrected/verify_R09_完整回合终态曲线.png",
+    "training_corrected/R09_学习指标图回执.json",
+    "training_corrected/train_R09_学习指标与固定验证.png",
 }
 
 
@@ -130,6 +142,81 @@ def _tree(root, prefix):
     return result
 
 
+def _figure_correction_errors(publication, manifest):
+    """Bind corrected complete-episode and R09 update panels to saved ZIP rows."""
+    errors = []
+    corrected = Path(publication) / "training_corrected"
+    qa_path = BASE / "preflight/final_report_numeric_figure_qa.json"
+    qa_script = BASE / "analysis/final_report_numeric_figure_qa.py"
+    complete_script = BASE / "analysis/publication_figures/complete_episode_curves.py"
+    metric_script = BASE / "analysis/publication_figures/learning_metric_panels.py"
+    corrected_receipt_path = corrected / "corrected_training_curve_receipt.json"
+    metric_receipt_path = corrected / "R09_学习指标图回执.json"
+    metric_figure = corrected / "train_R09_学习指标与固定验证.png"
+    qa, complete, metric = (read(path) for path in
+                            (qa_path, corrected_receipt_path, metric_receipt_path))
+    if (qa.get("schema") != "s1v10.final_report_numeric_figure_qa.v1" or
+            qa.get("passed") is not True or qa.get("formal_ready") is not True or
+            qa.get("issues") or qa.get("qa_script_sha256") != sha(qa_script) or
+            qa.get("archive_acceptance_sha256") != sha(ACCEPTANCE) or
+            qa.get("summary_sha256") != sha(FINAL_REPORT / "summary.json") or
+            qa.get("science_audit_sha256") != sha(FINAL_REPORT / "science_audit/science_audit.json") or
+            qa.get("per_scene_sha256") != sha(FINAL_REPORT / "per_scene.csv") or
+            qa.get("publication_receipt_sha256") != sha(Path(publication) / "publication_receipt.json") or
+            qa.get("corrected_training_receipt_sha256") != sha(corrected_receipt_path) or
+            qa.get("r09_learning_metric_receipt_sha256") != sha(metric_receipt_path)):
+        errors.append("final numeric/figure QA receipt or dependency SHA differs")
+    figure_paths = set()
+    for item in qa.get("figures") or []:
+        path = Path(item["path"]).resolve()
+        if (not (path.is_relative_to(FINAL_REPORT.resolve()) or
+                 path.is_relative_to(Path(publication).resolve())) or
+                not path.is_file() or sha(path) != item.get("sha256")):
+            errors.append("one final numeric QA figure SHA/path differs")
+        figure_paths.add(path)
+    if (len(qa.get("figures") or []) < 11 or
+            metric_figure.resolve() not in figure_paths or
+            (corrected / "train_R09_完整回合终态曲线.png").resolve() not in figure_paths):
+        errors.append("corrected R09 complete-episode/learning figures lack QA coverage")
+    files = {(row["port"], row["run_id"], row["name"]): row
+             for row in manifest.get("files", [])}
+    tasks = manifest.get("tasks") or {}
+    if (complete.get("script_sha256") != sha(complete_script) or
+            complete.get("inputs_sha256") != sha(FINAL_REPORT / "inputs.json") or
+            set(complete.get("tasks") or {}) != {"train_R09", "verify_R08", "verify_R09"} or
+            complete["tasks"]["train_R09"].get("complete_episodes") != 3208 or
+            complete["tasks"]["train_R09"].get("unassessed_budget_tails") != 32):
+        errors.append("complete-episode R09 correction receipt/source differs")
+    else:
+        for key, item in complete["tasks"].items():
+            task = tasks.get(key) or {}
+            row = files.get((task.get("port"), task.get("run_id"), "episodes.jsonl"))
+            image = Path(item["image"])
+            if (not row or row["sha256"] != item.get("member_sha256") or
+                    row["bytes"] != item.get("member_bytes") or
+                    not image.resolve().is_relative_to(corrected.resolve()) or
+                    not image.is_file() or sha(image) != item.get("image_sha256")):
+                errors.append("complete-episode corrected member/image differs: " + key)
+    if (metric.get("inputs_sha256") != sha(FINAL_REPORT / "inputs.json") or
+            metric.get("script_sha256") != sha(metric_script) or
+            Path(metric.get("figure") or "").resolve() != metric_figure.resolve() or
+            not metric_figure.is_file() or sha(metric_figure) != metric.get("figure_sha256") or
+            metric.get("update_rows") != 128 or metric.get("validation_nodes") != 16):
+        errors.append("R09 policy-loss/entropy/fixed-validation figure receipt differs")
+    else:
+        task = tasks.get("train_R09") or {}
+        for name in ("updates.jsonl", "evaluations.jsonl"):
+            row = files.get((task.get("port"), task.get("run_id"), name))
+            source = (metric.get("source_members") or {}).get(name) or {}
+            ref = (row or {}).get("source_ref") or {}
+            if (not row or source.get("member") != ref.get("member") or
+                    source.get("member_sha256") != row.get("sha256") or
+                    source.get("member_bytes") != row.get("bytes") or
+                    source.get("zip_sha256") != ref.get("zip_sha256")):
+                errors.append("R09 learning metric source member differs: " + name)
+    return errors
+
+
 def gate_state(report_md=REPORT_MD, publication=PUBLICATION):
     """Return independent formal gates; no file is packaged on failure."""
     errors = []
@@ -138,7 +225,10 @@ def gate_state(report_md=REPORT_MD, publication=PUBLICATION):
              "report_gate": GATE, "archive_acceptance": ACCEPTANCE,
              "root_verification": ROOT_VERIFY, "archive_manifest": MANIFEST,
              "publication_receipt": Path(publication) / "publication_receipt.json",
-             "learning_audit": BASE / "preflight/final_learning_audit.json"}
+             "learning_audit": BASE / "preflight/final_learning_audit.json",
+             "numeric_figure_qa": BASE / "preflight/final_report_numeric_figure_qa.json"}
+    for name in CORRECTED_PUBLICATION_FILES:
+        paths["corrected/" + name] = Path(publication) / name
     for label, path in paths.items():
         if not path.is_file():
             errors.append(label + " absent: " + str(path))
@@ -200,6 +290,7 @@ def gate_state(report_md=REPORT_MD, publication=PUBLICATION):
             path = _inside(item["path"], publication)
             if path.name != name or sha(path) != item["sha256"]:
                 errors.append("formal publication output SHA differs: " + name)
+        errors.extend(_figure_correction_errors(publication, manifest))
         tasks = manifest.get("tasks") or {}
         expected_tasks = {f"prepare_{port}" for port in ops.SSH_PORTS}
         expected_tasks.update(read(BASE / "controller/state.json")["tasks"])
