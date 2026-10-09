@@ -8,6 +8,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import json
 import multiprocessing
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -28,7 +29,11 @@ from satellite_rl.coverage.variable_runner import (_checkpoint_parallel, _load_p
                                                    _check_training,
                                                    _parallel_validation_if_due,
                                                    _cpu_worker_init, _cpu_observe,
-                                                   _cpu_execute)
+                                                   _cpu_execute,
+                                                   THROUGHPUT_REPAIR_ID,
+                                                   THROUGHPUT_REPAIR_ORIGIN,
+                                                   THROUGHPUT_REPAIR_RUNS,
+                                                   THROUGHPUT_REPAIR_CRITERIA)
 from satellite_rl.workbench.coverage_variable import variable_default_config
 
 
@@ -154,6 +159,134 @@ class VariableLearningTests(unittest.TestCase):
             self.assertEqual((directory / "actions.jsonl").read_text(encoding="utf-8"), "")
             self.assertEqual([x["level"] for x in saved["streams"]],
                              [x["level"] for x in streams])
+
+    def test_only_exact_approved_b311_repair_can_load_old_source_checkpoint(self):
+        import hashlib
+        from satellite_rl.coverage.scenes import CoverageDataset
+        from satellite_rl.coverage.config import config_hash
+
+        config = variable_default_config()
+        config["coverage"]["variable"]["route"] = "R08"
+        config["coverage"]["method"] = "ppo"
+        config["datasets"] = {
+            "train": {"path": "isolated-train", "sha256": "a" * 64,
+                      "partition_role": "train"},
+            "validation": {"path": "isolated-validation", "sha256": "b" * 64,
+                           "partition_role": "validation"}}
+        dataset = CoverageDataset([self.scene])
+        streams = [_fresh_stream(dataset, self.cfg, "R08", 800 + i,
+                                 [.75, 1, 1.25]) for i in range(32)]
+        policy = VariableSetPolicy()
+        optimizer = torch.optim.Adam(policy.parameters(), lr=.001)
+        optimizer.zero_grad()
+        sum(parameter.sum() for parameter in policy.parameters()).backward()
+        optimizer.step()
+        run_id = THROUGHPUT_REPAIR_RUNS["R08"]
+        repair_commit = "c" * 40
+        request_id = "s1v10_train_R08_20418_s51001"
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            old_root, new_root = directory / "old-source", directory / "new-source"
+            old_root.mkdir()
+            new_root.mkdir()
+            (old_root / "source_manifest.json").write_text('{"source":"old"}', encoding="utf-8")
+            (new_root / "source_manifest.json").write_text('{"source":"new"}', encoding="utf-8")
+            config_path = directory / "config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            old_job = {"run_id": run_id, "git_commit": THROUGHPUT_REPAIR_ORIGIN}
+            counts = {name: 0 for name in ("actions.jsonl", "episodes.jsonl",
+                                           "updates.jsonl", "evaluations.jsonl")}
+            _checkpoint_parallel(directory, old_job, config, policy, optimizer,
+                                 streams=streams, step=2048, updates=128,
+                                 episode=3, last_validation=0, ledger_counts=counts)
+            for name in counts:
+                (directory / name).write_text("", encoding="utf-8")
+            checkpoint_sha = hashlib.sha256((directory / "checkpoint.pt").read_bytes()).hexdigest()
+            config_sha = hashlib.sha256(config_path.read_bytes()).hexdigest()
+            archive = directory / "recoveries" / f"{THROUGHPUT_REPAIR_ID}_{repair_commit[:12]}"
+            (archive / "original").mkdir(parents=True)
+            shutil.copyfile(directory / "checkpoint.pt", archive / "original" / "checkpoint.pt")
+            shutil.copyfile(config_path, archive / "original" / "config.json")
+            for name in ("job.json", "status.json", "launch.json", "worker.log"):
+                text = (json.dumps({"run_id": run_id, "request_id": request_id,
+                                    "git_commit": THROUGHPUT_REPAIR_ORIGIN,
+                                    "source_root": str(old_root)})
+                        if name == "job.json" else "{}")
+                (archive / "original" / name).write_text(text, encoding="utf-8")
+            backups = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                       for path in (archive / "original").iterdir()}
+            evidences = []
+            for i in range(5):
+                evidence = archive / f"numeric_evidence_{i}.json"
+                evidence.write_text('{"passed":true}', encoding="utf-8")
+                evidences.append({"path": str(evidence),
+                                  "sha256": hashlib.sha256(evidence.read_bytes()).hexdigest()})
+            receipt = {"format": "s1v10_throughput_repair_validation_v1",
+                       "repair_id": THROUGHPUT_REPAIR_ID,
+                       "origin_commit": THROUGHPUT_REPAIR_ORIGIN,
+                       "repair_commit": repair_commit, "run_id": run_id,
+                       "request_id": request_id, "route": "R08",
+                       "actual_checkpoint": {"sha256": checkpoint_sha,
+                                             "step": 2048, "updates": 128, "episode": 3},
+                       "config_sha256": config_sha, "config_hash": config_hash(config),
+                       "dataset_sha256": {"train": "a" * 64, "validation": "b" * 64},
+                       "stream_count": 32, "tests_passed": True,
+                       "approved": True,
+                       "criteria": {key: True for key in THROUGHPUT_REPAIR_CRITERIA},
+                       "old_source_root": str(old_root), "new_source_root": str(new_root),
+                       "evidence_files": evidences}
+            receipt_path = directory / "recoveries" / "validation_receipt.json"
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            shutil.copyfile(receipt_path, archive / "validation_receipt.json")
+            proof = {"repair_id": THROUGHPUT_REPAIR_ID,
+                     "origin_commit": THROUGHPUT_REPAIR_ORIGIN,
+                     "repair_commit": repair_commit, "run_id": run_id,
+                     "request_id": request_id, "checkpoint_sha256": checkpoint_sha,
+                     "checkpoint_step": 2048, "checkpoint_updates": 128,
+                     "checkpoint_episode": 3, "route": "R08",
+                     "config_sha256": config_sha,
+                     "config_hash": config_hash(config),
+                     "validation_receipt_sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+                     "validation_receipt_path": str(receipt_path),
+                     "archive_path": str(archive), "old_source_root": str(old_root),
+                     "new_source_root": str(new_root),
+                     "old_manifest_sha256": hashlib.sha256(
+                         (old_root / "source_manifest.json").read_bytes()).hexdigest(),
+                     "new_manifest_sha256": hashlib.sha256(
+                         (new_root / "source_manifest.json").read_bytes()).hexdigest(),
+                     "backup_files_sha256": backups, "evidence_files": evidences,
+                     "approved": True}
+            (archive / "repair_proof.json").write_text(json.dumps(proof), encoding="utf-8")
+            new_job = {"run_id": run_id, "git_commit": repair_commit,
+                       "original_git_commit": THROUGHPUT_REPAIR_ORIGIN,
+                       "source_root": str(new_root), "source_history": [proof],
+                       "experiment_id": "S1-V10", "kind": "train",
+                       "experiment_role": "formal", "request_id": request_id,
+                       "variable_route": "R08",
+                       "execution_target": "u2024110224@10.160.17.102:20418",
+                       "archive_root": str(directory),
+                       "variable_throughput_repair": proof}
+            restored = _load_parallel(directory, new_job, config, policy, optimizer)
+            self.assertEqual(restored["step"], 2048)
+            self.assertEqual(len(restored["streams"]), 32)
+            bad_job = dict(new_job, variable_throughput_repair={
+                **proof, "checkpoint_sha256": "0" * 64})
+            with self.assertRaisesRegex(ValueError, "repair"):
+                _load_parallel(directory, bad_job, config, policy, optimizer)
+            bad_job = dict(new_job, run_id="unrelated-training")
+            with self.assertRaisesRegex(ValueError, "run_id|provenance|repair"):
+                _load_parallel(directory, bad_job, config, policy, optimizer)
+            next_sha = _checkpoint_parallel(directory, new_job, config, policy, optimizer,
+                                            streams=restored["streams"], step=4096,
+                                            updates=256, episode=3, last_validation=0,
+                                            ledger_counts=counts)
+            next_payload = torch.load(directory / "checkpoint.pt", map_location="cpu",
+                                      weights_only=False)
+            self.assertEqual(next_payload["source_commit"], repair_commit)
+            self.assertEqual(next_payload["throughput_repair"]["origin_commit"],
+                             THROUGHPUT_REPAIR_ORIGIN)
+            self.assertEqual(next_sha, hashlib.sha256(
+                (directory / "checkpoint.pt").read_bytes()).hexdigest())
 
     def test_parallel_runner_short_real_update_and_same_id_resume(self):
         from satellite_rl.coverage.scenes import CoverageDataset

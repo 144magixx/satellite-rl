@@ -31,6 +31,19 @@ from .variable_ppo import (Transition, VariableSetPolicy, collate, ppo_update)
 
 POLICY_FORMAT = "variable_set_ppo_v1"
 LEARNING_ROUTES = ("R08", "R09")
+THROUGHPUT_REPAIR_ID = "s1v10_cpu_supply_equivalent_v1"
+THROUGHPUT_REPAIR_ORIGIN = "b31187fcaf79e90b70d85db4cdfec5a4150020de"
+THROUGHPUT_REPAIR_RUNS = {
+    "R08": "train_ppo_20261009_095314_19a69288",
+    "R09": "train_ppo_20261009_095159_714e5c20",
+}
+THROUGHPUT_REPAIR_CRITERIA = (
+    "constructor_1728_exact", "pool_packet_state_rng_equal",
+    "trajectory_128_weight_optimizer_rng_equal",
+    "actual_checkpoint_policy_optimizer_rng_32streams_complete",
+    "same_input_action_gpu_update_equal", "ledger_prefix_complete",
+    "no_budget_seed_data_change",
+)
 _CPU_CONTEXT = None
 
 
@@ -338,18 +351,169 @@ def _checkpoint_parallel(directory, job, config, policy, optimizer, *,
                "rng": _rng_state(), "streams": [_stream_record(x) for x in streams],
                "step": step, "updates": updates, "episode": episode,
                "last_validation": last_validation, "ledger_counts": dict(ledger_counts)}
+    if job.get("variable_throughput_repair"):
+        payload["source_history"] = job.get("source_history")
+        payload["throughput_repair"] = _repair_metadata(job)
     path = directory / "checkpoint.pt"
     _save_torch(path, payload)
     return _sha256(path)
 
 
+def _repair_metadata(job):
+    proof = job["variable_throughput_repair"]
+    return {key: proof[key] for key in (
+        "repair_id", "origin_commit", "repair_commit", "checkpoint_sha256",
+        "checkpoint_step", "validation_receipt_sha256", "archive_path")}
+
+
+def _verify_legacy_throughput_checkpoint(directory, job, config, payload, checkpoint_sha):
+    """Narrow one-time b311→approved CPU-supply repair migration gate."""
+    directory = Path(directory).resolve()
+    proof = job.get("variable_throughput_repair")
+    if not isinstance(proof, dict) or proof.get("approved") is not True:
+        raise ValueError("Old-source S1-V10 checkpoint lacks approved repair proof")
+    route = config.get("coverage", {}).get("variable", {}).get("route")
+    if (route not in THROUGHPUT_REPAIR_RUNS or
+            job.get("run_id") != THROUGHPUT_REPAIR_RUNS[route] or
+            job.get("experiment_id") != "S1-V10" or
+            job.get("kind") != "train" or
+            job.get("experiment_role") != "formal" or
+            job.get("variable_route") != route or
+            job.get("execution_target") != (
+                "u2024110224@10.160.17.102:20418" if route == "R08" else
+                "u2024110224@10.160.17.102:20424") or
+            config["training"]["seed"] != 51001 or
+            config["training"]["total_steps"] != 262144):
+        raise ValueError("Throughput repair is limited to the two approved formal train IDs")
+    required = ("repair_id", "origin_commit", "repair_commit", "run_id", "request_id",
+                "checkpoint_sha256", "checkpoint_step", "checkpoint_updates",
+                "checkpoint_episode", "config_sha256", "config_hash",
+                "validation_receipt_sha256", "validation_receipt_path", "archive_path",
+                "old_source_root", "new_source_root", "backup_files_sha256",
+                "evidence_files", "route",
+                "old_manifest_sha256", "new_manifest_sha256", "approved")
+    if any(key not in proof for key in required):
+        raise ValueError("Throughput repair proof is incomplete")
+    if (proof["repair_id"] != THROUGHPUT_REPAIR_ID or
+            proof["origin_commit"] != THROUGHPUT_REPAIR_ORIGIN or
+            payload.get("source_commit") != THROUGHPUT_REPAIR_ORIGIN or
+            job.get("original_git_commit") != THROUGHPUT_REPAIR_ORIGIN or
+            proof["repair_commit"] != job.get("git_commit") or
+            proof["repair_commit"] == THROUGHPUT_REPAIR_ORIGIN or
+            len(str(proof["repair_commit"])) != 40 or
+            any(char not in "0123456789abcdef" for char in proof["repair_commit"]) or
+            proof["run_id"] != job["run_id"] or
+            proof["request_id"] != job.get("request_id") or
+            proof["checkpoint_sha256"] != checkpoint_sha or
+            proof["checkpoint_step"] != payload.get("step") or
+            proof["checkpoint_updates"] != payload.get("updates") or
+            proof["checkpoint_episode"] != payload.get("episode") or
+            proof["route"] != route or
+            payload.get("step", -1) % 2048 != 0 or
+            proof["config_hash"] != config_hash(config) or
+            proof["config_sha256"] != _sha256(directory / "config.json") or
+            Path(proof["new_source_root"]).resolve() != Path(job["source_root"]).resolve() or
+            Path(proof["old_source_root"]).resolve() == Path(proof["new_source_root"]).resolve()):
+        raise ValueError("Throughput repair source, task, stop point or config differs")
+    history = job.get("source_history")
+    if not isinstance(history, list) or proof not in history:
+        raise ValueError("Throughput repair source history is absent")
+    archive = Path(proof["archive_path"]).resolve()
+    archive_root = Path(job["archive_root"]).resolve()
+    expected_archive = (directory / "recoveries" /
+                        f"{THROUGHPUT_REPAIR_ID}_{proof['repair_commit'][:12]}").resolve()
+    if (archive != expected_archive or not archive.is_dir() or
+            not archive.is_relative_to(archive_root) or
+            not Path(proof["old_source_root"]).resolve().is_relative_to(archive_root) or
+            not Path(proof["new_source_root"]).resolve().is_relative_to(archive_root)):
+        raise ValueError("Throughput repair archive identity differs")
+    backups = proof["backup_files_sha256"]
+    if (not isinstance(backups, dict) or
+            backups.get("checkpoint.pt") != checkpoint_sha or
+            backups.get("config.json") != proof["config_sha256"] or
+            not {"job.json", "status.json", "launch.json", "worker.log"} <= set(backups)):
+        raise ValueError("Throughput repair original backup list differs")
+    for name, expected in backups.items():
+        if Path(name).name != name or _sha256(archive / "original" / name) != expected:
+            raise ValueError(f"Archived original {name} differs from repair proof")
+    if _read(archive / "repair_proof.json", {}) != proof:
+        raise ValueError("Archived throughput repair proof differs from workbench job")
+    archived_job = _read(archive / "original" / "job.json", {})
+    if (archived_job.get("run_id") != job["run_id"] or
+            archived_job.get("request_id") != job["request_id"] or
+            archived_job.get("git_commit") != THROUGHPUT_REPAIR_ORIGIN or
+            Path(archived_job.get("source_root", "")).resolve() !=
+            Path(proof["old_source_root"]).resolve()):
+        raise ValueError("Archived original job provenance differs")
+    if (_sha256(Path(proof["old_source_root"]) / "source_manifest.json") !=
+            proof["old_manifest_sha256"] or
+            _sha256(Path(proof["new_source_root"]) / "source_manifest.json") !=
+            proof["new_manifest_sha256"]):
+        raise ValueError("Throughput repair source manifests differ")
+    receipt_path = (directory / "recoveries" / "validation_receipt.json").resolve()
+    if (Path(proof["validation_receipt_path"]).resolve() != receipt_path or
+            _sha256(receipt_path) != proof["validation_receipt_sha256"] or
+            _sha256(archive / "validation_receipt.json") != proof["validation_receipt_sha256"]):
+        raise ValueError("Throughput repair validation receipt SHA differs")
+    receipt = _read(receipt_path, {})
+    actual_checkpoint = {"sha256": checkpoint_sha, "step": payload.get("step"),
+                         "updates": payload.get("updates"),
+                         "episode": payload.get("episode")}
+    if (receipt.get("format") != "s1v10_throughput_repair_validation_v1" or
+            receipt.get("repair_id") != THROUGHPUT_REPAIR_ID or
+            receipt.get("origin_commit") != THROUGHPUT_REPAIR_ORIGIN or
+            receipt.get("repair_commit") != job["git_commit"] or
+            receipt.get("old_source_root") != proof["old_source_root"] or
+            receipt.get("new_source_root") != proof["new_source_root"] or
+            receipt.get("run_id") != job["run_id"] or
+            receipt.get("request_id") != job.get("request_id") or
+            receipt.get("route") != route or
+            receipt.get("actual_checkpoint") != actual_checkpoint or
+            receipt.get("config_sha256") != proof["config_sha256"] or
+            receipt.get("config_hash") != proof["config_hash"] or
+            receipt.get("stream_count") != 32 or
+            receipt.get("approved") is not True or
+            receipt.get("tests_passed") is not True or
+            set(receipt.get("criteria") or {}) != set(THROUGHPUT_REPAIR_CRITERIA) or
+            any(receipt.get("criteria", {}).get(key) is not True
+                for key in THROUGHPUT_REPAIR_CRITERIA)):
+        raise ValueError("Throughput repair validation receipt contents differ")
+    datasets = {role: row["sha256"] for role, row in config["datasets"].items()}
+    if (set(datasets) != {"train", "validation"} or
+            receipt.get("dataset_sha256") != datasets):
+        raise ValueError("Throughput repair validation dataset SHA differs")
+    for evidence in receipt.get("evidence_files", []):
+        path = Path(evidence["path"]).resolve()
+        if not path.is_relative_to(archive_root) or _sha256(path) != evidence["sha256"]:
+            raise ValueError("Throughput repair evidence escaped archive root or SHA differs")
+    if len(receipt.get("evidence_files", [])) < 5:
+        raise ValueError("Throughput repair validation lacks evidence files")
+    if proof["evidence_files"] != receipt["evidence_files"]:
+        raise ValueError("Throughput repair proof evidence differs from receipt")
+    if (not isinstance(payload.get("policy"), dict) or not payload["policy"] or
+            not isinstance(payload.get("optimizer"), dict) or
+            not payload["optimizer"].get("state") or
+            not isinstance(payload.get("rng"), dict) or
+            set(payload["rng"]) != {"python", "numpy", "torch", "cuda"} or
+            len(payload.get("streams", [])) != 32 or
+            not isinstance(payload.get("ledger_counts"), dict) or
+            set(payload["ledger_counts"]) != {
+                "actions.jsonl", "episodes.jsonl", "updates.jsonl", "evaluations.jsonl"} or
+            any("sampler_state" not in stream or "layout" not in stream
+                for stream in payload["streams"])):
+        raise ValueError("Throughput repair checkpoint learning or environment state incomplete")
+
+
 def _load_parallel(directory, job, config, policy, optimizer):
-    payload = _load_torch(directory / "checkpoint.pt", "cpu")
+    checkpoint = Path(directory) / "checkpoint.pt"
+    checkpoint_sha = _sha256(checkpoint)
+    payload = _load_torch(checkpoint, "cpu")
     if (payload.get("format_version") != 2 or payload.get("run_id") != job["run_id"] or
             payload.get("config_hash") != config_hash(config) or
-            payload.get("source_commit") != job["git_commit"] or
             len(payload.get("streams", [])) != config["training"]["num_envs"]):
         raise ValueError("Variable parallel checkpoint provenance or stream count differs")
+    if payload.get("source_commit") != job["git_commit"]:
+        _verify_legacy_throughput_checkpoint(directory, job, config, payload, checkpoint_sha)
     policy.load_state_dict(payload["policy"])
     optimizer.load_state_dict(payload["optimizer"])
     _restore_rng(payload["rng"])
@@ -911,6 +1075,10 @@ def _train(directory, job, config, resume, preflight):
                               else "fixed_budget_endpoint"),
                 "experiment_role": job.get("experiment_role", "formal"),
                 "source_commit": job["git_commit"],
+                "original_git_commit": job.get("original_git_commit"),
+                "source_history": job.get("source_history", []),
+                "throughput_repair": (_repair_metadata(job)
+                                      if job.get("variable_throughput_repair") else None),
                 "config_hash": config_hash(config), "datasets": config["datasets"],
                 "policy_sha256": _sha256(final / "policy.pt"),
                 "parameter_count": sum(p.numel() for p in policy.parameters()),
