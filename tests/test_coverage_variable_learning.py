@@ -162,8 +162,10 @@ class VariableLearningTests(unittest.TestCase):
 
     def test_only_exact_approved_b311_repair_can_load_old_source_checkpoint(self):
         import hashlib
+        from dataclasses import replace
         from satellite_rl.coverage.scenes import CoverageDataset
         from satellite_rl.coverage.config import config_hash
+        from satellite_rl.coverage.variable_dataset import save_variable_dataset
 
         config = variable_default_config()
         config["coverage"]["variable"]["route"] = "R08"
@@ -186,6 +188,15 @@ class VariableLearningTests(unittest.TestCase):
         request_id = "s1v10_train_R08_20418_s51001"
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
+            validation_path = directory / "validation_data" / "inputs.npz"
+            validation_scenes = [replace(self.scene, scene_id=f"validation-{i}",
+                                         source_hash=f"validation-sha-{i}")
+                                 for i in range(20)]
+            save_variable_dataset(CoverageDataset(validation_scenes), validation_path)
+            config["datasets"]["validation"] = {
+                "path": str(validation_path),
+                "sha256": hashlib.sha256(validation_path.read_bytes()).hexdigest(),
+                "partition_role": "validation"}
             old_root, new_root = directory / "old-source", directory / "new-source"
             old_root.mkdir()
             new_root.mkdir()
@@ -193,6 +204,8 @@ class VariableLearningTests(unittest.TestCase):
             (new_root / "source_manifest.json").write_text('{"source":"new"}', encoding="utf-8")
             config_path = directory / "config.json"
             config_path.write_text(json.dumps(config), encoding="utf-8")
+            (directory / "status.json").write_text(
+                json.dumps({"stop_reason": "requested"}), encoding="utf-8")
             old_job = {"run_id": run_id, "git_commit": THROUGHPUT_REPAIR_ORIGIN}
             counts = {name: 0 for name in ("actions.jsonl", "episodes.jsonl",
                                            "updates.jsonl", "evaluations.jsonl")}
@@ -211,7 +224,9 @@ class VariableLearningTests(unittest.TestCase):
                 text = (json.dumps({"run_id": run_id, "request_id": request_id,
                                     "git_commit": THROUGHPUT_REPAIR_ORIGIN,
                                     "source_root": str(old_root)})
-                        if name == "job.json" else "{}")
+                        if name == "job.json" else
+                        json.dumps({"stop_reason": "requested"}) if name == "status.json"
+                        else "{}")
                 (archive / "original" / name).write_text(text, encoding="utf-8")
             backups = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                        for path in (archive / "original").iterdir()}
@@ -229,9 +244,11 @@ class VariableLearningTests(unittest.TestCase):
                        "actual_checkpoint": {"sha256": checkpoint_sha,
                                              "step": 2048, "updates": 128, "episode": 3},
                        "config_sha256": config_sha, "config_hash": config_hash(config),
-                       "dataset_sha256": {"train": "a" * 64, "validation": "b" * 64},
+                       "dataset_sha256": {role: record["sha256"]
+                                          for role, record in config["datasets"].items()},
                        "stream_count": 32, "tests_passed": True,
                        "approved": True,
+                       "stop_reason": "requested", "saved_validation_nodes": [],
                        "criteria": {key: True for key in THROUGHPUT_REPAIR_CRITERIA},
                        "old_source_root": str(old_root), "new_source_root": str(new_root),
                        "evidence_files": evidences}
@@ -255,6 +272,8 @@ class VariableLearningTests(unittest.TestCase):
                      "new_manifest_sha256": hashlib.sha256(
                          (new_root / "source_manifest.json").read_bytes()).hexdigest(),
                      "backup_files_sha256": backups, "evidence_files": evidences,
+                     "stop_reason": "requested", "saved_validation_nodes": [],
+                     "last_validation": 0,
                      "approved": True}
             (archive / "repair_proof.json").write_text(json.dumps(proof), encoding="utf-8")
             new_job = {"run_id": run_id, "git_commit": repair_commit,
@@ -301,6 +320,74 @@ class VariableLearningTests(unittest.TestCase):
                              THROUGHPUT_REPAIR_ORIGIN)
             self.assertEqual(next_sha, hashlib.sha256(
                 (directory / "checkpoint.pt").read_bytes()).hexdigest())
+            # A stopped validation may have 1..59 complete scene rows after
+            # the last learning checkpoint.  Its prefix must survive the
+            # source repair and resume at the next frozen scene, once.
+            interrupted = torch.load(archive / "original" / "checkpoint.pt",
+                                     map_location="cpu", weights_only=False)
+            interrupted.update(step=16384, updates=1024, last_validation=0)
+            torch.save(interrupted, directory / "checkpoint.pt")
+            shutil.copyfile(directory / "checkpoint.pt", archive / "original" / "checkpoint.pt")
+            partial_scene = replace(validation_scenes[0],
+                                    demands=validation_scenes[0].demands * .75,
+                                    metadata={"demand_multiplier": .75})
+            first_row = _single_evaluation(partial_scene, self.cfg, "R08",
+                                           policy.eval(), config=config)
+            partial_path = directory / "validation_16384.jsonl"
+            first_line = json.dumps(first_row, ensure_ascii=False) + "\n"
+            partial_path.write_text(first_line, encoding="utf-8")
+            shutil.copyfile(partial_path, archive / "original" / partial_path.name)
+            (directory / "status.json").write_text(
+                json.dumps({"stop_reason": "validation_interrupted"}), encoding="utf-8")
+            shutil.copyfile(directory / "status.json", archive / "original" / "status.json")
+            partial_sha = hashlib.sha256(partial_path.read_bytes()).hexdigest()
+            checkpoint_sha = hashlib.sha256((directory / "checkpoint.pt").read_bytes()).hexdigest()
+            partial_nodes = [{"env_step": 16384, "rows": 1, "sha256": partial_sha,
+                              "complete": False}]
+            interrupted_receipt = {**receipt,
+                                   "actual_checkpoint": {"sha256": checkpoint_sha,
+                                                         "step": 16384,
+                                                         "updates": 1024,
+                                                         "episode": 3},
+                                   "stop_reason": "validation_interrupted",
+                                   "saved_validation_nodes": partial_nodes}
+            receipt_path.write_text(json.dumps(interrupted_receipt), encoding="utf-8")
+            shutil.copyfile(receipt_path, archive / "validation_receipt.json")
+            interrupted_backups = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                                   for path in (archive / "original").iterdir()}
+            interrupted_proof = {**proof, "checkpoint_sha256": checkpoint_sha,
+                                 "checkpoint_step": 16384, "checkpoint_updates": 1024,
+                                 "stop_reason": "validation_interrupted",
+                                 "saved_validation_nodes": partial_nodes,
+                                 "backup_files_sha256": interrupted_backups,
+                                 "validation_receipt_sha256": hashlib.sha256(
+                                     receipt_path.read_bytes()).hexdigest()}
+            (archive / "repair_proof.json").write_text(json.dumps(interrupted_proof),
+                                                         encoding="utf-8")
+            partial_job = {**new_job, "variable_throughput_repair": interrupted_proof,
+                           "source_history": [interrupted_proof]}
+            restored_partial = _load_parallel(directory, partial_job, config,
+                                              policy, optimizer)
+            self.assertEqual(restored_partial["step"], 16384)
+            self.assertEqual(partial_path.read_text(encoding="utf-8"), first_line)
+            partial_path.write_text(first_line + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "partial validation SHA"):
+                _load_parallel(directory, partial_job, config, policy, optimizer)
+            partial_path.write_text(first_line, encoding="utf-8")
+            completed_rows, expected = _evaluate_rows(
+                directory, partial_job, config, role="validation", route="R08",
+                policy=policy.eval(), output=partial_path, resume=True)
+            self.assertEqual((len(completed_rows), expected), (60, 60))
+            self.assertEqual(partial_path.read_text(encoding="utf-8").splitlines()[0],
+                             first_line.strip())
+            full_sha = hashlib.sha256(partial_path.read_bytes()).hexdigest()
+            repeated, _ = _evaluate_rows(directory, partial_job, config,
+                                         role="validation", route="R08",
+                                         policy=policy.eval(), output=partial_path,
+                                         resume=True)
+            self.assertEqual(len(repeated), 60)
+            self.assertEqual(hashlib.sha256(partial_path.read_bytes()).hexdigest(),
+                             full_sha)
 
     def test_parallel_runner_short_real_update_and_same_id_resume(self):
         from satellite_rl.coverage.scenes import CoverageDataset

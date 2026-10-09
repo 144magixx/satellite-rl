@@ -363,7 +363,90 @@ def _repair_metadata(job):
     proof = job["variable_throughput_repair"]
     return {key: proof[key] for key in (
         "repair_id", "origin_commit", "repair_commit", "checkpoint_sha256",
-        "checkpoint_step", "validation_receipt_sha256", "archive_path")}
+        "checkpoint_step", "validation_receipt_sha256", "archive_path",
+        "stop_reason", "saved_validation_nodes")}
+
+
+def _verify_saved_validation_prefixes(directory, proof, receipt, payload, config, archive):
+    """Protect full nodes and an interrupted partial node before same-ID append."""
+    directory = Path(directory)
+    reason = proof.get("stop_reason")
+    nodes = proof.get("saved_validation_nodes")
+    interval = config["training"]["validation_interval"]
+    step = payload.get("step")
+    last = payload.get("last_validation")
+    status = _read(directory / "status.json", {})
+    if (reason not in ("requested", "validation_interrupted") or
+            receipt.get("stop_reason") != reason or
+            status.get("stop_reason") != reason or
+            not isinstance(nodes, list) or receipt.get("saved_validation_nodes") != nodes or
+            proof.get("last_validation") != last or
+            type(last) is not int or last < 0 or last > step or last % interval or
+            (reason == "validation_interrupted" and
+             (step != last + interval or step % interval))):
+        raise ValueError("Throughput repair validation stop position differs")
+    full_steps = list(range(interval, last + 1, interval))
+    if len(nodes) != len(full_steps) + int(reason == "validation_interrupted"):
+        raise ValueError("Throughput repair saved validation node count differs")
+    expected_names = {f"validation_{node}.jsonl" for node in full_steps}
+    if reason == "validation_interrupted" and nodes[-1].get("sha256") is not None:
+        expected_names.add(f"validation_{step}.jsonl")
+    found = {path.name for path in directory.glob("validation_*.jsonl")}
+    if found != expected_names:
+        raise ValueError("Throughput repair has missing, future or unbound validation files")
+    frozen = _dataset(config, "validation")
+    factors = config["evaluation"]["demand_multipliers"]
+    if len(frozen.scenes) != 20 or list(factors) != [.75, 1., 1.25]:
+        raise ValueError("Throughput repair frozen validation mother grid differs")
+    expected_order = [(scene.scene_id, scene.source_hash, float(factor))
+                      for scene in frozen.scenes for factor in factors]
+    if len(set(expected_order)) != 60:
+        raise ValueError("Throughput repair validation mother identities repeat")
+    backups = proof["backup_files_sha256"]
+    summaries = _read_lines(directory / "evaluations.jsonl")
+    if len(summaries) != len(full_steps):
+        raise ValueError("Throughput repair committed validation summary count differs")
+    for index, node in enumerate(full_steps):
+        entry = nodes[index]
+        name = f"validation_{node}.jsonl"
+        path = directory / name
+        if (entry != {"env_step": node, "rows": 60, "sha256": _sha256(path)} or
+                backups.get(name) != entry["sha256"] or
+                _sha256(archive / "original" / name) != entry["sha256"]):
+            raise ValueError("Throughput repair full validation SHA differs")
+        rows = _read_lines(path)
+        actual_order = [(row.get("scene_id"), row.get("scene_sha256"),
+                         row.get("demand_multiplier")) for row in rows]
+        if (len(rows) != 60 or actual_order != expected_order or
+                any(row.get("route") != config["coverage"]["variable"]["route"] or
+                    row.get("demand_conserved") is not True for row in rows) or
+                summaries[index].get("env_step") != node or
+                summaries[index].get("scene_count") != 60 or
+                summaries[index].get("rows_sha256") != entry["sha256"]):
+            raise ValueError("Throughput repair full validation rows or summary differ")
+    if reason == "validation_interrupted":
+        entry = nodes[-1]
+        name = f"validation_{step}.jsonl"
+        path = directory / name
+        if (entry.get("env_step") != step or entry.get("complete") is not False or
+                type(entry.get("rows")) is not int or not 0 <= entry["rows"] < 60):
+            raise ValueError("Throughput repair partial validation descriptor differs")
+        if entry["sha256"] is None:
+            if entry["rows"] != 0 or path.exists() or name in backups:
+                raise ValueError("Throughput repair zero-row validation file differs")
+        else:
+            if (not path.is_file() or _sha256(path) != entry["sha256"] or
+                    backups.get(name) != entry["sha256"] or
+                    _sha256(archive / "original" / name) != entry["sha256"]):
+                raise ValueError("Throughput repair partial validation SHA differs")
+            rows = _read_lines(path)
+            actual_order = [(row.get("scene_id"), row.get("scene_sha256"),
+                             row.get("demand_multiplier")) for row in rows]
+            if (len(rows) != entry["rows"] or
+                    actual_order != expected_order[:entry["rows"]] or
+                    any(row.get("route") != config["coverage"]["variable"]["route"] or
+                        row.get("demand_conserved") is not True for row in rows)):
+                raise ValueError("Throughput repair partial validation order differs")
 
 
 def _verify_legacy_throughput_checkpoint(directory, job, config, payload, checkpoint_sha):
@@ -391,7 +474,8 @@ def _verify_legacy_throughput_checkpoint(directory, job, config, payload, checkp
                 "validation_receipt_sha256", "validation_receipt_path", "archive_path",
                 "old_source_root", "new_source_root", "backup_files_sha256",
                 "evidence_files", "route",
-                "old_manifest_sha256", "new_manifest_sha256", "approved")
+                "old_manifest_sha256", "new_manifest_sha256", "stop_reason",
+                "saved_validation_nodes", "last_validation", "approved")
     if any(key not in proof for key in required):
         raise ValueError("Throughput repair proof is incomplete")
     if (proof["repair_id"] != THROUGHPUT_REPAIR_ID or
@@ -490,6 +574,7 @@ def _verify_legacy_throughput_checkpoint(directory, job, config, payload, checkp
         raise ValueError("Throughput repair validation lacks evidence files")
     if proof["evidence_files"] != receipt["evidence_files"]:
         raise ValueError("Throughput repair proof evidence differs from receipt")
+    _verify_saved_validation_prefixes(directory, proof, receipt, payload, config, archive)
     if (not isinstance(payload.get("policy"), dict) or not payload["policy"] or
             not isinstance(payload.get("optimizer"), dict) or
             not payload["optimizer"].get("state") or
