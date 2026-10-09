@@ -1232,6 +1232,7 @@ def build_report(state_path, synced_root, output_dir, *, strict=False):
                "sequence": clean_sequence, "plots": plots,
                "methods": {key: _method(spec) for key, spec in graph.items()},
                "metric_notes": {"in_band_fraction": "正需求业务束D相对本布局正需求束均值±20%",
+                                "peak_load_ratio": "max(逐束需求D)/600 Mbps参考容量；是峰值参考容量压力，不是max(D)/mean(D)",
                                 "center_carried_fraction": "束中心C，sum(min(C,D))/原场景所有飞机需求",
                                 "user_tdma_carried_fraction": "逐机离轴容量加需求比例TDMA，sum(min(C_u,D_u))/所有飞机需求",
                                 "physical_audit_scope": "对保存的终态束/用户容量、需求、有效承载、SI、SGM、TDMA份额和总分母作独立代数与守恒核验；未从原始逐机位置重新计算离轴链路容量",
