@@ -132,7 +132,8 @@ def _validate_training(config, job, preflight):
                 "entropy_coef": .01, "clip_ratio": .2,
                 "value_coef": .5, "max_grad_norm": .5,
                 "checkpoint_interval": 2048, "validation_interval": interval,
-                "pilot_step": 65536, "cpu_workers": 16}
+                "pilot_step": 65536, "cpu_workers": 16,
+                "torch_threads": 8}
     for name, value in expected.items():
         if settings.get(name) != value:
             raise ValueError(f"D12-A frozen training {name} differs")
@@ -237,6 +238,7 @@ def _worker_teacher(packet):
 def _resident_init(streams, dataset_record, core):
     """One process owns fixed stream IDs for its entire rollout and resume."""
     global _RESIDENT_STREAMS, _RESIDENT_DATASET, _RESIDENT_CORE
+    torch.set_num_threads(1)
     _RESIDENT_STREAMS = {stream_id: stream for stream_id, stream in streams}
     _RESIDENT_DATASET = _dataset({"datasets": {"train": dataset_record}}, "train")
     _RESIDENT_CORE = core
@@ -655,6 +657,7 @@ def _bc(directory, job, config, resume, preflight):
                        ("bc_max_updates", 1600), ("seed", 51001)):
         if config["training"].get(key) != value:
             raise ValueError(f"D12-A BC frozen {key} differs")
+    torch.set_num_threads(config["training"]["torch_threads"])
     demonstrations_dir = Path(job["demonstrations_dir"])
     teacher_source = job.get("teacher_source", {})
     manifest_path = Path(teacher_source.get("manifest_path",
@@ -1012,6 +1015,7 @@ def _train_resident(directory, job, config, preflight, settings, core,
 
 def _train(directory, job, config, resume, preflight):
     settings = _validate_training(config, job, preflight)
+    torch.set_num_threads(settings["torch_threads"])
     core = _core_config(config)
     train_set, validation_set = _dataset(config, "train"), _dataset(config, "validation")
     if len(validation_set.scenes) != 20:
