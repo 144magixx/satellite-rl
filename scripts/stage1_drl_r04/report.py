@@ -27,10 +27,26 @@ class Evidence:
     def __init__(self, root):
         self.root = Path(root)
         self.zip = zipfile.ZipFile(self.root) if self.root.is_file() else None
+        self.nested = {}
         if self.zip:
             self.names = [name for name in self.zip.namelist() if not name.endswith("/")]
         elif self.root.is_dir():
             self.names = [p.relative_to(self.root).as_posix() for p in self.root.rglob("*") if p.is_file()]
+            # A verified archive directory has per-task ZIP volumes and no
+            # extracted job files. Index members virtually, without copying.
+            if not any(name.endswith(("/job.json", "/status.json", "/results.jsonl",
+                                      "/actions.jsonl")) for name in self.names):
+                for name in list(self.names):
+                    if not name.endswith(".zip"):
+                        continue
+                    with zipfile.ZipFile(self.root / name) as bundle:
+                        for member in bundle.namelist():
+                            if member.endswith("/"):
+                                continue
+                            if member in self.nested:
+                                raise ValueError("archive member appears in two ZIP volumes")
+                            self.nested[member] = name
+                self.names.extend(self.nested)
         else:
             raise FileNotFoundError(root)
         self._digest_cache = {}
@@ -42,6 +58,9 @@ class Evidence:
     def _read(self, name):
         if self.zip:
             return self.zip.read(name)
+        if name in self.nested:
+            with zipfile.ZipFile(self.root / self.nested[name]) as bundle:
+                return bundle.read(name)
         return (self.root / name).read_bytes()
 
     def job_file(self, port, run_id, filename):
@@ -80,6 +99,13 @@ class Evidence:
                     for line in stream:
                         if line.strip():
                             yield json.loads(line)
+        elif matches[0] in self.nested:
+            with zipfile.ZipFile(self.root / self.nested[matches[0]]) as bundle:
+                with bundle.open(matches[0]) as binary:
+                    with io.TextIOWrapper(binary, encoding="utf-8") as stream:
+                        for line in stream:
+                            if line.strip():
+                                yield json.loads(line)
         else:
             with (self.root / matches[0]).open(encoding="utf-8") as stream:
                 for line in stream:
