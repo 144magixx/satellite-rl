@@ -25,6 +25,10 @@ class Stage1VariableControllerTests(unittest.TestCase):
         self.assertTrue(tasks["test_R12"]["cold_init"])
         self.assertEqual(set(tasks), set(controller.DEVELOPMENT + controller.MAIN +
                                          list(controller.LEARNED_FINAL)))
+        self.assertEqual(controller.DEPENDENCIES["train_R08"], ("verify_R08", "dev_R04"))
+        self.assertEqual(controller.DEPENDENCIES["train_R09"], ("verify_R09",))
+        self.assertEqual(controller.DEPENDENCIES["test_R08"], ("train_R08",))
+        self.assertEqual(controller.DEPENDENCIES["test_R01"], ("dev_R01",))
 
     def test_manifest_is_compact_single_handoff_entry(self):
         with tempfile.TemporaryDirectory() as temporary:

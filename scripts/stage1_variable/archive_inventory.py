@@ -54,6 +54,8 @@ for rid in run_ids:
  targets.append(root/'models/runs/workbench'/rid)
 for did in dataset_ids:targets.append(root/'outputs/workbench/scenes'/did)
 targets.append(root/'outputs/workbench/source_snapshots'/commit)
+prep_commit={state.get('preparation_source_commit', commit)!r}
+if prep_commit!=commit:targets.append(root/'outputs/workbench/source_snapshots'/prep_commit)
 targets.append(root/'ops/service.json')
 files=[]
 for target in targets:

@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+import subprocess
+import hashlib
 
 from scripts.stage1_variable import ops
 from scripts.stage1_variable.launch_downloads import ASSIGNMENT
@@ -22,6 +24,87 @@ from satellite_rl.workbench.coverage_variable import (PLAN_REVISION, ROLE_COUNTS
 RECEIPT = ops.LOCAL / "controller" / "data_preparation.json"
 REGISTRY = ops.LOCAL / "controller" / "dataset_registry.json"
 CONTRACT = ops.LOCAL / "controller" / "canonical_dataset_contract.json"
+PREPARATION_SOURCE_COMMIT = "ff25076e9f98b8111cc9671cb60e57cfc3f99760"
+PREPARATION_IDS = {
+    20418: ("prepare_ppo_20261009_094017_5797b0d1", "s1v10_prepare_20240203_20418"),
+    20424: ("prepare_ppo_20261009_094021_263060b8", "s1v10_prepare_20240204_20424"),
+    20473: ("prepare_ppo_20261009_094025_6201b255", "s1v10_prepare_20240205_20473"),
+    20474: ("prepare_ppo_20261009_094029_6436bd1f", "s1v10_prepare_20240206_20474"),
+}
+PREPARATION_ARCHIVE_SHA = {
+    "2024-02-03": "e7ebb945107ede71f75ca929a32d9f978c7ab532542f28e182a0201a1611717a",
+    "2024-02-04": "c816b523be2da6c47cf1699005dc4cc8dc0195d4593249fcc62c7d4a35e1c626",
+    "2024-02-05": "deecc80209df730e35c3bef0ad8b5c2370fea0351ec72d8de14243f344d1d4ee",
+    "2024-02-06": "cd67a4f7bf09597cb55d5eb0631b79458005f8ae2ac767d078fad46dbd0e7038",
+}
+ALLOWED_CONTINUATION_FILES = {
+    "src/satellite_rl/workbench/coverage.py",
+    "src/satellite_rl/workbench/static/coverage.js",
+    "scripts/stage1_variable/data_controller.py",
+    "scripts/stage1_variable/controller.py",
+    "scripts/stage1_variable/archive_inventory.py",
+    "tests/test_stage1_variable_controller.py",
+}
+SCIENTIFIC_MODULES = (
+    "src/satellite_rl/coverage/variable_config.py",
+    "src/satellite_rl/coverage/variable_dataset.py",
+    "src/satellite_rl/coverage/variable_design.py",
+    "src/satellite_rl/coverage/variable_downstream.py",
+    "src/satellite_rl/coverage/variable_observation.py",
+    "src/satellite_rl/coverage/variable_ppo.py",
+    "src/satellite_rl/coverage/variable_runner.py",
+    "src/satellite_rl/workbench/coverage_variable.py",
+    "src/satellite_rl/workbench/variable_preparation.py",
+    "src/satellite_rl/workbench/storage.py",
+    "src/satellite_rl/workbench/runner.py",
+    "src/satellite_rl/workbench/runtime.py",
+    "src/satellite_rl/coverage/config.py",
+)
+
+
+def continuation_audit(commit):
+    """Require a UI/ops-only descendant and identical frozen scientific files."""
+    source = Path(__file__).resolve().parents[2]
+    def git(*args):
+        return subprocess.run(["git", "-C", str(source), *args],
+                              capture_output=True, check=True).stdout
+    if git("rev-parse", "HEAD").decode().strip() != commit:
+        raise RuntimeError("continuation checkout does not match requested scientific commit")
+    if git("status", "--porcelain", "--", "src", "scripts/stage1_variable", "tests").strip():
+        raise RuntimeError("continuation source has uncommitted changes")
+    if git("merge-base", PREPARATION_SOURCE_COMMIT, commit).decode().strip() != PREPARATION_SOURCE_COMMIT:
+        raise RuntimeError("continuation is not descended from frozen preparation source")
+    changed = set(git("diff", "--name-only", PREPARATION_SOURCE_COMMIT, commit).decode().splitlines())
+    if changed - ALLOWED_CONTINUATION_FILES:
+        raise RuntimeError(f"science or data module changed in UI continuation: {sorted(changed - ALLOWED_CONTINUATION_FILES)}")
+    scientific = {}
+    for path in SCIENTIFIC_MODULES:
+        old = git("show", PREPARATION_SOURCE_COMMIT + ":" + path)
+        new = git("show", commit + ":" + path)
+        if old != new:
+            raise RuntimeError(f"frozen scientific module content changed: {path}")
+        scientific[path] = hashlib.sha256(old).hexdigest()
+    result = {"preparation_source_commit": PREPARATION_SOURCE_COMMIT,
+              "scientific_commit": commit,
+              "changed_files": sorted(changed),
+              "scientific_module_sha256": scientific}
+    save(ops.LOCAL / "preflight" / f"ui_continuation_{commit[:12]}.json", result)
+    return result
+
+
+def existing_prepares(commit):
+    continuation_audit(commit)
+    receipt = json.loads(RECEIPT.read_text(encoding="utf-8"))
+    if receipt["scientific_commit"] != PREPARATION_SOURCE_COMMIT or set(receipt["prepares"]) != set(map(str, PREPARATION_IDS)):
+        raise RuntimeError("frozen four preparation IDs are incomplete")
+    for port, (run_id, request_id) in PREPARATION_IDS.items():
+        role, day = ASSIGNMENT[port]
+        row = receipt["prepares"][str(port)]
+        if (row.get("run_id") != run_id or row.get("request_id") != request_id or
+                row.get("date") != day or row.get("role") != role or
+                row.get("git_commit") != PREPARATION_SOURCE_COMMIT):
+            raise RuntimeError(f"{port}: preparation identity differs from frozen handoff")
+    return receipt["prepares"]
 
 
 def save(path, value):
@@ -66,6 +149,8 @@ print(json.dumps({{'head':head,'service':service['source_commit'],
 
 
 def submit_prepares(commit):
+    if commit != PREPARATION_SOURCE_COMMIT:
+        return existing_prepares(commit)
     rows = {}
     for port, (role, day) in ASSIGNMENT.items():
         catalog = assert_service(port, commit)
@@ -135,8 +220,9 @@ def _import(port, path, role, expected_sha=None, expected_source_sha=None):
 
 
 def register_datasets(commit):
+    prepares = existing_prepares(commit)
     receipt = json.loads(RECEIPT.read_text(encoding="utf-8"))
-    if receipt["scientific_commit"] != commit or set(receipt["prepares"]) != set(map(str, ASSIGNMENT)):
+    if set(prepares) != set(map(str, ASSIGNMENT)):
         raise RuntimeError("all four frozen preparation IDs are required")
     prepared = {}
     source_records = {}
@@ -145,7 +231,11 @@ def register_datasets(commit):
         task = receipt["prepares"][str(port)]
         detail = api(port, "/api/runs/" + task["run_id"])
         if (detail["status"]["stage"] != "completed" or
-                detail["job"].get("git_commit") != commit or
+                detail["job"].get("git_commit") != PREPARATION_SOURCE_COMMIT or
+                detail["job"].get("run_id") != PREPARATION_IDS[port][0] or
+                detail["job"].get("request_id") != PREPARATION_IDS[port][1] or
+                detail["job"].get("variable_preparation", {}).get("archive", {}).get("sha256") !=
+                PREPARATION_ARCHIVE_SHA[day] or
                 detail["job"].get("variable_preparation", {}).get("date_utc") != day):
             raise RuntimeError(f"{port} {day}: preparation not completed at frozen commit")
         artifact = detail["artifacts"]
@@ -155,6 +245,7 @@ def register_datasets(commit):
             raise RuntimeError(f"{port} {day}: prepared dataset record differs")
         prepared[day] = record
         source_records[day] = {"asset_id": detail["job"]["variable_preparation"]["archive"]["asset_id"],
+                               "preparation_source_commit": PREPARATION_SOURCE_COMMIT,
                                "archive_sha256": artifact["raw_archive_sha256"],
                                "source_preflight_sha256": artifact["source_preflight_sha256"],
                                "selection_contract_sha256": artifact["selection_contract_sha256"],
@@ -209,6 +300,7 @@ def register_datasets(commit):
         raise RuntimeError("four-lane canonical dataset content SHA differs")
     contract = {"experiment_id": "S1-V10", "plan_revision": PLAN_REVISION,
                 "scientific_commit": commit,
+                "preparation_source_commit": PREPARATION_SOURCE_COMMIT,
                 "datasets": {role: {"sha256": row["sha256"], "count": ROLE_COUNTS[role],
                                     "dates": ROLE_DATES[role],
                                     "source_datasets": row.get("source", {}).get("source_datasets")}

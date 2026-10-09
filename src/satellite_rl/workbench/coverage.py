@@ -554,14 +554,19 @@ class CoverageApplication:
 
     def api(self, method, parts, query, body):
         if parts == ["catalog"] and method == "GET":
-            from .coverage_variable import variable_default_config
+            from .coverage_variable import ARCHIVE_PARENT, LANES, variable_default_config
             current_group = next((name for name, parent in RECONSTRUCTION_ARCHIVE_PARENTS.items()
                                   if self.store.archive_root.resolve().parent == parent.resolve()), None)
+            archive = self.store.archive_root.resolve()
+            variable_port = (archive.name if archive.parent == ARCHIVE_PARENT.resolve() and
+                             archive.name in LANES and os.environ.get("SATELLITE_RL_SSH_PORT") == archive.name
+                             else None)
             return {"defaults": default_config(), "summary": summary(default_config()),
                     "balance_defaults": balance_default_config(),
                     "reconstruction_defaults": reconstruction_default_config(),
                     "variable_defaults": variable_default_config(),
                     "variable_routes": [f"R{i:02d}" for i in range(1, 13)],
+                    "variable_current_port": variable_port,
                     "variable_roles": ["train", "development", "validation", "test", "sequence"],
                     "reconstruction_current_group": current_group,
                     "reconstruction_source_groups": ["s1_03"] if current_group == "s1_03" else

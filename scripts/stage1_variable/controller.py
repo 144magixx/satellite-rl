@@ -104,6 +104,15 @@ DEVELOPMENT = [key for key in TASKS if key.startswith(("dev_", "verify_"))]
 MAIN = [key for key in TASKS if key.startswith(("train_", "test_", "sequence_"))
         and key not in ("test_R08", "test_R09")]
 LEARNED_FINAL = ("test_R08", "test_R09")
+DEPENDENCIES = {
+    **{f"test_{route}": (f"dev_{route}",) for route in NONLEARNING},
+    "train_R08": ("verify_R08", "dev_R04"),
+    "train_R09": ("verify_R09",),
+    "sequence_R04": ("dev_R04",),
+    "sequence_R12": ("dev_R12",),
+    "test_R08": ("train_R08",),
+    "test_R09": ("train_R09",),
+}
 
 
 def api(port, path, body=None):
@@ -262,7 +271,7 @@ def write_run_manifest(state):
         "status": "attention" if state["need_attention"] else state["phase"],
         "phase": state["phase"],
         "scientific_commit": state["scientific_commit"],
-        "source_commit": state["scientific_commit"],
+        "source_commit": state.get("preparation_source_commit", state["scientific_commit"]),
         "last_observed_utc": state["observed_utc"],
         "data_sha256": state.get("dataset_sha256", {}),
         "dataset_contract_sha256": state.get("dataset_contract_sha256"),
@@ -314,16 +323,43 @@ def _phase_tasks(state, registry, keys):
     return all(value == "audited" for value in counts.values())
 
 
+def _execution_tick(state, registry):
+    for key in DEVELOPMENT:
+        _submit(TASKS[key], registry, state)
+    progress = {key: _task_state(key, state) for key in DEVELOPMENT}
+    for key in (*MAIN, *LEARNED_FINAL):
+        if key not in state["tasks"] and all(dep in state["audits"] for dep in DEPENDENCIES[key]):
+            _submit(TASKS[key], registry, state)
+        if key in state["tasks"]:
+            progress[key] = _task_state(key, state)
+        else:
+            progress[key] = "waiting_dependencies"
+    state["progress"] = progress
+    return all(key in state["audits"] for key in TASKS)
+
+
 def tick(commit):
     state = json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {
         "scientific_commit": commit, "phase": "source_preparation",
         "tasks": {}, "audits": {}, "need_attention": {}, "created_utc": now()}
     if state["scientific_commit"] != commit:
-        raise RuntimeError("controller state belongs to a different frozen commit")
+        old = data_controller.PREPARATION_SOURCE_COMMIT
+        if (state["scientific_commit"] != old or state["phase"] not in
+                ("source_preparation", "dataset_registration") or
+                state["tasks"] or state["audits"]):
+            raise RuntimeError("controller state belongs to a different frozen commit")
+        data_controller.existing_prepares(commit)
+        history = ROOT / "migrations" / f"prepare_{old[:12]}_to_{commit[:12]}.json"
+        save(history, state)
+        state["preparation_source_commit"] = old
+        state["scientific_commit"] = commit
+        state["phase"] = "dataset_registration"
+        state["migration_receipt"] = str(history)
     state.pop("last_error", None)
     try:
         if state["phase"] == "source_preparation":
             state["prepares"] = data_controller.submit_prepares(commit)
+            state["preparation_source_commit"] = data_controller.PREPARATION_SOURCE_COMMIT
             state["phase"] = "dataset_registration"
         if state["phase"] == "dataset_registration":
             for port, row in state.get("prepares", {}).items():
@@ -340,18 +376,14 @@ def tick(commit):
             state["dataset_sha256"] = registry["canonical_sha256"]
             state["dataset_contract_sha256"] = hashlib.sha256(
                 data_controller.CONTRACT.read_bytes()).hexdigest()
-            state["phase"] = "development"
-        if state["phase"] in ("development", "main", "learned_final"):
+            state["phase"] = "execution"
+        if state["phase"] == "execution":
             registry = json.loads(data_controller.REGISTRY.read_text(encoding="utf-8"))
             if registry["scientific_commit"] != commit or registry["canonical_sha256"] != state["dataset_sha256"]:
                 raise RuntimeError("dataset registry changed after first scientific dispatch")
             if hashlib.sha256(data_controller.CONTRACT.read_bytes()).hexdigest() != state["dataset_contract_sha256"]:
                 raise RuntimeError("canonical dataset contract changed after first scientific dispatch")
-            if state["phase"] == "development" and _phase_tasks(state, registry, DEVELOPMENT):
-                state["phase"] = "main"
-            if state["phase"] == "main" and _phase_tasks(state, registry, MAIN):
-                state["phase"] = "learned_final"
-            if state["phase"] == "learned_final" and _phase_tasks(state, registry, LEARNED_FINAL):
+            if _execution_tick(state, registry):
                 state["phase"] = "completed_pending_report_archive"
     except Exception as error:
         state["last_error"] = {"message": str(error), "observed_utc": now(),
@@ -369,12 +401,14 @@ def resume_run(commit, key):
     if key.startswith("prepare_") and key.removeprefix("prepare_") in state.get("prepares", {}):
         task = state["prepares"][key.removeprefix("prepare_")]
         task = {**task, "port": int(task["port"])}
+        expected_commit = state.get("preparation_source_commit", data_controller.PREPARATION_SOURCE_COMMIT)
     else:
         task = state["tasks"].get(key)
+        expected_commit = commit
     if task is None:
         raise RuntimeError("unknown frozen S1-V10 task key")
     detail = api(task["port"], "/api/runs/" + task["run_id"])
-    if (detail["job"].get("git_commit") != commit or
+    if (detail["job"].get("git_commit") != expected_commit or
             detail["status"].get("stage") not in ("stopped", "failed", "interrupted")):
         raise RuntimeError("same-ID workbench resume requires audited stopped/failed/interrupted state")
     result = api(task["port"], f"/api/runs/{task['run_id']}/resume", {})

@@ -110,7 +110,7 @@
   }
   async function guarded(fn) {try {await fn();}catch(error){message(error.message,true);}}
   document.addEventListener("DOMContentLoaded", async () => {
-    try {catalog=await request("coverage/catalog");config=catalog.defaults;for(const id of ["import-group","import-data-group"]){const node=el(id);node.innerHTML=(catalog.reconstruction_source_groups||["s1_03"]).map((group)=>`<option value="${escape(group)}">${group==="s1_03"?"S1-03原停止组":"S1-03-R1修复组"}</option>`).join("");}writeForm();await refresh();message(`第一阶段配置已加载；当前归档组：${catalog.reconstruction_current_group||"本地开发"}。`);}catch(error){message(error.message,true);return;}
+    try {catalog=await request("coverage/catalog");config=catalog.defaults;for(const id of ["import-group","import-data-group"]){const node=el(id);node.innerHTML=(catalog.reconstruction_source_groups||["s1_03"]).map((group)=>`<option value="${escape(group)}">${group==="s1_03"?"S1-03原停止组":"S1-03-R1修复组"}</option>`).join("");}writeForm();await refresh();message(`第一阶段配置已加载；当前实例：${catalog.variable_current_port?"S1-V10/"+catalog.variable_current_port:catalog.reconstruction_current_group||"本地开发"}。`);}catch(error){message(error.message,true);return;}
     el("refresh").onclick=()=>guarded(refresh);
     for(const role of ["train","development","validation","test","sequence"])el("data-"+role).onchange=()=>guarded(refresh);
     el("schema").onchange=()=>{config=JSON.parse(JSON.stringify(el("schema").value==="5"?catalog.variable_defaults:el("schema").value==="4"?catalog.reconstruction_defaults:el("schema").value==="3"?catalog.balance_defaults:catalog.defaults));writeForm();if(variable())el("dataset-role").value="validation";refresh().catch((error)=>message(error.message,true));};
