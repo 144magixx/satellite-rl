@@ -9,7 +9,7 @@ import numpy as np
 
 from satellite_rl.coverage.variable_config import CORE_ROUTES, VariableConfig
 from satellite_rl.coverage.variable_design import (
-    Layout, VariableAction, _objective, _robust_demand_patterns, _transport_lp,
+    Layout, VariableAction, _construct, _objective, _robust_demand_patterns, _transport_lp,
     apply_action, candidates, geometry_audit, initial_layout, metrics, solve,
 )
 
@@ -235,6 +235,20 @@ class VariableDesignTests(unittest.TestCase):
         self.assertGreaterEqual(audit["matrix_calls"], init["actual_geometry_calls"] + 2)
         self.assertGreater(audit["ray_pair_checks"], 0)
         self.assertTrue(menu)
+
+    def test_equal_score_candidate_order_survives_successive_coverage(self):
+        # Three disconnected, equal-demand users force three scans.  The
+        # frozen constructor chooses the lexicographically ordered sites on
+        # every exact tie, including after earlier users become covered.
+        points = [[40, -10], [50, 10], [60, 30]]
+        target = scene(points, [1.0, 1.0, 1.0])
+        layout, info = _construct(target, VariableConfig(max_beams=3),
+                                  "capacity_cluster", 0.5)
+        self.assertEqual(layout.centers.tolist(), [[40.0, -10.0], [50.0, 10.0],
+                                                  [60.0, 30.0]])
+        self.assertEqual(info["candidate_scans"], 3)
+        self.assertEqual(info["construction_termination"], "all_covered")
+        self.assertEqual(layout.assignment.tolist(), [0, 1, 2])
 
 
 if __name__ == "__main__":
