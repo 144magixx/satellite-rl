@@ -40,6 +40,7 @@ class CompletedJobArchiveTests(unittest.TestCase):
         model = root / "models/runs/workbench" / RUN / "final"
         model.mkdir(parents=True)
         (model / "policy.pt").write_bytes(b"weights")
+        _json(model / "model.json", {"source_commit": COMMIT, "env_step": 262144})
         _json(jobdir / "job.json", {
             "run_id": RUN, "request_id": "s1v10_verify_R08_20418_s51001",
             "experiment_id": "S1-V10", "archive_root": str(root.resolve()),
@@ -112,6 +113,13 @@ class CompletedJobArchiveTests(unittest.TestCase):
             row = next(item for item in manifest["files"] if item["name"] == "episodes.jsonl")
             self.assertEqual(row["source_ref"], ref)
             self.assertNotIn("path", row)
+            with patch.object(archive_jobs, "MODEL_EXPORT_ROOT", base / "exported_models"):
+                exported = archive_jobs._export_final_model(
+                    {"kind": "train", "budget": 262144}, RUN, refs)
+            self.assertEqual(archive_jobs.digest(Path(exported["path"]) / "policy.pt"),
+                             refs["weights/model_dir/final/policy.pt"]["sha256"])
+            self.assertEqual(archive_jobs.digest(Path(exported["path"]) / "model.json"),
+                             refs["weights/model_dir/final/model.json"]["sha256"])
 
     def test_active_job_and_tampered_volume_fail_closed(self):
         with tempfile.TemporaryDirectory() as temporary:

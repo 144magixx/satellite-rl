@@ -23,6 +23,7 @@ from satellite_rl.workbench.variable_throughput_recovery import ORIGIN_COMMIT
 
 LOCAL = ops.LOCAL / "job_archives"
 BACKUP_LOCAL = Path("C:/paper_archives/outputs/experiments/first_stage_s1_v10_20261009/job_archives")
+MODEL_EXPORT_ROOT = Path("D:/paper/models/runs/first_stage_s1_v10_20261009")
 ANALYSIS_MANIFEST = ops.LOCAL / "synced_jobs" / "manifest.json"
 MAX_FILES = 40000
 MAX_VOLUMES = 1000
@@ -360,6 +361,43 @@ def _small_mirror(local, receipt, refs):
     return copied
 
 
+def _export_final_model(task, run_id, refs):
+    """Expose only the small formal endpoint weights after ZIP verification."""
+    if task["kind"] != "train" or task.get("budget") != 262144:
+        return None
+    members = ("weights/model_dir/final/policy.pt",
+               "weights/model_dir/final/model.json")
+    if any(name not in refs or refs[name]["bytes"] > 64 * (1 << 20) for name in members):
+        raise RuntimeError("S1-V10 formal final policy/model metadata absent or unexpectedly large")
+    MODEL_EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
+    target = MODEL_EXPORT_ROOT / run_id / "final"
+    missing = sum(refs[name]["bytes"] for name in members
+                  if not (target / Path(name).name).is_file() or
+                  digest(target / Path(name).name) != refs[name]["sha256"])
+    _require_local_capacity(MODEL_EXPORT_ROOT, missing)
+    target.mkdir(parents=True, exist_ok=True)
+    exported = []
+    for member in members:
+        ref = refs[member]
+        path = target / Path(member).name
+        if not path.is_file() or digest(path) != ref["sha256"]:
+            pending = path.with_name(path.name + ".part")
+            pending.write_bytes(archive_sources.read_bytes_source(ref))
+            if pending.stat().st_size != ref["bytes"] or digest(pending) != ref["sha256"]:
+                raise RuntimeError("S1-V10 exported final model SHA differs")
+            pending.replace(path)
+        exported.append({"path": str(path), "sha256": ref["sha256"],
+                         "bytes": ref["bytes"], "source_ref": ref})
+    receipt = {"schema": "s1v10.final_model_export.v1", "run_id": run_id,
+               "created_utc": datetime.now(timezone.utc).isoformat(),
+               "files": exported}
+    pending = target / "export_receipt.json.part"
+    pending.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    pending.replace(target / "export_receipt.json")
+    return {"path": str(target), "receipt": str(target / "export_receipt.json"),
+            "files": exported}
+
+
 def _merge_analysis_manifest(key, port, run_id, source_commit, local, receipt, small, refs):
     small_by_name = {row["name"]: row["path"] for row in small}
     with _lock(ANALYSIS_MANIFEST.with_suffix(".lock")):
@@ -536,6 +574,7 @@ def archive_completed(key, *, part_mib=PART_MIB, compression_level=5,
         small = _small_mirror(local, receipt, refs)
         index = _merge_analysis_manifest(key, port, run_id,
                                          request["source_commit"], local, receipt, small, refs)
+        model_export = _export_final_model(task, run_id, refs)
         result = {"schema": "s1v10.job_archive_download.v1",
                   "archived_utc": datetime.now(timezone.utc).isoformat(),
                   "task_key": key, "port": port, "run_id": run_id,
@@ -552,6 +591,7 @@ def archive_completed(key, *, part_mib=PART_MIB, compression_level=5,
                   "local_volume_paths": {name: str(path.resolve())
                                          for name, path in volume_paths.items()},
                   "analysis_manifest": index, "small_mirrors": small,
+                  "formal_model_export": model_export,
                   "remote_package_reused": handoff["reused_verified"]}
         pending = local / "download_receipt.json.part"
         pending.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
