@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-09 22:56 S1-V10十二路线已完整交付，小时跟进已按约暂停。**两PPO共524288决策、1920训练内验证、3600静态和720时序结果、32任务原始归档、全量严格审计与正式曲线均完成。[正式报告08](docs/第一阶段/实验报告/08_可变波束全覆盖与负载均衡十二路线对照.md) SHA为`da2e7f03d31c486f26b7d4a090c51e447a3f355d48b29357cd8e15b36a9964dc`。含报告、图表、统计、学习诊断、复现脚本、两终点模型及来源索引的最终小包`030274583ebf03eb40c9`共151成员/5,998,862字节，ZIP SHA`daee381a974061e19e417e67fa835afae40f608eae52a147357ceb1f11cfb3db`；四端均对同一共享副本逐ZIP/成员/回执SHA回读通过，未重复打包大型原始ZIP。根22:53再次核本地151成员、报告SHA、原始验收和四端回执一致。[交付回执](outputs/experiments/first_stage_s1_v10_20261009/delivery/final_030274583ebf03eb40c9/final_delivery_receipt.json) · [根复核](outputs/experiments/first_stage_s1_v10_20261009/delivery/final_root_delivery_verification.json) · [完成记录](outputs/experiments/first_stage_s1_v10_20261009/delivery/s1_v10_completion.json)。
+
+每小时`s1-v10`已实际保存PAUSED并精确回读：[暂停配置](outputs/experiments/first_stage_s1_v10_20261009/followup/automation_completed_paused.toml) · [操作回执](outputs/experiments/first_stage_s1_v10_20261009/followup/automation_completed_paused_readback.json)。run_manifest整体状态已delivered，原科学观测时间、任务/预算/来源保留且保存更新前副本；原controller科学终态不重写。所有计算和后处理已结束，不恢复旧PID或重复评价。结案表示已授权验证与报告完成，不表示负载均衡/业务承载研究目标全部解决；38–111实景范围、R04/R05取舍、R08早停、R09承载退步、R12全回退与模型/物理边界均保留。下一轮仅为建议，未新增预算或任务。
+
 **2026-10-09 22:21严格报告与科学统计全部通过，22:39正式报告08已发布本地，正在最终双端交付。**`formal_ready=true`、issues为空、28/28科学/工程审计、32任务归档闭合；R08的251978个完整回合已全量解析，R09为3208完整回合＋32条明确未评价的预算尾段。正式与阶段静态/时序4320条逐字段一致，六张正式报告插图及工程/修订图均已核数核图。原R09与两工程六联图把截断尾段画成末端覆盖下跌，正式报告改用完整回合修订图＋独立学习指标图；原图保留，不改原始成绩或终点。[正式报告08](docs/第一阶段/实验报告/08_可变波束全覆盖与负载均衡十二路线对照.md) · [最终QA](outputs/experiments/first_stage_s1_v10_20261009/preflight/final_report_numeric_figure_qa.json)。
 
 静态各路线300/300严格几何覆盖；实际N38–111，477/3600条N<50、无200束输出。R04平均CV0.4784/逐机TDMA承载85.21%，比R01的0.5663/84.00%更均衡且承载略高；R05 CV最低0.3749但承载75.37%，不可单指标评冠军。R08早STOP没有确定性验证重构收益，R09验证承载退步，R12后续300/300帧均回退重建。仍是单seed、固定贪心＋声明TDMA/物理的结果，未验证112–200实景或I0/SCA三阶段效果。全部正式计算已结束，不恢复旧任务。最终报告小包及四端SHA回读尚待实际交付回执，跟进此刻仍ACTIVE；交付复核后暂停。
