@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
+from satellite_rl.power_refinement.physics import _sgm
 from scripts.stage1_variable import controller, ops
 
 
@@ -37,7 +38,8 @@ SCENE_COLUMNS = (
     "peak_load_ratio", "reference_capacity_bps", "reference_unserved_bps",
     "total_demand_bps", "uncovered_demand_bps", "center_carried_fraction",
     "user_tdma_carried_fraction", "beam_mean_si", "beam_mean_sgm",
-    "total_power_w", "complete_allocation", "initialization_seconds",
+    "total_power_w", "complete_allocation", "timing_granularity", "timing_source",
+    "method_seconds_before_common_downstream", "initialization_seconds",
     "algorithm_seconds", "geometry_seconds", "final_check_seconds",
     "downstream_interface_seconds", "allocation_seconds", "physical_verification_seconds",
     "downstream_total_seconds", "total_seconds", "geometry_calls",
@@ -48,7 +50,8 @@ MEASURES = (
     "coverage_users", "coverage_demand", "load_cv", "in_band_fraction",
     "peak_load_ratio", "beam_count", "center_carried_fraction",
     "user_tdma_carried_fraction", "beam_mean_si", "beam_mean_sgm",
-    "initialization_seconds", "algorithm_seconds", "final_check_seconds",
+    "method_seconds_before_common_downstream", "initialization_seconds",
+    "algorithm_seconds", "final_check_seconds",
     "downstream_interface_seconds", "allocation_seconds", "physical_verification_seconds",
     "downstream_total_seconds", "total_seconds", "geometry_calls",
     "geometry_budget_charges", "ray_pair_checks", "physical_allocation_calls",
@@ -67,9 +70,22 @@ def _json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _rows(path):
-    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines()
-            if line.strip()]
+def _iter_jsonl(path, *, with_line_number=False):
+    """Parse one row at a time, retaining the exact bad-file line number."""
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as stream:
+        for number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    raise ValueError("JSONL row must be an object")
+                yield (number, row) if with_line_number else row
+            except json.JSONDecodeError as error:
+                raise ValueError(f"{path}:{number}: malformed JSONL: {error.msg}") from error
+            except ValueError as error:
+                raise ValueError(f"{path}:{number}: {error}") from error
 
 
 def _save(path, value):
@@ -132,47 +148,222 @@ def _scene_row(task, raw):
     if not np.isclose(sum(_finite(u["demand_bps"], "user demand") for u in users),
                       total, rtol=1e-10, atol=1e-5):
         raise ValueError(f"{key}: user demand not conserved")
+    layout = raw.get("layout")
+    if (not isinstance(layout, dict) or layout.get("aircraft_ids") != ids or
+            len(layout.get("assignment", [])) != len(users) or
+            len(layout.get("beam_ids", [])) != n):
+        raise ValueError(f"{key}: layout aircraft/beam identities differ from user ledger")
+    assigned_demand = np.zeros(n, dtype=float)
+    uncovered_from_users = 0.0
+    for index, user in enumerate(users):
+        owner = user.get("assigned_beam")
+        if owner != layout["assignment"][index]:
+            if not (owner is None and layout["assignment"][index] == -1):
+                raise ValueError(f"{key}: user assignment differs from layout")
+        demand = _finite(user["demand_bps"], "user demand")
+        if demand < 0:
+            raise ValueError(f"{key}: negative user demand")
+        if owner is None:
+            uncovered_from_users += demand
+            if user.get("assigned_beam_stable_id") is not None:
+                raise ValueError(f"{key}: uncovered user has beam identity")
+        else:
+            if type(owner) is not int or not 0 <= owner < n:
+                raise ValueError(f"{key}: user owner is outside actual beam range")
+            if user.get("assigned_beam_stable_id") != layout["beam_ids"][owner]:
+                raise ValueError(f"{key}: user stable beam identity differs")
+            assigned_demand[owner] += demand
     beam_d = np.asarray([_finite(b["demand_bps"], "beam demand") for b in beams])
     uncovered = _finite(m["uncovered_demand_bps"], "uncovered demand")
     if not np.isclose(beam_d.sum() + uncovered, total, rtol=1e-10, atol=1e-5):
         raise ValueError(f"{key}: beam and uncovered demand do not sum to all aircraft")
+    if not np.allclose(beam_d, assigned_demand, rtol=1e-10, atol=1e-5) or not np.isclose(
+            uncovered, uncovered_from_users, rtol=1e-10, atol=1e-5):
+        raise ValueError(f"{key}: per-beam or uncovered demand differs from user ownership")
+    if (m.get("beam_ids") != layout["beam_ids"] or
+            not np.allclose(np.asarray(m.get("beam_demand_bps", []), dtype=float),
+                            beam_d, rtol=1e-10, atol=1e-5)):
+        raise ValueError(f"{key}: core metric beam identities or demand differ")
     if not bool(m["demand_conserved"]) or bool(m["coverage_100"]) != bool(raw["coverage_complete"]):
         raise ValueError(f"{key}: conservation or full-coverage flag differs")
     if int(m["covered_users"]) != sum(u.get("assigned_beam") is not None for u in users):
         raise ValueError(f"{key}: covered-user count differs from ownership")
+    covered_count = int(m["covered_users"])
+    if (bool(m["coverage_100"]) != (covered_count == len(users)) or
+            not np.isclose(_finite(m["coverage_users"], "coverage users"),
+                           covered_count / len(users) if users else 1.0, atol=1e-10) or
+            not np.isclose(_finite(m["coverage_demand"], "coverage demand"),
+                           1.0 - uncovered / total if total else 1.0, atol=1e-10)):
+        raise ValueError(f"{key}: coverage denominators differ from all aircraft")
+    beam_c = np.zeros(n, dtype=float)
+    beam_si = []
+    beam_sgm = []
     for index, b in enumerate(beams):
-        if b.get("beam_id") != index:
+        if b.get("beam_id") != index or b.get("stable_beam_id") != layout["beam_ids"][index]:
             raise ValueError(f"{key}: beam processing identity differs")
         d = beam_d[index]
         c = _finite(b.get("capacity_bps"), "terminal beam capacity")
         carried = _finite(b.get("carried_bps"), "terminal beam carried")
+        beam_c[index] = c
         if c < 0 or not np.isclose(carried, min(c, d), rtol=1e-8, atol=1e-5):
             raise ValueError(f"{key}: terminal min(C,D) differs")
-        if d > 0 and not np.isclose(_finite(b.get("unclipped_capacity_demand_ratio"), "C/D"),
-                                    c / d, rtol=1e-8, atol=1e-8):
-            raise ValueError(f"{key}: terminal C/D differs")
+        if d > 0:
+            ratio = c / d
+            if not np.isclose(_finite(b.get("unclipped_capacity_demand_ratio"), "C/D"),
+                              ratio, rtol=1e-8, atol=1e-8):
+                raise ValueError(f"{key}: terminal beam C/D differs")
+            si = _finite(b.get("si"), "terminal beam SI")
+            sgm = _finite(b.get("sgm"), "terminal beam SGM")
+            if not np.isclose(si, min(ratio, 1.0), rtol=1e-8, atol=1e-8):
+                raise ValueError(f"{key}: terminal beam SI differs from C/D")
+            beam_si.append(si)
+            beam_sgm.append(sgm)
+        elif (any(b.get(name) is not None for name in
+                  ("unclipped_capacity_demand_ratio", "si", "sgm")) or
+              c != 0 or carried != 0 or b.get("slots") != 0 or b.get("power_w") != 0):
+            raise ValueError(f"{key}: zero-demand beam has fabricated service or RF resources")
     positive = beam_d[beam_d > 0]
+    if len(positive):
+        expected_sgm, _ = _sgm(beam_c[beam_d > 0], positive)
+        if not np.allclose(beam_sgm, expected_sgm, rtol=1e-8, atol=1e-8):
+            raise ValueError(f"{key}: terminal beam SGM differs from capacity and demand")
     mean = float(positive.mean()) if len(positive) else None
     band = (float(np.mean((positive >= .8 * mean) & (positive <= 1.2 * mean)))
             if mean is not None else None)
     if not isinstance(down.get("metrics"), dict) or not isinstance(down.get("timing"), dict):
         raise ValueError(f"{key}: downstream summary or segmented timing absent")
-    dm, dt, calls = down["metrics"], down["timing"], down.get("calls", {})
+    dm, dt, calls = down["metrics"], down["timing"], down.get("calls")
+    if (not isinstance(calls, dict) or
+            any(type(calls.get(field)) is not int or calls[field] < 0 for field in
+                ("layout_allocation_calls", "allocation_decisions",
+                 "independent_physics_checks", "aircraft_link_checks"))):
+        raise ValueError(f"{key}: physical call ledger missing or invalid")
+    if type(dm.get("complete_allocation")) is not bool or type(dm.get("processed_count")) is not int:
+        raise ValueError(f"{key}: allocation completion or processed count missing")
+    if not 0 <= dm["processed_count"] <= len(positive) or (
+            dm["complete_allocation"] and dm["processed_count"] != len(positive)):
+        raise ValueError(f"{key}: allocation completion differs from processed beams")
     center = _finite(dm.get("demand_weighted_carried_fraction"), "center carried", nullable=True)
     direct_center = sum(b["carried_bps"] for b in beams) / total if total else None
-    if center is not None and not np.isclose(center, direct_center, rtol=1e-8, atol=1e-8):
+    if (center is None) != (direct_center is None) or (center is not None and not np.isclose(
+            center, direct_center, rtol=1e-8, atol=1e-8)):
         raise ValueError(f"{key}: center carried does not match beam ledger")
-    service = down.get("aircraft_service", {})
+    if not np.isclose(_finite(dm.get("total_demand_bps"), "downstream total demand"),
+                      total, rtol=1e-10, atol=1e-5):
+        raise ValueError(f"{key}: downstream denominator differs from all users")
+    if (not np.isclose(_finite(dm.get("carried_bps"), "downstream carried"),
+                       sum(b["carried_bps"] for b in beams), rtol=1e-8, atol=1e-5) or
+            not np.isclose(_finite(dm.get("uncovered_demand_bps"), "downstream uncovered"),
+                           uncovered, rtol=1e-8, atol=1e-5)):
+        raise ValueError(f"{key}: downstream carried or uncovered total differs")
+    if len(positive):
+        if (not np.isclose(_finite(dm.get("beam_mean_si"), "beam mean SI"),
+                           np.mean(beam_si), rtol=1e-8, atol=1e-8) or
+                not np.isclose(_finite(dm.get("beam_mean_sgm"), "beam mean SGM"),
+                               np.mean(beam_sgm), rtol=1e-8, atol=1e-8)):
+            raise ValueError(f"{key}: beam mean SI/SGM differs from terminal beams")
+    elif dm.get("beam_mean_si") is not None or dm.get("beam_mean_sgm") is not None:
+        raise ValueError(f"{key}: no-business beam SI/SGM mean must be missing")
+    power = [_finite(b.get("power_w"), "beam power") for b in beams]
+    if any(p < 0 for p in power) or not np.isclose(
+            _finite(dm.get("total_power_w"), "total power"), sum(power), rtol=1e-8, atol=1e-6):
+        raise ValueError(f"{key}: total power differs from actual beams")
+    if sum(power) > 3000 + 1e-6:
+        raise ValueError(f"{key}: total power exceeds common budget")
+    compact_episode = (task["kind"] == "train" and raw.get("completed_episode") is True and
+                       raw.get("terminal_physics_status") ==
+                       "evaluated_all_actual_beams_and_users" and
+                       "aircraft_service" not in down)
+    service = ({"capacity_bps": [u.get("capacity_bps") for u in users],
+                "airtime_fraction": [u.get("airtime_fraction") for u in users],
+                "carried_bps": [u.get("carried_bps") for u in users],
+                "si": [u.get("si") for u in users],
+                "demand_weighted_carried_fraction": down.get("user_tdma_carried_fraction"),
+                "aircraft_link_checks": calls.get("aircraft_link_checks")}
+               if compact_episode else down.get("aircraft_service", {}))
+    if not isinstance(service, dict):
+        raise ValueError(f"{key}: aircraft TDMA service arrays missing")
     user_carried = _finite(service.get("demand_weighted_carried_fraction"),
                            "aircraft TDMA carried", nullable=True)
-    if user_carried is not None and not 0 <= user_carried <= 1 + 1e-8:
-        raise ValueError(f"{key}: aircraft TDMA carried outside [0,1]")
+    count_users = len(users)
+    capacity_values = service.get("capacity_bps")
+    share_values = service.get("airtime_fraction")
+    if (not isinstance(capacity_values, list) or len(capacity_values) != count_users or
+            not isinstance(share_values, list) or len(share_values) != count_users):
+        raise ValueError(f"{key}: aircraft capacity or airtime array length differs")
+    user_d = np.asarray([u["demand_bps"] for u in users], dtype=float)
+    user_c = np.asarray([_finite(v, "aircraft capacity") for v in capacity_values])
+    shares = np.asarray([_finite(v, "aircraft airtime") for v in share_values])
+    if np.any(user_c < 0) or np.any((shares < 0) | (shares > 1 + 1e-10)):
+        raise ValueError(f"{key}: negative capacity or invalid aircraft airtime")
+    if total > 0:
+        names = (("carried_bps", "si") if compact_episode else
+                 ("full_time_rate_bps", "carried_bps", "unclipped_capacity_demand_ratio", "si"))
+        if any(not isinstance(service.get(name), list) or len(service[name]) != count_users
+               for name in names):
+            raise ValueError(f"{key}: positive-demand aircraft terminal arrays missing")
+        user_min = np.asarray([_finite(v, "aircraft min(C,D)") for v in service["carried_bps"]])
+        if not compact_episode:
+            full_time = np.asarray([_finite(v, "aircraft full-time rate")
+                                    for v in service["full_time_rate_bps"]])
+            if np.any(full_time < 0) or not np.allclose(user_c, full_time * shares,
+                                                        rtol=1e-8, atol=1e-5):
+                raise ValueError(f"{key}: aircraft full-time rate and TDMA capacity differ")
+        if not np.allclose(user_min, np.minimum(user_c, user_d), rtol=1e-8, atol=1e-5):
+            raise ValueError(f"{key}: aircraft TDMA capacity or min(C,D) differs")
+        for index, demand in enumerate(user_d):
+            ratio = (None if compact_episode else
+                     service["unclipped_capacity_demand_ratio"][index])
+            si = service["si"][index]
+            if demand > 0:
+                expected = user_c[index] / demand
+                if ((not compact_episode and not np.isclose(
+                        _finite(ratio, "aircraft C/D"), expected, rtol=1e-8, atol=1e-8)) or
+                        not np.isclose(_finite(si, "aircraft SI"), min(expected, 1.0),
+                                       rtol=1e-8, atol=1e-8)):
+                    raise ValueError(f"{key}: aircraft C/D or SI differs")
+            elif (not compact_episode and ratio is not None) or si is not None:
+                raise ValueError(f"{key}: zero-demand aircraft has fabricated C/D or SI")
+        expected_carried = float(user_min.sum() / total)
+        if user_carried is None or not np.isclose(user_carried, expected_carried,
+                                                  rtol=1e-8, atol=1e-8):
+            raise ValueError(f"{key}: aircraft carried fraction differs from all-user denominator")
+        if not compact_episode:
+            valid = user_d > 0
+            met = int(np.count_nonzero(valid & (user_c >= user_d)))
+            if (service.get("positive_demand_users") != int(valid.sum()) or
+                    service.get("positive_demand_users_met") != met or
+                    service.get("all_positive_demand_users_met") != bool(np.all(user_c[valid] >= user_d[valid]))):
+                raise ValueError(f"{key}: aircraft demand-met counts differ from all positive users")
+    elif (user_carried is not None or np.any(user_c != 0) or np.any(shares != 0)):
+        raise ValueError(f"{key}: no-demand aircraft service must be explicitly missing or zero")
+    for index, beam in enumerate(beams):
+        members = [u for u, row in enumerate(users) if row.get("assigned_beam") == index]
+        member_share = float(shares[members].sum())
+        active = beam_d[index] > 0 and int(beam.get("slots", 0)) > 0
+        if active and not np.isclose(member_share, 1.0, rtol=0, atol=1e-10):
+            raise ValueError(f"{key}: aircraft airtime does not sum to one in active beam")
+        if not active and not np.isclose(member_share, 0.0, rtol=0, atol=1e-10):
+            raise ValueError(f"{key}: unserved or zero-demand beam duplicates airtime")
+    if any(shares[u] != 0 or user_c[u] != 0 for u, row in enumerate(users)
+           if row.get("assigned_beam") is None or user_d[u] == 0):
+        raise ValueError(f"{key}: uncovered or zero-demand aircraft receives resources")
+    link_checks = sum(row.get("assigned_beam") is not None and user_d[u] > 0 and
+                      int(beams[row["assigned_beam"]].get("slots", 0)) > 0
+                      for u, row in enumerate(users))
+    if (service.get("aircraft_link_checks") != link_checks or
+            calls.get("aircraft_link_checks") != link_checks):
+        raise ValueError(f"{key}: aircraft link-check call ledger differs")
     for name in ("initialization_seconds", "algorithm_seconds", "final_check_seconds", "total_seconds"):
         if _finite(raw.get(name), name) < 0:
             raise ValueError(f"{key}: negative measured time")
     for name in ("interface_seconds", "allocation_seconds", "verification_seconds", "total_seconds"):
         if _finite(dt.get(name), f"downstream {name}") < 0:
             raise ValueError(f"{key}: negative downstream time")
+    if not np.isclose(dt["total_seconds"], dt["interface_seconds"] +
+                      dt["allocation_seconds"] + dt["verification_seconds"],
+                      rtol=1e-7, atol=1e-4):
+        raise ValueError(f"{key}: downstream segmented time differs from total")
     if not np.isclose(raw["total_seconds"], raw["initialization_seconds"] +
                       raw["algorithm_seconds"] + raw["final_check_seconds"] +
                       dt["total_seconds"], rtol=1e-7, atol=1e-4):
@@ -183,6 +374,10 @@ def _scene_row(task, raw):
                        else "feedback_selected_terminal_layout" if task["route"] == "R10" else None)
     if output_kind is None:
         raise ValueError(f"{key}: output-kind provenance absent")
+    learned = task["route"] in ("R08", "R09")
+    timing_granularity = ("separate_initialization_and_policy_execution" if learned else
+                          "combined_initialization_search_and_feedback_physics" if task["route"] == "R10" else
+                          "combined_initialization_and_search")
     row = {"task_key": key, "method": _method(task), "route": task["route"],
            "role": task["role"], "purpose": task["purpose"],
            "run_id": task["run_id"], "port": task["port"],
@@ -211,9 +406,14 @@ def _scene_row(task, raw):
            "beam_mean_sgm": _finite(dm.get("beam_mean_sgm"), "beam SGM", nullable=True),
            "total_power_w": _finite(dm.get("total_power_w"), "total power"),
            "complete_allocation": bool(dm.get("complete_allocation")),
-           "initialization_seconds": float(raw["initialization_seconds"]),
-           "algorithm_seconds": float(raw["algorithm_seconds"]),
-           "geometry_seconds": _finite(raw.get("geometry_seconds"), "geometry time", nullable=True),
+           "timing_granularity": timing_granularity,
+           "timing_source": f"frozen_workbench_runner:{task['source_commit']}",
+           "method_seconds_before_common_downstream": float(raw["initialization_seconds"] +
+                                                            raw["algorithm_seconds"]),
+           "initialization_seconds": float(raw["initialization_seconds"]) if learned else None,
+           "algorithm_seconds": float(raw["algorithm_seconds"]) if learned else None,
+           "geometry_seconds": (_finite(raw.get("geometry_seconds"), "geometry time", nullable=True)
+                                if learned else None),
            "final_check_seconds": float(raw["final_check_seconds"]),
            "downstream_interface_seconds": float(dt["interface_seconds"]),
            "allocation_seconds": float(dt["allocation_seconds"]),
@@ -314,7 +514,7 @@ def _task_sources(state, mirror_root, sync_manifest):
                 raise ValueError(f"{key}: validation node SHA differs")
             files[path.name] = {"path": str(path.resolve()), "sha256": digest,
                                 "bytes": path.stat().st_size}
-        mapped[key] = {"task": task | {"source_commit": state["scientific_commit"]},
+        mapped[key] = {"task": task | {"source_commit": controller.expected_task_source(state, key)},
                        "directory": str(directory), "files": files}
     return mapped
 
@@ -325,12 +525,16 @@ def _task_rows(key, source):
     if task["kind"] != "evaluate" or "results.partial.jsonl" not in files:
         return [], None
     raw_path = Path(files["results.partial.jsonl"]["path"])
-    raw_rows = _rows(raw_path)
     if "results.json" in files:
         result = _json(files["results.json"]["path"])
-        if result.get("run_id") != task["run_id"] or result.get("rows_sha256") != _sha(raw_path):
+        if result.get("run_id") != task["run_id"] or result.get("rows_sha256") != files["results.partial.jsonl"]["sha256"]:
             raise ValueError(f"{key}: finalized results SHA or run identity differs")
-    rows = [_scene_row(task, raw) for raw in raw_rows]
+    rows = []
+    for number, raw in _iter_jsonl(raw_path, with_line_number=True):
+        try:
+            rows.append(_scene_row(task, raw))
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"{raw_path}:{number}: {error}") from error
     grid = _grid(task, rows)
     if grid["complete"] and "results.json" not in files:
         raise ValueError(f"{key}: full raw rows lack finalized results.json")
@@ -338,21 +542,16 @@ def _task_rows(key, source):
 
 
 def _train_rows(key, source):
-    task = source["task"]
+    task = source["task"] | {"key": key}
     if task["kind"] != "train":
         return None
     files = source["files"]
-    updates = _rows(files["updates.jsonl"]["path"]) if "updates.jsonl" in files else []
-    episodes = _rows(files["episodes.jsonl"]["path"]) if "episodes.jsonl" in files else []
-    evaluations = _rows(files["evaluations.jsonl"]["path"]) if "evaluations.jsonl" in files else []
+    updates, episodes, evaluations = [], [], []
     trace_index = defaultdict(lambda: {"count": 0, "first": None, "last": None})
     action_count = 0
     if "actions.jsonl" in files:
-        with Path(files["actions.jsonl"]["path"]).open(encoding="utf-8") as stream:
-            for line in stream:
-                if not line.strip():
-                    continue
-                action = json.loads(line)
+        for number, action in _iter_jsonl(files["actions.jsonl"]["path"], with_line_number=True):
+            try:
                 action_count += 1
                 if action["env_step"] != action_count:
                     raise ValueError(f"{key}: action ledger decision step is not continuous")
@@ -362,48 +561,87 @@ def _train_rows(key, source):
                 if value["first"] is None:
                     value["first"] = action_count
                 value["last"] = action_count
-    steps = [int(row["env_step"]) for row in updates]
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(f"{files['actions.jsonl']['path']}:{number}: {error}") from error
+    if "updates.jsonl" in files:
+        for number, row in _iter_jsonl(files["updates.jsonl"]["path"], with_line_number=True):
+            try:
+                updates.append({"env_step": int(row["env_step"]),
+                                "policy_loss": _finite(row.get("policy_loss"), "policy_loss"),
+                                "entropy": _finite(row.get("entropy"), "entropy")})
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(f"{files['updates.jsonl']['path']}:{number}: {error}") from error
+    steps = [row["env_step"] for row in updates]
     if any(b <= a or b - a != 2048 for a, b in zip([0] + steps[:-1], steps)):
         raise ValueError(f"{key}: PPO update step ledger is not 2048-decision spaced")
-    if any(int(row["terminal_env_step"]) > (steps[-1] if steps else 0) for row in episodes):
-        raise ValueError(f"{key}: episode terminates beyond observed training steps")
-    for row in episodes:
-        trace = row.get("action_trace")
-        if not isinstance(trace, dict) or trace.get("file") != "actions.jsonl":
-            raise ValueError(f"{key}: episode lacks separate action-trace reference")
-        found = trace_index.get((trace["stream_id"], trace["stream_episode_serial"]))
-        if not found or (found["count"], found["first"], found["last"]) != (
-                trace["count"], trace["first_env_step"], trace["last_env_step"]):
-            raise ValueError(f"{key}: episode trace reference differs from raw actions")
-        if row.get("completed_episode"):
-            if (row.get("terminal_physics_status") != "evaluated_all_actual_beams_and_users" or
-                    any(beam.get("capacity_bps") is None for beam in row.get("beams", []))):
-                raise ValueError(f"{key}: completed training episode lacks final physical beams")
-        elif row.get("terminal_physics_status") != "not_run_incomplete_budget_tail":
-            raise ValueError(f"{key}: unfinished episode lacks explicit physics omission")
+    completed_episodes = partial_episodes = 0
+    if "episodes.jsonl" in files:
+        for number, row in _iter_jsonl(files["episodes.jsonl"]["path"], with_line_number=True):
+            try:
+                if int(row["terminal_env_step"]) > (steps[-1] if steps else 0):
+                    raise ValueError("episode terminates beyond observed training steps")
+                trace = row.get("action_trace")
+                if not isinstance(trace, dict) or trace.get("file") != "actions.jsonl":
+                    raise ValueError("episode lacks separate action-trace reference")
+                found = trace_index.get((trace["stream_id"], trace["stream_episode_serial"]))
+                if not found or (found["count"], found["first"], found["last"]) != (
+                        trace["count"], trace["first_env_step"], trace["last_env_step"]):
+                    raise ValueError("episode trace reference differs from raw actions")
+                if row.get("completed_episode"):
+                    if (row.get("terminal_physics_status") != "evaluated_all_actual_beams_and_users" or
+                            any(beam.get("capacity_bps") is None for beam in row.get("beams", []))):
+                        raise ValueError("completed training episode lacks final physical beams")
+                    _scene_row(task, row)  # Audit and discard full user/layout arrays.
+                    completed_episodes += 1
+                elif row.get("terminal_physics_status") != "not_run_incomplete_budget_tail":
+                    raise ValueError("unfinished episode lacks explicit physics omission")
+                else:
+                    partial_episodes += 1
+                coverage_value = row.get("coverage_100", row.get("metrics", {}).get("coverage_100"))
+                if type(coverage_value) is not bool:
+                    raise ValueError("episode lacks explicit terminal full-coverage flag")
+                episodes.append({"terminal_env_step": int(row["terminal_env_step"]),
+                                 "episode_return": _finite(row.get("episode_return"), "episode return"),
+                                 "coverage_100": coverage_value,
+                                 "completed_episode": bool(row.get("completed_episode"))})
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(f"{files['episodes.jsonl']['path']}:{number}: {error}") from error
     interval = 2048 if task["purpose"] == "verification" else 16384
     due = list(range(interval, (steps[-1] if steps else 0) + 1, interval))
-    nodes = [int(row["env_step"]) for row in evaluations]
+    if "evaluations.jsonl" in files:
+        for number, row in _iter_jsonl(files["evaluations.jsonl"]["path"], with_line_number=True):
+            try:
+                summary = row["summary"]
+                evaluations.append({"env_step": int(row["env_step"]),
+                                    "summary": {
+                                        "mean_coverage_users": _finite(summary.get("mean_coverage_users"), "validation coverage"),
+                                        "mean_load_cv": _finite(summary.get("mean_load_cv"), "validation CV")},
+                                    "rows_sha256": row["rows_sha256"],
+                                    "downstream_allocation_calls": int(row["downstream_allocation_calls"])})
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(f"{files['evaluations.jsonl']['path']}:{number}: {error}") from error
+    nodes = [row["env_step"] for row in evaluations]
     if len(nodes) != len(set(nodes)) or any(node not in due for node in nodes):
         raise ValueError(f"{key}: duplicate or unscheduled validation node")
     for node in nodes:
         name = f"validation_{node}.jsonl"
-        if name not in files or len(_rows(files[name]["path"])) != 60:
+        if name not in files:
             raise ValueError(f"{key}: validation node lacks 20 mothers × 3 demands")
-        node_rows = _rows(files[name]["path"])
         mother = defaultdict(set)
-        for row in node_rows:
-            if row["demand_multiplier"] not in MULTIPLIERS:
-                raise ValueError(f"{key}: validation node has unknown demand tier")
-            down = row.get("downstream", {})
-            if down.get("calls", {}).get("layout_allocation_calls") != 1 or any(
-                    beam.get("capacity_bps") is None or beam.get("carried_bps") is None or
-                    (beam["demand_bps"] > 0 and
-                     (beam.get("unclipped_capacity_demand_ratio") is None or
-                      beam.get("si") is None or beam.get("sgm") is None))
-                    for beam in row.get("beams", [])):
-                raise ValueError(f"{key}: validation terminal lacks true downstream service")
-            mother[(row["scene_id"], row["scene_sha256"])].add(row["demand_multiplier"])
+        count = 0
+        for number, row in _iter_jsonl(files[name]["path"], with_line_number=True):
+            try:
+                count += 1
+                if row["demand_multiplier"] not in MULTIPLIERS:
+                    raise ValueError("validation node has unknown demand tier")
+                _scene_row(task, row)  # Audit terminal arrays, retain only grid keys.
+                if row.get("downstream", {}).get("calls", {}).get("layout_allocation_calls") != 1:
+                    raise ValueError("validation node physical allocation call ledger differs")
+                mother[(row["scene_id"], row["scene_sha256"])].add(row["demand_multiplier"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(f"{files[name]['path']}:{number}: {error}") from error
+        if count != 60:
+            raise ValueError(f"{key}: validation node has {count}/60 mother×tier rows")
         if len(mother) != 20 or any(levels != set(MULTIPLIERS) for levels in mother.values()):
             raise ValueError(f"{key}: validation node mother×tier grid differs")
         ledger = next(row for row in evaluations if row["env_step"] == node)
@@ -416,10 +654,8 @@ def _train_rows(key, source):
                      action_count == budget and episodes)
     return {"budget": budget, "observed_steps": steps[-1] if steps else 0,
             "observed_actions": action_count,
-            "updates": len(updates), "completed_episodes": sum(bool(row.get("completed_episode", True))
-                                                   for row in episodes),
-            "partial_episodes": sum(not bool(row.get("completed_episode", True))
-                                    for row in episodes),
+            "updates": len(updates), "completed_episodes": completed_episodes,
+            "partial_episodes": partial_episodes,
             "validation_nodes": nodes, "expected_validation_nodes": len(range(interval, budget + 1, interval)),
             "validation_downstream_allocation_calls": len(nodes) * 60,
             "validation_downstream_allocation_call_budget": (60 if task["purpose"] == "verification"
@@ -626,11 +862,20 @@ def _markdown(summary):
              "严格全覆盖按逐机唯一合法归属判定，失败场景留在每法全部母场景分母。",
              "需求CV与带内比例使用当前布局所有正需求业务束；带内为各束需求落在本布局正需求束均值±20%的比例。",
              "中心容量有效承载和逐机比例需求TDMA有效承载分别列示；两者均以原场景全部飞机需求为分母。",
-             "总时间由布局初始化、算法执行、终态核验和下游真实分配/物理核验分段实测组成。",
+             "总时间包含方法执行、终态核验和下游真实分配/物理核验；非学习路线的原始方法耗时把初始化与搜索合并计量，原始初始化0仅是未拆分，报表单列为缺失。",
+             "方法前段合并耗时可比；R10该段还包含最多16次内部物理反馈，另列最终共同分配。",
+             "本材料对已保存容量和TDMA份额作代数、守恒核验，未由原始逐机位置独立重算离轴链路。",
              "同母场景三倍率与连续序列的帧不是独立样本；训练仅seed51001。", "",
              "## 已记录的静态测试分组", "",
              "| 方法 | 倍率 | 已记/计划景 | 严格全覆盖 | CV均值 | N均值 | 中心承载 | 逐机承载 | 总耗时均值s |",
              "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+    if summary.get("throughput_source_overrides"):
+        changes = summary["throughput_source_overrides"]
+        repaired = sorted(key for key in changes if key.startswith("train_"))
+        lines[4:4] = ["", "执行来源接续：" + "、".join(
+            f"{key}从`{summary['scientific_commit'][:12]}`同ID断点接续到`{changes[key]['repair_commit'][:12]}`"
+            for key in repaired) + "。学习任务与旧非学习基线可能来自不同构造器/CPU供给版本，"
+            "训练及逐景墙钟差不能归因于PPO纯算法速度；旧冻结基线未重评。"]
     for group in summary["groups"]:
         if group["role"] != "test":
             continue
@@ -721,8 +966,21 @@ def build_report(state_path, synced_root, output_dir, *, strict=False):
         if "job.json" in files:
             frozen_job = _json(files["job.json"]["path"])
             if (frozen_job.get("run_id") != task["run_id"] or
-                    frozen_job.get("git_commit") != commit):
+                    frozen_job.get("git_commit") != controller.expected_task_source(state, key)):
                 raise ValueError(f"{key}: job ID or frozen code commit differs")
+            override = state.get("throughput_source_overrides", {}).get(key)
+            if override and key in ("train_R08", "train_R09"):
+                proof = frozen_job.get("variable_throughput_repair") or {}
+                if (proof.get("origin_commit") != commit or
+                        proof.get("repair_commit") != task["source_commit"] or
+                        proof.get("validation_receipt_sha256") !=
+                        override.get("validation_receipt_sha256") or
+                        proof.get("checkpoint_sha256") !=
+                        override.get("origin_checkpoint_sha256")):
+                    raise ValueError(f"{key}: throughput repair source receipt differs")
+            if override and key in ("test_R08", "test_R09"):
+                if frozen_job.get("variable_dataset_contract", {}).get("sha256") != override.get("dataset_contract_sha256"):
+                    raise ValueError(f"{key}: learned test uses another canonical input contract")
         if "config.json" in files:
             frozen_config = _json(files["config.json"]["path"])
             actual = {role: record.get("sha256") for role, record in
@@ -774,10 +1032,16 @@ def build_report(state_path, synced_root, output_dir, *, strict=False):
         raise RuntimeError("Formal report evidence is incomplete; inspect progress summary without --strict")
     output_dir.mkdir(parents=True, exist_ok=True)
     previous_inputs = output_dir / "inputs.json"
-    if previous_inputs.is_file() and _json(previous_inputs).get("scientific_commit") != commit:
-        raise ValueError("Refusing to overwrite report artifacts from another scientific commit")
+    source_map = {key: controller.expected_task_source(state, key)
+                  for key in state.get("tasks", {})}
+    if previous_inputs.is_file():
+        prior = _json(previous_inputs)
+        if prior.get("scientific_commit") != commit or prior.get("task_source_commits") != source_map:
+            raise ValueError("Refusing to overwrite report artifacts from another task-source mapping")
     input_manifest = {"scientific_commit": commit, "controller_state": {"path": str(state_path.resolve()),
                        "sha256": _sha(state_path)},
+                      "task_source_commits": source_map,
+                      "throughput_source_overrides": state.get("throughput_source_overrides", {}),
                       "dataset_registry": {"path": str(registry_path.resolve()),
                                            "sha256": _sha(registry_path)} if registry else None,
                       "synced_manifest": {"path": str(manifest_path.resolve()),
@@ -826,6 +1090,8 @@ def build_report(state_path, synced_root, output_dir, *, strict=False):
     budget_account["combined_is_only_resource_accounting"] = True
     clean_sequence = {k: v for k, v in paired.items() if k != "paired_rows"}
     summary = {"scientific_commit": commit,
+               "task_source_commits": source_map,
+               "throughput_source_overrides": state.get("throughput_source_overrides", {}),
                "generated_utc": datetime.now(timezone.utc).isoformat(),
                "formal_ready": bool(ready), "controller_phase": state.get("phase"),
                "task_count": len(state.get("tasks", {})), "expected_task_count": len(graph),
@@ -840,6 +1106,10 @@ def build_report(state_path, synced_root, output_dir, *, strict=False):
                "metric_notes": {"in_band_fraction": "正需求业务束D相对本布局正需求束均值±20%",
                                 "center_carried_fraction": "束中心C，sum(min(C,D))/原场景所有飞机需求",
                                 "user_tdma_carried_fraction": "逐机离轴容量加需求比例TDMA，sum(min(C_u,D_u))/所有飞机需求",
+                                "physical_audit_scope": "对保存的终态束/用户容量、需求、有效承载、SI、SGM、TDMA份额和总分母作独立代数与守恒核验；未从原始逐机位置重新计算离轴链路容量",
+                                "training_compact_user_limit": "完整训练回合保留每机C/min(C,D)/SI/airtime；未保存逐机full-time率与C/D，报告仅由C和D重算比值，不伪称对缺失字段作原始值核验",
+                                "timing_granularity": "非学习路线原始initialization_seconds=0表示计时未拆分，报表填null；method_seconds_before_common_downstream是初始化+搜索合并实测，R10还含内部物理反馈；总时间不回填或扣除缺项",
+                                "timing_source_comparability": "任务执行源码逐项记录；学习提速接续与旧冻结基线的CPU供给/构造器可能不同，耗时差不归因为PPO纯算法速度",
                                 "sequence_unit": "同序列多帧和三倍率不视作独立母序列"}}
     _save(output_dir / "summary.json", summary)
     (output_dir / "报告08_数据材料.md").write_text(_markdown(summary), encoding="utf-8")
