@@ -223,8 +223,15 @@ def _archive_index(manifest):
 
 def _git_index(archive_index):
     """Identify local Git commits, four remote checkouts and archived source refs."""
+    current = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+    dirty = subprocess.run(["git", "-C", str(REPO), "status", "--porcelain", "--",
+                            "scripts/stage1_variable/final_delivery.py"],
+                           capture_output=True, text=True, check=True).stdout.strip()
+    if dirty:
+        raise RuntimeError("final delivery script has uncommitted source changes")
     commits = dict(SCIENTIFIC_COMMITS, archive_ops=ARCHIVE_OPS_COMMIT,
-                   report=REPORT_COMMIT)
+                   report=REPORT_COMMIT, delivery_ops=current)
     local = {}
     for label, commit in commits.items():
         result = subprocess.run(["git", "-C", str(REPO), "cat-file", "-t", commit],
