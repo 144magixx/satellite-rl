@@ -86,8 +86,10 @@ P0可在开发门槛与数据就绪后启动，教师与BC独立并行准备；P
 
 ## 7 当前进度与观察入口
 
-开始时工作区和旧实验均核对，复用本对话已附的本地worktree，新分支codex/stage1-drl-r04-a、起点10fab8a229cdf960113ac074db2d8a9f14ded2d8；所有科学实现先在该分支验证。当前处于实现与整合预检阶段，尚未冻结最终科学提交、尚未发起正式训练；不能把短正确性检查称训练完成。
+开始时工作区和旧实验均核对，复用本对话已附的本地worktree，新分支codex/stage1-drl-r04-a、起点10fab8a229cdf960113ac074db2d8a9f14ded2d8；所有科学实现先在该分支验证。03:07根实际核查时已冻结科学提交dfe7c394267e94bd2084ae72add3aa2c855b578f并部署四端，三项新数据prepare已并行，PPO尚未启动；不能把短正确性检查或数据准备称训练完成。唯一launch.py持久流程负责后续接续，PID/出生/任务ID见运行清单和controller/launcher.json。
 
 [运行计划](../../../outputs/experiments/first_stage_s1_d12a_20261010/run_plan.json) · [运行清单](../../../outputs/experiments/first_stage_s1_d12a_20261010/run_manifest.json) · [四端只读环境](../../../outputs/experiments/first_stage_s1_d12a_20261010/preflight/remote_probe.json) · [三母场景正确性检查](../../../outputs/experiments/first_stage_s1_d12a_20261010/preflight/core_real_scene_check.json)。
 
 本组设置独立每小时本对话跟进，持续核实际API/SSH时刻、任务阶段、两组步数/预算、教师/BC、评价完成数及CPU/GPU/显存，正常无变化也报告。正式报告、曲线和全部归档复核交付后才暂停；旧s1-v10保持已结案暂停，不能复用旧任务ID来运行新目标。
+
+启动核验：新算法26项检查通过，兼容55项中53通过/2需Linux；实际CUDA教师→BC→P1小例与五旧权重加载通过，HTTP提交及pilot门槛5项通过。前端schema6已接六方法、来源/预算/分片，四隧道HTTP核验通过；浏览器工具路径错误阻止实际页面操作，该项仍待工具恢复。短检查不代表科学效果。
