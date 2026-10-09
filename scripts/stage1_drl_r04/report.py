@@ -16,6 +16,11 @@ from pathlib import Path
 from statistics import mean, median
 import zipfile
 
+try:
+    from scripts.stage1_drl_r04.strict_audit import audit_scene_row, scenes_from_npz
+except ModuleNotFoundError:  # Direct script invocation from the repository root.
+    from strict_audit import audit_scene_row, scenes_from_npz
+
 
 METHODS = ("I0", "H1", "H2", "BC", "P0", "P1")
 LEVELS = (.75, 1.0, 1.25)
@@ -303,6 +308,7 @@ def analyze(state, source, output):
         raise ValueError("controller state is not S1-D12A")
     evidence = Evidence(source)
     issues, rows, training, validation, task_audit = [], [], {}, {}, {}
+    strict_rows = 0
     try:
         tasks = state.get("tasks", {})
         for key, task in tasks.items():
@@ -347,6 +353,16 @@ def analyze(state, source, output):
                 dataset_sha, dataset_error = evidence.sha(port, run_id, "scene_inputs/test/inputs.npz")
                 if dataset_error or dataset_sha != dataset_record.get("sha256"):
                     issues.append(f"{key}: frozen test dataset SHA unavailable or differs")
+                    frozen_scenes = None
+                else:
+                    try:
+                        data, _ = evidence.job_file(port, run_id, "scene_inputs/test/inputs.npz")
+                        frozen_scenes = scenes_from_npz(data)
+                        if len(frozen_scenes) != 100:
+                            raise ValueError("independent test NPZ needs 100 mothers")
+                    except (ValueError, KeyError, IndexError) as exc:
+                        frozen_scenes = None
+                        issues.append(f"{key}: frozen test NPZ decode failed: {exc}")
                 model = (summary or {}).get("model", {})
                 if method in ("BC", "P0", "P1"):
                     if (model.get("policy_format") != "drl_r04_set_ppo_v1" or
@@ -363,6 +379,16 @@ def analyze(state, source, output):
                         errors.append("model_step_missing")
                     elif row.get("checkpoint_step") != model.get("env_step"):
                         errors.append("evaluation_model_step_differs")
+                    strict_facts = {}
+                    if frozen_scenes is not None and isinstance(index, int) and 0 <= index < len(frozen_scenes):
+                        try:
+                            strict_errors, strict_facts = audit_scene_row(frozen_scenes[index], row)
+                            errors.extend(strict_errors)
+                            strict_rows += 1
+                        except (ValueError, TypeError, KeyError, IndexError, ArithmeticError) as exc:
+                            errors.append(f"strict_frozen_scene_replay_failed:{type(exc).__name__}")
+                    else:
+                        errors.append("strict_frozen_scene_replay_unavailable")
                     physical = best.get("metrics", {})
                     aircraft_service = best.get("aircraft_service", {})
                     beam_demands = [b["demand_bps"] for b in best.get("beams", [])
@@ -392,6 +418,11 @@ def analyze(state, source, output):
                             "trial_seconds": row.get("trial_seconds"),
                             "commits": row.get("commits"), "trials": row.get("trials"),
                             "geometry_calls": row.get("geometry_calls"),
+                            "best_N_lt_50": strict_facts.get("best", {}).get("N_lt_50"),
+                            "best_N_eq_200": strict_facts.get("best", {}).get("N_eq_200"),
+                            "positive_band_0p8_1p2": strict_facts.get("best", {}).get("positive_band_0p8_1p2"),
+                            "positive_demand_beams": strict_facts.get("best", {}).get("positive_demand_beams"),
+                            "strict_facts": strict_facts,
                             "errors": sorted(set(errors))}
                     rows.append(item)
             elif key in ("P0", "P1"):
@@ -546,6 +577,10 @@ def analyze(state, source, output):
         for method in METHODS:
             for level in LEVELS:
                 subset = [r for r in by_method[method] if r["demand_multiplier"] == level]
+                strict_complete = bool(subset) and all(
+                    r["best_N_lt_50"] is not None and
+                    isinstance(r["positive_band_0p8_1p2"], int) and
+                    isinstance(r["positive_demand_beams"], int) for r in subset)
                 summary[f"{method}@{level}"] = {"scene_count": len(subset),
                     "mother_count": len({r["dataset_index"] for r in subset}),
                     "best_j": _stats(r["best_j"] for r in subset),
@@ -558,7 +593,17 @@ def analyze(state, source, output):
                     "total_seconds": _stats(r["total_seconds"] for r in subset),
                     "algorithm_seconds": _stats(r["algorithm_seconds"] for r in subset),
                     "physical_seconds": _stats(r["physical_seconds"] for r in subset),
-                    "beam_count": _stats(r["beam_count"] for r in subset)}
+                    "beam_count": _stats(r["beam_count"] for r in subset),
+                    "N_lt_50_count": (sum(r["best_N_lt_50"] is True for r in subset)
+                                      if strict_complete else None),
+                    "N_eq_200_count": (sum(r["best_N_eq_200"] is True for r in subset)
+                                      if strict_complete else None),
+                    "positive_band_0p8_1p2_beams":
+                        (sum(r["positive_band_0p8_1p2"] for r in subset)
+                         if strict_complete else None),
+                    "positive_demand_beams":
+                        (sum(r["positive_demand_beams"] for r in subset)
+                         if strict_complete else None)}
         mothers = []
         for method in METHODS:
             for index in range(100):
@@ -578,25 +623,39 @@ def analyze(state, source, output):
         if not plots or not {"test_carried_distribution.png", "train_episode_reward_raw.png",
                              "validation_best_j.png"}.issubset(plots):
             issues.append("required real-data curves incomplete")
-        # Independent exact best-layout geometry, aircraft TDMA/SGM replay,
-        # positive-demand SI band, N strata, power/slot constraints, and
-        # segment-time reconciliation are still a separate strict audit.
-        # Even a complete bundle remains QA until those checks are implemented.
-        issues.append("strict_physics_and_timing_replay_pending")
+        if strict_rows != 1800:
+            issues.append("strict_frozen_scene_replay_incomplete")
+        curve_metadata = {
+            "train_episode_reward_raw.png": {"source": "P0/P1 episodes.jsonl",
+                "excluded": "budget_tails.jsonl", "x": "RL decisions", "y": "episode reward",
+                "raw_points": True, "trailing_mean_window_episodes": 100, "training_seed": 51001},
+            "validation_best_j.png": {"source": "P0/P1 evaluations.jsonl with verified 60-row nodes",
+                "x": "RL decisions", "y": "mean best R04 J", "training_seed": 51001},
+            "test_carried_distribution.png": {"source": "independent results.jsonl best aircraft_service",
+                "x": "sorted scene result", "y": "aircraft TDMA carried/all scene demand",
+                "correlation_unit": "mother scene; three demand levels are related"}}
+        (output / "curve_metadata.json").write_text(json.dumps(curve_metadata,
+            ensure_ascii=False, indent=2), encoding="utf-8")
         for name, data in (("per_scene.json", rows), ("per_mother.json", mothers),
                            ("summary.json", summary), ("task_audit.json", task_audit)):
             (output / name).write_text(json.dumps(data, ensure_ascii=False, indent=2,
                                                  allow_nan=False), encoding="utf-8")
         if rows:
             with (output / "per_scene.csv").open("w", newline="", encoding="utf-8-sig") as stream:
-                writer = csv.DictWriter(stream, fieldnames=[key for key in rows[0] if key != "errors"])
+                writer = csv.DictWriter(stream, fieldnames=[key for key in rows[0]
+                                                            if key not in ("errors", "strict_facts")])
                 writer.writeheader()
-                writer.writerows({key: value for key, value in row.items() if key != "errors"} for row in rows)
+                writer.writerows({key: value for key, value in row.items()
+                                  if key not in ("errors", "strict_facts")} for row in rows)
         audit = {"experiment_id": "S1-D12A", "scientific_commit": state.get("scientific_commit"),
                  "source": str(source), "formal_ready": not issues,
                  "scope": "formal evidence complete" if not issues else "partial QA only",
                  "task_count": len(task_audit), "test_rows": len(rows),
+                 "strict_replayed_rows": strict_rows,
                  "method_test_counts": {key: len(value) for key, value in by_method.items()},
+                 "limitations": ["GEO coverage replay reuses the project's pure ray implementation.",
+                                 "Logged beam capacity and off-axis aircraft rate are checked algebraically; RF interference is not recomputed.",
+                                 "Single training seed 51001; three demand levels share each mother scene."],
                  "plots": plots, "issues": sorted(set(issues))}
         (output / "audit.json").write_text(json.dumps(audit, ensure_ascii=False,
                                                      indent=2, allow_nan=False), encoding="utf-8")
