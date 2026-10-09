@@ -19,6 +19,14 @@ from .variable_design import (Layout, VariableAction, apply_action, candidates,
                               geometry_audit, initial_layout)
 
 
+# R04 initialization uses three exact matrices. Local menu uses one. The
+# split/merge executor currently uses three; reserve eight before each trial
+# so an upstream implementation change cannot consume the final few calls.
+INITIAL_MATRIX_BOUND = 3
+MENU_MATRIX_BOUND = 1
+TRIAL_MATRIX_RESERVE = 8
+
+
 def r04_objective(layout: Layout, demands, reference_capacity_bps: float,
                   max_beams: int) -> float:
     """Exact R04 objective for certified complete layouts, without a new ray call."""
@@ -62,6 +70,9 @@ class DrlR04Env:
         self.truncated = False
         self.commits = 0
         self.trials = 0
+        self.preview_requests = 0
+        self.preview_cache_hits = 0
+        self.preview_budget_rejections = 0
         self.geometry_calls = 0
         self.matrix_calls = 0
         self.ray_pair_checks = 0
@@ -74,6 +85,7 @@ class DrlR04Env:
 
     def reset(self):
         self.commits = self.trials = self.geometry_calls = 0
+        self.preview_requests = self.preview_cache_hits = self.preview_budget_rejections = 0
         self.matrix_calls = self.ray_pair_checks = 0
         self.ledger = []
         self._menu_cache = {}
@@ -88,22 +100,34 @@ class DrlR04Env:
                                                        separators=(",", ":")).encode()).hexdigest()
         started = perf_counter()
         with geometry_audit() as audit:
-            try:
-                layout, init = initial_layout(self.scene, self.cfg, "R04")
-            except ValueError as exc:
-                # An overlarge candidate set or impossible constructor remains
-                # a counted scene, with its original aircraft denominator.
+            if self.config.max_geometry_calls < INITIAL_MATRIX_BOUND:
                 layout = Layout.empty(len(self.scene.demands))
                 layout.aircraft_ids = tuple(getattr(self.scene, "aircraft_ids", ()))
-                init = {"status": "initialization_exception", "failure_reason": str(exc),
+                init = {"status": "initialization_budget_exhausted",
+                        "failure_reason": "initialization_geometry_budget_below_reserved_bound",
                         "metrics": {"coverage_100": False, "demand_conserved": False,
-                                    "aircraft_count": len(self.scene.demands)}}
+                                    "aircraft_count": len(self.scene.demands),
+                                    "total_demand_bps": float(np.sum(self.scene.demands))}}
+            else:
+                try:
+                    layout, init = initial_layout(self.scene, self.cfg, "R04")
+                except ValueError as exc:
+                    # An overlarge candidate set or impossible constructor remains
+                    # a counted scene, with its original aircraft denominator.
+                    layout = Layout.empty(len(self.scene.demands))
+                    layout.aircraft_ids = tuple(getattr(self.scene, "aircraft_ids", ()))
+                    init = {"status": "initialization_exception", "failure_reason": str(exc),
+                            "metrics": {"coverage_100": False, "demand_conserved": False,
+                                        "aircraft_count": len(self.scene.demands),
+                                        "total_demand_bps": float(np.sum(self.scene.demands))}}
         self.initialization_seconds = perf_counter() - started
         self.menu_seconds = self.trial_seconds = 0.0
         self.matrix_calls += audit["matrix_calls"]
         self.ray_pair_checks += audit["ray_pair_checks"]
         self.geometry_calls += max(int(init.get("geometry_budget_charges", 0)),
                                    audit["matrix_calls"])
+        if audit["matrix_calls"] > INITIAL_MATRIX_BOUND:
+            raise RuntimeError("R04 initialization exceeded reserved matrix bound")
         self.initial_layout = self.current_layout = self.best_layout = layout
         self.initial_sha256 = layout_sha256(layout)
         self.initialization = init
@@ -117,8 +141,7 @@ class DrlR04Env:
             raise ValueError("initial layout violates A-stage fixed-width cap")
         self.initial_j = self.current_j = self.best_j = r04_objective(
             layout, self.scene.demands, self.cfg.reference_capacity_bps, self.cfg.max_beams)
-        if self.geometry_calls >= self.config.max_geometry_calls:
-            self.failure_reason = "initial_geometry_budget_exhausted"
+        if self.geometry_calls + MENU_MATRIX_BOUND + TRIAL_MATRIX_RESERVE > self.config.max_geometry_calls:
             self.stop_reason = "initial_geometry_budget_exhausted"
             self.done = self.truncated = True
             return self._failure_observation(), self._info("initial_geometry_budget_exhausted")
@@ -141,6 +164,9 @@ class DrlR04Env:
                 "best_sha256": layout_sha256(self.best_layout) if self.best_layout is not None else None,
                 "initial_j": self.initial_j, "current_j": self.current_j, "best_j": self.best_j,
                 "commits": self.commits, "trials": self.trials,
+                "preview_requests": self.preview_requests,
+                "preview_cache_hits": self.preview_cache_hits,
+                "preview_budget_rejections": self.preview_budget_rejections,
                 "geometry_calls": self.geometry_calls, "matrix_calls": self.matrix_calls,
                 "ray_pair_checks": self.ray_pair_checks,
                 "initialization_seconds": self.initialization_seconds,
@@ -156,13 +182,15 @@ class DrlR04Env:
         key = layout_sha256(layout)
         if key in self._menu_cache:
             return self._menu_cache[key]
-        if self.geometry_calls >= self.config.max_geometry_calls:
+        if self.geometry_calls + MENU_MATRIX_BOUND + TRIAL_MATRIX_RESERVE > self.config.max_geometry_calls:
             menu = [(VariableAction("stop"), np.zeros(16, dtype=np.float32))]
         else:
             started = perf_counter()
             with geometry_audit() as audit:
                 raw = candidates(self.scene, layout, self.cfg, mode="local")
             self.menu_seconds += perf_counter() - started
+            if audit["matrix_calls"] > MENU_MATRIX_BOUND:
+                raise RuntimeError("R04 menu exceeded reserved matrix bound")
             self._charge(audit, 1)
             menu = [(a, f) for a, f in raw if a.operation in ("stop", "split", "merge")]
         if not menu or menu[0][0].operation != "stop":
@@ -195,19 +223,25 @@ class DrlR04Env:
         if action.operation == "stop" or action not in [a for a, _ in menu]:
             raise ValueError("preview requires a menu split/merge action")
         key = (layout_sha256(base), action)
+        self.preview_requests += 1
         if key in self._trial_cache:
+            self.preview_cache_hits += 1
             return self._trial_cache[key]
         if self.trials >= self.config.max_trials:
+            self.preview_budget_rejections += 1
             raise RuntimeError("candidate trial budget exhausted")
         # Existing executor makes at most a few ray matrices per split/merge.
         # Leave headroom so observed calls cannot cross the hard ceiling.
-        if self.geometry_calls + 8 > self.config.max_geometry_calls:
+        if self.geometry_calls + TRIAL_MATRIX_RESERVE > self.config.max_geometry_calls:
+            self.preview_budget_rejections += 1
             raise RuntimeError("geometry budget exhausted")
         self.trials += 1
         started = perf_counter()
         with geometry_audit() as audit:
             proposed, raw = apply_action(self.scene, base, self.cfg, action)
         self.trial_seconds += perf_counter() - started
+        if audit["matrix_calls"] > TRIAL_MATRIX_RESERVE:
+            raise RuntimeError("R04 trial exceeded reserved matrix bound")
         self._charge(audit, raw.get("geometry_budget_charges", 0))
         accepted = bool(raw["accepted"])
         score = (r04_objective(proposed, self.scene.demands,
@@ -256,7 +290,7 @@ class DrlR04Env:
         reward = self.config.reward_scale * (old_best - self.best_j)
         if not self.done and (self.commits >= self.config.max_commits or
                               self.trials >= self.config.max_trials or
-                              self.geometry_calls + 8 > self.config.max_geometry_calls):
+                              self.geometry_calls + MENU_MATRIX_BOUND + TRIAL_MATRIX_RESERVE > self.config.max_geometry_calls):
             self.stop_reason = ("commit_budget" if self.commits >= self.config.max_commits else
                                 "trial_budget" if self.trials >= self.config.max_trials else
                                 "geometry_budget")
@@ -303,7 +337,7 @@ def h1_teacher_label(env: DrlR04Env):
     menu = env.menu
     selected, best = 0, env.best_j
     for index, (action, _) in enumerate(menu[1:], 1):
-        if env.trials >= env.config.max_trials or env.geometry_calls + 8 > env.config.max_geometry_calls:
+        if env.trials >= env.config.max_trials or env.geometry_calls + TRIAL_MATRIX_RESERVE > env.config.max_geometry_calls:
             break
         trial = env.preview(action)
         if trial.score is not None and trial.score < best - 1e-10:
@@ -325,7 +359,7 @@ def run_h2(env: DrlR04Env):
         first_menu = env.menu
         first = []
         for i, (action, _) in enumerate(first_menu[1:], 1):
-            if env.trials >= env.config.max_trials or env.geometry_calls + 8 > env.config.max_geometry_calls:
+            if env.trials >= env.config.max_trials or env.geometry_calls + TRIAL_MATRIX_RESERVE > env.config.max_geometry_calls:
                 break
             trial = env.preview(action)
             if trial.score is not None:
@@ -338,7 +372,7 @@ def run_h2(env: DrlR04Env):
                 continue
             branch_menu = env._menu(trial.layout)
             for j, (action, _) in enumerate(branch_menu[1:], 1):
-                if env.trials >= env.config.max_trials or env.geometry_calls + 8 > env.config.max_geometry_calls:
+                if env.trials >= env.config.max_trials or env.geometry_calls + TRIAL_MATRIX_RESERVE > env.config.max_geometry_calls:
                     break
                 second = env.preview(action, layout=trial.layout)
                 if second.score is not None:

@@ -149,6 +149,66 @@ class DrlR04CoreTests(unittest.TestCase):
         self.assertEqual(len(env.initial_layout.assignment), 3)
         self.assertLess(metrics(separated, env.initial_layout, env.cfg)["covered_users"], 3)
 
+    def test_near_geometry_budget_never_overshoots(self):
+        s = scene()
+        too_small = DrlR04Env(s, DrlR04Config(max_geometry_calls=2))
+        _, info = too_small.reset()
+        self.assertEqual(info["status"], "initialization_failed")
+        self.assertEqual(too_small.geometry_calls, 0)
+        self.assertEqual(too_small.initialization["metrics"]["aircraft_count"], 6)
+        exact_init = DrlR04Env(s, DrlR04Config(max_geometry_calls=3))
+        exact_init.reset()
+        self.assertTrue(exact_init.done)
+        self.assertTrue(exact_init.truncated)
+        self.assertLessEqual(exact_init.geometry_calls, 3)
+        one_trial = DrlR04Env(s, DrlR04Config(max_geometry_calls=12))
+        one_trial.reset()
+        action = next(i for i, (a, _) in enumerate(one_trial.menu)
+                      if a.operation != "stop")
+        one_trial.step(action)
+        self.assertTrue(one_trial.done)
+        self.assertTrue(one_trial.truncated)
+        self.assertLessEqual(one_trial.geometry_calls, 12)
+        self.assertGreaterEqual(one_trial.observe()[0]["global"].min(), 0.0)
+
+    def test_preview_cache_is_logged_and_commit_reuses_real_trial(self):
+        env = DrlR04Env(scene())
+        env.reset()
+        index = next(i for i, (a, _) in enumerate(env.menu) if a.operation == "split")
+        action = env.menu[index][0]
+        first = env.preview(action)
+        second = env.preview(action)
+        self.assertIs(first, second)
+        self.assertEqual(env.trials, 1)
+        self.assertEqual(env.preview_requests, 2)
+        self.assertEqual(env.preview_cache_hits, 1)
+        env.step(index)
+        self.assertEqual(env.trials, 1)
+        self.assertEqual(env.preview_requests, 3)
+        self.assertEqual(env.preview_cache_hits, 2)
+        self.assertEqual(env.ledger[-1]["preview_cache_hits"], 2)
+
+    def test_preview_request_denied_by_trial_budget_is_logged(self):
+        env = DrlR04Env(scene(), DrlR04Config(max_trials=1))
+        env.reset()
+        actions = [a for a, _ in env.menu if a.operation != "stop"]
+        self.assertGreaterEqual(len(actions), 2)
+        env.preview(actions[0])
+        with self.assertRaisesRegex(RuntimeError, "trial budget"):
+            env.preview(actions[1])
+        self.assertEqual(env.preview_requests, 2)
+        self.assertEqual(env.trials, 1)
+        self.assertEqual(env.preview_cache_hits, 0)
+        self.assertEqual(env.preview_budget_rejections, 1)
+
+    def test_h2_branches_share_one_counter(self):
+        env = DrlR04Env(scene(), DrlR04Config(max_trials=3, max_commits=2))
+        result = run_h2(env)
+        self.assertLessEqual(result["trials"], 3)
+        self.assertGreater(result["preview_requests"], result["preview_cache_hits"])
+        self.assertEqual(result["trials"], len(env._trial_cache))
+        self.assertLessEqual(result["geometry_calls"], 8192)
+
 
 if __name__ == "__main__":
     unittest.main()
