@@ -68,7 +68,7 @@
         <div class="layout-two"><div class="stack">
           <div class="panel"><h2>覆盖方案</h2><div class="field-grid">
             <label class="field">方案名称<input id="coverage-name" value="第一阶段 · 规则布局＋PPO"></label>
-            <label class="field">配置版本<select id="coverage-schema"><option value="2">S1-01原九动作（旧模型）</option><option value="3">S1-02覆盖与主体均衡</option><option value="4">S1-03需求区域重构</option><option value="5">S1-V10可变波束全覆盖</option></select></label>
+            <label class="field">配置版本<select id="coverage-schema"><option value="2">S1-01原九动作（旧模型）</option><option value="3">S1-02覆盖与主体均衡</option><option value="4">S1-03需求区域重构</option><option value="5">S1-V10可变波束全覆盖</option><option value="6">S1-D12A R04引导的DRL机制验证</option></select></label>
             <label class="field">环境<select id="coverage-profile" disabled><option value="europe_v1">欧洲版（航空业务）</option></select></label>
             <label class="field">基础布局<select id="coverage-initialization"><option value="rule">现有需求加权覆盖规则</option><option value="cluster">需求加权聚类</option><option value="empty">无基础布局（纯PPO逐束构建）</option></select></label>
             <label class="field">布局决策<select id="coverage-method"><option value="ppo">PPO</option><option value="none">不微调（评价基线）</option><option value="local_search">普通局部搜索（评价基线）</option></select></label>
@@ -126,6 +126,13 @@
             <label class="field">PPO评价模型<select id="coverage-model"></select></label>
             <label class="field coverage-balance-field coverage-variable-field">评价数据分区<select id="coverage-dataset-role"><option value="train">训练</option><option value="development">开发</option><option value="validation">验证</option><option value="test">考核</option><option value="sequence">连续时刻</option></select></label>
             <label class="field coverage-variable-field" hidden>新数据UTC日期<select id="coverage-source-date"><option value="2024-02-03">Feb03 验证20</option><option value="2024-02-04">Feb04 考核50</option><option value="2024-02-05">Feb05 考核50</option><option value="2024-02-06">Feb06 连续120</option></select></label>
+          </div><div class="field-grid coverage-drl-r04-field" hidden>
+            <label class="field">S1-D12A任务方法<select id="coverage-drl-method"><option value="I0">I0 共同初解</option><option value="H1">H1 R04即时规则</option><option value="H2">H2 两步搜索</option><option value="BC">BC 示范预热</option><option value="P0">P0 从零PPO</option><option value="P1">P1 示范加PPO</option><option value="teacher">教师示范准备</option><option value="dataset">新ADS-B场景准备</option></select></label>
+            <label class="field">来源实例<select id="coverage-drl-source-port"><option value="20418">20418</option><option value="20424">20424</option><option value="20473">20473</option><option value="20474">20474</option></select></label>
+            <label class="field">教师/BC/模型来源工作台任务ID<input id="coverage-drl-source-run-id" placeholder="已完成任务ID"></label>
+            <label class="field">独立考核分片<select id="coverage-drl-shard"><option value="0">第0片 · 母场景0,4,…</option><option value="1">第1片 · 母场景1,5,…</option><option value="2">第2片 · 母场景2,6,…</option><option value="3">第3片 · 母场景3,7,…</option></select></label>
+            <label class="field">登记数据的原始SHA256<input id="coverage-drl-dataset-sha" placeholder="64位SHA256；逐字节校验"></label>
+            <label class="field">新场景UTC日期<select id="coverage-drl-source-date"><option value="2024-02-07">Feb07 验证20</option><option value="2024-02-08">Feb08 考核50</option><option value="2024-02-09">Feb09 考核50</option></select></label>
           </div><details><summary>完整配置</summary><textarea id="coverage-config-json" rows="12" spellcheck="false"></textarea><button id="coverage-apply-json" type="button">应用配置</button></details>
           <div class="actions"><button id="coverage-validate" type="button">检查配置</button><button id="coverage-save" type="button">保存方案</button><button id="coverage-prepare" type="button" class="coverage-variable-field" hidden>提交原始场景准备</button><button id="coverage-start" class="primary" type="button">提交PPO训练</button><button id="coverage-evaluate" type="button">提交评价或基线</button></div><div id="coverage-message" class="notice muted" role="status">正在读取第一阶段配置…</div></div>
         </div><aside class="stack"><div class="panel"><h2>远端运行记录</h2><label class="field">任务<select id="coverage-run"></select></label><div class="actions"><button id="coverage-stop" type="button">停止并保存</button><button id="coverage-resume" type="button">从断点恢复</button></div><div id="coverage-status" class="facts"></div></div>

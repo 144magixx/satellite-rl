@@ -1774,6 +1774,16 @@ def run_job(job_dir, *, resume=False):
         from satellite_rl.power_refinement.runner import run_refinement_job
         return run_refinement_job(directory, resume=resume)
     if research_stage == "coverage":
+        if _read_json(directory / "config.json", {}).get("schema_version") == 6:
+            job = _read_json(directory / "job.json", {})
+            config = _read_json(directory / "config.json", {})
+            if job.get("kind") == "prepare":
+                from satellite_rl.workbench.drl_r04_preparation import run_drl_r04_preparation_job
+                return run_drl_r04_preparation_job(directory, job, config, resume=resume,
+                                                   preflight=strict_cuda_preflight(job))
+            from satellite_rl.coverage.drl_r04_runner import run_drl_r04_job
+            return run_drl_r04_job(directory, job, config, resume=resume,
+                                   preflight=strict_cuda_preflight(job))
         if _read_json(directory / "config.json", {}).get("schema_version") == 5:
             job = _read_json(directory / "job.json", {})
             config = _read_json(directory / "config.json", {})
