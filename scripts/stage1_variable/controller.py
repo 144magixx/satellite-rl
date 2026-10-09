@@ -113,6 +113,39 @@ DEPENDENCIES = {
     "test_R08": ("train_R08",),
     "test_R09": ("train_R09",),
 }
+THROUGHPUT_KEYS = {"train_R08", "test_R08", "train_R09", "test_R09"}
+
+
+def validate_throughput_overrides(state):
+    overrides = state.get("throughput_source_overrides", {})
+    if not isinstance(overrides, dict) or set(overrides) - THROUGHPUT_KEYS:
+        raise RuntimeError("throughput source override names a nonlearning or unknown task")
+    for route in LEARNING:
+        train, test = overrides.get(f"train_{route}"), overrides.get(f"test_{route}")
+        if test is not None and (train is None or
+                                 test.get("repair_commit") != train.get("repair_commit")):
+            raise RuntimeError("learned test has no matching repaired training source")
+    for key, item in overrides.items():
+        if (not isinstance(item, dict) or
+                item.get("origin_commit") != state["scientific_commit"] or
+                not isinstance(item.get("repair_commit"), str) or
+                len(item["repair_commit"]) != 40 or
+                item["repair_commit"] == state["scientific_commit"]):
+            raise RuntimeError(f"{key}: throughput source identity differs")
+        if key.startswith("train_"):
+            if (not isinstance(item.get("validation_receipt_sha256"), str) or
+                    len(item["validation_receipt_sha256"]) != 64 or
+                    not isinstance(item.get("origin_checkpoint_sha256"), str) or
+                    len(item["origin_checkpoint_sha256"]) != 64):
+                raise RuntimeError(f"{key}: checkpoint-bound validation evidence missing")
+        elif (not isinstance(item.get("dataset_contract_sha256"), str) or
+              len(item["dataset_contract_sha256"]) != 64):
+            raise RuntimeError(f"{key}: learned-test dataset contract SHA missing")
+
+
+def expected_task_source(state, key):
+    return (state.get("throughput_source_overrides", {}).get(key) or {}).get(
+        "repair_commit", state["scientific_commit"])
 
 
 def api(port, path, body=None):
@@ -152,10 +185,15 @@ def _submit(task, registry, state):
         return
     body = _body(task, registry, state)
     job = api(port, "/api/coverage/runs", body)
-    if (job.get("git_commit") != state["scientific_commit"] or
+    expected_source = expected_task_source(state, key)
+    if (job.get("git_commit") != expected_source or
             job.get("request_id") != body["request_id"] or
             job.get("execution_target") != ops.instance(port)["target"]):
         raise RuntimeError(f"{key}: frozen workbench task identity differs")
+    if key in ("test_R08", "test_R09") and expected_source != state["scientific_commit"]:
+        override = state["throughput_source_overrides"][key]
+        if job.get("variable_dataset_contract", {}).get("sha256") != override.get("dataset_contract_sha256"):
+            raise RuntimeError(f"{key}: throughput evaluation used another scene contract")
     state["tasks"][key] = {**task, "run_id": job["run_id"],
                            "request_id": body["request_id"],
                            "dataset_sha256": {role: registry["lanes"][str(port)][role]["sha256"]
@@ -201,7 +239,7 @@ print(json.dumps({{'count':len(rows),'expected':expected,
     return row
 
 
-def _audit_train(port, detail, expected_step, development=False):
+def _audit_train(port, detail, expected_step, development=False, expected_source=None):
     directory = detail["path"]
     code = f'''
 import hashlib,json,pathlib
@@ -211,7 +249,8 @@ meta=json.loads((model/'model.json').read_text())
 rows=root/f'validation_{{step}}.jsonl';lines=[json.loads(line) for line in rows.read_bytes().splitlines() if line.strip()] if rows.exists() else []
 print(json.dumps({{'checkpoint':checkpoint.is_file(),'checkpoint_sha256':hashlib.sha256(checkpoint.read_bytes()).hexdigest() if checkpoint.is_file() else None,
  'model_step':meta.get('env_step'),'model_sha256':hashlib.sha256((model/'policy.pt').read_bytes()).hexdigest(),
- 'metadata_policy_sha256':meta.get('policy_sha256'),'development_rows':len(lines),
+ 'metadata_policy_sha256':meta.get('policy_sha256'),'model_source_commit':meta.get('source_commit'),
+ 'model_source_history':meta.get('source_history'),'development_rows':len(lines),
  'bad_development_rows':sum(not row.get('demand_conserved') for row in lines)}}))
 '''
     response = ops.remote_python(code, port, timeout=180)
@@ -220,8 +259,15 @@ print(json.dumps({{'checkpoint':checkpoint.is_file(),'checkpoint_sha256':hashlib
     row = json.loads(response["stdout"].splitlines()[-1])
     if (not row["checkpoint"] or row["model_step"] != expected_step or
             row["model_sha256"] != row["metadata_policy_sha256"] or
+            (expected_source and row["model_source_commit"] != expected_source) or
             (development and (row["development_rows"] != 60 or row["bad_development_rows"]))):
         raise RuntimeError("training endpoint/checkpoint/development audit differs")
+    if expected_source and expected_source != detail["job"].get("original_git_commit", expected_source):
+        history = row["model_source_history"] or []
+        if not any(item.get("repair_commit") == expected_source and
+                   item.get("origin_commit") == detail["job"].get("original_git_commit")
+                   for item in history):
+            raise RuntimeError("repaired endpoint model lacks old/new source history")
     return row
 
 
@@ -235,8 +281,23 @@ def _task_state(key, state):
     stage = detail["status"]["stage"]
     task["last_observed_utc"] = now()
     task["last_observed_stage"] = stage
-    if detail["job"].get("git_commit") != state["scientific_commit"]:
+    expected_source = expected_task_source(state, key)
+    if detail["job"].get("git_commit") != expected_source:
         raise RuntimeError(f"{key}: scientific source commit changed")
+    if key in ("train_R08", "train_R09") and expected_source != state["scientific_commit"]:
+        proof = detail["job"].get("variable_throughput_repair") or {}
+        override = state["throughput_source_overrides"][key]
+        if (proof.get("repair_id") != "s1v10_cpu_supply_equivalent_v1" or
+                proof.get("origin_commit") != state["scientific_commit"] or
+                proof.get("repair_commit") != expected_source or
+                proof.get("run_id") != task["run_id"] or
+                proof.get("validation_receipt_sha256") != override.get("validation_receipt_sha256") or
+                proof.get("checkpoint_sha256") != override.get("origin_checkpoint_sha256")):
+            raise RuntimeError(f"{key}: same-ID throughput source proof differs")
+    if key in ("test_R08", "test_R09") and expected_source != state["scientific_commit"]:
+        override = state["throughput_source_overrides"][key]
+        if detail["job"].get("variable_dataset_contract", {}).get("sha256") != override.get("dataset_contract_sha256"):
+            raise RuntimeError(f"{key}: frozen learned-test scene contract differs")
     actual_datasets = {role: row.get("sha256")
                        for role, row in detail["config"].get("datasets", {}).items()}
     if actual_datasets != task["dataset_sha256"]:
@@ -247,7 +308,8 @@ def _task_state(key, state):
             if detail["status"].get("env_step") != step:
                 raise RuntimeError(f"{key}: completed at wrong decision budget")
             audit = _audit_train(task["port"], detail, step,
-                                 development=task["purpose"] == "verification")
+                                 development=task["purpose"] == "verification",
+                                 expected_source=expected_source)
         else:
             audit = _audit_rows(task["port"], detail, task["expected_count"], task)
         state["audits"][key] = {"run_id": task["run_id"],
@@ -275,6 +337,7 @@ def write_run_manifest(state):
         "last_observed_utc": state["observed_utc"],
         "data_sha256": state.get("dataset_sha256", {}),
         "dataset_contract_sha256": state.get("dataset_contract_sha256"),
+        "throughput_source_overrides": state.get("throughput_source_overrides", {}),
         "source_archive_observation": {port: {
             "date": item.get("date"),
             "status": (item.get("download") or {}).get("status"),
@@ -294,6 +357,8 @@ def write_run_manifest(state):
                  ("run_id", "request_id", "port", "role", "route", "kind",
                   "purpose", "budget", "expected_count", "dataset_sha256",
                   "last_observed_utc", "last_observed_stage")}
+                  | {"expected_source_commit": expected_task_source(state, key),
+                     "throughput_repair": state.get("throughput_source_overrides", {}).get(key)}
                   for key, task in state["tasks"].items()},
                   **{f"prepare_{port}": {"run_id": row["run_id"],
                       "request_id": row["request_id"], "port": int(port),
@@ -356,6 +421,7 @@ def tick(commit):
         state["phase"] = "dataset_registration"
         state["migration_receipt"] = str(history)
     state.pop("last_error", None)
+    validate_throughput_overrides(state)
     try:
         if state["phase"] == "source_preparation":
             state["prepares"] = data_controller.submit_prepares(commit)
@@ -404,7 +470,7 @@ def resume_run(commit, key):
         expected_commit = state.get("preparation_source_commit", data_controller.PREPARATION_SOURCE_COMMIT)
     else:
         task = state["tasks"].get(key)
-        expected_commit = commit
+        expected_commit = expected_task_source(state, key)
     if task is None:
         raise RuntimeError("unknown frozen S1-V10 task key")
     detail = api(task["port"], "/api/runs/" + task["run_id"])

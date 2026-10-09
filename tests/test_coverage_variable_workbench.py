@@ -22,7 +22,7 @@ from satellite_rl.workbench.coverage_variable import (_validate_dataset_lineage,
     submit_variable, variable_default_config)
 from satellite_rl.workbench.variable_preparation import _scene_from_rows, run_variable_preparation_job
 from satellite_rl.workbench.runtime import Scheduler
-from satellite_rl.workbench.storage import Store
+from satellite_rl.workbench.storage import Store, digest
 
 
 class VariableWorkbenchContractTests(unittest.TestCase):
@@ -271,6 +271,62 @@ class VariableWorkbenchContractTests(unittest.TestCase):
                 path.write_text(json.dumps(contract), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "date/count"):
                     _canonical_contract(fake_store)
+
+    def test_throughput_contract_only_allows_matching_learned_evaluation(self):
+        from satellite_rl.workbench.variable_throughput_recovery import (
+            DATA_CONTRACT_SHA256, ORIGIN_COMMIT, REPAIR_ID)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            original = {"experiment_id": "S1-V10", "plan_revision": PLAN_REVISION,
+                        "scientific_commit": ORIGIN_COMMIT,
+                        "datasets": {role: {"sha256": "a" * 64,
+                                            "count": ROLE_COUNTS[role],
+                                            "dates": ROLE_DATES[role],
+                                            "source_datasets": None}
+                                     for role in ROLE_DATES},
+                        "source_dates": {day: {"selection_contract_sha256": sha,
+                                              "source_preflight_sha256": SOURCE_PREFLIGHT_SHA[day],
+                                              "archive_sha256": "b" * 64,
+                                              "prepared_dataset_sha256": "c" * 64}
+                                         for day, sha in SOURCE_CONTRACT_SHA.items()},
+                        "historical_source_sha256": {
+                            "train": HISTORICAL_SOURCE_SHA["train"],
+                            "validation": HISTORICAL_SOURCE_SHA["development"]}}
+            for role in ("validation", "sequence"):
+                original["datasets"][role]["sha256"] = "c" * 64
+            original["datasets"]["test"]["source_datasets"] = [
+                {"id": day, "dates": [day], "sha256": "c" * 64}
+                for day in ROLE_DATES["test"]]
+            primary = source / "canonical_dataset_contract.json"
+            primary.write_text(json.dumps(original), encoding="utf-8")
+            new_commit = "d" * 40
+            continuation = {**original, "scientific_commit": new_commit,
+                            "format": "s1v10_throughput_canonical_continuation_v1",
+                            "repair_id": REPAIR_ID, "origin_commit": ORIGIN_COMMIT,
+                            "repair_commit": new_commit,
+                            "origin_contract_sha256": DATA_CONTRACT_SHA256,
+                            "allowed_eval_only": True,
+                            "allowed_route_port": {"R08": "20418", "R09": "20424"}}
+            sidecar = source / f"canonical_dataset_contract_throughput_{new_commit}.json"
+            sidecar.write_text(json.dumps(continuation), encoding="utf-8")
+            fake_store = type("Store", (), {"source_root": root,
+                                             "archive_root": root / "20418"})()
+            real_digest = digest
+            def pinned_digest(value):
+                return DATA_CONTRACT_SHA256 if Path(value) == primary else real_digest(value)
+            with patch("satellite_rl.workbench.coverage_variable.ARCHIVE_PARENT", root), \
+                 patch("satellite_rl.workbench.coverage_variable.subprocess.run",
+                       return_value=type("Result", (), {"stdout": new_commit})()), \
+                 patch("satellite_rl.workbench.coverage_variable.digest",
+                       side_effect=pinned_digest):
+                self.assertEqual(_canonical_contract(fake_store, route="R08",
+                                                     kind="evaluate")[0]["scientific_commit"], new_commit)
+                with self.assertRaisesRegex(ValueError, "learned evaluation"):
+                    _canonical_contract(fake_store, route="R01", kind="evaluate")
+                with self.assertRaisesRegex(ValueError, "learned evaluation"):
+                    _canonical_contract(fake_store, route="R08", kind="train")
 
     def test_same_id_preparation_resume_preserves_failed_status(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -7,8 +7,9 @@ can also be exercised with a tiny synthetic job for correctness checks.
 from __future__ import annotations
 
 from dataclasses import fields, replace
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import json
+import multiprocessing
 from pathlib import Path
 import sys
 import time
@@ -22,7 +23,7 @@ from .runner import (_event, _jsonl, _load_torch, _now, _read, _restore_rng,
                      _stop_requested, _write_json)
 from .variable_config import ROUTES, VariableConfig
 from .variable_dataset import load_variable_dataset
-from .variable_design import (Layout, apply_action, geometry_audit, initial_layout,
+from .variable_design import (Layout, VariableAction, apply_action, geometry_audit, initial_layout,
                               metrics, solve)
 from .variable_observation import candidate_digest, observation
 from .variable_ppo import (Transition, VariableSetPolicy, collate, ppo_update)
@@ -30,6 +31,20 @@ from .variable_ppo import (Transition, VariableSetPolicy, collate, ppo_update)
 
 POLICY_FORMAT = "variable_set_ppo_v1"
 LEARNING_ROUTES = ("R08", "R09")
+THROUGHPUT_REPAIR_ID = "s1v10_cpu_supply_equivalent_v1"
+THROUGHPUT_REPAIR_ORIGIN = "b31187fcaf79e90b70d85db4cdfec5a4150020de"
+THROUGHPUT_REPAIR_RUNS = {
+    "R08": "train_ppo_20261009_095314_19a69288",
+    "R09": "train_ppo_20261009_095159_714e5c20",
+}
+THROUGHPUT_REPAIR_CRITERIA = (
+    "constructor_1728_exact", "pool_packet_state_rng_equal",
+    "trajectory_128_weight_optimizer_rng_equal",
+    "actual_checkpoint_policy_optimizer_rng_32streams_complete",
+    "same_input_action_gpu_update_equal", "ledger_prefix_complete",
+    "no_budget_seed_data_change",
+)
+_CPU_CONTEXT = None
 
 
 def _core_config(config):
@@ -221,6 +236,112 @@ def _stream_from_record(record):
         "sampler": sampler, "layout": Layout.from_record(record["layout"])}
 
 
+def _cpu_worker_init(dataset_record, config, route, multipliers):
+    """One immutable, SHA-checked aircraft dataset per spawned CPU process."""
+    global _CPU_CONTEXT
+    dataset = _dataset({"datasets": {"train": dataset_record}}, "train")
+    _CPU_CONTEXT = {"dataset": dataset, "cfg": _core_config(config),
+                    "config": config, "route": route,
+                    "multipliers": tuple(multipliers)}
+
+
+def _cpu_scene(packet):
+    context = _CPU_CONTEXT
+    return _scaled(context["dataset"].scenes[packet["scene_index"]],
+                   context["multipliers"][packet["level"]])
+
+
+def _cpu_packet(stream):
+    return {"scene_index": stream["scene_index"], "level": stream["level"],
+            "layout": stream["layout"].to_record(),
+            "episode_steps": stream["episode_steps"],
+            "geometry_calls": stream["geometry_calls"]}
+
+
+def _cpu_terminal_packet(stream, stream_id):
+    trace = stream["actions"]
+    return _cpu_packet(stream) | {
+        "init_seconds": stream["init_seconds"],
+        "algorithm_seconds": stream["algorithm_seconds"],
+        "geometry_seconds": stream["geometry_seconds"],
+        "actual_geometry_calls": stream["actual_geometry_calls"],
+        "actual_ray_pair_checks": stream["actual_ray_pair_checks"],
+        "action_trace": {"file": "actions.jsonl", "stream_id": stream_id,
+                         "stream_episode_serial": stream["episode_serial"] + 1,
+                         "first_env_step": trace[0]["env_step"],
+                         "last_env_step": trace[-1]["env_step"],
+                         "count": len(trace)}}
+
+
+def _cpu_observe(packet):
+    context = _CPU_CONTEXT
+    scene, cfg, route = _cpu_scene(packet), context["cfg"], context["route"]
+    layout = Layout.from_record(packet["layout"])
+    budget = {"geometry_calls": packet["geometry_calls"],
+              "max_geometry_calls": cfg.max_geometry_calls}
+    with geometry_audit() as audit:
+        obs, menu = observation(scene, layout, cfg, route=route,
+                                steps=packet["episode_steps"],
+                                geometry_calls=packet["geometry_calls"],
+                                budget=budget)
+        before = metrics(scene, layout, cfg)
+    return obs, [action.to_record() for action, _ in menu], before, \
+        budget["geometry_calls"], dict(audit)
+
+
+def _cpu_execute(item):
+    packet, action_record, screened_calls = item
+    context = _CPU_CONTEXT
+    scene, cfg = _cpu_scene(packet), context["cfg"]
+    layout = Layout.from_record(packet["layout"])
+    budget = {"geometry_calls": screened_calls,
+              "max_geometry_calls": cfg.max_geometry_calls}
+    with geometry_audit() as audit:
+        next_layout, info = apply_action(scene, layout, cfg,
+                                         VariableAction.from_record(action_record), budget)
+        after = metrics(scene, next_layout, cfg)
+    return next_layout.to_record(), info, after, budget["geometry_calls"], dict(audit)
+
+
+def _cpu_bootstrap(packet):
+    context = _CPU_CONTEXT
+    scene, cfg, route = _cpu_scene(packet), context["cfg"], context["route"]
+    layout = Layout.from_record(packet["layout"])
+    with geometry_audit() as audit:
+        obs, _ = observation(scene, layout, cfg, route=route,
+                             steps=packet["episode_steps"],
+                             geometry_calls=packet["geometry_calls"],
+                             value_only=True)
+    return obs, dict(audit)
+
+
+def _cpu_initial_layout(item):
+    index, level = item
+    context = _CPU_CONTEXT
+    scene = _scaled(context["dataset"].scenes[index],
+                    context["multipliers"][level])
+    began = time.monotonic()
+    layout, info = initial_layout(scene, context["cfg"], route=context["route"])
+    return layout.to_record(), info, time.monotonic() - began
+
+
+def _cpu_terminal(packet):
+    context = _CPU_CONTEXT
+    scene, cfg, route = _cpu_scene(packet), context["cfg"], context["route"]
+    layout = Layout.from_record(packet["layout"])
+    row = _layout_row(scene, layout, cfg, route=route, actions=[],
+                      init_seconds=packet["init_seconds"],
+                      algorithm_seconds=packet["algorithm_seconds"],
+                      geometry_seconds=packet["geometry_seconds"],
+                      final_seconds=0.0, calls=packet["geometry_calls"],
+                      actual_calls=packet["actual_geometry_calls"],
+                      ray_pairs=packet["actual_ray_pair_checks"])
+    row.pop("actions")
+    row["macro_steps"] = packet["action_trace"]["count"]
+    row["action_trace"] = packet["action_trace"]
+    return _downstream(scene, layout, context["config"], route, row, compact=True)
+
+
 def _checkpoint_parallel(directory, job, config, policy, optimizer, *,
                          streams, step, updates, episode, last_validation,
                          ledger_counts):
@@ -230,18 +351,254 @@ def _checkpoint_parallel(directory, job, config, policy, optimizer, *,
                "rng": _rng_state(), "streams": [_stream_record(x) for x in streams],
                "step": step, "updates": updates, "episode": episode,
                "last_validation": last_validation, "ledger_counts": dict(ledger_counts)}
+    if job.get("variable_throughput_repair"):
+        payload["source_history"] = job.get("source_history")
+        payload["throughput_repair"] = _repair_metadata(job)
     path = directory / "checkpoint.pt"
     _save_torch(path, payload)
     return _sha256(path)
 
 
+def _repair_metadata(job):
+    proof = job["variable_throughput_repair"]
+    return {key: proof[key] for key in (
+        "repair_id", "origin_commit", "repair_commit", "checkpoint_sha256",
+        "checkpoint_step", "validation_receipt_sha256", "archive_path",
+        "stop_reason", "saved_validation_nodes")}
+
+
+def _verify_saved_validation_prefixes(directory, proof, receipt, payload, config, archive):
+    """Protect full nodes and an interrupted partial node before same-ID append."""
+    directory = Path(directory)
+    reason = proof.get("stop_reason")
+    nodes = proof.get("saved_validation_nodes")
+    interval = config["training"]["validation_interval"]
+    step = payload.get("step")
+    last = payload.get("last_validation")
+    status = _read(directory / "status.json", {})
+    if (reason not in ("requested", "validation_interrupted") or
+            receipt.get("stop_reason") != reason or
+            status.get("stop_reason") != reason or
+            not isinstance(nodes, list) or receipt.get("saved_validation_nodes") != nodes or
+            proof.get("last_validation") != last or
+            type(last) is not int or last < 0 or last > step or last % interval or
+            (reason == "validation_interrupted" and
+             (step != last + interval or step % interval))):
+        raise ValueError("Throughput repair validation stop position differs")
+    full_steps = list(range(interval, last + 1, interval))
+    if len(nodes) != len(full_steps) + int(reason == "validation_interrupted"):
+        raise ValueError("Throughput repair saved validation node count differs")
+    expected_names = {f"validation_{node}.jsonl" for node in full_steps}
+    if reason == "validation_interrupted" and nodes[-1].get("sha256") is not None:
+        expected_names.add(f"validation_{step}.jsonl")
+    found = {path.name for path in directory.glob("validation_*.jsonl")}
+    if found != expected_names:
+        raise ValueError("Throughput repair has missing, future or unbound validation files")
+    frozen = _dataset(config, "validation")
+    factors = config["evaluation"]["demand_multipliers"]
+    if len(frozen.scenes) != 20 or list(factors) != [.75, 1., 1.25]:
+        raise ValueError("Throughput repair frozen validation mother grid differs")
+    expected_order = [(scene.scene_id, scene.source_hash, float(factor))
+                      for scene in frozen.scenes for factor in factors]
+    if len(set(expected_order)) != 60:
+        raise ValueError("Throughput repair validation mother identities repeat")
+    backups = proof["backup_files_sha256"]
+    summaries = _read_lines(directory / "evaluations.jsonl")
+    if len(summaries) != len(full_steps):
+        raise ValueError("Throughput repair committed validation summary count differs")
+    for index, node in enumerate(full_steps):
+        entry = nodes[index]
+        name = f"validation_{node}.jsonl"
+        path = directory / name
+        if (entry != {"env_step": node, "rows": 60, "sha256": _sha256(path)} or
+                backups.get(name) != entry["sha256"] or
+                _sha256(archive / "original" / name) != entry["sha256"]):
+            raise ValueError("Throughput repair full validation SHA differs")
+        rows = _read_lines(path)
+        actual_order = [(row.get("scene_id"), row.get("scene_sha256"),
+                         row.get("demand_multiplier")) for row in rows]
+        if (len(rows) != 60 or actual_order != expected_order or
+                any(row.get("route") != config["coverage"]["variable"]["route"] or
+                    row.get("demand_conserved") is not True for row in rows) or
+                summaries[index].get("env_step") != node or
+                summaries[index].get("scene_count") != 60 or
+                summaries[index].get("rows_sha256") != entry["sha256"]):
+            raise ValueError("Throughput repair full validation rows or summary differ")
+    if reason == "validation_interrupted":
+        entry = nodes[-1]
+        name = f"validation_{step}.jsonl"
+        path = directory / name
+        if (entry.get("env_step") != step or entry.get("complete") is not False or
+                type(entry.get("rows")) is not int or not 0 <= entry["rows"] < 60):
+            raise ValueError("Throughput repair partial validation descriptor differs")
+        if entry["sha256"] is None:
+            if entry["rows"] != 0 or path.exists() or name in backups:
+                raise ValueError("Throughput repair zero-row validation file differs")
+        else:
+            if (not path.is_file() or _sha256(path) != entry["sha256"] or
+                    backups.get(name) != entry["sha256"] or
+                    _sha256(archive / "original" / name) != entry["sha256"]):
+                raise ValueError("Throughput repair partial validation SHA differs")
+            rows = _read_lines(path)
+            actual_order = [(row.get("scene_id"), row.get("scene_sha256"),
+                             row.get("demand_multiplier")) for row in rows]
+            if (len(rows) != entry["rows"] or
+                    actual_order != expected_order[:entry["rows"]] or
+                    any(row.get("route") != config["coverage"]["variable"]["route"] or
+                        row.get("demand_conserved") is not True for row in rows)):
+                raise ValueError("Throughput repair partial validation order differs")
+
+
+def _verify_legacy_throughput_checkpoint(directory, job, config, payload, checkpoint_sha):
+    """Narrow one-time b311→approved CPU-supply repair migration gate."""
+    directory = Path(directory).resolve()
+    proof = job.get("variable_throughput_repair")
+    if not isinstance(proof, dict) or proof.get("approved") is not True:
+        raise ValueError("Old-source S1-V10 checkpoint lacks approved repair proof")
+    route = config.get("coverage", {}).get("variable", {}).get("route")
+    if (route not in THROUGHPUT_REPAIR_RUNS or
+            job.get("run_id") != THROUGHPUT_REPAIR_RUNS[route] or
+            job.get("experiment_id") != "S1-V10" or
+            job.get("kind") != "train" or
+            job.get("experiment_role") != "formal" or
+            job.get("variable_route") != route or
+            job.get("execution_target") != (
+                "u2024110224@10.160.17.102:20418" if route == "R08" else
+                "u2024110224@10.160.17.102:20424") or
+            config["training"]["seed"] != 51001 or
+            config["training"]["total_steps"] != 262144):
+        raise ValueError("Throughput repair is limited to the two approved formal train IDs")
+    required = ("repair_id", "origin_commit", "repair_commit", "run_id", "request_id",
+                "checkpoint_sha256", "checkpoint_step", "checkpoint_updates",
+                "checkpoint_episode", "config_sha256", "config_hash",
+                "validation_receipt_sha256", "validation_receipt_path", "archive_path",
+                "old_source_root", "new_source_root", "backup_files_sha256",
+                "evidence_files", "route",
+                "old_manifest_sha256", "new_manifest_sha256", "stop_reason",
+                "saved_validation_nodes", "last_validation", "approved")
+    if any(key not in proof for key in required):
+        raise ValueError("Throughput repair proof is incomplete")
+    if (proof["repair_id"] != THROUGHPUT_REPAIR_ID or
+            proof["origin_commit"] != THROUGHPUT_REPAIR_ORIGIN or
+            payload.get("source_commit") != THROUGHPUT_REPAIR_ORIGIN or
+            job.get("original_git_commit") != THROUGHPUT_REPAIR_ORIGIN or
+            proof["repair_commit"] != job.get("git_commit") or
+            proof["repair_commit"] == THROUGHPUT_REPAIR_ORIGIN or
+            len(str(proof["repair_commit"])) != 40 or
+            any(char not in "0123456789abcdef" for char in proof["repair_commit"]) or
+            proof["run_id"] != job["run_id"] or
+            proof["request_id"] != job.get("request_id") or
+            proof["checkpoint_sha256"] != checkpoint_sha or
+            proof["checkpoint_step"] != payload.get("step") or
+            proof["checkpoint_updates"] != payload.get("updates") or
+            proof["checkpoint_episode"] != payload.get("episode") or
+            proof["route"] != route or
+            payload.get("step", -1) % 2048 != 0 or
+            proof["config_hash"] != config_hash(config) or
+            proof["config_sha256"] != _sha256(directory / "config.json") or
+            Path(proof["new_source_root"]).resolve() != Path(job["source_root"]).resolve() or
+            Path(proof["old_source_root"]).resolve() == Path(proof["new_source_root"]).resolve()):
+        raise ValueError("Throughput repair source, task, stop point or config differs")
+    history = job.get("source_history")
+    if not isinstance(history, list) or proof not in history:
+        raise ValueError("Throughput repair source history is absent")
+    archive = Path(proof["archive_path"]).resolve()
+    archive_root = Path(job["archive_root"]).resolve()
+    expected_archive = (directory / "recoveries" /
+                        f"{THROUGHPUT_REPAIR_ID}_{proof['repair_commit'][:12]}").resolve()
+    if (archive != expected_archive or not archive.is_dir() or
+            not archive.is_relative_to(archive_root) or
+            not Path(proof["old_source_root"]).resolve().is_relative_to(archive_root) or
+            not Path(proof["new_source_root"]).resolve().is_relative_to(archive_root)):
+        raise ValueError("Throughput repair archive identity differs")
+    backups = proof["backup_files_sha256"]
+    if (not isinstance(backups, dict) or
+            backups.get("checkpoint.pt") != checkpoint_sha or
+            backups.get("config.json") != proof["config_sha256"] or
+            not {"job.json", "status.json", "launch.json", "worker.log"} <= set(backups)):
+        raise ValueError("Throughput repair original backup list differs")
+    for name, expected in backups.items():
+        if Path(name).name != name or _sha256(archive / "original" / name) != expected:
+            raise ValueError(f"Archived original {name} differs from repair proof")
+    if _read(archive / "repair_proof.json", {}) != proof:
+        raise ValueError("Archived throughput repair proof differs from workbench job")
+    archived_job = _read(archive / "original" / "job.json", {})
+    if (archived_job.get("run_id") != job["run_id"] or
+            archived_job.get("request_id") != job["request_id"] or
+            archived_job.get("git_commit") != THROUGHPUT_REPAIR_ORIGIN or
+            Path(archived_job.get("source_root", "")).resolve() !=
+            Path(proof["old_source_root"]).resolve()):
+        raise ValueError("Archived original job provenance differs")
+    if (_sha256(Path(proof["old_source_root"]) / "source_manifest.json") !=
+            proof["old_manifest_sha256"] or
+            _sha256(Path(proof["new_source_root"]) / "source_manifest.json") !=
+            proof["new_manifest_sha256"]):
+        raise ValueError("Throughput repair source manifests differ")
+    receipt_path = (directory / "recoveries" / "validation_receipt.json").resolve()
+    if (Path(proof["validation_receipt_path"]).resolve() != receipt_path or
+            _sha256(receipt_path) != proof["validation_receipt_sha256"] or
+            _sha256(archive / "validation_receipt.json") != proof["validation_receipt_sha256"]):
+        raise ValueError("Throughput repair validation receipt SHA differs")
+    receipt = _read(receipt_path, {})
+    actual_checkpoint = {"sha256": checkpoint_sha, "step": payload.get("step"),
+                         "updates": payload.get("updates"),
+                         "episode": payload.get("episode")}
+    if (receipt.get("format") != "s1v10_throughput_repair_validation_v1" or
+            receipt.get("repair_id") != THROUGHPUT_REPAIR_ID or
+            receipt.get("origin_commit") != THROUGHPUT_REPAIR_ORIGIN or
+            receipt.get("repair_commit") != job["git_commit"] or
+            receipt.get("old_source_root") != proof["old_source_root"] or
+            receipt.get("new_source_root") != proof["new_source_root"] or
+            receipt.get("run_id") != job["run_id"] or
+            receipt.get("request_id") != job.get("request_id") or
+            receipt.get("route") != route or
+            receipt.get("actual_checkpoint") != actual_checkpoint or
+            receipt.get("config_sha256") != proof["config_sha256"] or
+            receipt.get("config_hash") != proof["config_hash"] or
+            receipt.get("stream_count") != 32 or
+            receipt.get("approved") is not True or
+            receipt.get("tests_passed") is not True or
+            set(receipt.get("criteria") or {}) != set(THROUGHPUT_REPAIR_CRITERIA) or
+            any(receipt.get("criteria", {}).get(key) is not True
+                for key in THROUGHPUT_REPAIR_CRITERIA)):
+        raise ValueError("Throughput repair validation receipt contents differ")
+    datasets = {role: row["sha256"] for role, row in config["datasets"].items()}
+    if (set(datasets) != {"train", "validation"} or
+            receipt.get("dataset_sha256") != datasets):
+        raise ValueError("Throughput repair validation dataset SHA differs")
+    for evidence in receipt.get("evidence_files", []):
+        path = Path(evidence["path"]).resolve()
+        if not path.is_relative_to(archive_root) or _sha256(path) != evidence["sha256"]:
+            raise ValueError("Throughput repair evidence escaped archive root or SHA differs")
+    if len(receipt.get("evidence_files", [])) < 5:
+        raise ValueError("Throughput repair validation lacks evidence files")
+    if proof["evidence_files"] != receipt["evidence_files"]:
+        raise ValueError("Throughput repair proof evidence differs from receipt")
+    _verify_saved_validation_prefixes(directory, proof, receipt, payload, config, archive)
+    if (not isinstance(payload.get("policy"), dict) or not payload["policy"] or
+            not isinstance(payload.get("optimizer"), dict) or
+            not payload["optimizer"].get("state") or
+            not isinstance(payload.get("rng"), dict) or
+            set(payload["rng"]) != {"python", "numpy", "torch", "cuda"} or
+            len(payload.get("streams", [])) != 32 or
+            not isinstance(payload.get("ledger_counts"), dict) or
+            set(payload["ledger_counts"]) != {
+                "actions.jsonl", "episodes.jsonl", "updates.jsonl", "evaluations.jsonl"} or
+            any("sampler_state" not in stream or "layout" not in stream
+                for stream in payload["streams"])):
+        raise ValueError("Throughput repair checkpoint learning or environment state incomplete")
+
+
 def _load_parallel(directory, job, config, policy, optimizer):
-    payload = _load_torch(directory / "checkpoint.pt", "cpu")
+    checkpoint = Path(directory) / "checkpoint.pt"
+    checkpoint_sha = _sha256(checkpoint)
+    payload = _load_torch(checkpoint, "cpu")
     if (payload.get("format_version") != 2 or payload.get("run_id") != job["run_id"] or
             payload.get("config_hash") != config_hash(config) or
-            payload.get("source_commit") != job["git_commit"] or
             len(payload.get("streams", [])) != config["training"]["num_envs"]):
         raise ValueError("Variable parallel checkpoint provenance or stream count differs")
+    if payload.get("source_commit") != job["git_commit"]:
+        _verify_legacy_throughput_checkpoint(directory, job, config, payload, checkpoint_sha)
     policy.load_state_dict(payload["policy"])
     optimizer.load_state_dict(payload["optimizer"])
     _restore_rng(payload["rng"])
@@ -567,59 +924,21 @@ def _train(directory, job, config, resume, preflight):
             budget_env_steps=training["total_steps"], update_step=updates,
             episode=episode, num_envs=count)
     cpu_workers = min(8, count)
-
-    def observe(index):
-        stream = streams[index]
-        scene = _stream_scene(stream, dataset, multipliers)
-        budget = {"geometry_calls": stream["geometry_calls"],
-                  "max_geometry_calls": cfg.max_geometry_calls}
-        with geometry_audit() as audit:
-            obs, menu = observation(scene, stream["layout"], cfg, route=route,
-                                    steps=stream["episode_steps"],
-                                    geometry_calls=stream["geometry_calls"],
-                                    budget=budget)
-            before = metrics(scene, stream["layout"], cfg)
-        return scene, obs, menu, before, budget["geometry_calls"], dict(audit)
-
-    def execute(item):
-        scene, layout, action, geometry_calls = item
-        budget = {"geometry_calls": geometry_calls,
-                  "max_geometry_calls": cfg.max_geometry_calls}
-        with geometry_audit() as audit:
-            next_layout, info = apply_action(scene, layout, cfg, action, budget=budget)
-            after = metrics(scene, next_layout, cfg)
-        return next_layout, info, after, budget["geometry_calls"], dict(audit)
-
-    def bootstrap_observe(index):
-        stream = streams[index]
-        scene = _stream_scene(stream, dataset, multipliers)
-        with geometry_audit() as audit:
-            obs, _ = observation(scene, stream["layout"], cfg, route=route,
-                                 steps=stream["episode_steps"],
-                                 geometry_calls=stream["geometry_calls"],
-                                 value_only=True)
-        return obs, dict(audit)
-
-    def terminal_physics(item):
-        i, scene, terminal_layout, calls = item
-        stream = streams[i]
-        row = _layout_row(scene, terminal_layout, cfg, route=route,
-                          actions=[], init_seconds=stream["init_seconds"],
-                          algorithm_seconds=stream["algorithm_seconds"],
-                          geometry_seconds=stream["geometry_seconds"],
-                          final_seconds=0.0, calls=calls,
-                          actual_calls=stream["actual_geometry_calls"],
-                          ray_pairs=stream["actual_ray_pair_checks"])
-        row["macro_steps"] = len(stream["actions"])
-        row.pop("actions")
-        row["action_trace"] = {"file": "actions.jsonl", "stream_id": i,
-                               "stream_episode_serial": stream["episode_serial"] + 1,
-                               "first_env_step": stream["actions"][0]["env_step"],
-                               "last_env_step": stream["actions"][-1]["env_step"],
-                               "count": len(stream["actions"])}
-        return _downstream(scene, terminal_layout, config, route, row, compact=True)
-
-    with ThreadPoolExecutor(max_workers=cpu_workers) as pool:
+    dataset_record = config["datasets"].get("train", {})
+    if device == "cuda":
+        executor = ProcessPoolExecutor(
+            max_workers=cpu_workers,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_cpu_worker_init,
+            initargs=(dataset_record, config, route, multipliers))
+        cpu_backend = "spawn_process"
+    else:
+        # Isolated CPU correctness tests use threads; formal workbench tasks
+        # have already passed the CUDA gate and always choose spawn above.
+        _cpu_worker_init(dataset_record, config, route, multipliers)
+        executor = ThreadPoolExecutor(max_workers=cpu_workers)
+        cpu_backend = "thread_local_verification"
+    with executor as pool:
         while step < training["total_steps"]:
             last_validation, interrupted = _parallel_validation_if_due(
                 directory, job, config, policy, optimizer, streams,
@@ -631,8 +950,9 @@ def _train(directory, job, config, resume, preflight):
             action_rows, episode_rows = [], []
             started = time.monotonic()
             for _ in range(training["rollout_steps"]):
-                observed = list(pool.map(observe, range(count)))
-                scenes, obs_rows, menus, before_rows, screened_calls, observation_audits = map(
+                packets = [_cpu_packet(stream) for stream in streams]
+                observed = list(pool.map(_cpu_observe, packets))
+                obs_rows, menus, before_rows, screened_calls, observation_audits = map(
                     list, zip(*observed))
                 selection_began = time.monotonic()
                 with torch.no_grad():
@@ -641,13 +961,14 @@ def _train(directory, job, config, resume, preflight):
                 indices = choices.cpu().tolist()
                 logp_values = logps.cpu().tolist()
                 values_values = values.cpu().tolist()
-                actions = [menus[i][indices[i]][0] for i in range(count)]
-                results = list(pool.map(execute, [(scenes[i], streams[i]["layout"],
-                                                   actions[i], screened_calls[i])
+                actions = [menus[i][indices[i]] for i in range(count)]
+                results = list(pool.map(_cpu_execute, [(packets[i], actions[i],
+                                                       screened_calls[i])
                                                   for i in range(count)]))
                 completed = []
-                for i, (next_layout, info, after, calls, execution_audit) in enumerate(results):
+                for i, (next_record, info, after, calls, execution_audit) in enumerate(results):
                     stream = streams[i]
+                    next_layout = Layout.from_record(next_record)
                     prior_calls = stream["geometry_calls"]
                     screen_calls = screened_calls[i] - prior_calls
                     stream["episode_steps"] += 1
@@ -657,7 +978,7 @@ def _train(directory, job, config, resume, preflight):
                     stream["actual_ray_pair_checks"] += (observation_audits[i]["ray_pair_checks"] +
                                                          execution_audit["ray_pair_checks"])
                     limit = 200 if route == "R09" else cfg.max_actions
-                    done = (actions[i].operation == "stop" and info["accepted"] or
+                    done = (actions[i]["operation"] == "stop" and info["accepted"] or
                             stream["episode_steps"] >= limit or
                             calls >= cfg.max_geometry_calls or
                             (route == "R09" and len(next_layout.centers) >= cfg.max_beams))
@@ -672,16 +993,18 @@ def _train(directory, job, config, resume, preflight):
                                                   reward, done))
                     event = {"env_step": step + len(transitions), "stream_id": i,
                              "scene_index": stream["scene_index"],
-                             "scene_id": scenes[i].scene_id,
-                             "scene_sha256": scenes[i].source_hash,
+                             "scene_id": dataset.scenes[stream["scene_index"]].scene_id,
+                             "scene_sha256": dataset.scenes[stream["scene_index"]].source_hash,
                              "demand_multiplier": float(multipliers[stream["level"]]),
                              "stream_episode_serial": stream["episode_serial"] + 1,
                              "candidate_index": indices[i],
-                             "candidate_identity_sha256": candidate_digest(menus[i]),
+                             "candidate_identity_sha256": candidate_digest(
+                                 [(VariableAction.from_record(action), None)
+                                  for action in menus[i]]),
                              "choice_log_prob": logp_values[i],
                              "value": values_values[i], "reward": reward,
-                             "requested_action": actions[i].to_record(),
-                             "actual_action": actions[i].to_record() if info["accepted"] else None,
+                             "requested_action": actions[i],
+                             "actual_action": actions[i] if info["accepted"] else None,
                              "before_metrics": before_rows[i], "after_metrics": after,
                              "candidate_screen_geometry_calls":
                              screen_calls,
@@ -700,13 +1023,14 @@ def _train(directory, job, config, resume, preflight):
                     stream["geometry_seconds"] += float(info["elapsed_s"])
                     stream["layout"] = next_layout
                     if done:
-                        completed.append((i, scenes[i], next_layout, calls,
+                        completed.append((i, calls,
                                           step + len(transitions),
-                                          "accepted_stop" if actions[i].operation == "stop" and info["accepted"]
+                                          "accepted_stop" if actions[i]["operation"] == "stop" and info["accepted"]
                                           else "step_or_geometry_budget"))
-                for terminal, row in zip(completed, pool.map(terminal_physics,
-                                                            [item[:4] for item in completed])):
-                    i, scene, next_layout, calls, terminal_step, stop_reason = terminal
+                terminal_packets = [_cpu_terminal_packet(streams[i], i)
+                                    for i, _, _, _ in completed]
+                for terminal, row in zip(completed, pool.map(_cpu_terminal, terminal_packets)):
+                    i, calls, terminal_step, stop_reason = terminal
                     stream = streams[i]
                     episode += 1
                     row.update(episode=episode,
@@ -718,8 +1042,14 @@ def _train(directory, job, config, resume, preflight):
                                completed_episode=True)
                     episode_rows.append(row)
                     stream["episode_serial"] += 1
-                    index, level, fresh, init, init_elapsed = _new_episode(
-                        dataset, cfg, route, stream["sampler"], multipliers)
+                starts = [(int(streams[i]["sampler"].integers(len(dataset.scenes))),
+                           int(streams[i]["sampler"].integers(len(multipliers))))
+                          for i, _, _, _ in completed]
+                initial_results = list(pool.map(_cpu_initial_layout, starts))
+                for (i, _, _, _), (index, level), (fresh_record, init, init_elapsed) in zip(
+                        completed, starts, initial_results):
+                    stream = streams[i]
+                    fresh = Layout.from_record(fresh_record)
                     stream.update(scene_index=index, level=level, layout=fresh,
                                   actions=[], episode_return=0.0,
                                   episode_steps=0,
@@ -728,7 +1058,8 @@ def _train(directory, job, config, resume, preflight):
                                   actual_ray_pair_checks=int(init.get("actual_ray_pair_checks", 0)),
                                   init_seconds=init_elapsed,
                                   algorithm_seconds=0.0, geometry_seconds=0.0)
-            bootstrap_rows = list(pool.map(bootstrap_observe, range(count)))
+            bootstrap_rows = list(pool.map(_cpu_bootstrap,
+                                           [_cpu_packet(stream) for stream in streams]))
             bootstrap_obs = []
             for stream, (obs, audit) in zip(streams, bootstrap_rows):
                 bootstrap_obs.append(obs)
@@ -767,6 +1098,7 @@ def _train(directory, job, config, resume, preflight):
             _status(directory, job, stage="training", env_step=step,
                     budget_env_steps=training["total_steps"], update_step=updates,
                     episode=episode, checkpoint_sha256=sha,
+                    cpu_worker_backend=cpu_backend, cpu_workers=cpu_workers,
                     latest_update=diagnostics,
                     effective_steps_per_second=len(transitions) /
                     max(time.monotonic() - started, 1e-9))
@@ -828,10 +1160,15 @@ def _train(directory, job, config, resume, preflight):
                               else "fixed_budget_endpoint"),
                 "experiment_role": job.get("experiment_role", "formal"),
                 "source_commit": job["git_commit"],
+                "original_git_commit": job.get("original_git_commit"),
+                "source_history": job.get("source_history", []),
+                "throughput_repair": (_repair_metadata(job)
+                                      if job.get("variable_throughput_repair") else None),
                 "config_hash": config_hash(config), "datasets": config["datasets"],
                 "policy_sha256": _sha256(final / "policy.pt"),
                 "parameter_count": sum(p.numel() for p in policy.parameters()),
                 "num_envs": count, "cpu_workers": cpu_workers,
+                "cpu_worker_backend": cpu_backend,
                 "validation_scene_count_per_node": 60,
                 "validation_node_budget": (1 if job.get("experiment_role") == "verification"
                                            else 16),

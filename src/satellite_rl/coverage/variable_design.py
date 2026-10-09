@@ -265,15 +265,17 @@ def _construct(scene, cfg, method: str, width: float) -> tuple[Layout, dict]:
     no_candidate = False
     while np.any(uncovered) and len(chosen) < cfg.max_beams:
         scans += 1
-        new = cover & uncovered[:, None]
+        # Preserve aircraft order while skipping rows already covered.  This
+        # avoids rescanning the full user×site matrix after every chosen beam.
+        new = cover[uncovered]
         counts = new.sum(axis=0)
         if method == "capacity_cluster":
-            mass = (new * demands[:, None]).sum(axis=0)
+            mass = (new * demands[uncovered, None]).sum(axis=0)
             score = counts + np.minimum(mass / cfg.reference_capacity_bps, 1.0) - 2 * np.maximum(mass / cfg.reference_capacity_bps - 1, 0)
         elif method == "set_cover":
-            score = counts + 1e-6 * (new * demands[:, None]).sum(axis=0) / max(float(demands.sum()), 1.0)
+            score = counts + 1e-6 * (new * demands[uncovered, None]).sum(axis=0) / max(float(demands.sum()), 1.0)
         elif method == "power_transport":
-            mass = (new * demands[:, None]).sum(axis=0)
+            mass = (new * demands[uncovered, None]).sum(axis=0)
             score = np.minimum(mass, cfg.reference_capacity_bps) / cfg.reference_capacity_bps + 0.01 * counts
         else:
             raise ValueError("unknown constructor")

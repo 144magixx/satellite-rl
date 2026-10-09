@@ -51,6 +51,32 @@ class Stage1VariableControllerTests(unittest.TestCase):
             self.assertEqual(value["budget"]["formal_total_decisions"], 524288)
             self.assertEqual(value["followup_id"], "s1-v10")
 
+    def test_throughput_source_mapping_is_limited_to_two_learning_routes(self):
+        state = {"scientific_commit": "a" * 40,
+                 "throughput_source_overrides": {
+                     "train_R08": {"origin_commit": "a" * 40,
+                                   "repair_commit": "b" * 40,
+                                   "validation_receipt_sha256": "d" * 64,
+                                   "origin_checkpoint_sha256": "e" * 64},
+                     "test_R08": {"origin_commit": "a" * 40,
+                                  "repair_commit": "b" * 40,
+                                  "dataset_contract_sha256": "c" * 64},
+                     "train_R09": {"origin_commit": "a" * 40,
+                                   "repair_commit": "b" * 40,
+                                   "validation_receipt_sha256": "d" * 64,
+                                   "origin_checkpoint_sha256": "e" * 64},
+                     "test_R09": {"origin_commit": "a" * 40,
+                                  "repair_commit": "b" * 40,
+                                  "dataset_contract_sha256": "c" * 64}}}
+        controller.validate_throughput_overrides(state)
+        for key in state["throughput_source_overrides"]:
+            self.assertEqual(controller.expected_task_source(state, key), "b" * 40)
+        for key in ("dev_R01", "test_R01", "sequence_R12", "prepare_20418"):
+            self.assertEqual(controller.expected_task_source(state, key), "a" * 40)
+        state["throughput_source_overrides"]["test_R01"] = {"repair_commit": "b" * 40}
+        with self.assertRaisesRegex(RuntimeError, "nonlearning"):
+            controller.validate_throughput_overrides(state)
+
 
 if __name__ == "__main__":
     unittest.main()
