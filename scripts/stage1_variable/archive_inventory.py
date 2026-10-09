@@ -139,197 +139,27 @@ def fetch_small(commit, threshold=2_000_000):
 
 
 def fetch_analysis(commit):
-    """Sync each audited run's text ledgers once for local plots and reporting."""
-    state = _state(commit)
-    allowed = {".json", ".jsonl", ".csv", ".md", ".txt", ".log"}
-    result = {"scientific_commit": commit, "tasks": {}, "files": []}
-    for port in ops.SSH_PORTS:
-        inventory = json.loads((LOCAL / f"inventory_{port}.json").read_text(encoding="utf-8"))
-        rows = {row["relative"]: row for row in inventory["files"]}
-        run_ids = {task["run_id"] for task in state["tasks"].values() if task["port"] == port}
-        for task in state["tasks"].values():
-            if task["port"] == port:
-                result["tasks"][task["key"]] = {"port": port, "run_id": task["run_id"]}
-        client = ops.connect(port)
-        try:
-            with client.open_sftp() as sftp:
-                for run_id in run_ids:
-                    prefix = f"outputs/workbench/jobs/{run_id}/"
-                    selected = [row for relative, row in rows.items()
-                                if relative.startswith(prefix) and
-                                PurePosixPath(relative).suffix.lower() in allowed and
-                                "scene_inputs/" not in relative and
-                                "source_snapshots/" not in relative]
-                    for row in selected:
-                        relative = row["relative"][len(prefix):]
-                        parts = PurePosixPath(relative).parts
-                        if not parts or ".." in parts:
-                            raise RuntimeError("unsafe analysis relative path")
-                        target = ops.LOCAL / "synced_jobs" / str(port) / run_id / Path(*parts)
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        if not target.exists() or file_sha(target) != row["sha256"]:
-                            sftp.get(inventory["root"] + "/" + row["relative"], str(target))
-                        if file_sha(target) != row["sha256"]:
-                            raise RuntimeError(f"{port} {run_id}: analysis file SHA differs")
-                        result["files"].append({"port": port, "run_id": run_id,
-                                                "path": str(target),
-                                                "source_relative": row["relative"],
-                                                "sha256": row["sha256"],
-                                                "bytes": row["bytes"]})
-        finally:
-            client.close()
-        save(ops.LOCAL / "synced_jobs" / "manifest.json", result)
-    return {"tasks": len(result["tasks"]), "files": len(result["files"]),
-            "manifest": str(ops.LOCAL / "synced_jobs" / "manifest.json")}
+    """Archive all audited jobs as verified ZIP members for report streaming."""
+    _state(commit)
+    from scripts.stage1_variable.archive_jobs import archive_all_completed
+
+    return archive_all_completed()
 
 
 def fetch_completed_analysis(commit):
-    """Incrementally sync only immutable audited/completed task text ledgers."""
-    from scripts.stage1_variable import controller
-
-    state = json.loads(controller.STATE.read_text(encoding="utf-8"))
+    """Archive only currently audited, completed and exited jobs."""
+    state = json.loads(STATE.read_text(encoding="utf-8"))
     if state.get("scientific_commit") != commit:
-        raise RuntimeError("partial sync controller source differs")
-    selected = {}
-    for key, audit in state.get("audits", {}).items():
-        task = state.get("tasks", {}).get(key)
-        if not task or audit.get("run_id") != task["run_id"]:
-            raise RuntimeError("partial sync audit and controller task differ")
-        port, run_id = task["port"], task["run_id"]
-        response = ops.api(port, "/api/runs/" + run_id)
-        if response["status"] != 200:
-            raise RuntimeError(f"{key}: live task API unavailable")
-        detail = response["body"]
-        if (detail["status"].get("stage") != "completed" or
-                detail["status"].get("process_alive") is True or
-                detail["job"].get("git_commit") != controller.expected_task_source(state, key) or
-                detail["job"].get("run_id") != run_id):
-            raise RuntimeError(f"{key}: task is not immutable/completed at its mapped source")
-        if task["kind"] == "evaluate" and (
-                detail["artifacts"].get("raw_results_sha256") != audit.get("sha256")):
-            raise RuntimeError(f"{key}: live raw result SHA differs from controller audit")
-        selected[key] = {"port": port, "run_id": run_id,
-                         "source_commit": detail["job"]["git_commit"],
-                         "archive_root": detail["job"]["archive_root"]}
-    allowed = {"job.json", "config.json", "status.json", "artifacts.json",
-               "results.json", "results.partial.jsonl", "actions.jsonl",
-               "episodes.jsonl", "updates.jsonl", "evaluations.jsonl"}
-    manifest = {"scientific_commit": commit,
-                "sync_kind": "audited_completed_tasks_only",
-                "created_utc": __import__("datetime").datetime.now(
-                    __import__("datetime").timezone.utc).isoformat(),
-                "tasks": {key: {"port": row["port"], "run_id": row["run_id"],
-                                "source_commit": row["source_commit"]}
-                          for key, row in selected.items()},
-                "files": []}
-    for port in ops.SSH_PORTS:
-        tasks = {key: row for key, row in selected.items() if row["port"] == port}
-        if not tasks:
-            continue
-        info = ops.instance(port)
-        run_ids = [row["run_id"] for row in tasks.values()]
-        code = f'''
-import hashlib,json,pathlib
-root=pathlib.Path({info['root']!r}).resolve();runs={run_ids!r};rows=[]
-allowed={sorted(allowed)!r}
-for run_id in runs:
- directory=root/'outputs/workbench/jobs'/run_id
- for file in sorted(directory.iterdir()):
-  if not file.is_file() or not (file.name in allowed or
-      file.name.startswith('validation_') and file.name.endswith('.jsonl')):continue
-  h=hashlib.sha256()
-  with file.open('rb') as stream:
-   for block in iter(lambda:stream.read(8<<20),b''):h.update(block)
-  rows.append({{'run_id':run_id,'name':file.name,'path':str(file),
-               'sha256':h.hexdigest(),'bytes':file.stat().st_size}})
-print(json.dumps(rows))
-'''
-        response = ops.remote_python(code, port, timeout=300)
-        if response["exit_code"]:
-            raise RuntimeError(f"{port}: partial analysis SHA inventory failed: {response['stderr'][-700:]}")
-        rows = json.loads(response["stdout"].splitlines()[-1])
-        client = ops.connect(port)
-        try:
-            with client.open_sftp() as sftp:
-                for row in rows:
-                    target = ops.LOCAL / "synced_jobs" / str(port) / row["run_id"] / row["name"]
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    if not target.exists() or file_sha(target) != row["sha256"]:
-                        sftp.get(row["path"], str(target))
-                    if file_sha(target) != row["sha256"]:
-                        raise RuntimeError(f"{port} {row['run_id']}: partial synced file SHA differs")
-                    manifest["files"].append({"port": port, "run_id": row["run_id"],
-                                              "path": str(target),
-                                              "source_relative": row["path"].removeprefix(info["root"] + "/"),
-                                              "sha256": row["sha256"], "bytes": row["bytes"]})
-        finally:
-            client.close()
-        save(ops.LOCAL / "synced_jobs" / "manifest.json", manifest)
-    save(ops.LOCAL / "synced_jobs" / "manifest.json", manifest)
-    receipt = {"tasks": len(manifest["tasks"]), "files": len(manifest["files"]),
-               "bytes": sum(row["bytes"] for row in manifest["files"]),
-               "manifest": str(ops.LOCAL / "synced_jobs" / "manifest.json"),
-               "formal_final_archive": False}
-    save(LOCAL / "completed_analysis_receipt.json", receipt)
-    return receipt
+        raise RuntimeError("partial archive controller source differs")
+    from scripts.stage1_variable.archive_jobs import archive_all_completed
+
+    return archive_all_completed()
 
 
 def bundle_download(commit):
+    """Prevent a second lane-wide copy of the same large job evidence."""
     _state(commit)
-    result = {}
-    for port in ops.SSH_PORTS:
-        manifest = json.loads((LOCAL / f"inventory_{port}.json").read_text(encoding="utf-8"))
-        if manifest["commit"] != commit:
-            raise RuntimeError("bundle commit differs")
-        info = ops.instance(port)
-        remote_manifest = f"{info['ops']}/inventory_{commit}.json"
-        sent = ops.upload(LOCAL / f"inventory_{port}.json", remote_manifest, port)
-        if sent["local_sha256"] != sent["remote"]:
-            raise RuntimeError("remote inventory SHA differs")
-        code = f'''
-import hashlib,json,pathlib,shutil,zipfile
-root=pathlib.Path({info['root']!r}).resolve();manifest=json.loads(pathlib.Path({remote_manifest!r}).read_text())
-target=root/'ops'/('s1v10_final_{commit}.zip')
-tmp=target.with_suffix('.zip.part')
-required=sum(int(row['bytes']) for row in manifest['files'])+2*(1<<30)
-if shutil.disk_usage(root).free<required:
- raise RuntimeError('remote final ZIP lacks uncompressed-size plus 2GiB free-space reserve')
-text_suffix={{'.json','.jsonl','.csv','.log','.md','.txt','.py','.html','.js','.css'}}
-with zipfile.ZipFile(tmp,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=5,allowZip64=True) as bundle:
- for row in manifest['files']:
-  file=(root/row['relative']).resolve()
-  if not file.is_relative_to(root) or not file.is_file():raise RuntimeError('inventory member absent')
-  h=hashlib.sha256()
-  with file.open('rb') as stream:
-   for block in iter(lambda:stream.read(8<<20),b''):h.update(block)
-  h=h.hexdigest()
-  if h!=row['sha256']:raise RuntimeError('inventory member SHA changed')
-  mode=zipfile.ZIP_DEFLATED if file.suffix.lower() in text_suffix else zipfile.ZIP_STORED
-  bundle.write(file,row['relative'],compress_type=mode,compresslevel=5 if mode==zipfile.ZIP_DEFLATED else None)
- bundle.write({remote_manifest!r},'inventory.json')
-tmp.replace(target)
-h=hashlib.sha256()
-with target.open('rb') as stream:
- for block in iter(lambda:stream.read(8<<20),b''):h.update(block)
-print(json.dumps({{'path':str(target),'bytes':target.stat().st_size,'sha256':h.hexdigest(),
-                  'file_count':len(manifest['files'])}}))
-'''
-        remote = _remote(port, code, timeout=3600)
-        local = bundle_local_path(port, remote["path"])
-        local.parent.mkdir(parents=True, exist_ok=True)
-        if shutil.disk_usage(local.parent).free < remote["bytes"] + 2 * (1 << 30):
-            raise RuntimeError(f"{port}: local ZIP needs payload plus 2GiB free-space reserve")
-        client = ops.connect(port)
-        try:
-            with client.open_sftp() as sftp:
-                sftp.get(remote["path"], str(local))
-        finally:
-            client.close()
-        if local.stat().st_size != remote["bytes"] or file_sha(local) != remote["sha256"]:
-            raise RuntimeError(f"{port}: final ZIP SHA differs")
-        result[str(port)] = {**remote, "local_path": str(local)}
-        save(LOCAL / "bundle_receipt.json", result)
-    return result
+    raise RuntimeError("S1-V10 job ZIP64 packages are the final local archive; use archive_jobs")
 
 
 def source_inventory(commit):

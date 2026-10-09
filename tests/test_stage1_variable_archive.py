@@ -6,7 +6,7 @@ import tempfile
 from unittest.mock import patch
 
 from scripts.stage1_variable.archive_inventory import bundle_local_path, fetch_completed_analysis
-from scripts.stage1_variable import archive_inventory, controller
+from scripts.stage1_variable import archive_inventory, archive_jobs, controller
 
 
 class VariableArchiveTests(unittest.TestCase):
@@ -24,7 +24,7 @@ class VariableArchiveTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bundle_local_path(99999, "/tmp/s1v10_final_a.zip")
 
-    def test_completed_only_sync_does_not_require_final_archive_gate(self):
+    def test_completed_only_archive_delegates_without_final_gate(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             state = root / "controller" / "state.json"
@@ -33,13 +33,17 @@ class VariableArchiveTests(unittest.TestCase):
                                          "phase": "execution", "tasks": {},
                                          "audits": {}}))
             with patch.object(controller, "STATE", state), \
-                 patch.object(archive_inventory.ops, "LOCAL", root), \
-                 patch.object(archive_inventory, "LOCAL", root / "delivery"):
+                 patch.object(archive_inventory, "STATE", state), \
+                 patch.object(archive_jobs, "archive_all_completed",
+                              return_value={"archived": 0, "tasks": {}}) as archive:
                 result = fetch_completed_analysis("a" * 40)
-            self.assertEqual(result["tasks"], 0)
-            self.assertFalse(result["formal_final_archive"])
-            manifest = json.loads((root / "synced_jobs" / "manifest.json").read_text())
-            self.assertEqual(manifest["sync_kind"], "audited_completed_tasks_only")
+            self.assertEqual(result["archived"], 0)
+            archive.assert_called_once_with()
+
+    def test_lane_wide_final_bundle_is_refused(self):
+        with patch.object(archive_inventory, "_state", return_value={}):
+            with self.assertRaisesRegex(RuntimeError, "job ZIP64 packages"):
+                archive_inventory.bundle_download("a" * 40)
 
 
 if __name__ == "__main__":
