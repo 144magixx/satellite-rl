@@ -849,6 +849,7 @@ def _scientific_stop_if_due(directory, job, config, policy, *, step, preflight,
                            selection=selection, preflight=preflight)
     _status(directory, job, stage="stopped", env_step=step,
             stop_reason="consecutive_validation_all_stop_zero_progress",
+            scientific_stop=True,
             checkpoint_sha256=checkpoint_sha256, final_policy=str(endpoint),
             scientific_stop_validation_nodes=[row["env_step"] for row in nodes[-2:]])
     _event(directory, job, "d12a_scientific_stop", env_step=step,

@@ -269,6 +269,7 @@ class DrlR04LearningTest(unittest.TestCase):
             self.assertEqual(metadata["env_step"], 32768)
             self.assertEqual(metadata["selection"], "scientific_stop_endpoint")
             status = json.loads((directory / "status.json").read_text(encoding="utf-8"))
+            self.assertTrue(status["scientific_stop"])
             self.assertEqual(status["stop_reason"],
                              "consecutive_validation_all_stop_zero_progress")
 
