@@ -223,8 +223,8 @@ def stop_training():
         port = detail["port"]
         if detail["job"].get("git_commit") != ORIGIN_COMMIT:
             raise RuntimeError("target source changed before stop")
-        if detail["status"].get("stage") != "training":
-            raise RuntimeError(f"{run_id} not in formal training stage")
+        if detail["status"].get("stage") not in ("training", "evaluating"):
+            raise RuntimeError(f"{run_id} not in formal training or its validation stage")
         held = hold(port)
         response = api(port, f"/api/runs/{run_id}/stop", {})
         result["runs"][run_id] = {"port": port, "request_id": detail["job"]["request_id"],
@@ -240,7 +240,7 @@ def stopped_checkpoint(run_id):
     job, status = detail["job"], detail["status"]
     if (job.get("git_commit") != ORIGIN_COMMIT or
             status.get("stage") != "stopped" or
-            status.get("stop_reason") != "requested" or
+            status.get("stop_reason") not in ("requested", "validation_interrupted") or
             type(status.get("env_step")) is not int or
             status["env_step"] % 2048 or not 0 < status["env_step"] < 262144 or
             not api(port, "/api/dispatch/hold").get("active")):
@@ -262,6 +262,7 @@ orphan=[line for line in sessions if line.split(None,2) and line.split(None,2)[0
 print(json.dumps({{'sha256':h.hexdigest(),'bytes':path.stat().st_size,
  'worker_alive_same_birth':alive,'launch_pid':pid,'launch_start':launch['process_start_time'],
  'step':status['env_step'],'updates':status['update_step'],'episode':status['episode'],
+ 'stop_reason':status.get('stop_reason'),
  'orphan_session_processes':orphan}}))
 '''
     remote_state = remote(port, code)
@@ -542,6 +543,7 @@ def stage_validation_receipt(run_id, new_commit, approval_commit):
                "dataset_sha256": {"train": TRAIN_SHA256,
                                   "validation": VALIDATION_SHA256},
                "stream_count": 32,
+               "stop_reason": state["stop_reason"],
                "saved_validation_nodes": state["saved_validation_nodes"],
                "actual_checkpoint": {"sha256": state["checkpoint_sha256"],
                                      "step": state["checkpoint_step"],

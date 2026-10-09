@@ -125,13 +125,23 @@ def _checkpoint_state(directory, job, config, status):
             raise ValueError(f"S1-V10 {name} has {lines} rows but checkpoint committed {counts[name]}")
     interval = config["training"]["validation_interval"]
     last_validation = payload.get("last_validation")
+    stop_reason = status.get("stop_reason")
     if (type(last_validation) is not int or last_validation < 0 or
             last_validation > step or last_validation % interval):
         raise ValueError("S1-V10 checkpoint validation position differs")
     expected_nodes = list(range(interval, last_validation + 1, interval))
+    interrupted_validation = stop_reason == "validation_interrupted"
+    if (stop_reason not in ("requested", "validation_interrupted") or
+            interrupted_validation and
+            (step != last_validation + interval or step % interval)):
+        raise ValueError("S1-V10 stop reason does not match checkpoint validation boundary")
     found = sorted(directory.glob("validation_*.jsonl"),
                    key=lambda path: int(path.stem.removeprefix("validation_")))
-    if [path.name for path in found] != [f"validation_{node}.jsonl" for node in expected_nodes]:
+    full_names = [f"validation_{node}.jsonl" for node in expected_nodes]
+    partial_name = f"validation_{step}.jsonl"
+    found_names = [path.name for path in found]
+    allowed_names = [full_names, full_names + [partial_name]] if interrupted_validation else [full_names]
+    if found_names not in allowed_names:
         raise ValueError("S1-V10 saved validation nodes include missing/future/partial files")
     summaries = []
     path = directory / "evaluations.jsonl"
@@ -169,10 +179,50 @@ def _checkpoint_state(directory, job, config, status):
             raise ValueError("S1-V10 validation summary SHA/step differs from full rows")
         validation_nodes.append({"env_step": node, "rows": 60,
                                  "sha256": node_sha})
+    if interrupted_validation:
+        from satellite_rl.coverage.variable_dataset import load_variable_dataset
+
+        frozen_validation = config["datasets"]["validation"]
+        frozen_path = Path(frozen_validation["path"])
+        if (not frozen_path.is_file() or
+                digest(frozen_path) != frozen_validation["sha256"]):
+            raise ValueError("S1-V10 frozen validation dataset SHA differs")
+        scenes = load_variable_dataset(frozen_path).scenes
+        multipliers = config["evaluation"]["demand_multipliers"]
+        if len(scenes) != 20 or list(multipliers) != [.75, 1., 1.25]:
+            raise ValueError("S1-V10 validation scene grid changed")
+        expected_order = [(scene.scene_id, scene.source_hash, float(multiplier))
+                          for scene in scenes for multiplier in multipliers]
+        partial = directory / partial_name
+        identities = set()
+        ordered = []
+        if partial.is_file():
+            with partial.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    identity = (row.get("scene_id"), row.get("scene_sha256"),
+                                row.get("demand_multiplier"))
+                    if (not row.get("demand_conserved") or row.get("route") !=
+                            config["coverage"]["variable"]["route"] or
+                            not isinstance(identity[0], str) or
+                            not isinstance(identity[1], str) or
+                            identity[2] not in (.75, 1., 1.25) or
+                            identity in identities):
+                        raise ValueError("S1-V10 partial validation row/source grid differs")
+                    identities.add(identity)
+                    ordered.append(identity)
+        if len(ordered) >= 60 or ordered != expected_order[:len(ordered)]:
+            raise ValueError("S1-V10 partial validation differs from frozen scene order")
+        validation_nodes.append({"env_step": step, "rows": len(ordered),
+                                 "sha256": digest(partial) if partial.is_file() else None,
+                                 "complete": False})
     return {"checkpoint_sha256": checkpoint_sha, "checkpoint_step": step,
             "checkpoint_updates": payload["updates"], "checkpoint_episode": payload["episode"],
             "config_hash": expected_hash, "stream_count": len(payload["streams"]),
             "ledger_counts": dict(counts), "last_validation": last_validation,
+            "stop_reason": stop_reason,
             "saved_validation_nodes": validation_nodes}
 
 
@@ -199,6 +249,7 @@ def _validation_receipt(store, directory, path, expected_sha, *, job, config, st
             receipt.get("dataset_sha256") != {"train": TRAIN_SHA256,
                                                "validation": VALIDATION_SHA256} or
             receipt.get("stream_count") != 32 or
+            receipt.get("stop_reason") != checkpoint_state["stop_reason"] or
             receipt.get("saved_validation_nodes") != checkpoint_state["saved_validation_nodes"] or
             actual != {"sha256": checkpoint_state["checkpoint_sha256"],
                        "step": checkpoint_state["checkpoint_step"],
@@ -256,7 +307,8 @@ def prepare_variable_throughput_recovery(store, job, validation_path,
             job.get("variable_dataset_contract", {}).get("sha256") != DATA_CONTRACT_SHA256 or
             digest(job["variable_dataset_contract"]["path"]) != DATA_CONTRACT_SHA256):
         raise ValueError("S1-V10 frozen input/seed/decision budget differs")
-    if (status.get("stage") != "stopped" or status.get("stop_reason") != "requested" or
+    if (status.get("stage") != "stopped" or status.get("stop_reason") not in
+            ("requested", "validation_interrupted") or
             launch.get("pid") != status.get("pid") or
             not isinstance(launch.get("process_start_time"), (int, float)) or
             pid_alive(status.get("pid"), launch["process_start_time"])):

@@ -8,9 +8,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import numpy as np
 import torch
 
 from satellite_rl.coverage.config import config_hash
+from satellite_rl.coverage.scenes import CoverageDataset, CoverageScene
+from satellite_rl.coverage.variable_dataset import save_variable_dataset
 from satellite_rl.training.run_monitor import atomic_json
 from satellite_rl.workbench.coverage_variable import variable_default_config
 from satellite_rl.workbench.storage import Store, digest
@@ -118,6 +121,7 @@ class ThroughputRecoveryTests(unittest.TestCase):
                    "dataset_sha256": {"train": TRAIN_SHA256,
                                       "validation": VALIDATION_SHA256},
                    "stream_count": 32,
+                   "stop_reason": "requested",
                    "saved_validation_nodes": [],
                    "actual_checkpoint": {"sha256": checkpoint_sha,
                                          "step": 2048, "updates": 128, "episode": 10},
@@ -224,6 +228,72 @@ class ThroughputRecoveryTests(unittest.TestCase):
             rows[0]["demand_conserved"] = False
             node.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "validation row"):
+                _checkpoint_state(directory, job, config, status)
+
+    def test_interrupted_validation_keeps_exact_partial_scene_prefix(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store, job, directory, receipt, contract = self.fixture(Path(temporary))
+            scenes = [CoverageScene(f"mother_{index}",
+                                    np.array([[50., 10.]]), np.array([1.]),
+                                    np.empty((0, 2)), [f"aircraft_{index}"], {},
+                                    f"sha_{index}") for index in range(20)]
+            validation = directory / "validation_inputs.npz"
+            save_variable_dataset(CoverageDataset(scenes, {}), validation)
+            config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
+            config["datasets"]["validation"]["sha256"] = digest(validation)
+            atomic_json(directory / "config.json", config)
+            checkpoint = torch.load(directory / "checkpoint.pt", map_location="cpu",
+                                    weights_only=False)
+            checkpoint.update(step=16384, updates=1024, episode=20,
+                              last_validation=0, config_hash=config_hash(config))
+            torch.save(checkpoint, directory / "checkpoint.pt")
+            status = json.loads((directory / "status.json").read_text(encoding="utf-8"))
+            status.update(env_step=16384, update_step=1024, episode=20,
+                          stop_reason="validation_interrupted",
+                          checkpoint_sha256=digest(directory / "checkpoint.pt"))
+            atomic_json(directory / "status.json", status)
+            rows = [{"scene_id": scene.scene_id,
+                     "scene_sha256": scene.source_hash,
+                     "demand_multiplier": multiplier, "route": "R08",
+                     "demand_conserved": True}
+                    for scene in scenes for multiplier in (.75, 1., 1.25)]
+            partial = directory / "validation_16384.jsonl"
+            partial.write_text("".join(json.dumps(row) + "\n" for row in rows[:17]))
+            checked = _checkpoint_state(directory, job, config, status)
+            self.assertEqual(checked["saved_validation_nodes"], [{
+                "env_step": 16384, "rows": 17, "sha256": digest(partial),
+                "complete": False}])
+            self.assertEqual(checked["stop_reason"], "validation_interrupted")
+            proof_receipt = json.loads(receipt.read_text(encoding="utf-8"))
+            proof_receipt.update(config_sha256=digest(directory / "config.json"),
+                                 config_hash=config_hash(config),
+                                 dataset_sha256={"train": TRAIN_SHA256,
+                                                 "validation": digest(validation)},
+                                 stop_reason="validation_interrupted",
+                                 saved_validation_nodes=checked["saved_validation_nodes"],
+                                 actual_checkpoint={"sha256": checked["checkpoint_sha256"],
+                                                    "step": 16384, "updates": 1024,
+                                                    "episode": 20})
+            atomic_json(receipt, proof_receipt)
+            job["variable_dataset_sha256"]["validation"] = digest(validation)
+            atomic_json(directory / "job.json", job)
+            real_digest = digest
+            def checked_digest(path):
+                return DATA_CONTRACT_SHA256 if Path(path) == contract else real_digest(path)
+            with patch("satellite_rl.workbench.variable_throughput_recovery.VALIDATION_SHA256",
+                       real_digest(validation)), patch(
+                           "satellite_rl.workbench.variable_throughput_recovery.pid_alive",
+                           return_value=False), patch(
+                           "satellite_rl.workbench.variable_throughput_recovery.digest",
+                           side_effect=checked_digest):
+                updated = prepare_variable_throughput_recovery(
+                    store, job, receipt, real_digest(receipt), NEW_COMMIT)
+            archive = Path(updated["variable_throughput_repair"]["archive_path"])
+            self.assertEqual(digest(archive / "original/validation_16384.jsonl"),
+                             checked["saved_validation_nodes"][-1]["sha256"])
+            partial.write_text("".join(json.dumps(row) + "\n" for row in
+                                       [rows[1], rows[0], *rows[2:17]]))
+            with self.assertRaisesRegex(ValueError, "frozen scene order"):
                 _checkpoint_state(directory, job, config, status)
 
 
