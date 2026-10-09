@@ -26,7 +26,12 @@ def _valid_terminal(row):
                 for v in (initial, best)) or best > initial + 1e-8 or
             row.get("failure_reason") or row.get("geometry_calls", 8193) > 8192 or
             row.get("trials", 257) > 256 or row.get("commits", 33) > 32 or
-            row.get("matrix_calls", -1) < 0 or row.get("ray_pair_checks", -1) < 0):
+            row.get("matrix_calls", -1) < 0 or
+            row.get("matrix_calls", 8193) > row.get("geometry_calls", -1) or
+            row.get("ray_pair_checks", -1) < 0 or
+            not isinstance(row.get("reward_sum"), (int, float)) or
+            not math.isclose(row["reward_sum"], 100 * (initial - best),
+                             rel_tol=1e-8, abs_tol=1e-7)):
         return False
     layout = row.get("best_layout") or {}
     assigned = layout.get("assignment")

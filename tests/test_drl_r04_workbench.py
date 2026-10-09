@@ -118,6 +118,7 @@ class DrlR04WorkbenchTests(unittest.TestCase):
             rows = [{"dataset_index": i // 3,
                      "demand_multiplier": d12.MULTIPLIERS[i % 3],
                      "initial_j": 1.0, "best_j": 1.0,
+                     "reward_sum": 0.0,
                      "geometry_calls": 0, "trials": 0, "commits": 1,
                      "matrix_calls": 0, "ray_pair_checks": 0,
                      "best_layout": {"centers": [[0.0, 0.0]], "widths": [.5],
