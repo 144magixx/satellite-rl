@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ast
 import copy
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import json
+import multiprocessing
 from pathlib import Path
 import tempfile
 import unittest
@@ -24,7 +26,9 @@ from satellite_rl.coverage.variable_runner import (_checkpoint_parallel, _load_p
                                                    _fresh_stream, _train,
                                                    _single_evaluation, _evaluate_rows,
                                                    _check_training,
-                                                   _parallel_validation_if_due)
+                                                   _parallel_validation_if_due,
+                                                   _cpu_worker_init, _cpu_observe,
+                                                   _cpu_execute)
 from satellite_rl.workbench.coverage_variable import variable_default_config
 
 
@@ -251,6 +255,42 @@ class VariableLearningTests(unittest.TestCase):
             config["training"]["total_steps"] = 262144
             with self.assertRaisesRegex(ValueError, "partition"):
                 _check_training(config, {"experiment_role": "formal"})
+
+    def test_spawn_cpu_worker_matches_threads_on_same_aircraft_packet(self):
+        from satellite_rl.coverage.scenes import CoverageDataset
+        from satellite_rl.coverage.variable_dataset import save_variable_dataset
+
+        config = variable_default_config()
+        config["coverage"]["variable"]["route"] = "R09"
+        config["coverage"]["method"] = "ppo"
+        with tempfile.TemporaryDirectory() as temp:
+            data = Path(temp) / "aircraft" / "inputs.npz"
+            save_variable_dataset(CoverageDataset([self.scene]), data)
+            import hashlib
+            record = {"path": str(data), "sha256": hashlib.sha256(data.read_bytes()).hexdigest()}
+            layout, _ = initial_layout(self.scene, self.cfg, "R09")
+            packet = {"scene_index": 0, "level": 1, "layout": layout.to_record(),
+                      "episode_steps": 0, "geometry_calls": 0}
+            _cpu_worker_init(record, config, "R09", [.75, 1, 1.25])
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                threaded = list(pool.map(_cpu_observe, [packet, packet]))
+            with ProcessPoolExecutor(
+                    max_workers=2, mp_context=multiprocessing.get_context("spawn"),
+                    initializer=_cpu_worker_init,
+                    initargs=(record, config, "R09", [.75, 1, 1.25])) as pool:
+                spawned = list(pool.map(_cpu_observe, [packet, packet]))
+                action = threaded[0][1][1]
+                process_step = pool.submit(_cpu_execute,
+                                           (packet, action, threaded[0][3])).result()
+            for left, right in zip(threaded, spawned):
+                for name in left[0]:
+                    self.assertTrue(np.array_equal(left[0][name], right[0][name]))
+                self.assertEqual(left[1:], right[1:])
+            thread_step = _cpu_execute((packet, action, threaded[0][3]))
+            self.assertEqual(thread_step[0], process_step[0])
+            self.assertEqual({k: v for k, v in thread_step[1].items() if k != "elapsed_s"},
+                             {k: v for k, v in process_step[1].items() if k != "elapsed_s"})
+            self.assertEqual(thread_step[2:], process_step[2:])
 
     def test_r12_static_cold_and_sequence_warm_are_distinct(self):
         from dataclasses import replace
