@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import shutil
+import zipfile
 
 from scripts.stage1_variable import ops
 from scripts.stage1_variable.controller import STATE, save
@@ -167,27 +168,44 @@ def source_inventory(commit):
     from scripts.stage1_variable.data_controller import (
         PREPARATION_ARCHIVE_SHA, SOURCE_CONTRACT_SHA, SOURCE_PREFLIGHT_SHA)
 
-    _state(commit)
+    state = json.loads(STATE.read_text(encoding="utf-8"))
+    if (state.get("scientific_commit") != commit or
+            set(state.get("prepares", {})) != {str(port) for port in ops.SSH_PORTS}):
+        raise RuntimeError("shared S1-V10 source inventory lacks four frozen prepare jobs")
+    for port in ops.SSH_PORTS:
+        prepared = state["prepares"][str(port)]
+        response = ops.api(port, "/api/runs/" + prepared["run_id"])
+        if response["status"] != 200:
+            raise RuntimeError("shared S1-V10 preparation API unavailable")
+        job, status = response["body"]["job"], response["body"]["status"]
+        if (job.get("run_id") != prepared["run_id"] or
+                job.get("request_id") != prepared["request_id"] or
+                job.get("git_commit") != prepared["git_commit"] or
+                status.get("stage") != "completed" or
+                status.get("process_alive") is not False):
+            raise RuntimeError("shared S1-V10 source needs four completed exited preparations")
     code = f'''
 import hashlib,json,pathlib
 base=pathlib.Path({ops.BASE!r})/'source';days={PREPARATION_ARCHIVE_SHA!r};rows={{}}
 for day,expected in days.items():
  folder=base/day;pin=json.loads((folder/'source_preflight.json').read_text());status=json.loads((folder/'download_status.json').read_text())
-archive=folder/pin['archive_name'];h=hashlib.sha256()
-with archive.open('rb') as stream:
- for block in iter(lambda:stream.read(8<<20),b''):h.update(block)
-if status.get('status')!='completed' or status.get('sha256')!=expected or h.hexdigest()!=expected:
- raise RuntimeError('original daily archive SHA/complete receipt differs: '+day)
-files=[]
-for path in sorted(folder.iterdir()):
- if path.is_file() and path!=archive and path.suffix!='.part':
-  files.append({{'path':str(path),'bytes':path.stat().st_size,
-                'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}})
-rows[day]={{'archive':str(archive),'bytes':archive.stat().st_size,'sha256':expected,
-            'asset_id':pin['asset_id'],'metadata_files':files}}
+ archive=folder/pin['archive_name'];h=hashlib.sha256()
+ with archive.open('rb') as stream:
+  for block in iter(lambda:stream.read(8<<20),b''):h.update(block)
+ if status.get('status')!='completed' or status.get('sha256')!=expected or h.hexdigest()!=expected:
+  raise RuntimeError('original daily archive SHA/complete receipt differs: '+day)
+ files=[]
+ for path in sorted(folder.iterdir()):
+  if path.is_file() and path!=archive and path.suffix!='.part':
+   files.append({{'path':str(path),'bytes':path.stat().st_size,
+                 'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}})
+ rows[day]={{'archive':str(archive),'bytes':archive.stat().st_size,'sha256':expected,
+             'asset_id':pin['asset_id'],'metadata_files':files}}
 print(json.dumps(rows))
 '''
     observed = _remote(20418, code, timeout=600)
+    if set(observed) != set(PREPARATION_ARCHIVE_SHA):
+        raise RuntimeError("shared S1-V10 source inventory omits one of four pinned days")
     for day, row in observed.items():
         mapped = {Path(item["path"]).name: item["sha256"] for item in row["metadata_files"]}
         if (row["sha256"] != PREPARATION_ARCHIVE_SHA[day] or
@@ -230,6 +248,41 @@ def source_bundle_target(commit, remote):
     return target, {"free_bytes_before": free,
                     "missing_compressed_bytes": missing,
                     "reserved_bytes_each_drive": archive_jobs.LOCAL_RESERVE_BYTES}
+
+
+def verify_shared_source_zip(path, inventory, inventory_path, expected_zip_sha):
+    """Verify the sole raw-source ZIP and every uncompressed daily member."""
+    from scripts.s2p19.archive_sources import safe_member
+
+    if file_sha(path) != expected_zip_sha:
+        raise RuntimeError("S1-V10 shared raw-source ZIP SHA differs")
+    expected = {"source_inventory.json": {
+        "sha256": file_sha(inventory_path), "bytes": Path(inventory_path).stat().st_size}}
+    for day, row in inventory["days"].items():
+        archive = Path(row["archive"])
+        expected[safe_member(day + "/" + archive.name)] = {
+            "sha256": row["sha256"], "bytes": row["bytes"]}
+        for item in row["metadata_files"]:
+            member = safe_member(day + "/" + Path(item["path"]).name)
+            if member in expected:
+                raise RuntimeError("S1-V10 shared source ZIP repeats a pinned member")
+            expected[member] = {"sha256": item["sha256"], "bytes": item["bytes"]}
+    with zipfile.ZipFile(path) as bundle:
+        infos = bundle.infolist()
+        if len(infos) != len(expected) or {info.filename for info in infos} != set(expected):
+            raise RuntimeError("S1-V10 shared source ZIP member set differs")
+        for info in infos:
+            safe_member(info.filename)
+            row = expected[info.filename]
+            if info.is_dir() or info.file_size != row["bytes"]:
+                raise RuntimeError("S1-V10 shared source ZIP member size differs")
+            value = hashlib.sha256()
+            with bundle.open(info) as stream:
+                for block in iter(lambda: stream.read(8 << 20), b""):
+                    value.update(block)
+            if value.hexdigest() != row["sha256"]:
+                raise RuntimeError("S1-V10 shared source ZIP member SHA differs")
+    return [{"member": member, **record} for member, record in sorted(expected.items())]
 
 
 def source_bundle_download(commit):
@@ -280,11 +333,82 @@ print(json.dumps({{'path':str(target),'bytes':target.stat().st_size,'sha256':h.h
         client.close()
     if target_local.stat().st_size != remote["bytes"] or file_sha(target_local) != remote["sha256"]:
         raise RuntimeError("single raw-source ZIP local SHA differs")
-    receipt = {**remote, "local_path": str(target_local),
+    members = verify_shared_source_zip(target_local, inventory, local_inventory, remote["sha256"])
+    receipt = {**remote, "schema": "s1v10.shared_source_bundle.v1",
+               "scientific_commit": commit,
+               "local_path": str(target_local),
                "local_space_gate": gate,
                "source_inventory_sha256": file_sha(local_inventory),
+               "all_member_shas_verified": True, "members": members,
                "daily_archives_copied_once": 4}
     save(LOCAL / "source_bundle_receipt.json", receipt)
+    return receipt
+
+
+def relocate_shared_source_to_backup(commit):
+    """Keep one verified source ZIP on C when it preserves D for large jobs."""
+    from scripts.stage1_variable import archive_jobs
+
+    receipt_path = LOCAL / "source_bundle_receipt.json"
+    if not receipt_path.is_file():
+        raise RuntimeError("verified shared source receipt absent")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    inventory_path = LOCAL / "source_inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8")) if inventory_path.is_file() else {}
+    name = f"s1v10_raw_source_{commit}.zip"
+    original = (LOCAL / "bundles" / "source" / name).resolve()
+    backup = (archive_jobs.BACKUP_LOCAL / "_shared_source" / name).resolve()
+    if ((archive_jobs.LOCAL / "shared_source_closure_receipt.json").is_file() or
+            receipt.get("schema") != "s1v10.shared_source_bundle.v1" or
+            receipt.get("all_member_shas_verified") is not True or
+            receipt.get("scientific_commit", commit) != commit or
+            inventory.get("scientific_commit") != commit or
+            receipt.get("source_inventory_sha256") != file_sha(inventory_path) or
+            receipt.get("bytes", 0) <= 0 or
+            Path(receipt.get("local_path") or "").resolve() not in (original, backup)):
+        raise RuntimeError("shared source ZIP is already closed or has another identity")
+    expected = receipt["sha256"]
+    if (Path(receipt["local_path"]).resolve() == backup and backup.is_file() and
+            file_sha(backup) == expected and not original.exists()):
+        return receipt
+    if not original.is_file() or original.is_symlink() or file_sha(original) != expected:
+        raise RuntimeError("original D shared source ZIP SHA/path differs")
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    source_free = shutil.disk_usage(original.parent).free
+    backup_free = shutil.disk_usage(backup.parent).free
+    if (source_free < archive_jobs.LOCAL_RESERVE_BYTES or
+            backup_free < receipt["bytes"] + archive_jobs.LOCAL_RESERVE_BYTES):
+        raise RuntimeError("C cannot hold shared source ZIP while retaining both 8 GiB reserves")
+    if not backup.is_file() or file_sha(backup) != expected:
+        pending = backup.with_name(backup.name + ".part")
+        shutil.copy2(original, pending)
+        if pending.stat().st_size != receipt["bytes"] or file_sha(pending) != expected:
+            raise RuntimeError("shared source ZIP copy to C failed SHA/size verification")
+        pending.replace(backup)
+    if file_sha(backup) != expected or backup.stat().st_size != receipt["bytes"]:
+        raise RuntimeError("verified C shared source ZIP differs")
+    migration = {"schema": "s1v10.shared_source_relocation.v1",
+                 "old_path": str(original), "new_path": str(backup),
+                 "sha256": expected, "bytes": receipt["bytes"],
+                 "D_free_before": source_free, "C_free_before": backup_free,
+                 "verified_copy_utc": __import__("datetime").datetime.now(
+                     __import__("datetime").timezone.utc).isoformat(),
+                 "old_removed": False}
+    receipt = {**receipt, "scientific_commit": commit,
+               "local_path": str(backup), "relocation": migration}
+    save(receipt_path, receipt)
+    if (original.resolve() != (LOCAL / "bundles" / "source" / name).resolve() or
+            file_sha(original) != expected):
+        raise RuntimeError("D source ZIP changed before duplicate removal")
+    original.unlink()
+    migration.update({"old_removed": True,
+                      "D_free_after": shutil.disk_usage(original.parent).free,
+                      "C_free_after": shutil.disk_usage(backup.parent).free,
+                      "completed_utc": __import__("datetime").datetime.now(
+                          __import__("datetime").timezone.utc).isoformat()})
+    receipt["relocation"] = migration
+    save(receipt_path, receipt)
+    save(LOCAL / "source_relocation_receipt.json", migration)
     return receipt
 
 
@@ -292,7 +416,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("inventory", "fetch-small", "fetch-analysis",
                                            "fetch-completed-analysis", "bundle-download",
-                                           "source-inventory", "source-bundle-download"))
+                                           "source-inventory", "source-bundle-download",
+                                           "source-relocate-backup"))
     parser.add_argument("--commit", required=True)
     args = parser.parse_args()
     result = (inventory(args.commit) if args.action == "inventory" else
@@ -301,7 +426,8 @@ def main():
               fetch_completed_analysis(args.commit) if args.action == "fetch-completed-analysis" else
               bundle_download(args.commit) if args.action == "bundle-download" else
               source_inventory(args.commit) if args.action == "source-inventory" else
-              source_bundle_download(args.commit))
+              source_bundle_download(args.commit) if args.action == "source-bundle-download" else
+              relocate_shared_source_to_backup(args.commit))
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

@@ -37,7 +37,7 @@ SMALL_MIRROR_MEMBERS = {
 
 
 REMOTE_BUILD = r'''
-import datetime,hashlib,json,os,pathlib,shutil,sys,zipfile
+import datetime,hashlib,json,os,pathlib,shutil,stat,sys,zipfile
 request=json.loads(REQUEST_JSON)
 root=pathlib.Path(request['archive_root']).resolve();run_id=request['run_id']
 jobdir=root/'outputs/workbench/jobs'/run_id
@@ -83,15 +83,65 @@ def add(member,path,expected=None):
  if expected is not None and actual!=expected:
   raise RuntimeError('frozen S1-V10 member SHA differs: '+member)
  items[member]={'member':member,'remote_path':str(path),'bytes':size,'sha256':actual}
-def tree(prefix,directory):
+def tree(prefix,directory,skip=None):
  directory=safe(directory)
  if not directory.is_dir():raise RuntimeError('archive directory absent: '+str(directory))
  for file in sorted(directory.rglob('*')):
+  if skip is not None and file==skip:continue
   if file.is_symlink():raise RuntimeError('symlink below archive tree')
   if file.is_file() and '__pycache__' not in file.parts and file.suffix!='.pyc':
    add(prefix+'/'+file.relative_to(directory).as_posix(),file)
 
-tree('job',jobdir)
+external_dependency=None;skip_raw=None
+if job.get('kind')=='prepare':
+ preparation=job.get('variable_preparation') or {}
+ archive=preparation.get('archive') or {}
+ preflight=preparation.get('source_preflight') or {}
+ day=preparation.get('date_utc')
+ if (not isinstance(day,str) or pathlib.PurePosixPath(day).name!=day or
+     len(day)!=10 or not isinstance(archive.get('sha256'),str) or
+     not isinstance(archive.get('bytes'),int)):
+  raise RuntimeError('preparation shared raw provenance incomplete')
+ shared=pathlib.Path(request['shared_source_root']).resolve()
+ pin=shared/day/'source_preflight.json'
+ if (str(pin)!=preflight.get('source_path') or not pin.is_file() or
+     digest(pin)!=preflight.get('sha256')):
+  raise RuntimeError('preparation raw source preflight SHA/path differs')
+ pin_record=json.loads(pin.read_text(encoding='utf-8'))
+ archive_name=pin_record.get('archive_name')
+ if (not isinstance(archive_name,str) or not archive_name or
+     pathlib.PurePosixPath(archive_name).name!=archive_name or
+     archive_name in ('.','..') or '\\' in archive_name):
+  raise RuntimeError('preparation raw pinned archive name unsafe')
+ shared_archive=shared/day/archive_name
+ if (str(shared_archive)!=archive.get('path') or
+     not shared_archive.is_file() or shared_archive.is_symlink() or
+     not stat.S_ISREG(shared_archive.lstat().st_mode)):
+  raise RuntimeError('preparation raw shared target differs from pinned daily archive')
+ skip_raw=jobdir/'preparation/raw'/archive_name
+ if not os.path.lexists(skip_raw):raise RuntimeError('preparation raw job member absent')
+ raw_stat=skip_raw.lstat();source_stat=shared_archive.lstat()
+ if stat.S_ISLNK(raw_stat.st_mode):
+  if skip_raw.resolve(strict=True)!=shared_archive.resolve(strict=True):
+   raise RuntimeError('preparation raw symlink points outside exact pinned source')
+  link_kind='exact_source_symlink'
+ elif stat.S_ISREG(raw_stat.st_mode):
+  if (raw_stat.st_dev,raw_stat.st_ino)!=(source_stat.st_dev,source_stat.st_ino):
+   raise RuntimeError('preparation raw regular file is not the pinned hardlink')
+  link_kind='exact_source_hardlink'
+ else:raise RuntimeError('preparation raw member has unsupported file type')
+ if (skip_raw.stat().st_size!=archive['bytes'] or
+     source_stat.st_size!=archive['bytes'] or
+     digest(skip_raw)!=archive['sha256'] or
+     digest(shared_archive)!=archive['sha256']):
+  raise RuntimeError('preparation raw source SHA/bytes differ from frozen job')
+ external_dependency={'kind':'shared_daily_aircraft_archive_v1',
+  'job_member':'job/preparation/raw/'+archive_name,
+  'source_bundle_member':day+'/'+archive_name,
+  'source_path':str(shared_archive),'sha256':archive['sha256'],
+  'bytes':archive['bytes'],'source_preflight_sha256':preflight['sha256'],
+  'link_kind':link_kind}
+tree('job',jobdir,skip=skip_raw)
 config=json.loads((jobdir/'config.json').read_text(encoding='utf-8'))
 for role,record in (config.get('datasets') or {}).items():
  if role not in ('train','development','validation','test','sequence'):
@@ -123,8 +173,10 @@ if request['raw_result_sha256']:
 total=sum(x['bytes'] for x in items.values())
 if not items or total>request['max_bytes']:raise RuntimeError('S1-V10 job input bound exceeded')
 ordered=[items[name] for name in sorted(items)]
-inventory=hashlib.sha256(json.dumps(
- [(x['member'],x['bytes'],x['sha256']) for x in ordered],separators=(',',':')).encode()).hexdigest()
+inventory_rows=[(x['member'],x['bytes'],x['sha256']) for x in ordered]
+inventory_payload=inventory_rows if external_dependency is None else {
+ 'members':inventory_rows,'external_dependencies':[external_dependency]}
+inventory=hashlib.sha256(json.dumps(inventory_payload,separators=(',',':')).encode()).hexdigest()
 groups=[];current=[];amount=0
 for item in ordered:
  if current and amount+item['bytes']>request['part_bytes']:
@@ -139,7 +191,8 @@ if destination.exists():
  if not receipt_path.is_file():raise RuntimeError('incomplete S1-V10 package preserved; inspect before retry')
  receipt=json.loads(receipt_path.read_text(encoding='utf-8'))
  if (receipt.get('inventory_sha256')!=inventory or receipt.get('run_id')!=run_id or
-     receipt.get('source_commit')!=job['git_commit']):
+     receipt.get('source_commit')!=job['git_commit'] or
+     receipt.get('external_dependencies')!=([] if external_dependency is None else [external_dependency])):
   raise RuntimeError('existing S1-V10 package inventory differs')
  for volume in receipt['volumes']:
   if digest(destination/volume['name'])!=volume['sha256']:
@@ -172,6 +225,7 @@ receipt={'schema':'s1v10.job_archive.v1',
          'job_stage':'completed','source_commit':job['git_commit'],
          'source_manifest_sha256':digest(source/'source_manifest.json'),
          'controller_audit_sha256':request['controller_audit_sha256'],
+         'external_dependencies':[] if external_dependency is None else [external_dependency],
          'inventory_sha256':inventory,'compression_level':request['compression_level'],
          'total_input_bytes':total,'member_count':len(ordered),'members':ordered,
          'volumes':volumes,'remote_package_directory':str(destination)}
@@ -326,7 +380,8 @@ def _select_volume_locations(receipt, port, run_id, package_id, receipt_bytes):
         if existing:
             paths[volume["name"]] = existing[0]
             continue
-        selected = next((root for root in roots if available[root] >= volume["bytes"]), None)
+        fitting = [root for root in roots if available[root] >= volume["bytes"]]
+        selected = min(fitting, key=lambda root: available[root] - volume["bytes"]) if fitting else None
         if selected is None:
             raise RuntimeError("S1-V10 actual ZIP volume exceeds D/C capacity plus 8 GiB reserves: " +
                                volume["name"] + " bytes=" + str(volume["bytes"]))
@@ -437,7 +492,9 @@ def _merge_analysis_manifest(key, port, run_id, source_commit, local, receipt, s
             raise RuntimeError("S1-V10 logical task already bound to another workbench job")
         tasks[key] = {"port": port, "run_id": run_id, "source_commit": source_commit,
                       "archive_receipt": str(local / "receipt.json"),
-                      "inventory_sha256": receipt["inventory_sha256"]}
+                      "inventory_sha256": receipt["inventory_sha256"],
+                      "external_dependencies": receipt.get("external_dependencies", []),
+                      "external_dependencies_closed": not receipt.get("external_dependencies")}
         updated = {**original, "sync_kind": "verified_completed_job_zip_sources",
                    "created_utc": datetime.now(timezone.utc).isoformat(),
                    "tasks": tasks, "files": sorted(prior + new_rows,
@@ -475,6 +532,7 @@ def archive_completed(key, *, part_mib=PART_MIB, compression_level=5,
     port, run_id = task["port"], task["run_id"]
     with _lock(LOCAL / "locks" / f"{port}_{run_id}.lock"):
         request = {"archive_root": ops.instance(port)["root"], "port": port,
+                   "shared_source_root": ops.BASE + "/source",
                    "task_key": key, "run_id": run_id,
                    "request_id": task["request_id"],
                    "source_commit": source_commit,
@@ -514,6 +572,17 @@ def archive_completed(key, *, part_mib=PART_MIB, compression_level=5,
                         len(receipt.get("volumes") or []) > MAX_VOLUMES or
                         receipt.get("total_input_bytes", 0) > MAX_INPUT_GIB * (1 << 30)):
                     raise RuntimeError("S1-V10 remote receipt scope differs")
+                dependencies = receipt.get("external_dependencies")
+                archive_meta = (detail["job"].get("variable_preparation") or {}).get("archive") or {}
+                if task["kind"] == "prepare":
+                    if (not isinstance(dependencies, list) or len(dependencies) != 1 or
+                            dependencies[0].get("kind") != "shared_daily_aircraft_archive_v1" or
+                            dependencies[0].get("sha256") != archive_meta.get("sha256") or
+                            dependencies[0].get("bytes") != archive_meta.get("bytes") or
+                            dependencies[0].get("source_path") != archive_meta.get("path")):
+                        raise RuntimeError("S1-V10 preparation shared raw dependency differs")
+                elif dependencies != []:
+                    raise RuntimeError("non-preparation S1-V10 package has external dependency")
                 receipt["controller_scientific_commit"] = state["scientific_commit"]
                 members = {item["member"]: item for item in receipt["members"]}
                 if len(members) != receipt["member_count"] or not receipt["volumes"]:
@@ -587,6 +656,8 @@ def archive_completed(key, *, part_mib=PART_MIB, compression_level=5,
                   "actual_compression_ratio": receipt["total_input_bytes"] /
                       max(sum(row["bytes"] for row in receipt["volumes"]), 1),
                   "all_volume_and_member_shas_verified": True,
+                  "external_dependencies": dependencies,
+                  "external_dependencies_closed": not dependencies,
                   "local_space_gate": capacity,
                   "local_volume_paths": {name: str(path.resolve())
                                          for name, path in volume_paths.items()},
@@ -599,7 +670,7 @@ def archive_completed(key, *, part_mib=PART_MIB, compression_level=5,
         return result
 
 
-def archive_all_completed(*, limit=None):
+def archive_all_completed(*, limit=None, on_task=None):
     if limit is not None and limit <= 0:
         raise ValueError("positive completed-job archive limit required")
     state = json.loads(controller.STATE.read_text(encoding="utf-8"))
@@ -614,6 +685,7 @@ def archive_all_completed(*, limit=None):
                 proof.get("port") == task.get("port")):
             archived.add(key)
     audited_keys = [key for key in state.get("audits", {}) if key in state.get("tasks", {})]
+    audited_keys.sort(key=lambda key: (state["tasks"][key].get("port") in (20418, 20424), key))
     prepared_keys = [f"prepare_{port}" for port in state.get("prepares", {})]
     keys = [key for key in [*prepared_keys, *audited_keys] if key not in archived]
     if limit is not None:
@@ -621,16 +693,137 @@ def archive_all_completed(*, limit=None):
     results = {}
     for key in keys:
         results[key] = archive_completed(key)
+        if on_task is not None:
+            on_task(key, results[key], len(results), len(keys))
     remaining = [key for key in [*prepared_keys, *audited_keys]
                  if key not in archived and key not in results]
     return {"archived_new": len(results), "already_archived": len(archived),
             "remaining_audited": len(remaining), "tasks": results,
-            "all_controller_tasks_audited": set(state.get("tasks", {})) == set(state.get("audits", {}))}
+            "all_controller_tasks_audited": (
+                set(state.get("tasks", {})) == set(controller.TASKS) and
+                set(state.get("audits", {})) == set(controller.TASKS)),
+            "expected_science_tasks": len(controller.TASKS),
+            "expected_preparation_tasks": len(ops.SSH_PORTS)}
+
+
+def close_shared_source_dependencies():
+    """Bind four preparation raw references to one fully verified shared ZIP."""
+    source_receipt_path = ops.LOCAL / "delivery" / "source_bundle_receipt.json"
+    if not source_receipt_path.is_file():
+        raise RuntimeError("S1-V10 shared raw-source ZIP receipt is absent")
+    source_receipt = json.loads(source_receipt_path.read_text(encoding="utf-8"))
+    zip_path = Path(source_receipt.get("local_path") or "")
+    if (source_receipt.get("schema") != "s1v10.shared_source_bundle.v1" or
+            source_receipt.get("all_member_shas_verified") is not True or
+            source_receipt.get("daily_archives_copied_once") != 4 or
+            not zip_path.is_file() or digest(zip_path) != source_receipt.get("sha256")):
+        raise RuntimeError("S1-V10 shared source ZIP/member receipt is not closed")
+    indexed = {item["member"]: item for item in source_receipt["members"]}
+    if len(indexed) != len(source_receipt["members"]):
+        raise RuntimeError("S1-V10 shared source receipt repeats a member")
+    with zipfile.ZipFile(zip_path) as bundle:
+        if set(bundle.namelist()) != set(indexed):
+            raise RuntimeError("S1-V10 shared source ZIP member set changed")
+        for name, item in indexed.items():
+            info = bundle.getinfo(archive_sources.safe_member(name))
+            if info.is_dir() or info.file_size != item["bytes"]:
+                raise RuntimeError("S1-V10 shared source ZIP member size changed")
+        raw_members = [item for item in source_receipt["members"]
+                       if Path(item["member"]).suffix == ".tar"]
+        if len(raw_members) != 4:
+            raise RuntimeError("S1-V10 shared source ZIP lacks exactly four daily archives")
+        for item in raw_members:
+            value = hashlib.sha256()
+            with bundle.open(item["member"]) as stream:
+                for block in iter(lambda: stream.read(8 << 20), b""):
+                    value.update(block)
+            if value.hexdigest() != item["sha256"]:
+                raise RuntimeError("S1-V10 shared raw member SHA differs at dependency closure")
+    with _lock(ANALYSIS_MANIFEST.with_suffix(".lock")):
+        manifest = json.loads(ANALYSIS_MANIFEST.read_text(encoding="utf-8"))
+        state = json.loads(controller.STATE.read_text(encoding="utf-8"))
+        if manifest.get("scientific_commit") != state.get("scientific_commit"):
+            raise RuntimeError("S1-V10 shared closure controller source differs")
+        tasks = dict(manifest.get("tasks") or {})
+        prepare_keys = {f"prepare_{port}" for port in ops.SSH_PORTS}
+        if not prepare_keys <= set(tasks):
+            raise RuntimeError("all four completed preparation job ZIPs required before shared closure")
+        files = list(manifest.get("files") or [])
+        keyed = {(row["port"], row["run_id"],
+                  row.get("name") or Path(row["path"]).name): row for row in files}
+        if len(keyed) != len(files):
+            raise RuntimeError("S1-V10 analysis manifest repeats a source name")
+        dependencies = {}
+        for key in sorted(prepare_keys):
+            task = tasks[key]
+            receipt_path = Path(task["archive_receipt"])
+            if not receipt_path.is_file():
+                raise RuntimeError("S1-V10 preparation job ZIP receipt absent")
+            job_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            dep_rows = job_receipt.get("external_dependencies")
+            if (job_receipt.get("schema") != "s1v10.job_archive.v1" or
+                    job_receipt.get("run_id") != task["run_id"] or
+                    job_receipt.get("port") != task["port"] or
+                    not isinstance(dep_rows, list) or len(dep_rows) != 1 or
+                    task.get("external_dependencies") != dep_rows):
+                raise RuntimeError("S1-V10 preparation external dependency receipt differs")
+            dep = dep_rows[0]
+            item = indexed.get(dep["source_bundle_member"])
+            if (item is None or item["sha256"] != dep["sha256"] or
+                    item["bytes"] != dep["bytes"] or
+                    dep["job_member"] != "job/preparation/raw/" +
+                    Path(dep["source_bundle_member"]).name):
+                raise RuntimeError("S1-V10 shared ZIP lacks the exact pinned preparation raw member")
+            ref = {"zip_path": str(zip_path.resolve()),
+                   "zip_sha256": source_receipt["sha256"],
+                   "member": dep["source_bundle_member"],
+                   "sha256": dep["sha256"], "bytes": dep["bytes"]}
+            logical = dep["job_member"].removeprefix("job/")
+            row = {"port": task["port"], "run_id": task["run_id"],
+                   "name": logical, "source_relative": dep["source_path"].removeprefix(
+                       ops.BASE + "/"), "source_ref": ref,
+                   "sha256": dep["sha256"], "bytes": dep["bytes"],
+                   "external_dependency": dep["kind"]}
+            identity = (row["port"], row["run_id"], row["name"])
+            prior = keyed.get(identity)
+            if prior is not None and prior != row:
+                raise RuntimeError("S1-V10 shared raw source already bound to another member")
+            if prior is None:
+                files.append(row)
+                keyed[identity] = row
+            tasks[key] = {**task, "external_dependencies_closed": True,
+                          "shared_source_zip_sha256": source_receipt["sha256"]}
+            dependencies[key] = {"run_id": task["run_id"], "source_ref": ref,
+                                 "job_receipt_path": str(receipt_path)}
+        updated = {**manifest, "tasks": tasks,
+                   "files": sorted(files, key=lambda row: (
+                       row["port"], row["run_id"], row.get("name") or Path(row["path"]).name)),
+                   "shared_source_bundle_receipt": str(source_receipt_path),
+                   "shared_source_dependencies_closed": True}
+        pending = ANALYSIS_MANIFEST.with_suffix(".json.part")
+        pending.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        pending.replace(ANALYSIS_MANIFEST)
+    result = {"schema": "s1v10.shared_source_closure.v1",
+              "created_utc": datetime.now(timezone.utc).isoformat(),
+              "source_bundle_receipt": str(source_receipt_path),
+              "source_bundle_receipt_sha256": digest(source_receipt_path),
+              "source_zip_path": str(zip_path.resolve()),
+              "source_zip_sha256": source_receipt["sha256"],
+              "all_four_preparation_dependencies_closed": True,
+              "dependencies": dependencies,
+              "analysis_manifest": str(ANALYSIS_MANIFEST)}
+    target = LOCAL / "shared_source_closure_receipt.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    pending = target.with_suffix(".json.part")
+    pending.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    pending.replace(target)
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("archive-task", "archive-completed"))
+    parser.add_argument("action", choices=("archive-task", "archive-completed",
+                                           "close-shared-source"))
     parser.add_argument("--task-key")
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
@@ -638,8 +831,10 @@ def main():
         if not args.task_key:
             parser.error("--task-key required")
         result = archive_completed(args.task_key)
-    else:
+    elif args.action == "archive-completed":
         result = archive_all_completed(limit=args.limit)
+    else:
+        result = close_shared_source_dependencies()
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

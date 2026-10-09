@@ -63,6 +63,37 @@ class VariableArchiveTests(unittest.TestCase):
             self.assertEqual(gate["missing_compressed_bytes"], 5 * gib)
             self.assertEqual(gate["reserved_bytes_each_drive"], 8 * gib)
 
+    def test_verified_shared_source_moves_once_to_c_and_removes_d_copy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            delivery, croot = base / "D/delivery", base / "C/job_archives"
+            commit = "b" * 40
+            original = delivery / "bundles/source" / f"s1v10_raw_source_{commit}.zip"
+            original.parent.mkdir(parents=True)
+            original.write_bytes(b"verified source zip bytes")
+            checksum = archive_inventory.file_sha(original)
+            archive_inventory.save(delivery / "source_inventory.json",
+                                   {"scientific_commit": commit})
+            archive_inventory.save(delivery / "source_bundle_receipt.json", {
+                "schema": "s1v10.shared_source_bundle.v1",
+                "scientific_commit": commit, "all_member_shas_verified": True,
+                "local_path": str(original), "sha256": checksum,
+                "bytes": original.stat().st_size,
+                "source_inventory_sha256": archive_inventory.file_sha(
+                    delivery / "source_inventory.json")})
+            gib = 1 << 30
+            with patch.object(archive_inventory, "LOCAL", delivery), \
+                 patch.object(archive_jobs, "LOCAL", base / "D/jobs"), \
+                 patch.object(archive_jobs, "BACKUP_LOCAL", croot), \
+                 patch.object(archive_inventory.shutil, "disk_usage",
+                              return_value=type("Usage", (), {"free": 12 * gib})()):
+                moved = archive_inventory.relocate_shared_source_to_backup(commit)
+                again = archive_inventory.relocate_shared_source_to_backup(commit)
+            self.assertFalse(original.exists())
+            self.assertEqual(archive_inventory.file_sha(moved["local_path"]), checksum)
+            self.assertEqual(again["local_path"], moved["local_path"])
+            self.assertTrue(moved["relocation"]["old_removed"])
+
 
 if __name__ == "__main__":
     unittest.main()

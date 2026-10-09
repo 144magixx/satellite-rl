@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,7 +13,7 @@ from unittest.mock import patch
 import zipfile
 
 from scripts.s2p19.archive_sources import member_ref, open_text_source
-from scripts.stage1_variable import archive_jobs
+from scripts.stage1_variable import archive_inventory, archive_jobs
 
 
 COMMIT = "b31187fcaf79e90b70d85db4cdfec5a4150020de"
@@ -56,8 +57,9 @@ class CompletedJobArchiveTests(unittest.TestCase):
                     for index in range(250)), encoding="utf-8")
         return root, jobdir
 
-    def build(self, root):
+    def build(self, root, shared=None):
         request = {"archive_root": str(root.resolve()), "port": 20418,
+                   "shared_source_root": str((shared or root.parent / "source").resolve()),
                    "task_key": "verify_R08", "run_id": RUN,
                    "request_id": "s1v10_verify_R08_20418_s51001",
                    "source_commit": COMMIT, "expected_step": 2048,
@@ -71,6 +73,39 @@ class CompletedJobArchiveTests(unittest.TestCase):
         with redirect_stdout(output):
             exec(compile(code, "<S1 archive closure>", "exec"), {})
         return json.loads(output.getvalue().splitlines()[-1])
+
+    def preparation_link(self, root, jobdir, *, symlink=False, wrong_target=False):
+        shared = root.parent / "source"
+        day = "2024-02-03"
+        folder = shared / day
+        folder.mkdir(parents=True)
+        source = folder / "aircraft.tar"
+        source.write_bytes(b"original frozen daily archive" * 30)
+        pin = folder / "source_preflight.json"
+        _json(pin, {"archive_name": source.name})
+        raw = jobdir / "preparation/raw" / source.name
+        raw.parent.mkdir(parents=True)
+        target = source
+        if wrong_target:
+            target = folder / "other.tar"
+            target.write_bytes(source.read_bytes())
+        if symlink:
+            try:
+                os.symlink(target, raw)
+            except OSError as error:
+                self.skipTest("test host cannot create symlink: " + str(error))
+        else:
+            os.link(source, raw)
+        job = json.loads((jobdir / "job.json").read_text(encoding="utf-8"))
+        job["kind"] = "prepare"
+        job["variable_preparation"] = {
+            "date_utc": day,
+            "archive": {"path": str(source), "sha256": archive_jobs.digest(source),
+                        "bytes": source.stat().st_size},
+            "source_preflight": {"source_path": str(pin),
+                                 "sha256": archive_jobs.digest(pin)}}
+        _json(jobdir / "job.json", job)
+        return shared, source, raw
 
     def test_completed_job_package_verifies_without_large_plain_mirror(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -136,6 +171,116 @@ class CompletedJobArchiveTests(unittest.TestCase):
             path.write_bytes(path.read_bytes()[:-1] + b"0")
             with self.assertRaisesRegex(ValueError, "ZIP SHA"):
                 archive_jobs._verify_volume(path, receipt["members"], volume["sha256"])
+
+    def test_exact_preparation_hardlink_is_shared_dependency_not_zip_member(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, jobdir = self.fixture(Path(temporary))
+            shared, source, raw = self.preparation_link(root, jobdir)
+            handoff = self.build(root, shared)
+            receipt = json.loads(Path(handoff["receipt_path"]).read_text(encoding="utf-8"))
+            self.assertNotIn("job/preparation/raw/aircraft.tar",
+                             {row["member"] for row in receipt["members"]})
+            self.assertEqual(receipt["external_dependencies"][0]["link_kind"],
+                             "exact_source_hardlink")
+            self.assertEqual(receipt["external_dependencies"][0]["sha256"],
+                             archive_jobs.digest(source))
+            self.assertEqual(raw.stat().st_ino, source.stat().st_ino)
+
+    def test_only_exact_pinned_preparation_symlink_is_allowed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, jobdir = self.fixture(Path(temporary))
+            shared, source, raw = self.preparation_link(root, jobdir, symlink=True)
+            handoff = self.build(root, shared)
+            receipt = json.loads(Path(handoff["receipt_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(receipt["external_dependencies"][0]["link_kind"],
+                             "exact_source_symlink")
+        with tempfile.TemporaryDirectory() as temporary:
+            root, jobdir = self.fixture(Path(temporary))
+            shared, source, raw = self.preparation_link(root, jobdir,
+                                                        symlink=True, wrong_target=True)
+            with self.assertRaisesRegex(RuntimeError, "symlink points outside"):
+                self.build(root, shared)
+
+    def test_tampered_preparation_daily_target_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, jobdir = self.fixture(Path(temporary))
+            shared, source, raw = self.preparation_link(root, jobdir)
+            source.write_bytes(b"tampered daily archive")
+            with self.assertRaisesRegex(RuntimeError, "SHA/bytes"):
+                self.build(root, shared)
+
+    def test_four_preparation_dependencies_close_only_with_verified_shared_zip(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            outputs = base / "outputs"
+            delivery = outputs / "delivery"
+            delivery.mkdir(parents=True)
+            zip_path = delivery / "shared_source.zip"
+            inventory_path = delivery / "source_inventory.json"
+            days = {}
+            for index, port in enumerate((20418, 20424, 20473, 20474), 3):
+                day = f"2024-02-{index:02d}"
+                file = base / day / "aircraft.tar"
+                file.parent.mkdir()
+                file.write_bytes((day + " immutable aircraft\n").encode() * 10)
+                days[day] = {"archive": str(file), "sha256": archive_jobs.digest(file),
+                             "bytes": file.stat().st_size, "metadata_files": []}
+            inventory = {"days": days}
+            _json(inventory_path, inventory)
+            with zipfile.ZipFile(zip_path, "w", allowZip64=True,
+                                 compression=zipfile.ZIP_DEFLATED) as bundle:
+                for day, row in days.items():
+                    bundle.write(row["archive"], day + "/aircraft.tar")
+                bundle.write(inventory_path, "source_inventory.json")
+            zip_sha = archive_jobs.digest(zip_path)
+            members = archive_inventory.verify_shared_source_zip(
+                zip_path, inventory, inventory_path, zip_sha)
+            _json(delivery / "source_bundle_receipt.json", {
+                "schema": "s1v10.shared_source_bundle.v1",
+                "local_path": str(zip_path), "sha256": zip_sha,
+                "all_member_shas_verified": True, "daily_archives_copied_once": 4,
+                "members": members})
+            tasks = {}
+            for index, port in enumerate((20418, 20424, 20473, 20474), 3):
+                day = f"2024-02-{index:02d}"
+                run_id = f"prepare_ppo_{port}"
+                dependency = {"kind": "shared_daily_aircraft_archive_v1",
+                              "job_member": "job/preparation/raw/aircraft.tar",
+                              "source_bundle_member": day + "/aircraft.tar",
+                              "source_path": str(days[day]["archive"]),
+                              "sha256": days[day]["sha256"],
+                              "bytes": days[day]["bytes"]}
+                receipt = base / f"prepare_{port}" / "receipt.json"
+                _json(receipt, {"schema": "s1v10.job_archive.v1", "run_id": run_id,
+                                "port": port, "external_dependencies": [dependency]})
+                tasks[f"prepare_{port}"] = {"port": port, "run_id": run_id,
+                                             "archive_receipt": str(receipt),
+                                             "external_dependencies": [dependency],
+                                             "external_dependencies_closed": False}
+            manifest = outputs / "synced_jobs/manifest.json"
+            _json(manifest, {"scientific_commit": COMMIT, "tasks": tasks, "files": []})
+            state = base / "controller_state.json"
+            _json(state, {"scientific_commit": COMMIT})
+            with patch.object(archive_jobs.ops, "LOCAL", outputs), \
+                 patch.object(archive_jobs, "ANALYSIS_MANIFEST", manifest), \
+                 patch.object(archive_jobs, "LOCAL", outputs / "job_archives"), \
+                 patch.object(archive_jobs.controller, "STATE", state):
+                closed = archive_jobs.close_shared_source_dependencies()
+                again = archive_jobs.close_shared_source_dependencies()
+            self.assertTrue(closed["all_four_preparation_dependencies_closed"])
+            self.assertTrue(again["all_four_preparation_dependencies_closed"])
+            updated = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(len(updated["files"]), 4)
+            self.assertTrue(all(task["external_dependencies_closed"]
+                                for task in updated["tasks"].values()))
+            self.assertTrue(all(row["source_ref"]["zip_sha256"] == zip_sha
+                                for row in updated["files"]))
+            zip_path.write_bytes(zip_path.read_bytes() + b"tampered")
+            with patch.object(archive_jobs.ops, "LOCAL", outputs), \
+                 patch.object(archive_jobs, "ANALYSIS_MANIFEST", manifest), \
+                 patch.object(archive_jobs.controller, "STATE", state):
+                with self.assertRaisesRegex(RuntimeError, "ZIP/member receipt"):
+                    archive_jobs.close_shared_source_dependencies()
 
     def test_download_gate_uses_actual_compressed_bytes_and_eight_gib(self):
         with patch.object(archive_jobs.shutil, "disk_usage",
@@ -212,6 +357,14 @@ class CompletedJobArchiveTests(unittest.TestCase):
             self.assertTrue(paths["part_0001.zip"].is_relative_to(droot))
             self.assertTrue(paths["part_0002.zip"].is_relative_to(croot))
             self.assertEqual(gate["reserved_bytes_each_drive"], 8 * gib)
+            receipt["volumes"] = [{"name": "part_0001.zip", "bytes": 3 * gib,
+                                   "sha256": "d" * 64}]
+            with patch.object(archive_jobs, "LOCAL", droot), \
+                 patch.object(archive_jobs, "BACKUP_LOCAL", croot), \
+                 patch.object(archive_jobs.shutil, "disk_usage", side_effect=usage):
+                _, smaller_paths, _ = archive_jobs._select_volume_locations(
+                    receipt, 20418, RUN, "package", 2000)
+            self.assertTrue(smaller_paths["part_0001.zip"].is_relative_to(croot))
             receipt["volumes"] = [{"name": "part_0001.zip", "bytes": 7 * gib,
                                    "sha256": "c" * 64}]
             with patch.object(archive_jobs, "LOCAL", droot), \
