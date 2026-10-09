@@ -120,6 +120,47 @@ class VariableReportTests(unittest.TestCase):
         self.assertAlmostEqual(paired["sequence_units"][0][
             "mean_delta_user_tdma_carried_fraction"], .1)
 
+    def test_sequence_plot_groups_twenty_mothers_by_three_tiers_with_id_map(self):
+        units = [{"sequence_id": f"2024-02-06_segment_{i:02d}_long_source_identity",
+                  "demand_multiplier": factor,
+                  "mean_delta_user_tdma_carried_fraction": (i - 10) / 100,
+                  "mean_delta_total_seconds": (i - 10) / 5}
+                 for i in range(20) for factor in report.MULTIPLIERS]
+        with tempfile.TemporaryDirectory() as temp:
+            result = report._sequence_plot(Path(temp), {"sequence_units": units,
+                                                          "matched_frames": 360})
+            self.assertEqual(result["sequence_count"], 20)
+            self.assertEqual(result["sequence_units"], 60)
+            self.assertEqual(result["statistical_unit"], "mother_sequence")
+            self.assertTrue(Path(result["path"]).is_file())
+            with Path(result["sequence_label_map_path"]).open(encoding="utf-8-sig", newline="") as stream:
+                mapping = list(csv.DictReader(stream))
+            self.assertEqual([row["short_id"] for row in mapping],
+                             [f"S{i:02d}" for i in range(1, 21)])
+            self.assertEqual(mapping[0]["sequence_id"], units[0]["sequence_id"])
+
+    def test_state_snapshot_uses_absolute_registry_and_verifies_sha(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path, mirror, _, _ = self._fixture(temp, [self._raw()])
+            base = Path(temp)
+            registry = base / "frozen" / "dataset_registry.json"
+            report._save(registry, {"scientific_commit": "a" * 40,
+                                    "canonical_sha256": {"test": "test-source-sha"}})
+            state = report._json(state_path)
+            state["dataset_registry"] = str(registry.resolve())
+            state["dataset_registry_file_sha256"] = report._sha(registry)
+            state["dataset_sha256"] = {"test": "test-source-sha"}
+            snapshot = base / "preflight" / "state_snapshot.json"
+            report._save(snapshot, state)
+            result = report.build_report(snapshot, mirror, base / "analysis")
+            self.assertTrue(result["dataset_registry_verified"])
+            inputs = report._json(base / "analysis" / "inputs.json")
+            self.assertEqual(inputs["dataset_registry"]["path"], str(registry.resolve()))
+            report._save(registry, {"scientific_commit": "a" * 40,
+                                    "canonical_sha256": {"test": "changed"}})
+            with self.assertRaisesRegex(ValueError, "registry file SHA differs"):
+                report.build_report(snapshot, mirror, base / "analysis2")
+
     def test_repaired_learning_source_does_not_relabel_legacy_baseline(self):
         with tempfile.TemporaryDirectory() as temp:
             state = {"scientific_commit": "a" * 40,

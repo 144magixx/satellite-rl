@@ -834,23 +834,52 @@ def _sequence_plot(outdir, paired):
     units = paired["sequence_units"]
     if not units:
         return None
+    from matplotlib.colors import TwoSlopeNorm
+
     plt, font = _plot_setup()
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    labels = [f"{x['sequence_id']} ×{x['demand_multiplier']:g}" for x in units]
-    x = np.arange(len(units))
-    for ax, field, title in ((axes[0], "mean_delta_user_tdma_carried_fraction", "逐机TDMA承载差值"),
-                             (axes[1], "mean_delta_total_seconds", "同帧总耗时差值（秒）")):
-        values = [u[field] if u[field] is not None else np.nan for u in units]
-        ax.bar(x, values, color="#408A7C")
-        ax.axhline(0, color="black", linewidth=.8)
-        ax.set(title=title, ylabel="R12－R04；先在每条序列内均值")
-        ax.set_xticks(x, labels, rotation=75)
-    fig.tight_layout()
+    sequences = sorted({unit["sequence_id"] for unit in units})
+    short = {sequence_id: f"S{index:02d}" for index, sequence_id in enumerate(sequences, 1)}
+    grid = {(unit["sequence_id"], unit["demand_multiplier"]): unit for unit in units}
+    mapping_path = outdir / "连续序列标签映射.csv"
+    _csv(mapping_path, [{"short_id": short[sequence_id], "sequence_id": sequence_id}
+                        for sequence_id in sequences], ("short_id", "sequence_id"))
+    fig, axes = plt.subplots(1, 2, figsize=(13, max(6, .38 * len(sequences) + 1.5)),
+                             constrained_layout=True)
+    fig.suptitle(f"R12－R04：{len(sequences)}条已配对母序列 × 三需求档；每格为该序列内已配对帧均值")
+    for ax, field, title, number_format in (
+            (axes[0], "mean_delta_user_tdma_carried_fraction", "逐机TDMA有效承载差值", ".3f"),
+            (axes[1], "mean_delta_total_seconds", "同帧总耗时差值（秒）", ".2f")):
+        values = np.asarray([[grid.get((sequence_id, factor), {}).get(field)
+                              for factor in MULTIPLIERS] for sequence_id in sequences], dtype=object)
+        values = np.asarray([[np.nan if value is None else float(value) for value in row]
+                             for row in values], dtype=float)
+        finite = values[np.isfinite(values)]
+        scale = max(float(np.max(np.abs(finite))) if len(finite) else 0.0, 1e-9)
+        palette = plt.get_cmap("RdBu_r").copy()
+        palette.set_bad("#edf0f2")
+        picture = ax.imshow(np.ma.masked_invalid(values), cmap=palette,
+                            norm=TwoSlopeNorm(vcenter=0, vmin=-scale, vmax=scale),
+                            aspect="auto", interpolation="nearest")
+        ax.set_title(title)
+        ax.set_xticks(range(len(MULTIPLIERS)), [f"×{factor:g}" for factor in MULTIPLIERS])
+        ax.set_yticks(range(len(sequences)), [short[sequence_id] for sequence_id in sequences])
+        ax.set_xlabel("同母场景需求倍率")
+        ax.set_ylabel("母序列短标签；完整ID见映射CSV")
+        for y in range(len(sequences)):
+            for x in range(len(MULTIPLIERS)):
+                value = values[y, x]
+                label = format(value, number_format) if np.isfinite(value) else "—"
+                ax.text(x, y, label, ha="center", va="center", fontsize=7,
+                        color="white" if np.isfinite(value) and abs(value) > scale * .6 else "#19232b")
+        fig.colorbar(picture, ax=ax, shrink=.83, pad=.02, label="R12－R04")
     path = outdir / "连续序列配对对照.png"
     fig.savefig(path, dpi=160)
     plt.close(fig)
     return {"path": str(path), "font": font,
-            "sequence_units": len(units), "matched_frames": paired["matched_frames"]}
+            "sequence_units": len(units), "sequence_count": len(sequences),
+            "statistical_unit": "mother_sequence", "demand_tiers": list(MULTIPLIERS),
+            "sequence_label_map_path": str(mapping_path),
+            "sequence_label_map": short, "matched_frames": paired["matched_frames"]}
 
 
 def _markdown(summary):
@@ -925,9 +954,16 @@ def build_report(state_path, synced_root, output_dir, *, strict=False):
     commit = state.get("scientific_commit")
     if not isinstance(commit, str) or len(commit) != 40:
         raise ValueError("Controller state lacks a frozen 40-character scientific commit")
-    registry_path = state_path.parent / "dataset_registry.json"
+    declared_registry = state.get("dataset_registry")
+    if declared_registry is not None and (not isinstance(declared_registry, str) or
+                                          not Path(declared_registry).is_absolute()):
+        raise ValueError("Controller dataset registry reference must be an absolute path")
+    registry_path = Path(declared_registry) if declared_registry else state_path.parent / "dataset_registry.json"
     registry = _json(registry_path) if registry_path.is_file() else None
     if registry is not None:
+        expected_registry_sha = state.get("dataset_registry_file_sha256")
+        if expected_registry_sha is not None and _sha(registry_path) != expected_registry_sha:
+            raise ValueError("Controller dataset registry file SHA differs")
         if registry.get("scientific_commit") != commit:
             raise ValueError("Dataset registry scientific commit differs")
         if (state.get("dataset_sha256") is not None and
@@ -942,7 +978,7 @@ def build_report(state_path, synced_root, output_dir, *, strict=False):
     sources = _task_sources(state, synced_root, sync_manifest)
     all_rows, training, grids, issues = [], {}, {}, []
     if registry is None:
-        issues.append("本地尚无冻结dataset_registry.json")
+        issues.append(f"冻结dataset_registry.json不存在：{registry_path}")
     for key, spec in graph.items():
         if key not in sources:
             issues.append(f"{key}：工作台任务尚未在controller登记")
