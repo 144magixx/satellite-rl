@@ -276,6 +276,20 @@ class VariableLearningTests(unittest.TestCase):
             bad_job = dict(new_job, run_id="unrelated-training")
             with self.assertRaisesRegex(ValueError, "run_id|provenance|repair"):
                 _load_parallel(directory, bad_job, config, policy, optimizer)
+            false_receipt = {**receipt, "criteria": {
+                **receipt["criteria"], "same_input_action_gpu_update_equal": False}}
+            receipt_path.write_text(json.dumps(false_receipt), encoding="utf-8")
+            shutil.copyfile(receipt_path, archive / "validation_receipt.json")
+            false_proof = {**proof, "validation_receipt_sha256": hashlib.sha256(
+                receipt_path.read_bytes()).hexdigest()}
+            (archive / "repair_proof.json").write_text(json.dumps(false_proof), encoding="utf-8")
+            false_job = {**new_job, "variable_throughput_repair": false_proof,
+                         "source_history": [false_proof]}
+            with self.assertRaisesRegex(ValueError, "validation receipt"):
+                _load_parallel(directory, false_job, config, policy, optimizer)
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            shutil.copyfile(receipt_path, archive / "validation_receipt.json")
+            (archive / "repair_proof.json").write_text(json.dumps(proof), encoding="utf-8")
             next_sha = _checkpoint_parallel(directory, new_job, config, policy, optimizer,
                                             streams=restored["streams"], step=4096,
                                             updates=256, episode=3, last_validation=0,
