@@ -593,6 +593,8 @@ def main():
                 "remote_shared_root": ops.BASE + "/delivery",
                 "four_lane_ports": list(ops.SSH_PORTS),
                 "deliver_command": "python -m scripts.stage1_variable.final_delivery deliver",
+                "delivery_script_path": str(Path(__file__).resolve()),
+                "delivery_script_sha256": sha(__file__),
                 "file_count_limit": MAX_FILES, "per_file_bytes_limit": MAX_FILE_BYTES,
                 "total_input_bytes_limit": MAX_TOTAL_BYTES,
                 "local_reserve_bytes": LOCAL_RESERVE_BYTES,
@@ -623,6 +625,21 @@ def main():
             "report_sha256": "<formal report 08 SHA256>",
             "archive_acceptance_sha256": "<passed 32/32 acceptance SHA256>",
             "manifest_sha256": "<frozen 32-task manifest SHA256>",
+            "raw_job_zips_embedded": False})
+        save(DELIVERY / "remote_delivery_receipt_template.json", {
+            "schema": "s1v10.final_delivery_remote.v1",
+            "status": "template_only_not_uploaded",
+            "package_id": "<same deterministic local package id>",
+            "shared_remote_path": ops.BASE + "/delivery/final_<package_id>/s1v10_final_delivery_<package_id>.zip",
+            "zip_sha256": "<same local ZIP SHA256>",
+            "zip_bytes": "<actual compressed ZIP bytes>",
+            "member_count": "<all small package members>",
+            "single_shared_physical_copy": True,
+            "same_device_inode_observed": "<read-only four-lane observation>",
+            "four_lane_access": {str(port): {"remote_path": "<same shared path>",
+                                                  "zip_sha256": "<same SHA256>",
+                                                  "all_member_shas_verified": False}
+                                 for port in ops.SSH_PORTS},
             "raw_job_zips_embedded": False})
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         return
