@@ -122,6 +122,9 @@ class CoverageApplication:
         return rows
 
     def import_dataset(self, body):
+        if body.get("schema_version") == 5:
+            from .coverage_variable import import_variable_dataset
+            return import_variable_dataset(self, body)
         from satellite_rl.coverage.scenes import load_dataset, save_dataset
         role = body.get("partition_role")
         if role not in ("train", "validation", "test"):
@@ -154,6 +157,9 @@ class CoverageApplication:
 
     def submit(self, body):
         config = validate_config(body["config"])
+        if config["schema_version"] == 5:
+            from .coverage_variable import submit_variable
+            return submit_variable(self, body, config)
         if config["schema_version"] == 4:
             return self._submit_reconstruction(body, config)
         balanced = config["schema_version"] == 3
@@ -548,11 +554,15 @@ class CoverageApplication:
 
     def api(self, method, parts, query, body):
         if parts == ["catalog"] and method == "GET":
+            from .coverage_variable import variable_default_config
             current_group = next((name for name, parent in RECONSTRUCTION_ARCHIVE_PARENTS.items()
                                   if self.store.archive_root.resolve().parent == parent.resolve()), None)
             return {"defaults": default_config(), "summary": summary(default_config()),
                     "balance_defaults": balance_default_config(),
                     "reconstruction_defaults": reconstruction_default_config(),
+                    "variable_defaults": variable_default_config(),
+                    "variable_routes": [f"R{i:02d}" for i in range(1, 13)],
+                    "variable_roles": ["train", "development", "validation", "test", "sequence"],
                     "reconstruction_current_group": current_group,
                     "reconstruction_source_groups": ["s1_03"] if current_group == "s1_03" else
                     ["s1_03", "s1_03_r1"],
@@ -567,11 +577,17 @@ class CoverageApplication:
                                 {"id": "ppo", "label": "PPO微调"}]}
         if parts == ["validate"] and method == "POST":
             config = validate_config(body)
+            if config["schema_version"] == 5:
+                from .coverage_variable import variable_summary
+                return {"config": config, "summary": variable_summary(config)}
             return {"config": config, "summary": summary(config)}
         if parts == ["datasets"] and method == "GET":
             return {"datasets": self.datasets()}
         if parts == ["datasets", "import"] and method == "POST":
             return self.import_dataset(body)
+        if parts == ["datasets", "merge"] and method == "POST":
+            from .coverage_variable import merge_variable_datasets
+            return merge_variable_datasets(self, body)
         if parts == ["reconstruction", "import-start"] and method == "POST":
             return self.import_reconstruction_start(body)
         if parts == ["reconstruction", "import-dataset"] and method == "POST":

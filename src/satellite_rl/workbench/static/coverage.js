@@ -14,10 +14,12 @@
   const textBalanceFields = new Set(["route", "action_menu", "coverage_goal"]);
   function balanced() { return config.schema_version === 3; }
   function reconstructed() { return config.schema_version === 4; }
+  function variable() { return config.schema_version === 5; }
   function writeForm() {
     el("name").value = config.name;
     el("schema").value = String(config.schema_version);
-    for (const [id,key] of Object.entries(coverageFields)) el(id).value = config.coverage[key];
+    if (!variable()) for (const [id,key] of Object.entries(coverageFields)) el(id).value = config.coverage[key];
+    if (variable()) {const v=config.coverage.variable;el("variable-route").value=v.route;el("variable-max-beams").value=v.max_beams;el("variable-geometry").value=v.max_geometry_calls;el("variable-width").value=v.fixed_width_deg;}
     if (balanced()) for (const [id,key] of Object.entries(balanceFields)) el(id).value = config.coverage.balance[key];
     if (reconstructed()) { const r=config.coverage.reconstruction;el("reconstruction-route").value=r.route;el("macro-steps").value=r.max_macro_steps;el("geometry-action").value=r.max_geometry_calls_per_action;el("geometry-total").value=r.max_geometry_calls_total;el("initialization-geometry").value=r.max_initialization_geometry_calls;el("search-width").value=r.search_width;el("split-templates").value=r.split_templates.join(",");el("mechanism-gate").value=config.training.mechanism_gate_step; }
     for (const [id,key] of Object.entries(trainingFields)) el(id).value = config.training[key];
@@ -27,21 +29,24 @@
     const pure=config.coverage.initialization==="empty";
     for(const node of document.querySelectorAll(".coverage-balance-field")) node.hidden = !balanced();
     for(const node of document.querySelectorAll(".coverage-reconstruction-field")) node.hidden = !reconstructed();
+    for(const node of document.querySelectorAll(".coverage-variable-field")) node.hidden = !variable();
+    for(const select of [el("data-role"),el("dataset-role")])for(const option of select.options)if(["development","sequence"].includes(option.value))option.disabled=!variable();
     for(const node of document.querySelectorAll(".coverage-start-field")) node.hidden = !(balanced()||reconstructed());
-    for(const id of ["method","sweeps","coordinate-step","max-movement","demand-floor","user-floor"])el(id).closest(".field").hidden=reconstructed();
-    for(const id of ["coordinate-step","max-movement","sweeps"]){el(id).disabled=pure||balanced()||reconstructed();el(id).closest("label").hidden=reconstructed();}
+    for(const id of ["initialization","method","sweeps","coordinate-step","max-movement","demand-floor","user-floor","cluster-iterations"])el(id).closest(".field").hidden=reconstructed()||variable();
+    for(const id of ["coordinate-step","max-movement","sweeps"]){el(id).disabled=pure||balanced()||reconstructed()||variable();el(id).closest("label").hidden=reconstructed()||variable();}
     el("initialization").disabled=balanced()||reconstructed();el("method").disabled=balanced()||reconstructed();
     for(const option of el("method").options)option.disabled=pure&&option.value!=="ppo";
     el("action-menu").disabled=balanced() && ["prepare","A0","A1","A2","A3","X0","X1","X2","X3","X4"].includes(config.coverage.balance.route);
     el("demand-floor").disabled=balanced()||reconstructed();el("user-floor").disabled=balanced()||reconstructed();
-    el("start").disabled=(balanced()&&config.coverage.balance.route!=="ppo")||(reconstructed()&&config.coverage.reconstruction.route!=="P1");
+    el("start").disabled=(balanced()&&config.coverage.balance.route!=="ppo")||(reconstructed()&&config.coverage.reconstruction.route!=="P1")||(variable()&&!(["R08","R09"].includes(config.coverage.variable.route)));
     el("start-heading").textContent=reconstructed()?"S1-03共同覆盖初始化来源":"共同A2起点来源";
     el("start-note").textContent=reconstructed()?"每个分区先提交prepare评价任务；P1训练及R0–R3/P1评价绑定已完成起点。跨实例来源先只读导入，逐SHA冻结。":"先用当前数据分区提交A2准备评价任务。训练、验证及考核分别绑定已完成任务，来源文件和SHA随新任务冻结。";
-    el("action-note").textContent=reconstructed()?"S1-03欧洲版固定100束、0.5°全宽，不受旧聚类中心0.25°位移限制。PPO选择完整区域重构宏动作，包括区域/波束与切分模板；STOP立即交出原终态。每动作及每景几何调用有硬预算，覆盖、主体CV与全体束负载独立报告；轨迹最好仅作诊断。":balanced()?"欧洲版固定100束、0.5°全宽；卫星视角格宽与旧经纬度步长不同。四向/八向/多步/业务候选/双束按菜单独立计数；X4双束占两次束处理。覆盖目标、主体CV、例外、早停原因与实际动作在任务中记录。第一阶段未计算的容量、SI、SGM标为不适用。":pure?"纯PPO起始真实激活束为0；从原始正需求航空器位置池中逐次选100个唯一波位。局部格步长、移动范围与移动代价不适用。":"规则/聚类提供100束基础布局，PPO每步保持或局部移动一束；固定0.5°全宽。";
+    el("action-note").textContent=variable()?"S1-V10逐机原始需求与位置为输入；每个母场景独立展开0.75/1/1.25三档需求。上限200束，严格逐机全覆盖；R05宽度为单独理想化物理版本。R08/R09训练，其余路线仅评价。候选、回退、实际N和逐机/逐束结果由任务归档。":reconstructed()?"S1-03欧洲版固定100束、0.5°全宽，不受旧聚类中心0.25°位移限制。PPO选择完整区域重构宏动作，包括区域/波束与切分模板；STOP立即交出原终态。每动作及每景几何调用有硬预算，覆盖、主体CV与全体束负载独立报告；轨迹最好仅作诊断。":balanced()?"欧洲版固定100束、0.5°全宽；卫星视角格宽与旧经纬度步长不同。四向/八向/多步/业务候选/双束按菜单独立计数；X4双束占两次束处理。覆盖目标、主体CV、例外、早停原因与实际动作在任务中记录。第一阶段未计算的容量、SI、SGM标为不适用。":pure?"纯PPO起始真实激活束为0；从原始正需求航空器位置池中逐次选100个唯一波位。局部格步长、移动范围与移动代价不适用。":"规则/聚类提供100束基础布局，PPO每步保持或局部移动一束；固定0.5°全宽。";
   }
   function readForm() {
     config.name = el("name").value;
-    for (const [id,key] of Object.entries(coverageFields)) config.coverage[key] = ["initialization","method"].includes(key) ? el(id).value : Number(el(id).value);
+    if (!variable()) for (const [id,key] of Object.entries(coverageFields)) config.coverage[key] = ["initialization","method"].includes(key) ? el(id).value : Number(el(id).value);
+    if (variable()) {const v=config.coverage.variable;v.route=el("variable-route").value;v.max_beams=Number(el("variable-max-beams").value);v.max_geometry_calls=Number(el("variable-geometry").value);v.fixed_width_deg=Number(el("variable-width").value);config.coverage.method=["R08","R09"].includes(v.route)?"ppo":"local_search";}
     if (balanced()) {
       for (const [id,key] of Object.entries(balanceFields)) config.coverage.balance[key] = textBalanceFields.has(key) ? el(id).value : Number(el(id).value);
       const b=config.coverage.balance;
@@ -61,9 +66,9 @@
     el("config-json").value = JSON.stringify(config,null,2); return config;
   }
   function renderDatasets() {
-    for (const role of ["train","validation","test"]) {
+    for (const role of ["train","development","validation","test","sequence"]) {
       const node = el("data-" + role), previous = node.value;
-      node.innerHTML = '<option value="">请选择已准备数据</option>' + datasets.filter((r) => r.partition_role === role && r.initialization === config.coverage.initialization).map((r) => `<option value="${escape(r.id)}">${escape(r.name)} · ${r.count}场景 · ${escape((r.dates||[]).join(","))}</option>`).join("");
+      node.innerHTML = '<option value="">请选择已准备数据</option>' + datasets.filter((r) => r.partition_role === role && (variable()?r.schema_version===5:r.initialization===config.coverage.initialization)).map((r) => `<option value="${escape(r.id)}">${escape(r.name)} · ${r.count}场景 · ${escape((r.dates||[]).join(","))}</option>`).join("");
       if ([...node.options].some((r) => r.value === previous)) node.value = previous;
     }
   }
@@ -79,17 +84,18 @@
     try {
       const [detail,logs,results,metrics] = await Promise.all([request("runs/"+encodeURIComponent(runId)),request("runs/"+encodeURIComponent(runId)+"/logs"),request("runs/"+encodeURIComponent(runId)+"/results"),request("runs/"+encodeURIComponent(runId)+"/metrics?limit=300")]);
       const training = detail.job.kind === "train";
-      const preparing=detail.job.reconstruction_route==="prepare";
-      const progress = training ? `${detail.status.env_step||0}/${detail.status.budget_env_steps||0}交互步 · ${detail.status.update_step||0}次更新` : preparing?`共同初始化：${detail.status.prepared_scenes||0}/${detail.status.preparation_total||0}场景`:`评价：${detail.status.evaluated_scenes||0}/${detail.status.evaluation_total||0}场景`;
+      const preparing=detail.job.reconstruction_route==="prepare"||detail.job.kind==="prepare";
+      const progress = training ? `${detail.status.env_step||0}/${detail.status.budget_env_steps||0}交互步 · ${detail.status.update_step||0}次更新` : preparing?`数据准备：${detail.status.prepared_scenes||0}/${detail.status.preparation_total||0}场景`:`评价：${detail.status.evaluated_scenes||0}/${detail.status.evaluation_total||0}场景`;
       const validation = training ? `<p>开发验证：${detail.status.evaluated_scenes||0}/${detail.status.evaluation_total||0}场景</p>` : "";
       const s=results.summary||{};
       const gate=training&&detail.job.reconstruction_route==="P1"?await request("coverage/runs/"+encodeURIComponent(runId)+"/mechanism-gate"):null;
       const balanceInfo=detail.job.balance_route?`<p>路线：${escape(detail.job.balance_route)} · 菜单：${escape(detail.job.balance_action_menu)} · 停止原因：${escape(JSON.stringify(s.stop_reasons||detail.status.stop_reasons||{}))}<br>需求/用户覆盖：${escape(s.coverage_demand)}/${escape(s.coverage_users)} · 主体CV：${escape(s.subject_cv)} · 全体CV：${escape(s.load_cv)} · 例外束：${escape(s.edge_beam_count)}</p>`:"";
       const reconstructionInfo=detail.job.reconstruction_route?`<p>S1-03路线：${escape(detail.job.reconstruction_route)} · 原终态覆盖/主体CV/全体CV：${escape(s.coverage_users)}/${escape(s.subject_cv)}/${escape(s.load_cv)} · 几何调用：${escape(s.geometry_calls||detail.status.geometry_calls||"")}<br>执行实例：${escape(detail.job.execution_target)}${training?` · 机制闸门：${escape(detail.status.stop_reason||"")} ${gate?.proof?.approved?"已记录通过审计":"待审计"}`:""}</p>`:"";
-      el("status").innerHTML = `<p>状态：${escape(detail.status.stage)} · ${progress}</p>${validation}${balanceInfo}${reconstructionInfo}<p>源码：${escape(detail.job.git_commit)}<br>GPU：${escape(detail.status.preflight?.gpu||detail.status.gpu||"")}<br>冻结配置与来源保留于任务记录。</p><details><summary>任务配置与状态</summary><pre>${escape(JSON.stringify(detail,null,2))}</pre></details>`;
+      const variableInfo=detail.job.variable_route?`<p>S1-V10路线：${escape(detail.job.variable_route)} · 实际N：${escape(s.actual_beams??detail.status.actual_beams)} · 全部飞机覆盖：${escape(s.coverage_users??detail.status.coverage_users)} · 需求CV：${escape(s.load_cv??detail.status.load_cv)}<br>场景用途：${escape(detail.job.dataset_role)} · 实例：${escape(detail.job.execution_target)}</p>`:"";
+      el("status").innerHTML = `<p>状态：${escape(detail.status.stage)} · ${progress}</p>${validation}${balanceInfo}${reconstructionInfo}${variableInfo}<p>源码：${escape(detail.job.git_commit)}<br>GPU：${escape(detail.status.preflight?.gpu||detail.status.gpu||"")}<br>冻结配置与来源保留于任务记录。</p><details><summary>任务配置与状态</summary><pre>${escape(JSON.stringify(detail,null,2))}</pre></details>`;
       el("logs").textContent = (logs.lines||[]).join("\n");
       el("result-download").href="/api/runs/"+encodeURIComponent(runId)+"/results";
-      const rawName=detail.job.reconstruction_route==="prepare"?"starts.jsonl":detail.job.reconstruction_route?"results.partial.jsonl":"results.json";
+      const rawName=detail.job.kind==="prepare"?"results.json":detail.job.variable_route?"results.partial.jsonl":detail.job.reconstruction_route==="prepare"?"starts.jsonl":detail.job.reconstruction_route?"results.partial.jsonl":"results.json";
       el("raw-download").href="/api/runs/"+encodeURIComponent(runId)+"/download?file="+encodeURIComponent(rawName);
       el("results").textContent = JSON.stringify(results.summary||results,null,2);
       const list = (metrics.series||metrics.tags||[]); el("curves").innerHTML = list.slice(0,10).map((s) => `<div><p>${escape(s.tag||s.name)}</p>${curve(s)}</div>`).join("") || "暂无原始曲线";
@@ -106,25 +112,28 @@
   document.addEventListener("DOMContentLoaded", async () => {
     try {catalog=await request("coverage/catalog");config=catalog.defaults;for(const id of ["import-group","import-data-group"]){const node=el(id);node.innerHTML=(catalog.reconstruction_source_groups||["s1_03"]).map((group)=>`<option value="${escape(group)}">${group==="s1_03"?"S1-03原停止组":"S1-03-R1修复组"}</option>`).join("");}writeForm();await refresh();message(`第一阶段配置已加载；当前归档组：${catalog.reconstruction_current_group||"本地开发"}。`);}catch(error){message(error.message,true);return;}
     el("refresh").onclick=()=>guarded(refresh);
-    for(const role of ["train","validation","test"])el("data-"+role).onchange=()=>guarded(refresh);
-    el("schema").onchange=()=>{config=JSON.parse(JSON.stringify(el("schema").value==="4"?catalog.reconstruction_defaults:el("schema").value==="3"?catalog.balance_defaults:catalog.defaults));writeForm();refresh().catch((error)=>message(error.message,true));};
+    for(const role of ["train","development","validation","test","sequence"])el("data-"+role).onchange=()=>guarded(refresh);
+    el("schema").onchange=()=>{config=JSON.parse(JSON.stringify(el("schema").value==="5"?catalog.variable_defaults:el("schema").value==="4"?catalog.reconstruction_defaults:el("schema").value==="3"?catalog.balance_defaults:catalog.defaults));writeForm();if(variable())el("dataset-role").value="validation";refresh().catch((error)=>message(error.message,true));};
+    el("variable-route").onchange=()=>{config.coverage.variable.route=el("variable-route").value;config.coverage.method=["R08","R09"].includes(el("variable-route").value)?"ppo":"local_search";writeForm();};
+    el("source-date").onchange=()=>{el("dataset-role").value=el("source-date").value==="2024-02-03"?"validation":el("source-date").value==="2024-02-06"?"sequence":"test";};
     el("route").onchange=()=>{config.coverage.balance.route=el("route").value;if(["A3","X0","X1","X2","X3","X4"].includes(el("route").value))config.coverage.balance.action_menu=el("route").value==="A3"?"X0":el("route").value;config.coverage.method=el("route").value==="ppo"?"ppo":el("route").value==="prepare"?"none":"local_search";writeForm();};
     el("reconstruction-route").onchange=()=>{const route=el("reconstruction-route").value;config.coverage.reconstruction.route=route;config.coverage.method=route==="P1"?"ppo":["prepare","R0"].includes(route)?"none":"local_search";writeForm();};
     el("goal").onchange=()=>{config.coverage.balance.coverage_goal=el("goal").value;config.coverage.min_coverage_demand=config.coverage.min_coverage_users=el("goal").value==="strict_100"?1:0.999;writeForm();};
     el("initialization").onchange=()=>{config.coverage.initialization=el("initialization").value;if(config.coverage.initialization==="empty"){config.coverage.method="ppo";config.coverage.sweeps=1;}else{config.coverage.sweeps=2;}writeForm();};
-    el("validate").onclick=()=>guarded(async()=>{const result=await request("coverage/validate",readForm());config=result.config;writeForm();message(reconstructed()?`S1-03校验通过：${result.summary.route}，最多${result.summary.max_macro_steps}次完整宏动作，单次/每景几何调用上限${result.summary.max_geometry_calls_per_action}/${result.summary.max_geometry_calls_total}。`:`校验通过：${typeof result.summary.state_dim==="number"?result.summary.state_dim+"维状态":"状态维数以实际环境记录为准"}，${result.summary.action_dim}个候选动作。`);});
+    el("validate").onclick=()=>guarded(async()=>{const result=await request("coverage/validate",readForm());config=result.config;writeForm();message(variable()?`S1-V10校验通过：${result.summary.route}，最多${result.summary.max_beams}束，每景${result.summary.geometry_call_budget}次几何调用，三档倍率${result.summary.demand_multipliers.join("/")}。`:reconstructed()?`S1-03校验通过：${result.summary.route}，最多${result.summary.max_macro_steps}次完整宏动作，单次/每景几何调用上限${result.summary.max_geometry_calls_per_action}/${result.summary.max_geometry_calls_total}。`:`校验通过：${typeof result.summary.state_dim==="number"?result.summary.state_dim+"维状态":"状态维数以实际环境记录为准"}，${result.summary.action_dim}个候选动作。`);});
     el("apply-json").onclick=()=>guarded(async()=>{const result=await request("coverage/validate",JSON.parse(el("config-json").value));config=result.config;writeForm();message("完整配置已校验并应用。");});
     el("save").onclick=()=>guarded(async()=>{const saved=await request("coverage/configs",{config:readForm()});message("方案已保存："+saved.id);});
-    el("import-data").onclick=()=>guarded(async()=>{message("正在按基础布局准备逐机数据…");const record=await request("coverage/datasets/import",{path:el("data-path").value,partition_role:el("data-role").value,coverage:readForm().coverage});await refresh();el("data-"+record.partition_role).value=record.id;message(`已保存${record.count}个场景；初始化失败${record.failed_initializations}个，来源SHA已保留。`);});
+    el("import-data").onclick=()=>guarded(async()=>{message("正在准备逐机数据…");const current=readForm();const record=await request("coverage/datasets/import",{path:el("data-path").value,partition_role:el("data-role").value,schema_version:current.schema_version,coverage:current.coverage});await refresh();el("data-"+record.partition_role).value=record.id;message(`已保存${record.count}个场景；来源SHA已保留。`);});
+    el("merge-data").onclick=()=>guarded(async()=>{const ids=el("merge-ids").value.split(",").map((s)=>s.trim()).filter(Boolean);const role=el("data-role").value;const record=await request("coverage/datasets/merge",{dataset_ids:ids,partition_role:role});await refresh();el("data-"+role).value=record.id;message(`已合并${record.count}个${role}母场景：${record.id}`);});
     el("import-dataset").onclick=()=>guarded(async()=>{const row=await request("coverage/reconstruction/import-dataset",{source_group:el("import-data-group").value,source_target:el("import-data-target").value,source_dataset_id:el("import-dataset-id").value,partition_role:el("import-data-role").value});await refresh();el("data-"+row.partition_role).value=row.id;message(`数据已从${row.source_group}只读导入：${row.id} · SHA ${row.sha256}`);});
     el("import-start").onclick=()=>guarded(async()=>{const row=await request("coverage/reconstruction/import-start",{source_group:el("import-group").value,source_target:el("import-target").value,source_run_id:el("import-run-id").value,partition_role:el("import-role").value});await refresh();message(`共同起点已从${row.source_group}只读导入：${row.id} · SHA ${row.sha256}`);});
     el("import-model").onclick=()=>guarded(async()=>{const row=await request("coverage/reconstruction/import-model",{source_group:el("import-group").value,source_target:el("import-target").value,source_run_id:el("import-run-id").value});await refresh();message(`P1模型已从${row.source_group}只读导入：${row.id} · SHA ${row.sha256}`);});
     async function submit(kind) {
-      const selected={};for(const role of ["train","validation","test"])if(el("data-"+role).value)selected[role]=el("data-"+role).value;
+      const selected={};for(const role of ["train","development","validation","test","sequence"])if(el("data-"+role).value)selected[role]=el("data-"+role).value;
       const starts={};for(const role of ["train","validation","test"])if(el("start-"+role).value)starts[role]=el("start-"+role).value;
-      const job=await request("coverage/runs",{kind,config:readForm(),dataset_ids:selected,dataset_role:el("dataset-role").value,start_run_ids:starts,model_id:el("model").value,experiment_role:el("purpose").value,request_id:"coverage_ui_"+crypto.randomUUID()});runId=job.run_id;await refresh();message("工作台任务已提交："+job.run_id);
+      const job=await request("coverage/runs",{kind,config:readForm(),dataset_ids:selected,dataset_role:el("dataset-role").value,source_date:el("source-date").value,start_run_ids:starts,model_id:el("model").value,experiment_role:el("purpose").value,request_id:"coverage_ui_"+crypto.randomUUID()});runId=job.run_id;await refresh();message("工作台任务已提交："+job.run_id);
     }
-    el("start").onclick=()=>guarded(()=>submit("train"));el("evaluate").onclick=()=>guarded(()=>submit("evaluate"));
+    el("prepare").onclick=()=>guarded(()=>submit("prepare"));el("start").onclick=()=>guarded(()=>submit("train"));el("evaluate").onclick=()=>guarded(()=>submit("evaluate"));
     el("run").onchange=()=>{runId=el("run").value;runDetail();};
     for(const action of ["stop","resume"])el(action).onclick=()=>guarded(async()=>{if(!runId)throw new Error("请先选择任务");await request("runs/"+encodeURIComponent(runId)+"/"+action,{});await refresh();message(action==="stop"?"停止请求已提交，任务将保存断点。":"断点恢复请求已提交。");});
     const open=()=>{if(location.hash==="#coverage"){for(const page of document.querySelectorAll(".page")){const active=page.id==="page-coverage";page.hidden=!active;page.classList.toggle("active",active);}for(const button of document.querySelectorAll("[data-page]"))button.setAttribute("aria-current",button.dataset.page==="coverage"?"page":"false");}};

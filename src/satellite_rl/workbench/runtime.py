@@ -320,14 +320,22 @@ class Scheduler:
                                     is_variable_beam_experiment(job.get("experiment_id")))
             resumable_preparation = bool(job and job.get("kind") == "prepare" and
                 job.get("experiment_id") == "S2-P19" and config.get("research_stage") == "s2p19_preparation")
+            resumable_variable_preparation = bool(job and job.get("kind") == "prepare" and
+                job.get("experiment_id") == "S1-V10" and config.get("research_stage") == "coverage" and
+                config.get("schema_version") == 5)
             resumable_balance_eval = bool(job and job.get("kind") == "evaluate" and
                                           config.get("research_stage") == "coverage" and
                                           config.get("schema_version") == 3)
             resumable_reconstruction_eval = bool(job and job.get("kind") == "evaluate" and
                                                  config.get("research_stage") == "coverage" and
                                                  config.get("schema_version") == 4)
+            resumable_variable_eval = bool(job and job.get("kind") == "evaluate" and
+                                           config.get("research_stage") == "coverage" and
+                                           config.get("schema_version") == 5)
             if not job or (job["kind"] not in ("train", "refine") and
-                           not (saved_evaluation or resumable_preparation or resumable_balance_eval or resumable_reconstruction_eval)):
+                           not (saved_evaluation or resumable_preparation or resumable_variable_preparation or
+                                resumable_balance_eval or
+                                resumable_reconstruction_eval or resumable_variable_eval)):
                 raise ValueError("只有工作台训练或功率优化任务支持恢复")
             if status.get("stage") not in ("stopped", "failed", "interrupted"):
                 raise ValueError("该任务当前不能恢复；已完成任务请复制配置新建")
@@ -364,12 +372,16 @@ class Scheduler:
                 partial_name = "starts.partial.jsonl" if route == "prepare" else "results.partial.jsonl"
                 if not (directory / partial_name).is_file():
                     raise ValueError("没有可恢复的S1-03逐场景记录；评价不能伪重跑")
+            if resumable_variable_eval and not (directory / "results.partial.jsonl").is_file():
+                raise ValueError("没有可恢复的S1-V10逐场景记录；评价不能伪重跑")
             boundary_repair = source_repair == S2P17_BOUNDARY_REPAIR_ID
             replay_repair = source_repair == S2P19_REPLAY_REPAIR_ID
             i0_budget_repair = source_repair == I0_BUDGET_REPAIR_ID
             if source_repair is not None and (
                     (job["kind"] == "refine" and not boundary_repair) or
-                    saved_evaluation or resumable_balance_eval or resumable_reconstruction_eval):
+                    saved_evaluation or resumable_variable_preparation or
+                    resumable_balance_eval or resumable_reconstruction_eval or
+                    resumable_variable_eval):
                 raise ValueError("功率优化按冻结源码及完整场景记录恢复，不支持训练源码替换")
             if boundary_repair and (job.get("run_id") != S2P17_FAILED_RUN or
                     expected_origin_commit != S2P17_ORIGIN_COMMIT or
@@ -429,6 +441,14 @@ class Scheduler:
                 from .recovery import prepare_io_retry_recovery
                 job = prepare_io_retry_recovery(self.store, job)
             (directory / "stop.request").unlink(missing_ok=True)
+            if resumable_variable_preparation:
+                history = directory / "recovery_history" / f"attempt_{int(job.get('resume_attempt', 0)) + 1:03d}"
+                history.mkdir(parents=True, exist_ok=False)
+                atomic_json(history / "status_before_resume.json", status)
+                failure = directory / "failure.json"
+                if failure.is_file():
+                    (history / "failure_before_resume.json").write_bytes(failure.read_bytes())
+                job["resume_attempt"] = int(job.get("resume_attempt", 0)) + 1
             job["resume"] = True
             atomic_json(directory / "job.json", job)
             reason = ("从已保存完整评价案例恢复" if saved_evaluation else
@@ -436,6 +456,8 @@ class Scheduler:
                       "从S1-02逐场景记录恢复" if resumable_balance_eval else "从正常断点恢复")
             if resumable_reconstruction_eval:
                 reason = "从S1-03逐场景记录恢复"
+            if resumable_variable_preparation:
+                reason = "S1-V10同ID从冻结原始归档重做准备；原失败和开销留在recovery_history"
             fields = {"stage": "queued", "queue_reason": reason, "pid": None,
                       "error": None, "traceback": None, "failure_path": None,
                       "exit_code": None, "exit_hex": None}
