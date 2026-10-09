@@ -26,7 +26,9 @@ def row():
             "algorithm_seconds": .2, "total_seconds": .3,
             "terminal_physics": {"layout_aliases": {"best": digest},
                                  "layouts_by_sha256": {digest: {
-                                     "beams": [beam], "metrics": {"carried_bps": 80.0,
+                                     "beams": [beam],
+                                     "aircraft_service": {"demand_weighted_carried_fraction": .75},
+                                     "metrics": {"carried_bps": 80.0,
                                                                    "total_demand_bps": 100.0,
                                                                    "demand_weighted_carried_fraction": .8,
                                                                    "beam_mean_si": .8,
@@ -129,6 +131,8 @@ class ReportTests(unittest.TestCase):
             self.assertTrue((root / "report" / "per_scene.csv").is_file())
             summary = json.loads((root / "report" / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["I0@0.75"]["scene_count"], 1)
+            self.assertEqual(summary["I0@0.75"]["beam_carried_fraction"]["mean"], .8)
+            self.assertEqual(summary["I0@0.75"]["aircraft_tdma_carried_fraction"]["mean"], .75)
 
 
 if __name__ == "__main__":
