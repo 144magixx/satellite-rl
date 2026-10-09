@@ -162,7 +162,8 @@ class Store:
     def create_job(self, config, *, kind="train", request_id=None, extra=None):
         if kind not in ("train", "evaluate", "refine", "prepare"):
             raise ValueError("未知任务类型")
-        if kind == "prepare" and config.get("research_stage") != "s2p19_preparation":
+        if kind == "prepare" and not (config.get("research_stage") == "s2p19_preparation" or
+                (config.get("research_stage") == "coverage" and config.get("schema_version") == 5)):
             raise ValueError("准备任务须声明受校验的S2-P19准备类型")
         if request_id is not None:
             validate_id(request_id)
@@ -188,6 +189,14 @@ class Store:
                 from .s2p19_service import freeze_preparation
                 config = deepcopy(config)
                 config["preparation"] = freeze_preparation(config["preparation"], directory / "input_sources")
+            if kind == "prepare" and config.get("research_stage") == "coverage" and config.get("schema_version") == 5:
+                from .coverage_variable import freeze_variable_preparation
+                frozen_extra["variable_preparation"] = freeze_variable_preparation(
+                    frozen_extra["variable_preparation"], directory / "input_sources")
+            if kind in ("train", "evaluate") and config.get("research_stage") == "coverage" and config.get("schema_version") == 5:
+                from .coverage_variable import freeze_variable_dataset_contract
+                frozen_extra["variable_dataset_contract"] = freeze_variable_dataset_contract(
+                    frozen_extra["variable_dataset_contract"], directory / "input_sources")
             is_coverage = config.get("research_stage") == "coverage"
             profile = (config["coverage"]["environment_profile"] if is_coverage else
                        config.get("environment", {}).get("profile", "china_legacy"))
