@@ -45,6 +45,24 @@ class VariableArchiveTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "job ZIP64 packages"):
                 archive_inventory.bundle_download("a" * 40)
 
+    def test_shared_raw_source_chooses_disk_from_actual_zip_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            droot, croot = base / "D", base / "C"
+            gib = 1 << 30
+            def usage(path):
+                amount = 12 * gib if Path(path).is_relative_to(droot) else 14 * gib
+                return type("Usage", (), {"free": amount})()
+            remote = {"bytes": 5 * gib, "sha256": "a" * 64,
+                      "path": "/remote/one_raw_source.zip"}
+            with patch.object(archive_inventory, "LOCAL", droot), \
+                 patch.object(archive_jobs, "BACKUP_LOCAL", croot), \
+                 patch.object(archive_inventory.shutil, "disk_usage", side_effect=usage):
+                target, gate = archive_inventory.source_bundle_target("b" * 40, remote)
+            self.assertTrue(target.is_relative_to(croot))
+            self.assertEqual(gate["missing_compressed_bytes"], 5 * gib)
+            self.assertEqual(gate["reserved_bytes_each_drive"], 8 * gib)
+
 
 if __name__ == "__main__":
     unittest.main()

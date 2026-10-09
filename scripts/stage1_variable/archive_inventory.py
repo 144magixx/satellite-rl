@@ -203,6 +203,35 @@ print(json.dumps(rows))
     return result
 
 
+def source_bundle_target(commit, remote):
+    """Choose one verified D/C location from actual compressed ZIP bytes."""
+    from scripts.stage1_variable import archive_jobs
+
+    candidates = (LOCAL / "bundles" / "source",
+                  archive_jobs.BACKUP_LOCAL / "_shared_source")
+    for directory in candidates:
+        directory.mkdir(parents=True, exist_ok=True)
+    free = {str(path): shutil.disk_usage(path).free for path in candidates}
+    if any(value < archive_jobs.LOCAL_RESERVE_BYTES for value in free.values()):
+        raise RuntimeError("raw-source archive requires D and C each to retain 8 GiB")
+    name = f"s1v10_raw_source_{commit}.zip"
+    target = next((directory / name for directory in candidates
+                   if (directory / name).is_file() and
+                   (directory / name).stat().st_size == remote["bytes"] and
+                   file_sha(directory / name) == remote["sha256"]), None)
+    missing = 0 if target is not None else remote["bytes"]
+    if target is None:
+        target = next((directory / name for directory in candidates
+                       if free[str(directory)] >= missing +
+                       archive_jobs.LOCAL_RESERVE_BYTES), None)
+    if target is None:
+        raise RuntimeError("actual raw-source ZIP bytes do not fit D/C with 8 GiB reserves; "
+                           "remote receipt remains at " + remote["path"])
+    return target, {"free_bytes_before": free,
+                    "missing_compressed_bytes": missing,
+                    "reserved_bytes_each_drive": archive_jobs.LOCAL_RESERVE_BYTES}
+
+
 def source_bundle_download(commit):
     """Create one ZIP64 raw-source package, never four duplicate daily sets."""
     inventory = source_inventory(commit)
@@ -211,11 +240,6 @@ def source_bundle_download(commit):
     uploaded = ops.upload(local_inventory, remote_inventory, 20418)
     if uploaded["remote"] != file_sha(local_inventory):
         raise RuntimeError("raw source inventory transfer SHA differs")
-    estimated = inventory["raw_bytes_once"]
-    target_local = LOCAL / "bundles" / "source" / f"s1v10_raw_source_{commit}.zip"
-    target_local.parent.mkdir(parents=True, exist_ok=True)
-    if shutil.disk_usage(target_local.parent).free < estimated + 2 * (1 << 30):
-        raise RuntimeError("local raw-source ZIP requires daily payload plus 2GiB reserve")
     code = f'''
 import hashlib,json,pathlib,shutil,zipfile
 base=pathlib.Path({ops.BASE!r})/'source';manifest=json.loads(pathlib.Path({remote_inventory!r}).read_text())
@@ -242,15 +266,22 @@ with target.open('rb') as stream:
 print(json.dumps({{'path':str(target),'bytes':target.stat().st_size,'sha256':h.hexdigest()}}))
 '''
     remote = _remote(20418, code, timeout=3600)
+    target_local, gate = source_bundle_target(commit, remote)
     client = ops.connect(20418)
     try:
         with client.open_sftp() as sftp:
-            sftp.get(remote["path"], str(target_local))
+            if gate["missing_compressed_bytes"]:
+                pending = target_local.with_name(target_local.name + ".part")
+                sftp.get(remote["path"], str(pending))
+                if pending.stat().st_size != remote["bytes"] or file_sha(pending) != remote["sha256"]:
+                    raise RuntimeError("single raw-source ZIP staging SHA differs")
+                pending.replace(target_local)
     finally:
         client.close()
     if target_local.stat().st_size != remote["bytes"] or file_sha(target_local) != remote["sha256"]:
         raise RuntimeError("single raw-source ZIP local SHA differs")
     receipt = {**remote, "local_path": str(target_local),
+               "local_space_gate": gate,
                "source_inventory_sha256": file_sha(local_inventory),
                "daily_archives_copied_once": 4}
     save(LOCAL / "source_bundle_receipt.json", receipt)
