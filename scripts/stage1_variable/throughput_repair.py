@@ -247,7 +247,7 @@ def stopped_checkpoint(run_id):
         raise RuntimeError("target is not cleanly stopped at an original-source 2048 checkpoint")
     directory = detail["directory"]
     code = f'''
-import hashlib,json,os,pathlib
+import hashlib,json,os,pathlib,subprocess
 root=pathlib.Path({directory!r});status=json.loads((root/'status.json').read_text());launch=json.loads((root/'launch.json').read_text())
 path=root/'checkpoint.pt';h=hashlib.sha256()
 with path.open('rb') as stream:
@@ -256,12 +256,16 @@ pid=launch['pid'];p=pathlib.Path('/proc')/str(pid);alive=False
 if p.exists():
  raw=(p/'stat').read_text();ticks=int(raw[raw.rfind(')')+2:].split()[19]);boot=next(int(x.split()[1]) for x in pathlib.Path('/proc/stat').read_text().splitlines() if x.startswith('btime '));start=boot+ticks/os.sysconf('SC_CLK_TCK')
  alive=abs(start-launch['process_start_time'])<.02
+sessions=subprocess.run(['ps','-eo','sess,pid,args'],capture_output=True,text=True,timeout=10,check=True).stdout.splitlines()[1:]
+orphan=[line for line in sessions if line.split(None,2) and line.split(None,2)[0].isdigit()
+ and int(line.split(None,2)[0])==pid and int(line.split(None,2)[1])!=pid]
 print(json.dumps({{'sha256':h.hexdigest(),'bytes':path.stat().st_size,
  'worker_alive_same_birth':alive,'launch_pid':pid,'launch_start':launch['process_start_time'],
- 'step':status['env_step'],'updates':status['update_step'],'episode':status['episode']}}))
+ 'step':status['env_step'],'updates':status['update_step'],'episode':status['episode'],
+ 'orphan_session_processes':orphan}}))
 '''
     remote_state = remote(port, code)
-    if (remote_state["worker_alive_same_birth"] or
+    if (remote_state["worker_alive_same_birth"] or remote_state["orphan_session_processes"] or
             remote_state["sha256"] != status.get("checkpoint_sha256") or
             remote_state["step"] != status["env_step"]):
         raise RuntimeError("stopped worker PID/birth/checkpoint SHA differs")
