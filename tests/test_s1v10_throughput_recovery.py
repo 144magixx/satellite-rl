@@ -296,6 +296,25 @@ class ThroughputRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "frozen scene order"):
                 _checkpoint_state(directory, job, config, status)
 
+    def test_requested_stop_before_due_validation_has_no_prefix(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store, job, directory, receipt, contract = self.fixture(Path(temporary))
+            checkpoint = torch.load(directory / "checkpoint.pt", map_location="cpu",
+                                    weights_only=False)
+            checkpoint.update(step=16384, updates=1024, episode=20,
+                              last_validation=0)
+            torch.save(checkpoint, directory / "checkpoint.pt")
+            status = json.loads((directory / "status.json").read_text(encoding="utf-8"))
+            status.update(env_step=16384, update_step=1024, episode=20,
+                          stop_reason="requested",
+                          checkpoint_sha256=digest(directory / "checkpoint.pt"))
+            atomic_json(directory / "status.json", status)
+            config = json.loads((directory / "config.json").read_text(encoding="utf-8"))
+            checked = _checkpoint_state(directory, job, config, status)
+            self.assertEqual(checked["last_validation"], 0)
+            self.assertEqual(checked["saved_validation_nodes"], [])
+            self.assertFalse((directory / "validation_16384.jsonl").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
