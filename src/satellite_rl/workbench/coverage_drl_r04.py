@@ -421,7 +421,8 @@ def submit(application, body, config):
     if (kind not in ("prepare", "train", "evaluate") or variant not in METHODS + ("teacher",) or
             purpose not in ("formal", "verification")):
         raise ValueError("S1-D12A task kind, variant or role differs")
-    if (kind == "prepare" and variant != "teacher") or (kind == "train" and variant not in LEARNED):
+    if (kind == "prepare" and variant != "teacher") or (kind == "train" and variant not in LEARNED) or \
+            (kind == "evaluate" and variant == "teacher"):
         raise ValueError("S1-D12A teacher prepares; BC/P0/P1 train")
     if purpose == "verification" and kind in ("prepare", "train") and variant not in ("P0", "P1"):
         raise ValueError("only P0/P1 have authorized 2048-step engineering verification")
@@ -450,8 +451,9 @@ def submit(application, body, config):
     if config["coverage"]["method"] != expected_method:
         raise ValueError("S1-D12A variant and coverage method differ")
     supplied = body.get("dataset_ids")
-    required = {"train"} if kind == "prepare" or variant == "BC" else (
-        {"train", "validation"} if kind == "train" else {role})
+    required = ({role} if kind == "evaluate" else
+                {"train"} if kind == "prepare" or variant == "BC" else
+                {"train", "validation"})
     if not isinstance(supplied, dict) or set(supplied) != required:
         raise ValueError(f"S1-D12A requires exactly {sorted(required)} datasets")
     datasets = {}

@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from satellite_rl.workbench import coverage_drl_r04 as d12
 from satellite_rl.workbench import drl_r04_gate
+from satellite_rl.workbench.coverage import CoverageApplication
 from satellite_rl.workbench.storage import digest
 from satellite_rl.training.run_monitor import atomic_json
 
@@ -75,6 +76,57 @@ class DrlR04WorkbenchTests(unittest.TestCase):
                 body["scene_indices"] = list(range(1, 100, 4))
                 with self.assertRaisesRegex(ValueError, "shard"):
                     d12.submit(self.application, body, config)
+
+    def test_api_test_shards_accept_learned_models_with_frozen_source(self):
+        root = Path(self.temp.name)
+        coverage = CoverageApplication(self.application)
+        with patch.object(d12, "PARENT", root), patch.object(d12, "deployment", return_value="20418"):
+            for variant in ("BC", "P0", "P1"):
+                run_id = f"train_{variant.lower()}"
+                source = root / "20424" / "archive" / "outputs" / "workbench" / "jobs" / run_id
+                source.mkdir(parents=True)
+                endpoint = "bc_endpoint" if variant == "BC" else "final"
+                model_root = root / f"model_{variant.lower()}"
+                model_dir = model_root / endpoint
+                model_dir.mkdir(parents=True)
+                policy = model_dir / "policy.pt"
+                policy.write_bytes(variant.encode())
+                atomic_json(model_dir / "model.json", {
+                    "env_step": 0 if variant == "BC" else 262144,
+                    "selection": "bc_endpoint" if variant == "BC" else "fixed_budget_endpoint",
+                    "policy_sha256": digest(policy)})
+                atomic_json(source / "job.json", {"run_id": run_id, "experiment_id": d12.GROUP,
+                            "kind": "train", "variant": variant, "experiment_role": "formal",
+                            "model_dir": str(model_root)})
+                atomic_json(source / "status.json", {"stage": "completed",
+                            "env_step": 0 if variant == "BC" else 262144})
+                for shard in range(4):
+                    config = d12.default_drl_r04_config()
+                    body = {"kind": "evaluate", "variant": variant, "dataset_role": "test",
+                            "dataset_ids": {"test": "test"}, "shard_id": shard,
+                            "scene_indices": list(range(shard, 100, 4)),
+                            "experiment_role": "formal", "source_port": "20424",
+                            "source_run_id": run_id, "request_id": f"{variant}_{shard}"}
+                    job = coverage.api("POST", ["runs"], {}, {"config": config, **body})
+                    self.assertEqual(set(job["config"]["datasets"]), {"test"})
+                    self.assertEqual(job["extra"]["expected_result_rows"], 75)
+                    self.assertEqual(job["extra"]["model_source"]["source_run_id"], run_id)
+                    self.assertEqual(job["extra"]["model_source"]["model_files"][0]["sha256"],
+                                     digest(policy))
+                policy.write_bytes(b"tampered endpoint")
+                with self.assertRaisesRegex(ValueError, "metadata/budget"):
+                    coverage.api("POST", ["runs"], {}, {"config": config, **body})
+
+    def test_api_training_still_requires_train_dataset(self):
+        coverage = CoverageApplication(self.application)
+        with patch.object(d12, "deployment", return_value="20418"):
+            for variant, datasets in (("BC", {}), ("P0", {"validation": "validation"}),
+                                      ("P1", {"validation": "validation"})):
+                with self.subTest(variant=variant), self.assertRaisesRegex(ValueError, "datasets"):
+                    coverage.api("POST", ["runs"], {}, {
+                        "config": d12.default_drl_r04_config(), "kind": "train",
+                        "variant": variant, "dataset_ids": datasets,
+                        "experiment_role": "formal", "request_id": f"train_{variant}"})
 
     def test_verification_cannot_expand_formal_training_budget(self):
         body = {"kind": "train", "variant": "P0", "dataset_ids": {
