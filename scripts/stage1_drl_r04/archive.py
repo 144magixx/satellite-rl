@@ -546,6 +546,18 @@ def plan_canonical(port, receipt, free_by_root=None):
     return {name: str(path.resolve()) for name, path in choices.items()}
 
 
+def remote_blocks(remote, total_bytes, window_bytes=2 << 20):
+    """Use bounded public SFTP vector reads, avoiding one round trip per 32 KiB."""
+    offset = 0
+    while offset < total_bytes:
+        size = min(window_bytes, total_bytes - offset)
+        blocks = list(remote.readv([(offset, size)]))
+        if len(blocks) != 1 or len(blocks[0]) != size:
+            raise ValueError("remote ZIP vector read was short or out of order")
+        yield blocks[0]
+        offset += size
+
+
 def _download(port, receipt):
     directory = LOCAL / str(port) / receipt["run_id"]
     choices = plan_canonical(port, receipt)
@@ -566,7 +578,8 @@ def _download(port, receipt):
                     h = hashlib.sha256()
                     size = 0
                     with sftp.open(volume["remote_path"], "rb") as remote, partial.open("wb") as local:
-                        while block := remote.read(8 << 20):
+                        remote.settimeout(90)
+                        for block in remote_blocks(remote, volume["bytes"]):
                             h.update(block)
                             size += len(block)
                             local.write(block)
