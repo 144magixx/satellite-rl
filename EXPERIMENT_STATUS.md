@@ -1,5 +1,13 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-10 15:10 S1-D12A两PPO继续正常，报告全量核验与归档入口已补强。**根真实四端API/SSH核P0为141312/262144、8832更新，P1为139264/262144、8704更新；两者第8个验证节点131072已完成，原worker54275/52878与科学dfe保持，无重训或新增预算。[进度证据](outputs/experiments/first_stage_s1_d12a_20261010/preflight/heartbeat_20261010_1510.json)。14:50瞬时GPU两端0%/498MiB；14:52四秒窗口CPU主worker及17子进程合计约2.65/2.93核，不能宣称GPU或全部CPU已满载；窗口样本不作算法速度排名，后续仍按有效吞吐观察。
+
+H1/H2开发与固定验证共240条已用原NPZ重新回放初解/原终态/最好解几何、需求守恒、J、逐束供需代数、逐机TDMA、资源及分段时间，全部通过；复用相同纯几何实现，未独立重算离轴链路物理。训练各3条真实完整回合抽查也通过，但全量须终态归档后执行。报告工具原带内统计把需求均衡与C/D混用，410c4a1已按原定义更正并分列两者，未改冻结算法或数据；训练回合未记总墙钟时间，28d071e明确缺项不补零。报告SHA和JSONL均流式读取，1a57287增加全部训练终态回放，d8c8b5a另列发布最好布局的物理成本与多布局审计总成本，不将审计额外调用冒充在线部署速度。[240条实数复核](outputs/experiments/first_stage_s1_d12a_20261010/preflight/strict_real_baseline_audit.json) · [训练终态抽查](outputs/experiments/first_stage_s1_d12a_20261010/preflight/strict_training_terminal_sample.json)。
+
+归档已改每卷唯一canonical存D或C、各留8GiB，不再重复下载两份。真实dev_H1首包166成员/ZIP SHA与成员SHA闭合，卷在C，D只留索引；首遍因D索引目录未创建而留错，42884ef修复后复用同卷，无重打包。[dev_H1收据](outputs/experiments/first_stage_s1_d12a_20261010/job_archives/20473/evaluate_ppo_20261010_033351_fb367deb/receipt.json)。共享源首次批27952在ZIP生成前因Feb07旧恢复缓存而保护性失败；400块与35.37MB前缀已逐范围证明可从最终tar重建，274804c重新实时核对并排除重复缓存，将证明和清单存入源ZIP，原缓存未删改。[缓存逐字节核验](outputs/experiments/first_stage_s1_d12a_20261010/preflight/source_recovery_cache_audit.json)。
+
+唯一源归档批PID41840/出生1791615734.5712087，冻结ops274804c，15:02在空闲20473压缩三日卷，随后逐卷校验下载；15:13本地part仍实际增长，未完成前不称归档闭合。源完成后自动接已完成任务的有界批：当前PID2236（启动见completed_launch.json），最多等待7200秒，再只处理API已终态且worker已退出者；旧等待批39552已按出生在waiting阶段停止延长等待，源码/训练不受影响。不要双起源批或归档批。[源批状态](outputs/experiments/first_stage_s1_d12a_20261010/job_archives/background/source_status.json) · [后继批状态](outputs/experiments/first_stage_s1_d12a_20261010/job_archives/background/completed_status.json)。独立考核1800、报告09、最终模型小文件导出和完整双端核验仍待，小时跟进保持ACTIVE。
+
 **2026-10-10 正式中期报告按开题行文重写，故障中断后已续作完成。**用户指出上一版07仍像实验汇编；本轮重新通读原开题研究正文，先形成[结构与行文分析](outputs/midterm_proposal_style_20261010/proposal_style_analysis.md)，再按“立题依据—三阶段研究内容与模型—方案/结果/可行性—可能创新—基础与计划”重写[07正文](docs/资料/07_HTS资源分配中期报告_正式版.md)及[Word](docs/资料/07_HTS资源分配中期报告_正式版.docx)，最终16页、5图、7条Word数学表达和3张主要效果表（另有术语表）。完整历史明细仍引用06讨论版附件，06和原开题未改。纠正文稿中逐槽功率分摊、目标束分母和50回合平滑说明，既有科学结果未改；新S1-D12A只记录进入实施流程，不纳入其尚未完成的效果。源码/训练/远端控制/自动化/前端均未操作。全部本地引用、P19表28个值、图源SHA及16页排版已核对，[交付核验](outputs/midterm_proposal_style_20261010/delivery_verification.json)保存恢复与验收证据；该记录覆盖此前07的26页汇编版说明。
 
 **2026-10-10 14:27 Codex退出影响已核实并修复，两PPO从原断点恢复，已真实推进到67584。**本轮14:13真实API/SSH显示：新三日数据、H1/H2开发与验证可达性、teacher、BC1580更新及两工程2048均已完成；P0/P1此前各正常运行到65536、4096更新和4×60验证，exit0/stop_reason=pilot_gate。工作台Scheduler漏识别合法pilot_pending，把正常试点等待误标成interrupted，原launcher37916于04:22进入attention_required；Codex异常期间未及时接续，凌晨04:22/04:32至14:25造成约10小时等候。不能把这段时间算作算法计算慢，也不能把问题全部归咎于聊天退出。
