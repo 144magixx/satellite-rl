@@ -20,6 +20,10 @@ class VectorReadTests(unittest.TestCase):
                 return [b"short"]
         with self.assertRaisesRegex(ValueError, "short"):
             list(remote_blocks(ShortRemote(), len(data)))
+        calls.clear()
+        suffix = b"".join(remote_blocks(Remote(), len(data), start_offset=12345))
+        self.assertEqual(suffix, data[12345:])
+        self.assertEqual(calls[0][0], 12345)
 
 if __name__ == "__main__":
     unittest.main()

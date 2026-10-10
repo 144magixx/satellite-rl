@@ -532,6 +532,18 @@ def plan_canonical(port, receipt, free_by_root=None):
     for volume in sorted(receipt["volumes"], key=lambda row: row["bytes"], reverse=True):
         if volume["file"] in choices:
             continue
+        partials = [(key, root / (volume["file"] + ".part")) for key, root in roots.items()
+                    if (root / (volume["file"] + ".part")).exists()]
+        if partials:
+            if len(partials) != 1:
+                raise ValueError("partial ZIP exists on both drives")
+            key, partial = partials[0]
+            remaining = volume["bytes"] - partial.stat().st_size
+            if remaining < 0 or free[key] < remaining:
+                raise RuntimeError("partial ZIP is oversized or lacks 8GiB reserve")
+            choices[volume["file"]] = roots[key] / volume["file"]
+            free[key] -= remaining
+            continue
         eligible = [key for key in roots if free[key] >= volume["bytes"]]
         if not eligible:
             raise RuntimeError("no canonical drive has ZIP bytes plus 8GiB reserve")
@@ -546,9 +558,9 @@ def plan_canonical(port, receipt, free_by_root=None):
     return {name: str(path.resolve()) for name, path in choices.items()}
 
 
-def remote_blocks(remote, total_bytes, window_bytes=2 << 20):
+def remote_blocks(remote, total_bytes, window_bytes=2 << 20, *, start_offset=0):
     """Use bounded public SFTP vector reads, avoiding one round trip per 32 KiB."""
-    offset = 0
+    offset = start_offset
     while offset < total_bytes:
         size = min(window_bytes, total_bytes - offset)
         blocks = list(remote.readv([(offset, size)]))
@@ -573,13 +585,19 @@ def _download(port, receipt):
                     verify_volume(target, volume)
                 else:
                     partial = target.with_suffix(target.suffix + ".part")
-                    if partial.exists():
-                        raise FileExistsError("interrupted local ZIP requires manual inspection")
                     h = hashlib.sha256()
                     size = 0
-                    with sftp.open(volume["remote_path"], "rb") as remote, partial.open("wb") as local:
+                    if partial.exists():
+                        with partial.open("rb") as prior:
+                            for block in iter(lambda: prior.read(8 << 20), b""):
+                                h.update(block)
+                                size += len(block)
+                        if size > volume["bytes"]:
+                            raise ValueError("partial ZIP exceeds immutable receipt size")
+                    resume_offset = size
+                    with sftp.open(volume["remote_path"], "rb") as remote, partial.open("ab") as local:
                         remote.settimeout(90)
-                        for block in remote_blocks(remote, volume["bytes"]):
+                        for block in remote_blocks(remote, volume["bytes"], start_offset=resume_offset):
                             h.update(block)
                             size += len(block)
                             local.write(block)
@@ -587,6 +605,7 @@ def _download(port, receipt):
                         raise ValueError("remote ZIP stream SHA/size differs")
                     partial.replace(target)
                     verify_volume(target, volume)
+                    volume["download_resumed_from_bytes"] = resume_offset
                 volume["canonical_path"] = str(target)
     finally:
         client.close()
