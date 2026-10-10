@@ -353,7 +353,35 @@ def _plot(output, scene_rows, training, validation):
     return plots, None
 
 
-def analyze(state, source, output):
+def _terminal_checkpoint_proof(evidence, port, run_id, status, actual_sha, audit):
+    """Accept the frozen runner's post-tail checkpoint only with independent proof."""
+    if not isinstance(audit, dict) or audit.get("passed") is not True:
+        return None
+    required = ("completed_budget", "source", "seed", "config_hash",
+                "learner_hash", "streams_and_optimizer_rng", "final_policy",
+                "same_checkpoint_policy", "finite", "worker_exited",
+                "ledger_budget_tails.jsonl", "validations", "observation_shards")
+    if not all(audit.get("checks", {}).get(name) is True for name in required):
+        return None
+    counts = audit.get("ledger_counts", {})
+    if (audit.get("run_id") != run_id or
+            audit.get("checkpoint_sha256") != actual_sha or
+            status.get("stage") != "completed" or
+            status.get("env_step") != 262144 or
+            status.get("update_step") != 16384 or
+            counts.get("actions.jsonl") != 262144 or
+            counts.get("budget_tails.jsonl") != 32 or
+            not evidence.has_digest(audit.get("model_sha256"), "model.json") or
+            not evidence.has_digest(audit.get("policy_sha256"), "policy.pt")):
+        return None
+    return {"status_checkpoint_sha256": status.get("checkpoint_sha256"),
+            "verified_terminal_checkpoint_sha256": actual_sha,
+            "final_model_sha256": audit["model_sha256"],
+            "final_policy_sha256": audit["policy_sha256"],
+            "basis": "verified archived ZIP and independent final_learning_audit"}
+
+
+def analyze(state, source, output, *, terminal_audit=None):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     if state.get("experiment_id") != "S1-D12A":
@@ -487,7 +515,13 @@ def analyze(state, source, output):
                 checkpoint_sha = status.get("checkpoint_sha256")
                 actual_checkpoint, checkpoint_error = evidence.sha(port, run_id, "checkpoint.pt")
                 if checkpoint_error or not checkpoint_sha or checkpoint_sha != actual_checkpoint:
-                    issues.append(f"{key}: terminal checkpoint SHA unavailable or differs")
+                    proof = None if checkpoint_error else _terminal_checkpoint_proof(
+                        evidence, port, run_id, status, actual_checkpoint,
+                        (terminal_audit or {}).get(str(port)))
+                    if proof is None:
+                        issues.append(f"{key}: terminal checkpoint SHA unavailable or differs")
+                    else:
+                        task_audit[key]["terminal_checkpoint_proof"] = proof
                 for role in ("train", "validation"):
                     expected = config.get("datasets", {}).get(role, {}).get("sha256")
                     actual, dataset_error = evidence.sha(port, run_id, f"scene_inputs/{role}/inputs.npz")
@@ -765,9 +799,13 @@ def main():
     parser.add_argument("--jobs", required=True, type=Path,
                         help="Downloaded jobs directory or ZIP stream")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--terminal-audit", type=Path,
+                        help="Independent final_learning_audit.json for frozen post-tail SHA")
     args = parser.parse_args()
     state = json.loads(args.state.read_text(encoding="utf-8"))
-    result = analyze(state, args.jobs, args.output)
+    terminal_audit = (json.loads(args.terminal_audit.read_text(encoding="utf-8"))
+                      if args.terminal_audit else None)
+    result = analyze(state, args.jobs, args.output, terminal_audit=terminal_audit)
     print(json.dumps({"formal_ready": result["formal_ready"],
                       "test_rows": result["test_rows"], "issue_count": len(result["issues"]),
                       "audit": str(args.output / "audit.json")}, ensure_ascii=False))

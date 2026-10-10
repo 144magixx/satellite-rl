@@ -8,7 +8,9 @@ import unittest
 from unittest import mock
 import zipfile
 
-from scripts.stage1_drl_r04.report import Evidence, _audit_row, _layout_sha, _stats, analyze
+from scripts.stage1_drl_r04.report import (Evidence, _audit_row, _layout_sha,
+                                          _stats, _terminal_checkpoint_proof,
+                                          analyze)
 
 
 def row():
@@ -38,6 +40,48 @@ def row():
 
 
 class ReportTests(unittest.TestCase):
+    def test_post_tail_checkpoint_requires_complete_independent_proof(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            jobdir = root / "20418" / "run-1"
+            jobdir.mkdir(parents=True)
+            checkpoint = b"post-tail checkpoint"
+            model = b"verified final metadata"
+            policy = b"verified final policy"
+            (jobdir / "checkpoint.pt").write_bytes(checkpoint)
+            (root / "final" / "model.json").parent.mkdir()
+            (root / "final" / "model.json").write_bytes(model)
+            (root / "final" / "policy.pt").write_bytes(policy)
+            digest = lambda data: hashlib.sha256(data).hexdigest()
+            status = {"stage": "completed", "env_step": 262144,
+                      "update_step": 16384, "checkpoint_sha256": digest(b"pre-tail")}
+            required = ("completed_budget", "source", "seed", "config_hash",
+                        "learner_hash", "streams_and_optimizer_rng", "final_policy",
+                        "same_checkpoint_policy", "finite", "worker_exited",
+                        "ledger_budget_tails.jsonl", "validations", "observation_shards")
+            audit = {"passed": True, "run_id": "run-1",
+                     "checkpoint_sha256": digest(checkpoint),
+                     "model_sha256": digest(model), "policy_sha256": digest(policy),
+                     "checks": {name: True for name in required},
+                     "ledger_counts": {"actions.jsonl": 262144,
+                                       "budget_tails.jsonl": 32}}
+            evidence = Evidence(root)
+            try:
+                proof = _terminal_checkpoint_proof(evidence, 20418, "run-1",
+                                                   status, digest(checkpoint), audit)
+                self.assertEqual(proof["status_checkpoint_sha256"], digest(b"pre-tail"))
+                for change in ({"checkpoint_sha256": digest(b"corrupt")},
+                               {"policy_sha256": digest(b"wrong")},
+                               {"ledger_counts": {"actions.jsonl": 262144,
+                                                  "budget_tails.jsonl": 0}},
+                               {"checks": {**audit["checks"],
+                                           "same_checkpoint_policy": False}}):
+                    self.assertIsNone(_terminal_checkpoint_proof(
+                        evidence, 20418, "run-1", status, digest(checkpoint),
+                        {**audit, **change}))
+            finally:
+                evidence.close()
+
     def test_beam_and_reward_algebra_and_missing_values(self):
         valid, _ = _audit_row(row())
         self.assertEqual(valid, [])
