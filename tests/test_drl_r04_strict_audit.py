@@ -8,6 +8,7 @@ import unittest
 import numpy as np
 
 from scripts.stage1_drl_r04.strict_audit import audit_scene_row, scenes_from_npz
+from scripts.stage1_drl_r04.report import audit_training_terminal
 from satellite_rl.coverage.drl_r04_core import DrlR04Env
 from satellite_rl.coverage.drl_r04_runner import _terminal_physics
 from satellite_rl.coverage.scenes import CoverageDataset, CoverageScene
@@ -80,6 +81,14 @@ class StrictAuditTests(unittest.TestCase):
                          "not_recorded_for_training_terminal_not_filled")
         errors, _ = audit_scene_row(restored[0], training)
         self.assertIn("algorithm_plus_physical_total_time_differs", errors)
+        training["episode_return"] = training["reward_sum"]
+        lookup = {(scene.scene_id, scene.source_hash): restored[0]}
+        errors, replayed = audit_training_terminal(lookup, training)
+        self.assertTrue(replayed)
+        self.assertEqual(errors, [])
+        training["episode_return"] += 1
+        errors, _ = audit_training_terminal(lookup, training)
+        self.assertIn("training_terminal_reward_not_telescoping", errors)
 
 
 if __name__ == "__main__":

@@ -265,6 +265,24 @@ def _stats(values):
             "p95": data[math.ceil(.95 * len(data)) - 1]}
 
 
+def audit_training_terminal(scene_lookup, terminal):
+    """Replay recorded terminal physics without inventing episode wall time."""
+    if (terminal.get("purpose") == "budget_tail_snapshot" and
+            terminal.get("action_trace", {}).get("count") == 0):
+        return [], False
+    scene = scene_lookup.get((terminal.get("scene_id"), terminal.get("scene_sha256")))
+    if scene is None:
+        return ["training_frozen_scene_unavailable"], False
+    errors, _ = audit_scene_row(scene, terminal, require_total_timing=False)
+    if not _near(terminal.get("reward_sum"), terminal.get("episode_return"), atol=1e-7):
+        errors.append("training_terminal_reward_sum_differs")
+    if not (_number(terminal.get("initial_j")) and _number(terminal.get("best_j"))) or not _near(
+            terminal.get("episode_return"),
+            100 * (terminal["initial_j"] - terminal["best_j"]), atol=1e-7):
+        errors.append("training_terminal_reward_not_telescoping")
+    return errors, True
+
+
 def _plot(output, scene_rows, training, validation):
     if not scene_rows and not any(training.values()) and not any(validation.values()):
         return [], None
@@ -465,6 +483,18 @@ def analyze(state, source, output):
                     actual, dataset_error = evidence.sha(port, run_id, f"scene_inputs/{role}/inputs.npz")
                     if dataset_error or actual != expected:
                         issues.append(f"{key}: frozen {role} dataset SHA unavailable or differs")
+                training_scene_lookup = {}
+                try:
+                    train_bytes, train_error = evidence.job_file(port, run_id, "scene_inputs/train/inputs.npz")
+                    if train_error or hashlib.sha256(train_bytes).hexdigest() != config["datasets"]["train"]["sha256"]:
+                        raise ValueError("training NPZ is missing or has another SHA")
+                    training_scenes = scenes_from_npz(train_bytes)
+                    training_scene_lookup = {(scene.scene_id, scene.source_hash): scene
+                                             for scene in training_scenes}
+                    if len(training_scene_lookup) != len(training_scenes):
+                        raise ValueError("training scene identity duplicated")
+                except (KeyError, TypeError, ValueError) as exc:
+                    issues.append(f"{key}: training scene replay unavailable: {exc}")
                 tails, error = evidence.job_jsonl(port, run_id, "budget_tails.jsonl")
                 if error:
                     issues.append(f"{key}: {error}")
@@ -515,10 +545,16 @@ def analyze(state, source, output):
                             not _near(actual.get("reward"), terminal.get("episode_return"), atol=1e-7)):
                         issues.append(f"{key}: terminal action trace or reward differs {identity}")
                 episode_count = 0
+                strict_training_terminals = 0
+                strict_training_error_count = 0
                 try:
                     for terminal in evidence.job_iter_jsonl(port, run_id, "episodes.jsonl"):
                         episode_count += 1
                         check_terminal(terminal)
+                        replay_errors, replayed = audit_training_terminal(training_scene_lookup, terminal)
+                        strict_training_terminals += int(replayed)
+                        strict_training_error_count += len(replay_errors)
+                        issues.extend(f"{key}: {message}" for message in replay_errors)
                         if terminal.get("completed_episode") is not True:
                             issues.append(f"{key}: completed episode ledger contains partial tail")
                         else:
@@ -529,12 +565,19 @@ def analyze(state, source, output):
                     issues.append(f"{key}: episode ledger unavailable or invalid: {exc}")
                 for terminal in tails:
                     check_terminal(terminal)
+                    replay_errors, replayed = audit_training_terminal(training_scene_lookup, terminal)
+                    strict_training_terminals += int(replayed)
+                    strict_training_error_count += len(replay_errors)
+                    issues.extend(f"{key}: {message}" for message in replay_errors)
                 if action_total != status.get("env_step"):
                     issues.append(f"{key}: action count differs from recorded decision budget")
                 task_audit[key].update(env_step=status.get("env_step"),
                                        action_rows=action_total, completed_episodes=episode_count,
                                        budget_tails=len(tails),
-                                       validation_nodes=len(nodes))
+                                       validation_nodes=len(nodes),
+                                       strict_training_terminals=strict_training_terminals,
+                                       strict_training_error_count=strict_training_error_count,
+                                       training_total_timing="not_recorded_not_filled")
                 if any(x.get("purpose") != "budget_tail_snapshot" or x.get("completed_episode") is not False for x in tails):
                     issues.append(f"{key}: budget tail mixed with completed episodes")
                 for node in nodes:
