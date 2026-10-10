@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 from scripts.stage1_drl_r04 import archive
@@ -24,6 +25,52 @@ def volume(directory, filename, contents):
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_canonical_space_plan_rejects_below_reserve(self):
+        receipt = {"run_id": "shared_sources", "volumes": [
+            {"file": "day.zip", "bytes": 100, "sha256": "0" * 64}]}
+        with tempfile.TemporaryDirectory() as directory:
+            with (patch.object(archive, "LOCAL", Path(directory) / "D"),
+                  patch.object(archive, "BACKUP", Path(directory) / "C")):
+                with self.assertRaisesRegex(RuntimeError, "8GiB reserve"):
+                    archive.plan_canonical(20418, receipt, {
+                        "local": archive.RESERVE + 99,
+                        "backup": archive.RESERVE + 40})
+
+    def test_canonical_plan_keeps_room_for_second_large_volume(self):
+        receipt = {"run_id": "task", "volumes": [
+            {"file": name, "bytes": size, "sha256": "0" * 64}
+            for name, size in (("a.zip", 7), ("b.zip", 4), ("c.zip", 4))]}
+        with tempfile.TemporaryDirectory() as directory:
+            with (patch.object(archive, "LOCAL", Path(directory) / "D"),
+                  patch.object(archive, "BACKUP", Path(directory) / "C")):
+                choices = archive.plan_canonical(20418, receipt, {
+                    "local": archive.RESERVE + 8,
+                    "backup": archive.RESERVE + 7})
+        self.assertIn("C", choices["a.zip"])
+        self.assertIn("D", choices["b.zip"])
+        self.assertIn("D", choices["c.zip"])
+
+    def test_canonical_plan_reuses_verified_existing_zip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            local, backup = Path(directory) / "D", Path(directory) / "C"
+            target = backup / "20418" / "shared_sources"
+            target.mkdir(parents=True)
+            saved = volume(target, "day.zip", {"shared_sources/2024-02-07/day.tar": b"raw"})
+            receipt = {"run_id": "shared_sources", "volumes": [saved]}
+            with (patch.object(archive, "LOCAL", local),
+                  patch.object(archive, "BACKUP", backup)):
+                choices = archive.plan_canonical(20418, receipt, {
+                    "local": archive.RESERVE,
+                    "backup": archive.RESERVE})
+            self.assertEqual(choices["day.zip"], str((target / "day.zip").resolve()))
+            (target / "day.zip").write_bytes(b"tampered")
+            with (patch.object(archive, "LOCAL", local),
+                  patch.object(archive, "BACKUP", backup)):
+                with self.assertRaisesRegex(ValueError, "ZIP byte SHA"):
+                    archive.plan_canonical(20418, receipt, {
+                        "local": archive.RESERVE,
+                        "backup": archive.RESERVE})
+
     def test_plan_combines_controller_and_three_preparation_tasks(self):
         commit = "a" * 40
         state = {"experiment_id": "S1-D12A", "scientific_commit": commit,
@@ -104,6 +151,55 @@ class ArchiveTests(unittest.TestCase):
                                  [{"row": 1}])
             finally:
                 evidence.close()
+
+    def test_cross_drive_receipts_close_source_refs_and_report_streams(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jobdir = root / "D" / "20473" / "prepare-1"
+            sourcedir = root / "D" / "20418" / "shared_sources"
+            cdir = root / "C" / "20418" / "shared_sources"
+            jobdir.mkdir(parents=True)
+            sourcedir.mkdir(parents=True)
+            cdir.mkdir(parents=True)
+            prefix = "20473/prepare-1/"
+            part = volume(jobdir, "job.zip", {prefix + name: b"{}" for name in
+                                               ("job.json", "config.json", "status.json")})
+            part["canonical_path"] = str((jobdir / "job.zip").resolve())
+            receipt = {"experiment_id": "S1-D12A", "port": 20473,
+                       "run_id": "prepare-1", "volumes": [part],
+                       "source_refs": [{"source_bundle_member":
+                                        "shared_sources/2024-02-07/day.tar",
+                                        "sha256": hashlib.sha256(b"raw").hexdigest(),
+                                        "bytes": 3,
+                                        "source_preflight_sha256": hashlib.sha256(b"pin").hexdigest()}]}
+            (jobdir / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            volumes = []
+            for day in ("2024-02-07", "2024-02-08", "2024-02-09"):
+                source_part = volume(cdir, f"{day}.zip", {
+                    f"shared_sources/{day}/day.tar": b"raw",
+                    f"shared_sources/{day}/source_preflight.json": b"pin"})
+                source_part["canonical_path"] = str((cdir / source_part["file"]).resolve())
+                volumes.append(source_part)
+            source_receipt = {"experiment_id": "S1-D12A", "run_id": "shared_sources",
+                              "volumes": volumes}
+            (sourcedir / "receipt.json").write_text(json.dumps(source_receipt), encoding="utf-8")
+            self.assertTrue(archive.verify_receipt(receipt, jobdir, source_receipt,
+                                                   sourcedir)["closed"])
+            evidence = Evidence(root / "D")
+            try:
+                job, error = evidence.job_json(20473, "prepare-1", "job.json")
+                self.assertIsNone(error)
+                self.assertEqual(job, {})
+                with patch.object(evidence, "_read", side_effect=AssertionError("full read")):
+                    self.assertEqual(evidence.sha(20473, "prepare-1", "job.json"),
+                                     (hashlib.sha256(b"{}").hexdigest(), None))
+                    self.assertTrue(evidence.has_digest(hashlib.sha256(b"raw").hexdigest(),
+                                                        "day.tar"))
+            finally:
+                evidence.close()
+            volumes[0]["sha256"] = "0" * 64
+            with self.assertRaisesRegex(ValueError, "ZIP byte SHA"):
+                archive.verify_receipt(receipt, jobdir, source_receipt, sourcedir)
 
 
 if __name__ == "__main__":
