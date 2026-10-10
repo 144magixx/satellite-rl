@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import zipfile
 
 from scripts.stage1_drl_r04 import archive
@@ -25,6 +25,23 @@ def volume(directory, filename, contents):
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_canonical_download_creates_index_for_backup_only_volumes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            backup = root / "C"
+            backup.mkdir()
+            packed = volume(backup, "part.zip", {"data.json": b"{}"})
+            receipt = {"run_id": "one", "volumes": [packed]}
+            client = MagicMock()
+            with (patch.object(archive, "LOCAL", root / "D"),
+                  patch.object(archive, "plan_canonical", return_value={"part.zip": str(backup / "part.zip")}),
+                  patch.object(archive.ops, "connect", return_value=client)):
+                directory = archive._download(20473, receipt)
+            self.assertTrue(directory.is_dir())
+            (directory / "receipt.json").write_text(json.dumps(receipt))
+            self.assertEqual(packed["canonical_path"], str(backup / "part.zip"))
+            self.assertFalse((directory / "part.zip").exists())
+
     def test_canonical_space_plan_rejects_below_reserve(self):
         receipt = {"run_id": "shared_sources", "volumes": [
             {"file": "day.zip", "bytes": 100, "sha256": "0" * 64}]}

@@ -546,6 +546,8 @@ def plan_canonical(port, receipt, free_by_root=None):
 def _download(port, receipt):
     directory = LOCAL / str(port) / receipt["run_id"]
     choices = plan_canonical(port, receipt)
+    # Receipts live in the small D-side index even when every ZIP goes to C.
+    directory.mkdir(parents=True, exist_ok=True)
     client = ops.connect(port)
     try:
         with client.open_sftp() as sftp:
