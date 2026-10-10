@@ -7,6 +7,7 @@ code. Missing evidence stays missing. A partial download produces QA only.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import csv
 import hashlib
 import io
@@ -41,16 +42,41 @@ class Evidence:
             # extracted job files. Index members virtually, without copying.
             if not any(name.endswith(("/job.json", "/status.json", "/results.jsonl",
                                       "/actions.jsonl")) for name in self.names):
-                for name in list(self.names):
-                    if not name.endswith(".zip"):
-                        continue
-                    with zipfile.ZipFile(self.root / name) as bundle:
-                        for member in bundle.namelist():
-                            if member.endswith("/"):
-                                continue
-                            if member in self.nested:
-                                raise ValueError("archive member appears in two ZIP volumes")
-                            self.nested[member] = name
+                receipts = sorted(self.root.rglob("receipt.json"))
+                if receipts:
+                    for receipt_path in receipts:
+                        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                        for volume in receipt.get("volumes", []):
+                            path = Path(volume.get("canonical_path") or
+                                        receipt_path.parent / volume["file"])
+                            if not path.is_file() or path.stat().st_size != volume["bytes"]:
+                                raise ValueError("canonical archive ZIP absent or wrong size")
+                            checksum = hashlib.sha256()
+                            with path.open("rb") as stream:
+                                for block in iter(lambda: stream.read(8 << 20), b""):
+                                    checksum.update(block)
+                            if checksum.hexdigest() != volume["sha256"]:
+                                raise ValueError("canonical archive ZIP SHA differs")
+                            with zipfile.ZipFile(path) as bundle:
+                                names = [name for name in bundle.namelist() if not name.endswith("/")]
+                            if set(names) != set(volume["members"]) or len(names) != len(volume["members"]):
+                                raise ValueError("canonical archive member inventory differs")
+                            for member in names:
+                                if member in self.nested:
+                                    raise ValueError("archive member appears in two ZIP volumes")
+                                self.nested[member] = path
+                else:
+                    for name in list(self.names):
+                        if not name.endswith(".zip"):
+                            continue
+                        path = self.root / name
+                        with zipfile.ZipFile(path) as bundle:
+                            for member in bundle.namelist():
+                                if member.endswith("/"):
+                                    continue
+                                if member in self.nested:
+                                    raise ValueError("archive member appears in two ZIP volumes")
+                                self.nested[member] = path
                 self.names.extend(self.nested)
         else:
             raise FileNotFoundError(root)
@@ -60,20 +86,39 @@ class Evidence:
         if self.zip:
             self.zip.close()
 
-    def _read(self, name):
+    @contextmanager
+    def _open(self, name):
         if self.zip:
-            return self.zip.read(name)
-        if name in self.nested:
-            with zipfile.ZipFile(self.root / self.nested[name]) as bundle:
-                return bundle.read(name)
-        return (self.root / name).read_bytes()
+            with self.zip.open(name) as stream:
+                yield stream
+        elif name in self.nested:
+            with zipfile.ZipFile(self.nested[name]) as bundle:
+                with bundle.open(name) as stream:
+                    yield stream
+        else:
+            with (self.root / name).open("rb") as stream:
+                yield stream
 
-    def job_file(self, port, run_id, filename):
+    def _read(self, name):
+        with self._open(name) as stream:
+            return stream.read()
+
+    def _sha_name(self, name):
+        checksum = hashlib.sha256()
+        with self._open(name) as stream:
+            for block in iter(lambda: stream.read(8 << 20), b""):
+                checksum.update(block)
+        return checksum.hexdigest()
+
+    def _job_name(self, port, run_id, filename):
         suffixes = (f"/{port}/{run_id}/{filename}", f"/{run_id}/{filename}")
         matches = [name for name in self.names if any(("/" + name).endswith(s) for s in suffixes)]
-        if len(matches) != 1:
-            return None, f"expected one {filename} for {port}/{run_id}; found {len(matches)}"
-        return self._read(matches[0]), None
+        return (matches[0], None) if len(matches) == 1 else (
+            None, f"expected one {filename} for {port}/{run_id}; found {len(matches)}")
+
+    def job_file(self, port, run_id, filename):
+        name, error = self._job_name(port, run_id, filename)
+        return (None, error) if error else (self._read(name), None)
 
     def job_json(self, port, run_id, filename):
         data, error = self.job_file(port, run_id, filename)
@@ -94,32 +139,18 @@ class Evidence:
             return [], f"invalid {filename}: {exc}"
 
     def job_iter_jsonl(self, port, run_id, filename):
-        suffixes = (f"/{port}/{run_id}/{filename}", f"/{run_id}/{filename}")
-        matches = [name for name in self.names if any(("/" + name).endswith(s) for s in suffixes)]
-        if len(matches) != 1:
+        name, error = self._job_name(port, run_id, filename)
+        if error:
             raise FileNotFoundError(f"expected one {filename} for {port}/{run_id}")
-        if self.zip:
-            with self.zip.open(matches[0]) as binary:
-                with io.TextIOWrapper(binary, encoding="utf-8") as stream:
-                    for line in stream:
-                        if line.strip():
-                            yield json.loads(line)
-        elif matches[0] in self.nested:
-            with zipfile.ZipFile(self.root / self.nested[matches[0]]) as bundle:
-                with bundle.open(matches[0]) as binary:
-                    with io.TextIOWrapper(binary, encoding="utf-8") as stream:
-                        for line in stream:
-                            if line.strip():
-                                yield json.loads(line)
-        else:
-            with (self.root / matches[0]).open(encoding="utf-8") as stream:
+        with self._open(name) as binary:
+            with io.TextIOWrapper(binary, encoding="utf-8") as stream:
                 for line in stream:
                     if line.strip():
                         yield json.loads(line)
 
     def sha(self, port, run_id, filename):
-        data, error = self.job_file(port, run_id, filename)
-        return (hashlib.sha256(data).hexdigest(), None) if not error else (None, error)
+        name, error = self._job_name(port, run_id, filename)
+        return (None, error) if error else (self._sha_name(name), None)
 
     def has_digest(self, digest, basename):
         if not isinstance(digest, str) or len(digest) != 64:
@@ -127,7 +158,7 @@ class Evidence:
         key = (digest, basename)
         if key not in self._digest_cache:
             self._digest_cache[key] = any(
-                hashlib.sha256(self._read(name)).hexdigest() == digest
+                self._sha_name(name) == digest
                 for name in self.names if name.endswith("/" + basename) or name == basename)
         return self._digest_cache[key]
 

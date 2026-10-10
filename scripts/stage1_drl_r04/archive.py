@@ -36,6 +36,17 @@ def digest(path):
     return value.hexdigest()
 
 
+def volume_path(directory, volume):
+    """Resolve a single canonical local ZIP; old receipts remain readable."""
+    canonical = volume.get("canonical_path")
+    if canonical is not None:
+        path = Path(canonical)
+        if not path.is_absolute() or path.name != volume["file"]:
+            raise ValueError("invalid canonical ZIP path")
+        return path
+    return Path(directory) / volume["file"]
+
+
 def plan(state, preparations):
     if (state.get("experiment_id") != "S1-D12A" or
             preparations.get("experiment_id") != "S1-D12A" or
@@ -106,7 +117,7 @@ def verify_source_receipt(receipt, directory):
         raise ValueError("wrong shared source receipt")
     members = {}
     for volume in receipt.get("volumes", []):
-        verify_volume(Path(directory) / volume["file"], volume)
+        verify_volume(volume_path(directory, volume), volume)
         for name, record in volume["members"].items():
             if name in members:
                 raise ValueError("shared source member duplicated")
@@ -124,7 +135,7 @@ def verify_receipt(receipt, directory, source_receipt=None, source_directory=Non
         raise ValueError("wrong or empty D12A archive receipt")
     all_members = {}
     for volume in receipt["volumes"]:
-        path = Path(directory) / volume["file"]
+        path = volume_path(directory, volume)
         verify_volume(path, volume)
         for name, record in volume["members"].items():
             if name in all_members:
@@ -318,6 +329,7 @@ try:
  if saved.exists():
   prior=json.loads(saved.read_text())
   if (prior.get('run_id')!='shared_sources' or prior.get('source_commit')!=request['source_commit'] or
+    len(prior.get('volumes',[]))!=3 or
    any(not pathlib.Path(v['remote_path']).is_file() or sha(pathlib.Path(v['remote_path']))!=v['sha256']
        for v in prior.get('volumes',[]))):raise RuntimeError('existing shared source receipt differs')
   print(json.dumps(prior));sys.exit(0)
@@ -358,16 +370,20 @@ try:
  total=sum(x['bytes'] for x in items.values())
  if shutil.disk_usage(dest).free < request['reserve']+total+len(items)*2048:
   raise RuntimeError('remote free space below source bundle plus 8GiB reserve')
- path=dest/'shared_sources.zip';temporary=dest/'shared_sources.zip.tmp'
- if path.exists() or temporary.exists():raise RuntimeError('shared source bundle already exists')
- with zipfile.ZipFile(temporary,'w',allowZip64=True,compression=zipfile.ZIP_STORED) as out:
-  for member,row in sorted(items.items()):out.write(row['path'],member)
- temporary.replace(path)
- volume={'file':path.name,'remote_path':str(path),'bytes':path.stat().st_size,
-  'sha256':sha(path),'members':{name:{'bytes':row['bytes'],'sha256':row['sha256']}
-   for name,row in items.items()}}
+  volumes=[]
+  for day in sorted({entry['day'] for entry in request['preparations']}):
+   day_items={name:row for name,row in items.items() if name.startswith('shared_sources/'+day+'/')}
+   if not any(name.endswith('.tar') for name in day_items):raise RuntimeError('source day lacks raw archive')
+   path=dest/('shared_sources_'+day+'.zip');temporary=dest/(path.name+'.tmp')
+   if path.exists() or temporary.exists():raise RuntimeError('shared source volume already exists')
+   with zipfile.ZipFile(temporary,'w',allowZip64=True,compression=zipfile.ZIP_STORED) as out:
+    for member,row in sorted(day_items.items()):out.write(row['path'],member)
+   temporary.replace(path)
+   volumes.append({'file':path.name,'remote_path':str(path),'bytes':path.stat().st_size,
+    'sha256':sha(path),'members':{name:{'bytes':row['bytes'],'sha256':row['sha256']}
+     for name,row in day_items.items()}})
  receipt={'experiment_id':'S1-D12A','run_id':'shared_sources','port':20418,
-  'source_commit':request['source_commit'],'volumes':[volume]}
+   'source_commit':request['source_commit'],'volumes':volumes}
  (dest/'receipt.json').write_text(json.dumps(receipt))
  print(json.dumps(receipt))
 finally:
@@ -375,23 +391,58 @@ finally:
 '''
 
 
-def _free(path, upcoming):
+def _disk_free(path):
     path = Path(path)
-    path.mkdir(parents=True, exist_ok=True)
-    if shutil.disk_usage(path).free < RESERVE + upcoming:
-        raise RuntimeError(f"{path.drive or path} free space below 8GiB reserve plus copy")
+    while not path.exists():
+        if path == path.parent:
+            raise FileNotFoundError(path)
+        path = path.parent
+    return shutil.disk_usage(path).free
+
+
+def plan_canonical(port, receipt, free_by_root=None):
+    """Choose one existing or new D/C location per ZIP, preserving 8 GiB on each."""
+    roots = {"local": LOCAL / str(port) / receipt["run_id"],
+             "backup": BACKUP / str(port) / receipt["run_id"]}
+    free = {key: (_disk_free(root) if free_by_root is None else free_by_root[key]) - RESERVE
+            for key, root in roots.items()}
+    choices = {}
+    for volume in receipt["volumes"]:
+        filename = volume["file"]
+        if filename in choices or Path(filename).name != filename:
+            raise ValueError("duplicate or unsafe archive volume name")
+        existing = [root / filename for root in roots.values() if (root / filename).exists()]
+        if len(existing) > 1:
+            raise ValueError("ZIP already exists on both local drives")
+        if existing:
+            verify_volume(existing[0], volume)
+            choices[filename] = existing[0]
+    for volume in sorted(receipt["volumes"], key=lambda row: row["bytes"], reverse=True):
+        if volume["file"] in choices:
+            continue
+        eligible = [key for key in roots if free[key] >= volume["bytes"]]
+        if not eligible:
+            raise RuntimeError("no canonical drive has ZIP bytes plus 8GiB reserve")
+        # Put each largest volume on the tighter fitting drive so another
+        # large volume can still use the drive with more remaining space.
+        key = min(eligible, key=lambda item: (free[item], item != "local"))
+        target = roots[key] / volume["file"]
+        if target.with_suffix(target.suffix + ".part").exists():
+            raise FileExistsError("interrupted local ZIP requires manual inspection")
+        choices[volume["file"]] = target
+        free[key] -= volume["bytes"]
+    return {name: str(path.resolve()) for name, path in choices.items()}
 
 
 def _download(port, receipt):
     directory = LOCAL / str(port) / receipt["run_id"]
-    backup = BACKUP / str(port) / receipt["run_id"]
-    _free(directory, sum(x["bytes"] for x in receipt["volumes"]))
-    _free(backup, sum(x["bytes"] for x in receipt["volumes"]))
+    choices = plan_canonical(port, receipt)
     client = ops.connect(port)
     try:
         with client.open_sftp() as sftp:
             for volume in receipt["volumes"]:
-                target = directory / volume["file"]
+                target = Path(choices[volume["file"]])
+                target.parent.mkdir(parents=True, exist_ok=True)
                 if target.exists():
                     verify_volume(target, volume)
                 else:
@@ -409,12 +460,7 @@ def _download(port, receipt):
                         raise ValueError("remote ZIP stream SHA/size differs")
                     partial.replace(target)
                     verify_volume(target, volume)
-                duplicate = backup / volume["file"]
-                if duplicate.exists():
-                    verify_volume(duplicate, volume)
-                else:
-                    shutil.copyfile(target, duplicate)
-                    verify_volume(duplicate, volume)
+                volume["canonical_path"] = str(target)
     finally:
         client.close()
     return directory
@@ -425,8 +471,11 @@ def one_task(entry):
     existing = LOCAL / str(port) / entry["run_id"] / "receipt.json"
     if existing.is_file():
         receipt = json.loads(existing.read_text(encoding="utf-8"))
+        if (receipt.get("run_id") != entry["run_id"] or
+                receipt.get("source_commit") != entry["source_commit"]):
+            raise ValueError("existing archive receipt identity differs")
         for volume in receipt.get("volumes", []):
-            verify_volume(existing.parent / volume["file"], volume)
+            verify_volume(volume_path(existing.parent, volume), volume)
         return receipt
     detail = ops.api(port, f"/api/runs/{entry['run_id']}")
     if (detail.get("job", {}).get("run_id") != entry["run_id"] or
@@ -445,8 +494,6 @@ def one_task(entry):
     directory = _download(port, receipt)
     path = directory / "receipt.json"
     path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
-    duplicate = BACKUP / str(port) / entry["run_id"] / "receipt.json"
-    shutil.copyfile(path, duplicate)
     return receipt
 
 
@@ -458,6 +505,13 @@ def one_source(planned):
         if detail.get("status", {}).get("stage") != "completed":
             raise ValueError("all three official preparation workers must complete first")
         entries.append({"port": port, "role": role, "day": day, "run_id": task["run_id"]})
+    existing = LOCAL / "20418" / "shared_sources" / "receipt.json"
+    if existing.is_file():
+        receipt = json.loads(existing.read_text(encoding="utf-8"))
+        if receipt.get("source_commit") != planned["scientific_commit"]:
+            raise ValueError("existing source archive receipt commit differs")
+        verify_source_receipt(receipt, existing.parent)
+        return receipt
     request = {"base": ops.BASE,
                "destination": ops.instance(20418)["ops"] + "/archive_d12a/shared_sources",
                "source_commit": planned["scientific_commit"],
@@ -471,7 +525,6 @@ def one_source(planned):
     verify_source_receipt(receipt, directory)
     path = directory / "receipt.json"
     path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
-    shutil.copyfile(path, BACKUP / "20418" / "shared_sources" / "receipt.json")
     return receipt
 
 
@@ -496,7 +549,6 @@ def main():
         directory = LOCAL / "20418" / "shared_sources"
         receipt = json.loads((directory / "receipt.json").read_text(encoding="utf-8"))
         result = {"members": len(verify_source_receipt(receipt, directory))}
-        verify_source_receipt(receipt, BACKUP / "20418" / "shared_sources")
         print(json.dumps(result))
         return
     if args.key not in planned["tasks"]:
@@ -511,9 +563,6 @@ def main():
                   if args.source_receipt else None)
         result = verify_receipt(receipt, directory, source,
                                 args.source_receipt.parent if args.source_receipt else None)
-        backup = BACKUP / str(entry["port"]) / entry["run_id"]
-        verify_receipt(receipt, backup, source,
-                       args.source_receipt.parent if args.source_receipt else None)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
