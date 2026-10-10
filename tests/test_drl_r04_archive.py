@@ -67,6 +67,57 @@ class ArchiveTests(unittest.TestCase):
         self.assertIn("D", choices["b.zip"])
         self.assertIn("D", choices["c.zip"])
 
+    def test_canonical_plan_prefers_extra_and_preserves_existing_d_volume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            local, backup, extra = (base / name for name in ("D", "C", "E"))
+            existing = local / "20418" / "task"
+            existing.mkdir(parents=True)
+            saved = volume(existing, "old.zip", {"20418/task/old.json": b"old"})
+            receipt = {"run_id": "task", "volumes": [
+                saved, {"file": "new.zip", "bytes": 100, "sha256": "0" * 64}]}
+            with (patch.object(archive, "LOCAL", local),
+                  patch.object(archive, "BACKUP", backup),
+                  patch.object(archive, "EXTRA", extra)):
+                choices = archive.plan_canonical(20418, receipt, {
+                    "local": archive.RESERVE + 200,
+                    "backup": archive.RESERVE + 200,
+                    "extra": archive.RESERVE + 100})
+            self.assertEqual(choices["old.zip"], str((existing / "old.zip").resolve()))
+            self.assertEqual(choices["new.zip"], str((extra / "20418" / "task" / "new.zip").resolve()))
+
+    def test_report_reads_three_drive_canonical_zips_and_checks_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            index, backup, extra = (base / "D" / "20418" / "task",
+                                    base / "C", base / "E")
+            index.mkdir(parents=True)
+            backup.mkdir()
+            extra.mkdir()
+            member = "20418/task/job.json"
+            saved_d = volume(index, "status.zip", {"20418/task/status.json": b'{"stage": "completed"}'})
+            saved_c = volume(backup, "config.zip", {"20418/task/config.json": b'{"seed": 51001}'})
+            saved_e = volume(extra, "job.zip", {member: b'{"ok": true}'})
+            saved_c["canonical_path"] = str((backup / "config.zip").resolve())
+            saved_e["canonical_path"] = str((extra / "job.zip").resolve())
+            (index / "receipt.json").write_text(json.dumps({"volumes": [saved_d, saved_c, saved_e]}))
+            evidence = Evidence(base / "D")
+            try:
+                data, error = evidence.job_json(20418, "task", "job.json")
+                self.assertIsNone(error)
+                self.assertEqual(data, {"ok": True})
+                self.assertEqual(evidence.sha(20418, "task", "job.json")[0],
+                                 saved_e["members"][member]["sha256"])
+                self.assertEqual(evidence.job_json(20418, "task", "status.json")[0],
+                                 {"stage": "completed"})
+                self.assertEqual(evidence.job_json(20418, "task", "config.json")[0],
+                                 {"seed": 51001})
+            finally:
+                evidence.close()
+            (extra / "job.zip").write_bytes(b"tampered")
+            with self.assertRaisesRegex(ValueError, "wrong size|SHA differs"):
+                Evidence(base / "D")
+
     def test_canonical_plan_reuses_verified_existing_zip(self):
         with tempfile.TemporaryDirectory() as directory:
             local, backup = Path(directory) / "D", Path(directory) / "C"
