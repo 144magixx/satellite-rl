@@ -7,7 +7,15 @@ from pathlib import Path
 
 from satellite_rl.training.run_monitor import atomic_json
 from satellite_rl.workbench.storage import digest, now, read_json, validate_id
-from satellite_rl.workbench.coverage_drl_r04 import GROUP, MULTIPLIERS, PARENT, PORTS
+from satellite_rl.workbench.coverage_drl_r04 import GROUP, MULTIPLIERS, PARENT, PORTS, deployment
+from satellite_rl.workbench.runtime import pid_alive
+
+
+MISCLASSIFIED_PILOTS = {
+    "train_ppo_20261010_034306_03e7f00f": ("P0", "20418"),
+    "train_ppo_20261010_034937_d980cee4": ("P1", "20424"),
+}
+FROZEN_PILOT_COMMIT = "dfe7c394267e94bd2084ae72add3aa2c855b578f"
 
 
 def _status(job, status, config, run_id):
@@ -76,10 +84,10 @@ def _real_refresh(row):
     return False
 
 
-def _audit(application, run_id):
+def _audit(application, run_id, *, status_override=None):
     directory = application.store.job_dir(run_id)
     job = read_json(directory / "job.json", {})
-    status = read_json(directory / "status.json", {})
+    status = status_override if status_override is not None else read_json(directory / "status.json", {})
     config = read_json(directory / "config.json", {})
     _status(job, status, config, run_id)
     checkpoint = directory / "checkpoint.pt"
@@ -155,6 +163,76 @@ def _audit(application, run_id):
     else:
         atomic_json(audit_path, content)
     return directory, job, status, audit_path, content
+
+
+def reconcile_misclassified_pilot(application, run_id, body):
+    """Repair only the two scheduler-misclassified, normally exited D12-A pilots."""
+    validate_id(run_id)
+    expected = MISCLASSIFIED_PILOTS.get(run_id)
+    if expected is None or deployment(application.store) != expected[1]:
+        raise ValueError("pilot reconciliation is limited to the two affected lanes")
+    directory = application.store.job_dir(run_id)
+    job = read_json(directory / "job.json", {})
+    status_path = directory / "status.json"
+    status = read_json(status_path, {})
+    launch = read_json(directory / "launch.json", {})
+    failure_path = directory / "failure.json"
+    checkpoint = directory / "checkpoint.pt"
+    receipt_path = directory / "pilot_pending_reconciliation.json"
+    prior = read_json(receipt_path, {})
+    if prior:
+        if (status.get("stage") != "pilot_pending" or
+                status.get("checkpoint_sha256") != prior.get("checkpoint_sha256") or
+                digest(checkpoint) != prior.get("checkpoint_sha256")):
+            raise ValueError("existing pilot reconciliation differs from current status")
+        return {"status": status, "receipt": prior}
+    if (not isinstance(body, dict) or
+            set(body) != {"expected_status_sha256", "expected_checkpoint_sha256",
+                          "expected_failure_sha256"} or
+            body["expected_status_sha256"] != digest(status_path) or
+            body["expected_checkpoint_sha256"] != digest(checkpoint) or
+            body["expected_failure_sha256"] != digest(failure_path)):
+        raise ValueError("pilot reconciliation requires exact status/checkpoint/failure SHA")
+    failure = read_json(failure_path, {})
+    config = read_json(directory / "config.json", {})
+    if (job.get("run_id") != run_id or job.get("experiment_id") != GROUP or
+            job.get("kind") != "train" or job.get("train_mode") != expected[0] or
+            job.get("experiment_role") != "formal" or
+            job.get("git_commit") != FROZEN_PILOT_COMMIT or
+            config.get("schema_version") != 6 or
+            status.get("stage") != "interrupted" or
+            status.get("stop_reason") != "pilot_gate" or
+            status.get("env_step") != 65536 or
+            status.get("checkpoint_sha256") != digest(checkpoint) or
+            status.get("exit_code") != 0 or
+            status.get("scientific_stop") is True or
+            launch.get("pid") != status.get("pid") or
+            not isinstance(launch.get("process_start_time"), (int, float)) or
+            pid_alive(launch["pid"], launch["process_start_time"]) or
+            failure.get("run_id") != run_id or failure.get("exit_code") != 0 or
+            failure.get("pid") != status.get("pid") or
+            failure.get("git_commit") != FROZEN_PILOT_COMMIT or
+            failure.get("error") !=
+            "进程在没有Python异常记录的情况下结束；原生退出应结合Windows事件和驱动日志排查"):
+        raise ValueError("pilot reconciliation evidence is not an exact normal gate exit")
+    repaired = {**status, "stage": "pilot_pending"}
+    repaired.pop("exit_code", None)
+    repaired.pop("exit_hex", None)
+    repaired.pop("error", None)
+    _, _, _, audit_path, audit = _audit(application, run_id, status_override=repaired)
+    receipt = {"run_id": run_id, "source_commit": FROZEN_PILOT_COMMIT,
+               "previous_status_sha256": body["expected_status_sha256"],
+               "failure_sha256": body["expected_failure_sha256"],
+               "checkpoint_sha256": body["expected_checkpoint_sha256"],
+               "launch_pid": launch["pid"],
+               "launch_process_start_time": launch["process_start_time"],
+               "pilot_audit_path": str(audit_path), "pilot_audit_sha256": digest(audit_path),
+               "pilot_progress_pass": audit["progress_pass"],
+               "pilot_zero_progress_stop": audit["zero_progress_stop"],
+               "reconciled_at": now()}
+    atomic_json(receipt_path, receipt)
+    atomic_json(status_path, {**repaired, "heartbeat_at": now()})
+    return {"status": read_json(status_path), "receipt": receipt, "audit": audit}
 
 
 def _peer(job, body, source_commit, validation_sha):
