@@ -1,5 +1,11 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-10 S1-D12A正式报告09已发布，正在最终四端小包交付。** 两PPO各262144决策、16384更新、16×60验证；六法1800条考核及37任务完整归档均完成。全量严格报告已`formal_ready=true`/issues空：全部受测几何覆盖、实际40–111束；P0/P1相对H1平均CV分别上升2.35%/6.47%，均未过事前质量或效率门槛，P1继续PPO未超过BC。PPO确实会改动布局，但不能称已获超越BC或强基线的收益。报告含7张实际曲线/分层/配对/计时图，18行分档表和100母计时；三倍率相关、单种子、固定宽度、模型估计TDMA及未独立重算RF限制保留。[正式报告09](docs/第一阶段/实验报告/09_R04引导的DRL覆盖A阶段对照.md) · [严格审计](outputs/experiments/first_stage_s1_d12a_20261010/analysis/final_report_verified/audit.json) · [数图链接复核](outputs/experiments/first_stage_s1_d12a_20261010/preflight/final_report_numeric_figure_qa.json)。
+
+37原始任务已由收尾40180完成逐卷/成员/共享源核验。首次严格报告拒绝P0/P1的旧status checkpoint SHA：冻结runner在最后验证后补32预算尾段并重存checkpoint，而status仍旧SHA。实际终点、全部日志/观察、优化器/RNG及final参数一致并严格CUDA加载通过。报告213b288仅接受逐项匹配的独立终点证明，保留旧SHA/最终SHA和初次失败，没有改原日志或终点。唯一复核报告47024已正常结束，最终1800行及汇总与初次QA逐字节一致。归档/launcher/训练均不再重启。约10小时pilot停等和服务修复仍留账；本条覆盖下方17:52“归档进行中”历史快照。
+
+当前已通过交付工具全部门槛，正式报告小包将包含三模型、冻结科学Git、分析脚本、37收据和图表；四端回读通过前不称最终交付完成，自动化继续。后续B/宽度/动态或新种子未授权实施。
+
 **2026-10-10 17:52:31 S1-D12A全部科学计算完成，正在完整归档与严格报告生成。**根本轮四端真实API核24/24独立考核任务全部completed，各75行、合计1800；两PPO此前各262144/16384更新与16×60验证已验收，未追加训练或重复基线。controller.phase已test_complete_report_archive_pending，不再恢复任何已完成科学任务。归档28940仍在处理P1，收尾40180真实PID出生吻合并等待归档结束；随后补37任务完整归档、冻结输入、全量strict统计。正式报告09/图数人工复核/最终交付仍未完成，跟进继续。[全部考核完成快照](outputs/experiments/first_stage_s1_d12a_20261010/preflight/heartbeat_20261010_1755.json)。
 
 **2026-10-10 17:49 S1-D12A两PPO正式训练完成，独立考核20/24分片已完成、1593/1800行已记录，归档转入E盘继续。**两组各262144决策/16384更新/16×60验证；17:36在原DQN/CUDA严格加载终点并核checkpoint、全部日志行数、128观测分片SHA、32环境流、optimizer/RNG、final与checkpoint参数逐张量相等，全部通过。P0/P1完整回合分别9413/10488，各32预算尾段另列；网络88450参数，不能沿用S1-V10的87682。三小模型P0/P1 final与BC endpoint已导出并对远端SHA核同。[终点验收](outputs/experiments/first_stage_s1_d12a_20261010/preflight/final_learning_audit.json) · [模型入口与SHA](outputs/experiments/first_stage_s1_d12a_20261010/preflight/model_exports.json)。

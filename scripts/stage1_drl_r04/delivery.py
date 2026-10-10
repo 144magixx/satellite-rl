@@ -290,6 +290,14 @@ def gate(repo=REPO, base=BASE):
         errors.append("learning evidence addendum is only partly written")
     for name in existing_learning:
         _file(files, "analysis/" + name, base / "analysis" / name, errors)
+    for name, path in {
+        "analysis/learning_evidence_addendum.md": base / "analysis/learning_evidence_addendum.md",
+        "evidence/final_report_numeric_figure_qa.json": base / "preflight/final_report_numeric_figure_qa.json",
+        "plans/12_R04引导的DRL波束覆盖优化方案.md": repo / "docs/第一阶段/方案/12_R04引导的DRL波束覆盖优化方案.md",
+        "plans/13_DRL覆盖A阶段四实例执行方案.md": repo / "docs/第一阶段/方案/13_DRL覆盖A阶段四实例执行方案.md",
+    }.items():
+        if path.is_file():
+            _file(files, name, path, errors)
     if "learning_evidence_addendum.json" in existing_learning:
         addendum = read(base / "analysis/learning_evidence_addendum.json")
         provenance = addendum.get("provenance", {})
@@ -327,13 +335,17 @@ def _members(gates):
         "S1-D12A small delivery package. The 37 large task ZIP volumes and three "
         "source ZIPs remain at canonical_paths in archive_receipts; only their "
         "SHA/size references are included here. Restore sources/frozen_science.bundle "
-        "with git clone, install the project, then run "
+        "with git clone, install the project, and overlay the packaged scripts/ tree "
+        "for the later report-only audit fixes (science workers remain frozen). Then run "
         "python -m scripts.stage1_drl_r04.report --state indexes/frozen_state.json "
         "--jobs <canonical job_archives directory> --output <new directory> "
         "--terminal-audit evidence/final_learning_audit.json. "
         "The analysis/publication/build_figures.py script expects analysis/final_report_verified "
         "and the threshold files at their packaged relative paths. "
-        "Consult indexes/source_index.json before resolving external source ZIPs.\n"
+        "Consult indexes/source_index.json before resolving external source ZIPs. "
+        "The report Markdown keeps the original D:/paper repository links; use the "
+        "packaged analysis/, models/ and archive_receipts/ folders when viewing this "
+        "small package independently, or restore files to their repository locations.\n"
     ).encode("utf-8")
     if (sum(len(data) for data in members.values()) > MAX_PACKAGE_BYTES or
             any(name.endswith(".zip") for name in members)):
