@@ -1,5 +1,13 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-10 14:27 Codex退出影响已核实并修复，两PPO从原断点恢复，已真实推进到67584。**本轮14:13真实API/SSH显示：新三日数据、H1/H2开发与验证可达性、teacher、BC1580更新及两工程2048均已完成；P0/P1此前各正常运行到65536、4096更新和4×60验证，exit0/stop_reason=pilot_gate。工作台Scheduler漏识别合法pilot_pending，把正常试点等待误标成interrupted，原launcher37916于04:22进入attention_required；Codex异常期间未及时接续，凌晨04:22/04:32至14:25造成约10小时等候。不能把这段时间算作算法计算慢，也不能把问题全部归咎于聊天退出。
+
+14:16独立核两断点SHA、全部日志长度、32观察shards、32环境流、RNG、优化器、权重严格CUDA加载、4×60验证及pilot终点均通过，未发现成果丢失，不重训。P0/P1原试点分别20/20与17/20母可测改善并有真实非STOP刷新，均过事先6/20门槛；这是继续训练条件，不是最终学习增益结论。服务专用修复`666b608341379ee7cb0a2f5bba73537d1ebccf59`仅改三工作台文件，部署在独立ops/service目录；Application明确Store源为原clean `dfe7c394267e94bd2084ae72add3aa2c855b578f`，全部科学worker仍用原冻结snapshot。两误标状态通过工作台pilot-reconcile API逐原status/checkpoint/failure SHA与原验证审计恢复，再按pilot-gate/resume原ID接续；旧状态字节、失败和停等记录均保留。[现场与完整断点审计](outputs/experiments/first_stage_s1_d12a_20261010/preflight/crash_recovery_20261010/checkpoint_audit.json) · [API纠正回执](outputs/experiments/first_stage_s1_d12a_20261010/preflight/crash_recovery_20261010/pilot_reconciliation.json)。
+
+14:27:20根实际复核：P0 `train_ppo_20261010_034306_03e7f00f`/20418与P1 `train_ppo_20261010_034937_d980cee4`/20424均training **67584/262144、4224更新**，原ID/科学dfe/seed51001保持，worker PID54275/52878出生与--resume命令及原snapshot路径匹配。两组都已完成恢复后的一个2048批次，不能仅凭旧failure或stop_reason判断又停。唯一新launcher PID25616/出生1791613429.2841775、learning/OS锁存活；本机旧进程44772/37916/24084及传输relay已结束，不恢复它们。首次恢复launcher24084重复POST已完成prepare遭400，已保留现场；local ops f398a96改为GET严核既存任务，未新建或重做准备。四本地隧道已恢复，小时跟进ACTIVE并精确回读。[恢复后实际增量](outputs/experiments/first_stage_s1_d12a_20261010/preflight/crash_recovery_20261010/progress_after_resume.json) · [新启动回执](outputs/experiments/first_stage_s1_d12a_20261010/preflight/crash_recovery_20261010/launcher_retry1_start.json) · [定时配置回读](outputs/experiments/first_stage_s1_d12a_20261010/followup/automation_crash_recovery_readback.json)。
+
+修复相关27项检查通过，后处理strict补充f3dd1ff的11项机械检查通过，但报告09/独立考核1800及全归档未完成。归档工具当前D/C重复下载安排需先改成单canonical卷选择，各盘留8GiB；未执行不适配磁盘预算的源归档。已有用户中期报告及其目录修改保持，不混入本组提交。
+
 **2026-10-10 03:17传输修复已持久接续，正式学习仍待数据。**本地HTTPS→远端SFTP流式传输PID21532继续，Feb08/09已有持续字节增长，Feb07官方CDN慢且不稳定，准备严格Content-Range分块等价传输后备；不更换日期/抽样。旧relay36616已按出生单独停止，修复API恢复中starting调度态后新relay9172持唯一锁，逐日长度/SHA通过后自动同ID恢复prepare、再启动唯一launcher；准确现态以[恢复回执](outputs/experiments/first_stage_s1_d12a_20261010/preflight/stream_transfer/relay_resume_workflow.json)及[根复核](outputs/experiments/first_stage_s1_d12a_20261010/preflight/root_relay_live.json)为准，不重启旧PID。已保存每次失败与脚本SHA，小时跟进仍ACTIVE。
 
 新归档工具与报告QA已并main3fc507c/c65ce98并通过10项机械检查，科学源仍dfe不变。最终完整任务预计37项，含3prepare和24个考核分片；当前尚无新科学结果。报告formal_ready由strict_physics_and_timing_replay_pending硬门槛保持false，独立几何/逐束代数/逐机TDMA/资源与时间回放仍在补齐，不能以机械测试冒充报告交付。
