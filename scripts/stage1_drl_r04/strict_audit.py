@@ -112,7 +112,10 @@ def audit_scene_row(scene, row):
         errors.append("best_downstream_allocation_incomplete")
     demand = np.asarray(best_metrics["beam_demand_bps"], dtype=float)
     beta = float(np.mean(demand[demand > 0])) if np.any(demand > 0) else None
-    band = 0
+    # Load balance is relative beam demand, not the capacity/demand ratio.
+    demand_band = int(np.count_nonzero((demand > 0) & (demand >= .8 * beta) &
+                                       (demand <= 1.2 * beta))) if beta else 0
+    capacity_ratio_band = 0
     slots_used = set()
     total_power = 0.0
     for b, beam in enumerate(beams):
@@ -124,7 +127,7 @@ def audit_scene_row(scene, row):
             errors.append("best_beam_demand_or_min_capacity_differs")
         if d > 0:
             ratio = c / d
-            band += .8 <= ratio <= 1.2
+            capacity_ratio_band += .8 <= ratio <= 1.2
             if not _close(beam.get("unclipped_capacity_demand_ratio"), ratio, atol=1e-8) or not _close(beam.get("si"), min(ratio, 1), atol=1e-8):
                 errors.append("best_beam_ratio_or_SI_differs")
             if beta is None or not _close(beam.get("sgm"), _sgm(c, d, beta), atol=1e-8):
@@ -152,7 +155,9 @@ def audit_scene_row(scene, row):
     if not _close(total_power, measured.get("metrics", {}).get("total_power_w"), atol=1e-6):
         errors.append("total_power_summary_differs")
     facts["best"].update(positive_demand_beams=int(np.count_nonzero(demand > 0)),
-                         positive_band_0p8_1p2=band, total_power_w=total_power,
+                         positive_band_0p8_1p2=demand_band,
+                         capacity_demand_ratio_band_0p8_1p2=capacity_ratio_band,
+                         positive_demand_mean_bps=beta, total_power_w=total_power,
                          occupied_group_slots=len(slots_used))
     service = measured.get("aircraft_service", {})
     capacities, rates, shares, carried = (service.get(key) for key in

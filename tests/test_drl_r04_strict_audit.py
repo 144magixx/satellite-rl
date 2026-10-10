@@ -41,6 +41,15 @@ class StrictAuditTests(unittest.TestCase):
         self.assertTrue(facts["best"]["N_lt_50"])
         self.assertEqual(facts["best"]["N_eq_200"], False)
         self.assertIsNotNone(facts["best"]["aircraft_TDMA_carried_fraction"])
+        measured = row["terminal_physics"]["layouts_by_sha256"][
+            row["terminal_physics"]["layout_aliases"]["best"]]
+        demands = [beam["demand_bps"] for beam in measured["beams"] if beam["demand_bps"] > 0]
+        mean_demand = sum(demands) / len(demands)
+        self.assertEqual(facts["best"]["positive_band_0p8_1p2"],
+                         sum(.8 * mean_demand <= d <= 1.2 * mean_demand for d in demands))
+        self.assertEqual(facts["best"]["capacity_demand_ratio_band_0p8_1p2"],
+                         sum(.8 <= beam["capacity_bps"] / beam["demand_bps"] <= 1.2
+                             for beam in measured["beams"] if beam["demand_bps"] > 0))
         broken = dict(row)
         broken["best_layout"] = dict(row["best_layout"])
         broken["best_layout"]["assignment"] = [-1] * len(scene.demands)
