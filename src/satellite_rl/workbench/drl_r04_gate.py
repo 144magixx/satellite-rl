@@ -220,8 +220,22 @@ def reconcile_misclassified_pilot(application, run_id, body):
     repaired.pop("exit_hex", None)
     repaired.pop("error", None)
     _, _, _, audit_path, audit = _audit(application, run_id, status_override=repaired)
+    history = directory / "recovery_history" / "pilot_pending_reconciliation"
+    history.mkdir(parents=True, exist_ok=True)
+    original_status_path = history / "interrupted_status.json"
+    original_bytes = status_path.read_bytes()
+    if digest(status_path) != body["expected_status_sha256"]:
+        raise ValueError("pilot status changed during reconciliation")
+    if original_status_path.exists():
+        if digest(original_status_path) != body["expected_status_sha256"]:
+            raise ValueError("existing original pilot status backup differs")
+    else:
+        original_status_path.write_bytes(original_bytes)
+        if digest(original_status_path) != body["expected_status_sha256"]:
+            raise ValueError("original pilot status backup failed SHA verification")
     receipt = {"run_id": run_id, "source_commit": FROZEN_PILOT_COMMIT,
                "previous_status_sha256": body["expected_status_sha256"],
+               "previous_status_path": str(original_status_path),
                "failure_sha256": body["expected_failure_sha256"],
                "checkpoint_sha256": body["expected_checkpoint_sha256"],
                "launch_pid": launch["pid"],
