@@ -71,6 +71,15 @@ class StrictAuditTests(unittest.TestCase):
         altered["total_seconds"] += .1
         errors, _ = audit_scene_row(restored[0], altered)
         self.assertIn("algorithm_plus_physical_total_time_differs", errors)
+        training = dict(row)
+        training.pop("algorithm_seconds")
+        training.pop("total_seconds")
+        errors, facts = audit_scene_row(restored[0], training, require_total_timing=False)
+        self.assertEqual(errors, [])
+        self.assertEqual(facts["end_to_end_timing_scope"],
+                         "not_recorded_for_training_terminal_not_filled")
+        errors, _ = audit_scene_row(restored[0], training)
+        self.assertIn("algorithm_plus_physical_total_time_differs", errors)
 
 
 if __name__ == "__main__":

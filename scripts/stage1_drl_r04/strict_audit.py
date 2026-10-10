@@ -63,10 +63,12 @@ def _sgm(capacity, demand, beta):
     return 1 - (1 - math.exp(-abs(complex(real, imag)))) ** 3
 
 
-def audit_scene_row(scene, row):
+def audit_scene_row(scene, row, *, require_total_timing=True):
     errors = []
     facts = {"geometry_version": "shared_exact_satellite_ray_europe_v1",
-             "rf_scope": "logged_capacity_service_algebra_only_no_off_axis_recompute"}
+             "rf_scope": "logged_capacity_service_algebra_only_no_off_axis_recompute",
+             "end_to_end_timing_scope": ("recorded_static_evaluation" if require_total_timing else
+                                        "not_recorded_for_training_terminal_not_filled")}
     cfg = VariableConfig(max_beams=200)
     scaled = SimpleNamespace(scene_id=scene.scene_id, source_hash=scene.source_hash,
                              aircraft_ids=scene.aircraft_ids, positions=scene.positions,
@@ -212,7 +214,9 @@ def audit_scene_row(scene, row):
         errors.append("physical_segment_time_sum_differs")
     unique = physical.get("layouts_by_sha256", {})
     parts = [x.get("timing", {}).get("total_seconds") for x in unique.values()]
-    if (not all(isinstance(x, (int, float)) and math.isfinite(x) and x >= 0 for x in parts) or
+    if not all(isinstance(x, (int, float)) and math.isfinite(x) and x >= 0 for x in parts):
+        errors.append("physical_layout_total_time_invalid")
+    elif require_total_timing and (
             not isinstance(row.get("algorithm_seconds"), (int, float)) or
             not _close(row.get("total_seconds"), row["algorithm_seconds"] + sum(parts), atol=1e-7)):
         errors.append("algorithm_plus_physical_total_time_differs")
