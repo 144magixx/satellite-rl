@@ -291,7 +291,7 @@ try:
  def zip_group(name,entries):
   path=dest/name;temporary=dest/(name+'.tmp')
   if path.exists() or temporary.exists():raise RuntimeError('archive already exists; verify before retry')
-  with zipfile.ZipFile(temporary,'w',allowZip64=True,compression=zipfile.ZIP_STORED) as out:
+  with zipfile.ZipFile(temporary,'w',allowZip64=True,compression=zipfile.ZIP_DEFLATED,compresslevel=6) as out:
    for member,record in entries:
     out.write(record['path'],member)
   temporary.replace(path)
@@ -370,19 +370,20 @@ try:
  total=sum(x['bytes'] for x in items.values())
  if shutil.disk_usage(dest).free < request['reserve']+total+len(items)*2048:
   raise RuntimeError('remote free space below source bundle plus 8GiB reserve')
-  volumes=[]
-  for day in sorted({entry['day'] for entry in request['preparations']}):
-   day_items={name:row for name,row in items.items() if name.startswith('shared_sources/'+day+'/')}
-   if not any(name.endswith('.tar') for name in day_items):raise RuntimeError('source day lacks raw archive')
-   path=dest/('shared_sources_'+day+'.zip');temporary=dest/(path.name+'.tmp')
-   if path.exists() or temporary.exists():raise RuntimeError('shared source volume already exists')
-   with zipfile.ZipFile(temporary,'w',allowZip64=True,compression=zipfile.ZIP_STORED) as out:
-    for member,row in sorted(day_items.items()):out.write(row['path'],member)
-   temporary.replace(path)
-   volumes.append({'file':path.name,'remote_path':str(path),'bytes':path.stat().st_size,
-    'sha256':sha(path),'members':{name:{'bytes':row['bytes'],'sha256':row['sha256']}
-     for name,row in day_items.items()}})
+ volumes=[]
+ for day in sorted({entry['day'] for entry in request['preparations']}):
+  day_items={name:row for name,row in items.items() if name.startswith('shared_sources/'+day+'/')}
+  if not any(name.endswith('.tar') for name in day_items):raise RuntimeError('source day lacks raw archive')
+  path=dest/('shared_sources_'+day+'.zip');temporary=dest/(path.name+'.tmp')
+  if path.exists() or temporary.exists():raise RuntimeError('shared source volume already exists')
+  with zipfile.ZipFile(temporary,'w',allowZip64=True,compression=zipfile.ZIP_STORED) as out:
+   for member,row in sorted(day_items.items()):out.write(row['path'],member)
+  temporary.replace(path)
+  volumes.append({'file':path.name,'remote_path':str(path),'bytes':path.stat().st_size,
+   'sha256':sha(path),'members':{name:{'bytes':row['bytes'],'sha256':row['sha256']}
+    for name,row in day_items.items()}})
  receipt={'experiment_id':'S1-D12A','run_id':'shared_sources','port':20418,
+   'builder_ssh_port':request.get('builder_ssh_port',20418),
    'source_commit':request['source_commit'],'volumes':volumes}
  (dest/'receipt.json').write_text(json.dumps(receipt))
  print(json.dumps(receipt))
@@ -515,9 +516,9 @@ def one_source(planned):
     request = {"base": ops.BASE,
                "destination": ops.instance(20418)["ops"] + "/archive_d12a/shared_sources",
                "source_commit": planned["scientific_commit"],
-               "preparations": entries, "reserve": RESERVE}
+               "preparations": entries, "reserve": RESERVE, "builder_ssh_port": 20473}
     code = "REQUEST_JSON=" + repr(json.dumps(request)) + "\n" + REMOTE_SOURCE_BUILD
-    result = ops.remote_python(code, 20418, timeout=1800)
+    result = ops.remote_python(code, 20473, timeout=1800)
     if result["exit_code"]:
         raise RuntimeError(result["stderr"][-2000:])
     receipt = json.loads(result["stdout"].splitlines()[-1])
