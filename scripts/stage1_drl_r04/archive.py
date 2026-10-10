@@ -376,7 +376,7 @@ try:
   if not any(name.endswith('.tar') for name in day_items):raise RuntimeError('source day lacks raw archive')
   path=dest/('shared_sources_'+day+'.zip');temporary=dest/(path.name+'.tmp')
   if path.exists() or temporary.exists():raise RuntimeError('shared source volume already exists')
-  with zipfile.ZipFile(temporary,'w',allowZip64=True,compression=zipfile.ZIP_STORED) as out:
+  with zipfile.ZipFile(temporary,'w',allowZip64=True,compression=zipfile.ZIP_DEFLATED,compresslevel=6) as out:
    for member,row in sorted(day_items.items()):out.write(row['path'],member)
   temporary.replace(path)
   volumes.append({'file':path.name,'remote_path':str(path),'bytes':path.stat().st_size,
