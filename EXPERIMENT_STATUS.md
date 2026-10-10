@@ -2,7 +2,7 @@
 
 **2026-10-10 18:56 S1-D12A已完整交付。** 本轮真实四端API再次核37/37任务completed、科学源dfe一致且worker均不存活；两PPO、1800考核、全部原始ZIP/共享源、三模型和全量严格审计均完成。[正式报告09](docs/第一阶段/实验报告/09_R04引导的DRL覆盖A阶段对照.md)与七图/18行分档/100母配对和计时已经发布。最终小包`c0672af34aebfbeed454`共108成员、17,649,228字节，ZIP SHA`e4137153a3c387a5435779f632574d58738c1c58b2494d9aff4cd55b2c892edc`；四端读同一共享副本逐ZIP/成员SHA通过，根再次复核本地全成员与正式报告SHA一致。[最终双端回执](outputs/experiments/first_stage_s1_d12a_20261010/delivery/final_delivery_receipt.json) · [完成记录](outputs/experiments/first_stage_s1_d12a_20261010/delivery/s1_d12a_completion.json)。首次上传仅本机DQN缺paramiko、尚未连接远端，已用原传输环境接续同一不可变包，未重打包或改科学环境。
 
-结论：全部受测几何覆盖、实际40–111束；P0/P1相对H1平均CV退步2.35%/6.47%，均未过事前门槛，P1在BC之后继续PPO未增加总体收益。已证明PPO有布局选择作用，未证明超越BC/强基线，更未完成宽度/动态与完整三阶段效果。run_manifest整体标delivered，原冻结state/任务/预算/失败记录保持。交付跟进现在结束，不恢复已完成训练、controller或旧S1-V10；后续B/新预算仅建议。
+结论：全部受测几何覆盖、实际40–111束；P0/P1相对H1平均CV退步2.35%/6.47%，均未过事前门槛，P1在BC之后继续PPO未增加总体收益。已证明PPO有布局选择作用，未证明超越BC/强基线，更未完成宽度/动态与完整三阶段效果。run_manifest整体标delivered，原冻结state/任务/预算/失败记录保持。交付跟进已完成并删除`s1-d12a-drl`，实际TOML已不存在；删除前精确配置与工具回执保留于[跟进终止核验](outputs/experiments/first_stage_s1_d12a_20261010/followup/automation_completion_readback.json)。不恢复已完成训练、controller或旧S1-V10；后续B/新预算仅建议。
 
 **2026-10-10 S1-D12A正式报告09已发布，正在最终四端小包交付。** 两PPO各262144决策、16384更新、16×60验证；六法1800条考核及37任务完整归档均完成。全量严格报告已`formal_ready=true`/issues空：全部受测几何覆盖、实际40–111束；P0/P1相对H1平均CV分别上升2.35%/6.47%，均未过事前质量或效率门槛，P1继续PPO未超过BC。PPO确实会改动布局，但不能称已获超越BC或强基线的收益。报告含7张实际曲线/分层/配对/计时图，18行分档表和100母计时；三倍率相关、单种子、固定宽度、模型估计TDMA及未独立重算RF限制保留。[正式报告09](docs/第一阶段/实验报告/09_R04引导的DRL覆盖A阶段对照.md) · [严格审计](outputs/experiments/first_stage_s1_d12a_20261010/analysis/final_report_verified/audit.json) · [数图链接复核](outputs/experiments/first_stage_s1_d12a_20261010/preflight/final_report_numeric_figure_qa.json)。
 
