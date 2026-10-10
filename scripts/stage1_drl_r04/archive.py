@@ -396,7 +396,7 @@ try:
    sha(pinfile)!=prep['files']['source_preflight.json']['sha256'] or
    raw_sha!=artifacts['raw_archive_sha256']):
    raise RuntimeError('shared official raw archive differs from frozen preparation')
-  if day=='2024-02-07' and role=='validation':
+  if day=='2024-02-07' and role=='validation' and ((source/'chunks').exists() or (source/(archive.name+'.part')).exists()):
    proof_path=pathlib.Path(request['recovery_proof_path'])
    if (proof_path.is_symlink() or not proof_path.is_file() or
     not proof_path.resolve().is_relative_to(base/'20473'/'ops') or
