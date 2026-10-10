@@ -1,5 +1,13 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-10 17:49 S1-D12A两PPO正式训练完成，独立考核20/24分片已完成、1593/1800行已记录，归档转入E盘继续。**两组各262144决策/16384更新/16×60验证；17:36在原DQN/CUDA严格加载终点并核checkpoint、全部日志行数、128观测分片SHA、32环境流、optimizer/RNG、final与checkpoint参数逐张量相等，全部通过。P0/P1完整回合分别9413/10488，各32预算尾段另列；网络88450参数，不能沿用S1-V10的87682。三小模型P0/P1 final与BC endpoint已导出并对远端SHA核同。[终点验收](outputs/experiments/first_stage_s1_d12a_20261010/preflight/final_learning_audit.json) · [模型入口与SHA](outputs/experiments/first_stage_s1_d12a_20261010/preflight/model_exports.json)。
+
+16:27原launcher在提交BC考核时将evaluation误套训练dataset gate，400后有界退出；I0/H1/H2的900行已完成未重跑。独立服务ops已从666更新到`02b610c22f898af96654eb1013f43fca0621c8d4`，只补kind优先的数据角色校验，训练门槛及来源/模型/分片校验不放宽；Store科学源仍原dfe，四端新评价实际job.git_commit均dfe。新唯一launcher PID14756/出生1791625284.1644783已恢复，原25616不重启。17:49真实四端API：24任务已全部提交，20 completed、4 evaluating，共1593/1800记录，无新错误。[恢复现场](outputs/experiments/first_stage_s1_d12a_20261010/preflight/heartbeat_20261010_1750.json)。
+
+源三日ZIP已于16:28:04完整校验闭合，原41840正常退出。旧completed批43668在P0下载前遇容量保护而失败，原六任务归档保留：P0已有远端ZIP共3,609,436,653字节，而C/D各保8GiB后总量仅2,752,638,976字节，问题不是损坏。E盘已核Fixed/NTFS/Healthy、空闲约106GiB，7908044新增E:/paper_archives/outputs/experiments/first_stage_s1_d12a_20261010/job_archives作为新卷优先路径，各盘仍保8GiB，旧D/C卷不移动/重复。新归档批PID28940/出生1791625343.7784634，17:49已从P0推进至P1，分块SFTP预读实际10MB/0.5秒且SHA一致，保持2MiB预读窗口和全卷/逐成员SHA。[容量审计](outputs/experiments/first_stage_s1_d12a_20261010/preflight/archive_capacity_audit.json) · [吞吐字节等价核验](outputs/experiments/first_stage_s1_d12a_20261010/preflight/archive_vector_read_verification.json)。
+
+已启动唯一收尾进程PID40180/出生1791625670.140581，analysis/finalizer_state.json保存三个后处理模块SHA守卫。它等待科学launcher及当前归档批完成，冻结state/manifest/prepare输入，补齐37任务归档，再运行全量strict报告，异常有界停止而非无限重试。正式报告09、数值/图片人工复核及最终交付仍待，不能将已完成训练或生成统计当作全部交付。原source/归档/launcher失败和约10小时试点停等继续保留。[收尾状态](outputs/experiments/first_stage_s1_d12a_20261010/analysis/finalizer_state.json)。
+
 **2026-10-10 15:10 S1-D12A两PPO继续正常，报告全量核验与归档入口已补强。**根真实四端API/SSH核P0为141312/262144、8832更新，P1为139264/262144、8704更新；两者第8个验证节点131072已完成，原worker54275/52878与科学dfe保持，无重训或新增预算。[进度证据](outputs/experiments/first_stage_s1_d12a_20261010/preflight/heartbeat_20261010_1510.json)。14:50瞬时GPU两端0%/498MiB；14:52四秒窗口CPU主worker及17子进程合计约2.65/2.93核，不能宣称GPU或全部CPU已满载；窗口样本不作算法速度排名，后续仍按有效吞吐观察。
 
 H1/H2开发与固定验证共240条已用原NPZ重新回放初解/原终态/最好解几何、需求守恒、J、逐束供需代数、逐机TDMA、资源及分段时间，全部通过；复用相同纯几何实现，未独立重算离轴链路物理。训练各3条真实完整回合抽查也通过，但全量须终态归档后执行。报告工具原带内统计把需求均衡与C/D混用，410c4a1已按原定义更正并分列两者，未改冻结算法或数据；训练回合未记总墙钟时间，28d071e明确缺项不补零。报告SHA和JSONL均流式读取，1a57287增加全部训练终态回放，d8c8b5a另列发布最好布局的物理成本与多布局审计总成本，不将审计额外调用冒充在线部署速度。[240条实数复核](outputs/experiments/first_stage_s1_d12a_20261010/preflight/strict_real_baseline_audit.json) · [训练终态抽查](outputs/experiments/first_stage_s1_d12a_20261010/preflight/strict_training_terminal_sample.json)。
