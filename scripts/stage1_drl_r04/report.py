@@ -461,6 +461,12 @@ def analyze(state, source, output):
                             "physical_seconds": (row["total_seconds"] - row["algorithm_seconds"]
                                                  if _number(row.get("total_seconds")) and
                                                  _number(row.get("algorithm_seconds")) else None),
+                            "published_best_physical_seconds": best.get("timing", {}).get("total_seconds"),
+                            "algorithm_plus_best_physical_seconds": (
+                                row["algorithm_seconds"] + best["timing"]["total_seconds"]
+                                if _number(row.get("algorithm_seconds")) and
+                                _number(best.get("timing", {}).get("total_seconds")) else None),
+                            "audited_physical_layout_calls": row.get("terminal_physics", {}).get("physical_allocation_calls"),
                             "initialization_seconds": row.get("initialization_seconds"),
                             "menu_seconds": row.get("menu_seconds"),
                             "trial_seconds": row.get("trial_seconds"),
