@@ -47,8 +47,12 @@ class Evidence:
                     for receipt_path in receipts:
                         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
                         for volume in receipt.get("volumes", []):
-                            path = Path(volume.get("canonical_path") or
-                                        receipt_path.parent / volume["file"])
+                            canonical = volume.get("canonical_path")
+                            path = (Path(canonical) if canonical is not None else
+                                    receipt_path.parent / volume["file"])
+                            if (path.name != volume["file"] or
+                                    (canonical is not None and not path.is_absolute())):
+                                raise ValueError("invalid canonical archive ZIP path")
                             if not path.is_file() or path.stat().st_size != volume["bytes"]:
                                 raise ValueError("canonical archive ZIP absent or wrong size")
                             checksum = hashlib.sha256()

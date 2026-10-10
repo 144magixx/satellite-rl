@@ -22,6 +22,7 @@ from scripts.stage1_drl_r04.data_controller import ASSIGNMENT, RECEIPT
 
 LOCAL = ops.LOCAL / "job_archives"
 BACKUP = Path("C:/paper_archives/outputs/experiments/first_stage_s1_d12a_20261010/job_archives")
+EXTRA = Path("E:/paper_archives/outputs/experiments/first_stage_s1_d12a_20261010/job_archives")
 RECOVERY_PROOF = ops.LOCAL / "preflight" / "source_recovery_cache_audit.json"
 RESERVE = 8 * (1 << 30)
 PART_BYTES = 256 * (1 << 20)
@@ -513,9 +514,14 @@ def _disk_free(path):
 
 
 def plan_canonical(port, receipt, free_by_root=None):
-    """Choose one existing or new D/C location per ZIP, preserving 8 GiB on each."""
+    """Choose one D/C/E location per ZIP, preserving 8 GiB on each drive."""
     roots = {"local": LOCAL / str(port) / receipt["run_id"],
              "backup": BACKUP / str(port) / receipt["run_id"]}
+    # E is optional on other hosts. In tests, free_by_root explicitly selects
+    # the drives under consideration; on this host, probe the E drive itself.
+    if ((free_by_root is None and EXTRA.anchor and Path(EXTRA.anchor).exists()) or
+            (free_by_root is not None and "extra" in free_by_root)):
+        roots["extra"] = EXTRA / str(port) / receipt["run_id"]
     free = {key: (_disk_free(root) if free_by_root is None else free_by_root[key]) - RESERVE
             for key, root in roots.items()}
     choices = {}
@@ -547,9 +553,10 @@ def plan_canonical(port, receipt, free_by_root=None):
         eligible = [key for key in roots if free[key] >= volume["bytes"]]
         if not eligible:
             raise RuntimeError("no canonical drive has ZIP bytes plus 8GiB reserve")
-        # Put each largest volume on the tighter fitting drive so another
-        # large volume can still use the drive with more remaining space.
-        key = min(eligible, key=lambda item: (free[item], item != "local"))
+        # Preserve the existing D/C evidence and their small remaining
+        # capacity. New exports use the verified E volume when available.
+        key = ("extra" if "extra" in eligible else
+               min(eligible, key=lambda item: (free[item], item != "local")))
         target = roots[key] / volume["file"]
         if target.with_suffix(target.suffix + ".part").exists():
             raise FileExistsError("interrupted local ZIP requires manual inspection")
