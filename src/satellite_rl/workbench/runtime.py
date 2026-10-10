@@ -114,6 +114,23 @@ def system_info(store):
             "archive_root": str(store.archive_root), "server_time": now()}
 
 
+def _valid_drl_pilot_pending(directory, job, status):
+    """The D12-A worker exits normally at its checkpoint-bound pilot gate."""
+    if (status.get("stage") != "pilot_pending" or
+            status.get("stop_reason") != "pilot_gate" or
+            status.get("env_step") != 65536 or
+            job.get("experiment_id") != "S1-D12A" or
+            job.get("kind") != "train" or
+            job.get("train_mode") not in ("P0", "P1") or
+            job.get("experiment_role") != "formal"):
+        return False
+    checkpoint = directory / "checkpoint.pt"
+    if not checkpoint.is_file():
+        return False
+    from .storage import digest
+    return status.get("checkpoint_sha256") == digest(checkpoint)
+
+
 class Scheduler:
     def __init__(self, store, python_executable=sys.executable, max_workers=1):
         self.store = store
@@ -183,7 +200,8 @@ class Scheduler:
                 # A worker may finish between reading status and inspecting PID.
                 directory = self.store.job_dir(run_id)
                 latest = read_json(directory / "status.json", status)
-                if latest.get("stage") in TERMINAL:
+                if latest.get("stage") in TERMINAL or _valid_drl_pilot_pending(directory, job, latest):
+                    self.children.pop(run_id, None)
                     continue
                 exit_code = child.returncode if child else None
                 exit_hex = f"0x{exit_code & 0xffffffff:08X}" if isinstance(exit_code, int) else None

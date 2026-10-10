@@ -629,6 +629,10 @@ class CoverageApplication:
         if len(parts) == 3 and parts[0] == "runs" and parts[2] == "pilot-gate" and method == "POST":
             from .drl_r04_gate import approve_pilot_gate
             return approve_pilot_gate(self, parts[1], body)
+        if len(parts) == 3 and parts[0] == "runs" and parts[2] == "pilot-reconcile" and method == "POST":
+            from .drl_r04_gate import reconcile_misclassified_pilot
+            with self.app.scheduler.lock:
+                return reconcile_misclassified_pilot(self, parts[1], body)
         if len(parts) == 3 and parts[0] == "runs" and parts[2] == "pilot-gate" and method == "GET":
             directory = self.store.job_dir(validate_id(parts[1]))
             proof = read_json(directory / "pilot_gate.json", {})
