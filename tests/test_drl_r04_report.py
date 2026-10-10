@@ -134,6 +134,56 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(summary["I0@0.75"]["beam_carried_fraction"]["mean"], .8)
             self.assertEqual(summary["I0@0.75"]["aircraft_tdma_carried_fraction"]["mean"], .75)
 
+    def test_training_episode_audit_streams_and_keeps_only_plot_pairs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            jobdir = root / "jobs" / "20418" / "train-p0"
+            jobdir.mkdir(parents=True)
+            checkpoint = b"fixed-checkpoint"
+            (jobdir / "checkpoint.pt").write_bytes(checkpoint)
+            (jobdir / "job.json").write_text(json.dumps({
+                "run_id": "train-p0", "variant": "P0", "git_commit": "a" * 40,
+                "experiment_id": "S1-D12A"}), encoding="utf-8")
+            (jobdir / "status.json").write_text(json.dumps({
+                "stage": "completed", "env_step": 2,
+                "checkpoint_sha256": hashlib.sha256(checkpoint).hexdigest()}), encoding="utf-8")
+            (jobdir / "config.json").write_text('{"schema_version":6}', encoding="utf-8")
+            events = [{"stream_id": 0, "stream_episode_serial": serial,
+                       "env_step": serial, "reward": 1.0,
+                       "best_j_before": .2, "best_j_after": .19,
+                       "info": {"commits": 1, "trials": 1, "geometry_calls": 6}}
+                      for serial in (1, 2)]
+            episodes = [{"stream_id": 0, "stream_episode_serial": serial,
+                         "completed_episode": True, "terminal_env_step": serial,
+                         "episode_return": 1.0,
+                         "action_trace": {"count": 1, "first_env_step": serial,
+                                          "last_env_step": serial},
+                         "large_terminal_payload": "x" * 10000}
+                        for serial in (1, 2)]
+            for filename, records in (("actions.jsonl", events),
+                                      ("episodes.jsonl", episodes),
+                                      ("budget_tails.jsonl", []),
+                                      ("evaluations.jsonl", [])):
+                (jobdir / filename).write_text(
+                    "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+            state = {"experiment_id": "S1-D12A", "scientific_commit": "a" * 40,
+                     "tasks": {"P0": {"port": 20418, "run_id": "train-p0", "variant": "P0"}}}
+            original = Evidence.job_jsonl
+            def guarded(instance, port, run_id, filename):
+                if filename == "episodes.jsonl":
+                    raise AssertionError("episodes must be streamed")
+                return original(instance, port, run_id, filename)
+            with (mock.patch.object(Evidence, "job_jsonl", guarded),
+                  mock.patch("scripts.stage1_drl_r04.report._plot", return_value=([], None)) as plot):
+                audit = analyze(state, root / "jobs", root / "report")
+            training = plot.call_args.args[2]
+            self.assertEqual(training["P0"], [(1, 1.0), (2, 1.0)])
+            task = json.loads((root / "report" / "task_audit.json").read_text(encoding="utf-8"))["P0"]
+            self.assertEqual(task["action_rows"], 2)
+            self.assertEqual(task["completed_episodes"], 2)
+            self.assertFalse(any("terminal action trace or reward differs" in issue
+                                 for issue in audit["issues"]))
+
 
 if __name__ == "__main__":
     unittest.main()

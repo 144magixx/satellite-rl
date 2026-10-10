@@ -293,9 +293,8 @@ def _plot(output, scene_rows, training, validation):
     if training:
         fig, ax = plt.subplots(figsize=(9, 5))
         for method, rows in training.items():
-            points = sorted((x.get("terminal_env_step"), x.get("episode_return")) for x in rows
-                      if x.get("completed_episode") and _number(x.get("terminal_env_step")) and
-                      _number(x.get("episode_return")))
+            points = sorted((step, reward) for step, reward in rows
+                            if _number(step) and _number(reward))
             if points:
                 ax.scatter(*zip(*points), s=3, alpha=.25, label=f"{method} raw episodes")
                 window = 100
@@ -466,16 +465,15 @@ def analyze(state, source, output):
                     actual, dataset_error = evidence.sha(port, run_id, f"scene_inputs/{role}/inputs.npz")
                     if dataset_error or actual != expected:
                         issues.append(f"{key}: frozen {role} dataset SHA unavailable or differs")
-                episodes, error = evidence.job_jsonl(port, run_id, "episodes.jsonl")
-                if error:
-                    issues.append(f"{key}: {error}")
                 tails, error = evidence.job_jsonl(port, run_id, "budget_tails.jsonl")
                 if error:
                     issues.append(f"{key}: {error}")
+                if len(tails) > 32:
+                    issues.append(f"{key}: budget tails exceed 32 scene streams")
                 nodes, error = evidence.job_jsonl(port, run_id, "evaluations.jsonl")
                 if error:
                     issues.append(f"{key}: {error}")
-                training[key], validation[key] = episodes, nodes
+                training[key], validation[key] = [], nodes
                 action_groups = {}
                 action_total = 0
                 try:
@@ -505,25 +503,38 @@ def analyze(state, source, output):
                                 issues.append(f"{key}: action {field} budget invalid")
                 except (FileNotFoundError, ValueError, UnicodeDecodeError) as exc:
                     issues.append(f"{key}: action ledger unavailable or invalid: {exc}")
-                for terminal in (*episodes, *tails):
+                def check_terminal(terminal):
                     trace = terminal.get("action_trace", {})
                     if trace.get("count") == 0 and terminal.get("purpose") == "budget_tail_snapshot":
-                        continue
+                        return
                     identity = (terminal.get("stream_id"), terminal.get("stream_episode_serial"))
-                    actual = action_groups.get(identity, {})
+                    actual = action_groups.pop(identity, {})
                     if (actual.get("count") != trace.get("count") or
                             actual.get("first") != trace.get("first_env_step") or
                             actual.get("last") != trace.get("last_env_step") or
                             not _near(actual.get("reward"), terminal.get("episode_return"), atol=1e-7)):
                         issues.append(f"{key}: terminal action trace or reward differs {identity}")
+                episode_count = 0
+                try:
+                    for terminal in evidence.job_iter_jsonl(port, run_id, "episodes.jsonl"):
+                        episode_count += 1
+                        check_terminal(terminal)
+                        if terminal.get("completed_episode") is not True:
+                            issues.append(f"{key}: completed episode ledger contains partial tail")
+                        else:
+                            step, reward = terminal.get("terminal_env_step"), terminal.get("episode_return")
+                            if _number(step) and _number(reward):
+                                training[key].append((step, reward))
+                except (FileNotFoundError, ValueError, UnicodeDecodeError) as exc:
+                    issues.append(f"{key}: episode ledger unavailable or invalid: {exc}")
+                for terminal in tails:
+                    check_terminal(terminal)
                 if action_total != status.get("env_step"):
                     issues.append(f"{key}: action count differs from recorded decision budget")
                 task_audit[key].update(env_step=status.get("env_step"),
-                                       action_rows=action_total, completed_episodes=len(episodes),
+                                       action_rows=action_total, completed_episodes=episode_count,
                                        budget_tails=len(tails),
                                        validation_nodes=len(nodes))
-                if any(x.get("completed_episode") is not True for x in episodes):
-                    issues.append(f"{key}: completed episode ledger contains partial tail")
                 if any(x.get("purpose") != "budget_tail_snapshot" or x.get("completed_episode") is not False for x in tails):
                     issues.append(f"{key}: budget tail mixed with completed episodes")
                 for node in nodes:
