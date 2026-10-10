@@ -319,6 +319,11 @@ import hashlib,json,os,pathlib,shutil,sys,zipfile
 request=json.loads(REQUEST_JSON)
 base=pathlib.Path(request['base']).resolve();dest=pathlib.Path(request['destination'])
 dest.mkdir(parents=True,exist_ok=True);lock=dest/'.lock';lock.mkdir()
+owner={'pid':os.getpid(),'run_id':'shared_sources','source_commit':request['source_commit']}
+proc=pathlib.Path('/proc')/str(os.getpid())/'stat'
+if proc.is_file():
+ raw=proc.read_text();owner['start_ticks']=int(raw[raw.rfind(')')+2:].split()[19])
+(lock/'owner.json').write_text(json.dumps(owner))
 try:
  def sha(path):
   h=hashlib.sha256()
@@ -388,6 +393,7 @@ try:
  (dest/'receipt.json').write_text(json.dumps(receipt))
  print(json.dumps(receipt))
 finally:
+ (lock/'owner.json').unlink(missing_ok=True)
  lock.rmdir()
 '''
 
