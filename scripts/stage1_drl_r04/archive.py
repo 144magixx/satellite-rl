@@ -312,7 +312,10 @@ try:
   files=sorted(path.rglob('*')) if path.is_dir() else [path]
   for file in files:
    if file.is_file():
-    member='models/'+str(port)+'/'+run_id+'/'+name+'/'+file.name
+    file=safe(file)
+    relative=file.relative_to(path).as_posix() if path.is_dir() else file.name
+    member='models/'+str(port)+'/'+run_id+'/'+name+'/'+relative
+    if member in model_items:raise RuntimeError('duplicate model archive member')
     model_items[member]={'path':str(file),'sha256':sha(file),'bytes':file.stat().st_size}
  if sum(x['bytes'] for x in items.values())>request['max_bytes']:
   raise RuntimeError('job archive byte bound exceeded')

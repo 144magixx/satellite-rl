@@ -13,6 +13,43 @@ from scripts.stage1_drl_r04 import archive
 
 
 class SourceArchiveExecutionTests(unittest.TestCase):
+    def test_model_endpoints_keep_distinct_relative_paths(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder).resolve()
+            store = base / "20418/archive"
+            run = "train_one"
+            jobdir = store / "outputs/workbench/jobs" / run
+            jobdir.mkdir(parents=True)
+            source = store / "source"
+            source.mkdir()
+            (source / "source_manifest.json").write_text(json.dumps({"git_commit": "a" * 40, "files": {}}))
+            models = store / "models" / run
+            for endpoint in ("final", "pilot_endpoint"):
+                p = models / endpoint
+                p.mkdir(parents=True)
+                (p / "policy.pt").write_bytes(endpoint.encode())
+                (p / "model.json").write_text(json.dumps({"selection": endpoint}))
+            job = {"run_id": run, "request_id": "one", "experiment_id": "S1-D12A",
+                   "git_commit": "a" * 40, "archive_root": str(store), "variant": "P0",
+                   "source_root": str(source), "model_dir": str(models)}
+            for name, value in {"job.json": job, "config.json": {"datasets": {}},
+                                "status.json": {"run_id": run, "stage": "completed"},
+                                "launch.json": {}}.items():
+                (jobdir / name).write_text(json.dumps(value))
+            request = {"port": 20418, "run_id": run, "request_id": "one", "variant": "P0",
+                       "base": str(base), "archive": str(store), "source_commit": "a" * 40,
+                       "destination": str(base / "export"), "preparation_day": None,
+                       "max_files": 100, "max_bytes": 1 << 20, "reserve": archive.RESERVE,
+                       "part_bytes": 1 << 20}
+            output = io.StringIO()
+            with patch("shutil.disk_usage", return_value=type("Space", (), {"free": 1 << 40})()), contextlib.redirect_stdout(output):
+                exec(compile(archive.REMOTE_BUILD, "job_builder", "exec"), {"REQUEST_JSON": json.dumps(request)})
+            receipt = json.loads(output.getvalue())
+            model_volume = next(v for v in receipt["volumes"] if v["file"] == "models.zip")
+            with zipfile.ZipFile(model_volume["remote_path"]) as packed:
+                for endpoint in ("final", "pilot_endpoint"):
+                    self.assertEqual(packed.read(f"models/20418/{run}/model_dir/{endpoint}/policy.pt"), endpoint.encode())
+
     def test_three_source_volumes_are_built_after_capacity_check(self):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
