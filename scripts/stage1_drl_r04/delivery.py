@@ -24,6 +24,11 @@ REPORT_FILES = ("audit.json", "summary.json", "task_audit.json",
                 "per_scene.json", "per_scene.csv", "per_mother.json",
                 "curve_metadata.json", "test_carried_distribution.png",
                 "train_episode_reward_raw.png", "validation_best_j.png")
+PUBLICATION_OUTPUTS = ("01_quality_100_mothers.png", "02_demand_levels.png",
+                       "03_timing_100_mothers.png",
+                       "04_paired_differences_100_mothers.png",
+                       "overall_100_mothers.csv", "by_level_100_mothers.csv",
+                       "timing_100_mothers.csv")
 MAX_PACKAGE_BYTES = 256 << 20
 
 
@@ -81,6 +86,37 @@ def gate(repo=REPO, base=BASE):
     for name in REPORT_FILES:
         _file(files, "analysis/final_report_verified/" + name, final / name, errors)
 
+    publication = base / "analysis/publication"
+    metadata_path = publication / "figure_metadata.json"
+    metadata = read(metadata_path) if metadata_path.is_file() else {}
+    script = publication / "build_figures.py"
+    source_inputs = {"per_scene.csv": final / "per_scene.csv",
+                     "threshold_audit_mothers.csv": base / "analysis/threshold_audit_mothers.csv",
+                     "threshold_audit.json": base / "analysis/threshold_audit.json"}
+    declared_inputs = metadata.get("inputs", {})
+    if (metadata.get("experiment") != "S1-D12A" or
+            not script.is_file() or metadata.get("script_sha256") !=
+            (file_sha(script) if script.is_file() else None) or
+            len(declared_inputs) != len(source_inputs)):
+        errors.append("publication metadata or figure script differs")
+    for name, path in source_inputs.items():
+        found = [(source, sha) for source, sha in declared_inputs.items()
+                 if Path(source).name == name]
+        if (len(found) != 1 or not path.is_file() or
+                found[0][1] != file_sha(path)):
+            errors.append(f"publication input SHA differs: {name}")
+    if set(metadata.get("outputs", {})) != set(PUBLICATION_OUTPUTS):
+        errors.append("four formal figures and three publication CSVs incomplete")
+    for name in PUBLICATION_OUTPUTS:
+        path = publication / name
+        expected = metadata.get("outputs", {}).get(name, {})
+        if (not path.is_file() or path.stat().st_size != expected.get("bytes") or
+                file_sha(path) != expected.get("sha256")):
+            errors.append(f"publication output SHA or bytes differ: {name}")
+        _file(files, "analysis/publication/" + name, path, errors)
+    _file(files, "analysis/publication/figure_metadata.json", metadata_path, errors)
+    _file(files, "analysis/publication/build_figures.py", script, errors)
+
     learning_path = base / "preflight/final_learning_audit.json"
     learning = read(learning_path) if learning_path.is_file() else {}
     for port in (20418, 20424):
@@ -98,10 +134,27 @@ def gate(repo=REPO, base=BASE):
     state = read(state_path) if state_path.is_file() else {}
     manifest_path = base / "run_manifest.json"
     manifest = read(manifest_path) if manifest_path.is_file() else {}
+    frozen_manifest_path = base / "analysis/final_input/run_manifest.json"
+    frozen_manifest = (read(frozen_manifest_path)
+                       if frozen_manifest_path.is_file() else {})
+    plan_path = base / "run_plan.json"
+    plan = read(plan_path) if plan_path.is_file() else {}
+    preparation_path = base / "analysis/final_input/data_preparation.json"
+    preparation = read(preparation_path) if preparation_path.is_file() else {}
     report_tasks = state.get("tasks", {})
     tasks = manifest.get("tasks", {})
     if (state.get("experiment_id") != "S1-D12A" or
             state.get("scientific_commit") != SCIENTIFIC_COMMIT or
+            plan.get("experiment_id") != "S1-D12A" or
+            plan.get("formal_source_commit") != SCIENTIFIC_COMMIT or
+            not plan_path.is_file() or
+            manifest.get("run_plan_sha256") != file_sha(plan_path) or
+            frozen_manifest.get("run_plan_sha256") != file_sha(plan_path) or
+            frozen_manifest.get("tasks") != tasks or
+            preparation.get("experiment_id") != "S1-D12A" or
+            preparation.get("scientific_commit") != SCIENTIFIC_COMMIT or
+            set(preparation.get("tasks", {})) !=
+            {"2024-02-07", "2024-02-08", "2024-02-09"} or
             len(report_tasks) != 34 or
             not set(report_tasks) <= set(tasks) or
             len(tasks) != 37 or len({(task.get("port"), task.get("run_id"))
@@ -113,6 +166,20 @@ def gate(repo=REPO, base=BASE):
         errors.append("37 frozen task identities unavailable")
     _file(files, "indexes/frozen_state.json", state_path, errors)
     _file(files, "indexes/run_manifest.json", manifest_path, errors)
+    _file(files, "indexes/frozen_run_manifest.json", frozen_manifest_path, errors)
+    _file(files, "indexes/run_plan.json", plan_path, errors)
+    _file(files, "indexes/frozen_data_preparation.json", preparation_path, errors)
+
+    finalizer_path = base / "analysis/finalizer_state.json"
+    finalizer = read(finalizer_path) if finalizer_path.is_file() else {}
+    verified = finalizer.get("verified_tasks", [])
+    if (len(verified) != 37 or
+            {row.get("key") for row in verified} != set(tasks) or
+            any(row.get("run_id") != tasks[row.get("key", "")].get("run_id") or
+                row.get("proof", {}).get("closed") is not True
+                for row in verified if row.get("key") in tasks)):
+        errors.append("37-task finalizer archive closure evidence incomplete")
+    _file(files, "evidence/finalizer_state.json", finalizer_path, errors)
     receipts = {}
     for key, task in sorted(tasks.items()):
         port, run_id = task.get("port"), task.get("run_id")
@@ -195,16 +262,52 @@ def gate(repo=REPO, base=BASE):
 
     bundle = base / ("deployment/s1d12a_" + SCIENTIFIC_COMMIT + ".bundle")
     fixed = {"sources/frozen_science.bundle": bundle,
-             "scripts/report.py": repo / "scripts/stage1_drl_r04/report.py",
-             "scripts/strict_audit.py": repo / "scripts/stage1_drl_r04/strict_audit.py",
-             "scripts/delivery.py": Path(__file__).resolve(),
              "scripts/threshold_audit.py": base / "analysis/threshold_audit.py",
              "analysis/threshold_audit.json": base / "analysis/threshold_audit.json",
              "analysis/threshold_audit.csv": base / "analysis/threshold_audit.csv",
              "analysis/threshold_audit_mothers.csv": base / "analysis/threshold_audit_mothers.csv",
-             "analysis/result_interpretation.md": base / "analysis/result_interpretation.md"}
+             "analysis/result_interpretation.md": base / "analysis/result_interpretation.md",
+             "evidence/finalizer.py": base / "analysis/finalizer.py",
+             "evidence/strict_repair_launch.json": base / "analysis/strict_repair_launch.json",
+             "evidence/source_recovery_cache_audit.json": base / "preflight/source_recovery_cache_audit.json",
+             "evidence/source_recovery_cache_audit_probe.py": base / "preflight/source_recovery_cache_audit_probe.py",
+             "evidence/checkpoint_audit.json": base / "preflight/crash_recovery_20261010/checkpoint_audit.json",
+             "evidence/pilot_reconciliation.json": base / "preflight/crash_recovery_20261010/pilot_reconciliation.json"}
     for name, path in fixed.items():
         _file(files, name, path, errors)
+    for path in sorted((repo / "scripts/stage1_drl_r04").glob("*.py")):
+        _file(files, "scripts/stage1_drl_r04/" + path.name, path, errors)
+    for required in ("report.py", "strict_audit.py", "archive.py", "ops.py",
+                     "delivery.py"):
+        if "scripts/stage1_drl_r04/" + required not in files:
+            errors.append(f"report dependency missing: {required}")
+    _file(files, "scripts/s2p19/ops.py", repo / "scripts/s2p19/ops.py", errors)
+    learning_files = ("learning_evidence_audit.py", "learning_evidence_addendum.json",
+                      "learning_evidence_addendum.csv")
+    existing_learning = [name for name in learning_files
+                         if (base / "analysis" / name).exists()]
+    if existing_learning and len(existing_learning) != len(learning_files):
+        errors.append("learning evidence addendum is only partly written")
+    for name in existing_learning:
+        _file(files, "analysis/" + name, base / "analysis" / name, errors)
+    if "learning_evidence_addendum.json" in existing_learning:
+        addendum = read(base / "analysis/learning_evidence_addendum.json")
+        provenance = addendum.get("provenance", {})
+        if not provenance:
+            errors.append("learning evidence provenance missing")
+        for label, item in provenance.items():
+            path = (base / "job_archives" / str(item.get("port")) /
+                    str(item.get("run_id")) / "receipt.json")
+            if not path.is_file():
+                errors.append(f"learning evidence archive missing: {label}")
+                continue
+            matches = [row for volume in read(path).get("volumes", [])
+                       for name, row in volume.get("members", {}).items()
+                       if name == item.get("member")]
+            if (len(matches) != 1 or
+                    matches[0].get("sha256") != item.get("sha256") or
+                    matches[0].get("bytes") != item.get("bytes")):
+                errors.append(f"learning evidence member SHA differs: {label}")
     source_index = {"schema": "s1d12a.source_index.v1",
                     "scientific_commit": SCIENTIFIC_COMMIT,
                     "science_bundle_sha256": file_sha(bundle) if bundle.is_file() else None,
@@ -220,6 +323,18 @@ def gate(repo=REPO, base=BASE):
 def _members(gates):
     members = {name: path.read_bytes() for name, path in gates["files"].items()}
     members["indexes/source_index.json"] = canonical(gates["source_index"])
+    members["REPRODUCE.md"] = (
+        "S1-D12A small delivery package. The 37 large task ZIP volumes and three "
+        "source ZIPs remain at canonical_paths in archive_receipts; only their "
+        "SHA/size references are included here. Restore sources/frozen_science.bundle "
+        "with git clone, install the project, then run "
+        "python -m scripts.stage1_drl_r04.report --state indexes/frozen_state.json "
+        "--jobs <canonical job_archives directory> --output <new directory> "
+        "--terminal-audit evidence/final_learning_audit.json. "
+        "The analysis/publication/build_figures.py script expects analysis/final_report_verified "
+        "and the threshold files at their packaged relative paths. "
+        "Consult indexes/source_index.json before resolving external source ZIPs.\n"
+    ).encode("utf-8")
     if (sum(len(data) for data in members.values()) > MAX_PACKAGE_BYTES or
             any(name.endswith(".zip") for name in members)):
         raise ValueError("small delivery package exceeds bounds or includes raw ZIP")
