@@ -34,14 +34,47 @@ class DeliveryTests(unittest.TestCase):
             "strict_replayed_rows": 1800,
             "method_test_counts": {key: 300 for key in
                                    ("I0", "H1", "H2", "BC", "P0", "P1")}})
+        publication = self.base / "analysis/publication"
+        write(publication / "build_figures.py", b"publication source")
+        outputs = {}
+        for name in delivery.PUBLICATION_OUTPUTS:
+            path = publication / name
+            write(path, name.encode())
+            outputs[name] = {"sha256": delivery.file_sha(path),
+                             "bytes": path.stat().st_size}
+        threshold_mothers = self.base / "analysis/threshold_audit_mothers.csv"
+        threshold_json = self.base / "analysis/threshold_audit.json"
+        write(threshold_mothers, b"a,b\n")
+        write(threshold_json, b"{}")
+        write(publication / "figure_metadata.json", {
+            "experiment": "S1-D12A",
+            "script_sha256": delivery.file_sha(publication / "build_figures.py"),
+            "inputs": {str(path): delivery.file_sha(path)
+                       for path in (final / "per_scene.csv", threshold_mothers,
+                                    threshold_json)},
+            "outputs": outputs})
         self.tasks = {f"task_{i:02d}": {"port": 20424 if i == 1 else 20418,
                                        "run_id": f"run-{i:02d}",
                                        "git_commit": delivery.SCIENTIFIC_COMMIT}
                       for i in range(37)}
         write(self.base / "run_manifest.json", {"tasks": self.tasks})
+        plan = self.base / "run_plan.json"
+        write(plan, {"experiment_id": "S1-D12A",
+                     "formal_source_commit": delivery.SCIENTIFIC_COMMIT})
+        manifest = {"tasks": self.tasks, "run_plan_sha256": delivery.file_sha(plan)}
+        write(self.base / "run_manifest.json", manifest)
+        write(self.base / "analysis/final_input/run_manifest.json", manifest)
+        write(self.base / "analysis/final_input/data_preparation.json", {
+            "experiment_id": "S1-D12A", "scientific_commit": delivery.SCIENTIFIC_COMMIT,
+            "tasks": {date: {} for date in
+                      ("2024-02-07", "2024-02-08", "2024-02-09")}})
         write(self.base / "analysis/final_input/state.json", {
             "experiment_id": "S1-D12A", "scientific_commit": delivery.SCIENTIFIC_COMMIT,
             "tasks": dict(list(self.tasks.items())[:34])})
+        write(self.base / "analysis/finalizer_state.json", {
+            "verified_tasks": [{"key": key, "run_id": row["run_id"],
+                                "proof": {"closed": True}}
+                               for key, row in self.tasks.items()]})
         for key, row in self.tasks.items():
             write(self.base / "job_archives" / str(row["port"]) /
                   row["run_id"] / "receipt.json", {
@@ -100,8 +133,18 @@ class DeliveryTests(unittest.TestCase):
             "analysis/result_interpretation.md": b"memo"}
         for name, value in fixed.items():
             write(self.base / name, value)
-        for name in ("report.py", "strict_audit.py"):
+        for name in ("report.py", "strict_audit.py", "archive.py", "ops.py",
+                     "delivery.py"):
             write(self.repo / "scripts/stage1_drl_r04" / name, b"source")
+        write(self.repo / "scripts/s2p19/ops.py", b"source")
+        write(self.base / "analysis/strict_repair_launch.json", b"{}")
+        write(self.base / "analysis/finalizer.py", b"source")
+        write(self.base / "preflight/source_recovery_cache_audit.json", b"{}")
+        write(self.base / "preflight/source_recovery_cache_audit_probe.py", b"source")
+        write(self.base / "preflight/crash_recovery_20261010/checkpoint_audit.json",
+              b"{}")
+        write(self.base / "preflight/crash_recovery_20261010/pilot_reconciliation.json",
+              b"{}")
 
     def test_plan_gate_and_small_immutable_package(self):
         gates = delivery.gate(self.repo, self.base)
@@ -135,6 +178,45 @@ class DeliveryTests(unittest.TestCase):
         learning["20418"]["checks"]["same_checkpoint_policy"] = False
         write(learning_path, learning)
         self.assertFalse(delivery.gate(self.repo, self.base)["ready"])
+
+    def test_publication_and_finalizer_are_hard_gates(self):
+        publication = self.base / "analysis/publication"
+        figure = publication / "01_quality_100_mothers.png"
+        figure.write_bytes(b"changed")
+        errors = delivery.gate(self.repo, self.base)["errors"]
+        self.assertTrue(any("publication output SHA" in error for error in errors))
+        figure.write_bytes(figure.name.encode())
+        finalizer = self.base / "analysis/finalizer_state.json"
+        status = delivery.read(finalizer)
+        status["verified_tasks"][0]["proof"]["closed"] = False
+        write(finalizer, status)
+        self.assertTrue(any("37-task finalizer" in error for error in
+                            delivery.gate(self.repo, self.base)["errors"]))
+
+    def test_frozen_inputs_and_learning_provenance_are_hard_gates(self):
+        publication = self.base / "analysis/publication/figure_metadata.json"
+        metadata = delivery.read(publication)
+        first = next(iter(metadata["inputs"]))
+        metadata["inputs"][first] = "0" * 64
+        write(publication, metadata)
+        self.assertTrue(any("publication input SHA" in error for error in
+                            delivery.gate(self.repo, self.base)["errors"]))
+        metadata["inputs"][first] = delivery.file_sha(Path(first))
+        write(publication, metadata)
+        plan = self.base / "run_plan.json"
+        write(plan, {"experiment_id": "S1-D12A",
+                     "formal_source_commit": "0" * 40})
+        self.assertFalse(delivery.gate(self.repo, self.base)["ready"])
+        write(plan, {"experiment_id": "S1-D12A",
+                     "formal_source_commit": delivery.SCIENTIFIC_COMMIT})
+        addendum = self.base / "analysis/learning_evidence_addendum.json"
+        write(addendum, {"provenance": {"P0_status": {
+            "port": 20418, "run_id": "run-00", "member": "raw",
+            "sha256": "0" * 64, "bytes": 100}}})
+        for name in ("learning_evidence_audit.py", "learning_evidence_addendum.csv"):
+            write(self.base / "analysis" / name, b"small evidence")
+        self.assertTrue(any("learning evidence member SHA" in error for error in
+                            delivery.gate(self.repo, self.base)["errors"]))
 
     def test_upload_and_resume_read_same_package_on_four_lanes(self):
         receipt = delivery.package(self.repo, self.base)
