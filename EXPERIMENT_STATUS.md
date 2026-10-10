@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-10 17:52:31 S1-D12A全部科学计算完成，正在完整归档与严格报告生成。**根本轮四端真实API核24/24独立考核任务全部completed，各75行、合计1800；两PPO此前各262144/16384更新与16×60验证已验收，未追加训练或重复基线。controller.phase已test_complete_report_archive_pending，不再恢复任何已完成科学任务。归档28940仍在处理P1，收尾40180真实PID出生吻合并等待归档结束；随后补37任务完整归档、冻结输入、全量strict统计。正式报告09/图数人工复核/最终交付仍未完成，跟进继续。[全部考核完成快照](outputs/experiments/first_stage_s1_d12a_20261010/preflight/heartbeat_20261010_1755.json)。
+
 **2026-10-10 17:49 S1-D12A两PPO正式训练完成，独立考核20/24分片已完成、1593/1800行已记录，归档转入E盘继续。**两组各262144决策/16384更新/16×60验证；17:36在原DQN/CUDA严格加载终点并核checkpoint、全部日志行数、128观测分片SHA、32环境流、optimizer/RNG、final与checkpoint参数逐张量相等，全部通过。P0/P1完整回合分别9413/10488，各32预算尾段另列；网络88450参数，不能沿用S1-V10的87682。三小模型P0/P1 final与BC endpoint已导出并对远端SHA核同。[终点验收](outputs/experiments/first_stage_s1_d12a_20261010/preflight/final_learning_audit.json) · [模型入口与SHA](outputs/experiments/first_stage_s1_d12a_20261010/preflight/model_exports.json)。
 
 16:27原launcher在提交BC考核时将evaluation误套训练dataset gate，400后有界退出；I0/H1/H2的900行已完成未重跑。独立服务ops已从666更新到`02b610c22f898af96654eb1013f43fca0621c8d4`，只补kind优先的数据角色校验，训练门槛及来源/模型/分片校验不放宽；Store科学源仍原dfe，四端新评价实际job.git_commit均dfe。新唯一launcher PID14756/出生1791625284.1644783已恢复，原25616不重启。17:49真实四端API：24任务已全部提交，20 completed、4 evaluating，共1593/1800记录，无新错误。[恢复现场](outputs/experiments/first_stage_s1_d12a_20261010/preflight/heartbeat_20261010_1750.json)。
