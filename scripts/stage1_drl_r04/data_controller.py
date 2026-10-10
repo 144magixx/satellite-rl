@@ -119,6 +119,24 @@ def submit_preparations(commit):
         config["name"] = f"S1-D12A {role} {day} official ADS-B preparation"
         config["coverage"]["method"] = "none"
         request_id = f"s1d12a_prepare_{day.replace('-', '')}_{port}"
+        saved = result["tasks"].get(day)
+        if saved is not None:
+            if (saved.get("port") != port or saved.get("role") != role or
+                    saved.get("request_id") != request_id or
+                    saved.get("git_commit") != commit or saved.get("kind") != "prepare"):
+                raise ValueError(f"{day} saved preparation ownership differs")
+            existing = ops.api(port, f"/api/runs/{saved['run_id']}")
+            job = existing["job"]
+            preparation = job.get("dataset_preparation", {})
+            if (job.get("run_id") != saved["run_id"] or
+                    job.get("request_id") != request_id or
+                    job.get("experiment_id") != "S1-D12A" or
+                    job.get("git_commit") != commit or job.get("kind") != "prepare" or
+                    preparation.get("date_utc") != day or preparation.get("role") != role):
+                raise ValueError(f"{day} existing workbench preparation differs")
+            # Existing tasks own their original frozen source paths and resume
+            # history; a service repair must not regenerate their request.
+            continue
         job = ops.api(port, "/api/coverage/runs", {
             "kind": "prepare", "variant": "dataset", "config": config,
             "dataset_role": role, "source_date": day,
