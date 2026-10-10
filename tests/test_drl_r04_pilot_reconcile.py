@@ -90,10 +90,31 @@ class PilotReconcileTests(unittest.TestCase):
         actual = json.loads((self.directory / "status.json").read_text(encoding="utf-8"))
         self.assertEqual(actual["stage"], "interrupted")
 
+    def test_scheduler_does_not_exempt_nonzero_worker_exit(self):
+        atomic_json(self.directory / "status.json", {**self.status, "stage": "pilot_pending"})
+        scheduler = runtime.Scheduler(self.store)
+        child = Mock()
+        child.poll.return_value = 1
+        child.returncode = 1
+        scheduler.children[RUN_ID] = child
+        scheduler.tick()
+        actual = json.loads((self.directory / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(actual["stage"], "interrupted")
+        self.assertEqual(actual["exit_code"], 1)
+
+    def test_scheduler_recognizes_pilot_after_service_restart(self):
+        atomic_json(self.directory / "status.json", {**self.status, "stage": "pilot_pending"})
+        scheduler = runtime.Scheduler(self.store)
+        with patch.object(runtime, "pid_alive", return_value=False):
+            scheduler.tick()
+        actual = json.loads((self.directory / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(actual["stage"], "pilot_pending")
+
     def test_reconcile_requires_exact_evidence_and_preserves_failure(self):
         audit_path = self.store.root / "pilot_audit.json"
         atomic_json(audit_path, {"run_id": RUN_ID, "passed": False})
         body = self.body()
+        original_status_bytes = (self.directory / "status.json").read_bytes()
         with (patch.object(drl_r04_gate, "deployment", return_value="20418"),
               patch.object(drl_r04_gate, "pid_alive", return_value=False),
               patch.object(drl_r04_gate, "_audit", return_value=(
@@ -108,6 +129,8 @@ class PilotReconcileTests(unittest.TestCase):
             self.assertEqual(result["status"]["stage"], "pilot_pending")
             self.assertEqual(result["receipt"]["previous_status_sha256"], body["expected_status_sha256"])
             self.assertEqual(result["receipt"]["pilot_audit_sha256"], digest(audit_path))
+            self.assertEqual(Path(result["receipt"]["previous_status_path"]).read_bytes(),
+                             original_status_bytes)
             self.assertTrue((self.directory / "failure.json").is_file())
             self.assertEqual(audit.call_count, 1)
 

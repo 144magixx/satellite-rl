@@ -200,10 +200,12 @@ class Scheduler:
                 # A worker may finish between reading status and inspecting PID.
                 directory = self.store.job_dir(run_id)
                 latest = read_json(directory / "status.json", status)
-                if latest.get("stage") in TERMINAL or _valid_drl_pilot_pending(directory, job, latest):
+                exit_code = child.returncode if child else None
+                if (latest.get("stage") in TERMINAL or
+                        ((child is None or exit_code == 0) and
+                         _valid_drl_pilot_pending(directory, job, latest))):
                     self.children.pop(run_id, None)
                     continue
-                exit_code = child.returncode if child else None
                 exit_hex = f"0x{exit_code & 0xffffffff:08X}" if isinstance(exit_code, int) else None
                 failure = {"at": now(), "run_id": run_id, "pid": status.get("pid"),
                            "exit_code": exit_code, "exit_hex": exit_hex,
