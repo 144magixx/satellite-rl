@@ -22,6 +22,7 @@ from scripts.stage1_drl_r04.data_controller import ASSIGNMENT, RECEIPT
 
 LOCAL = ops.LOCAL / "job_archives"
 BACKUP = Path("C:/paper_archives/outputs/experiments/first_stage_s1_d12a_20261010/job_archives")
+RECOVERY_PROOF = ops.LOCAL / "preflight" / "source_recovery_cache_audit.json"
 RESERVE = 8 * (1 << 30)
 PART_BYTES = 256 * (1 << 20)
 MAX_FILES = 40000
@@ -127,6 +128,36 @@ def verify_source_receipt(receipt, directory):
            if name.startswith("shared_sources/") and name.endswith(".tar") and len(name.split("/")) == 3}
     if raw != days or len(raw) != 3:
         raise ValueError("shared source bundle lacks exactly three pinned raw days")
+    excluded = receipt.get("excluded_recovery_cache")
+    if excluded:
+        proof_member = "shared_sources/2024-02-07/recovery/source_recovery_cache_audit.json"
+        manifest_member = "shared_sources/2024-02-07/recovery/chunks_manifest.json"
+        raw_member = next((name for name in members if name.startswith(
+            "shared_sources/2024-02-07/") and name.endswith(".tar")), None)
+        if (excluded.get("source_bundle_member") != raw_member or
+                excluded.get("canonical_sha256") != members.get(raw_member, {}).get("sha256") or
+                excluded.get("proof_sha256") != members.get(proof_member, {}).get("sha256") or
+                excluded.get("chunk_manifest_sha256") != members.get(manifest_member, {}).get("sha256") or
+                len(excluded.get("files", [])) != 401 or
+                len({item.get("path") for item in excluded["files"]}) != 401 or
+                any(item.get("canonical_offset", -1) < 0 or
+                    item.get("canonical_offset", 0) + item.get("bytes", 0) >
+                    members.get(raw_member, {}).get("bytes", 0)
+                    for item in excluded["files"])):
+            raise ValueError("excluded recovery cache does not close against canonical source")
+        volume = next((item for item in receipt["volumes"]
+                       if proof_member in item["members"]), None)
+        if volume is None:
+            raise ValueError("excluded recovery cache proof ZIP missing")
+        with zipfile.ZipFile(volume_path(directory, volume)) as bundle:
+            proof = json.loads(bundle.read(proof_member))
+        expected = [{"path": row["path"], "bytes": row["bytes"],
+                     "sha256": row["sha256"], "canonical_offset": row["canonical_offset"]}
+                    for row in proof.get("cache_files", [])]
+        if (proof.get("all_reconstructable") is not True or
+                proof.get("canonical_tar", {}).get("sha256") != excluded["canonical_sha256"] or
+                expected != excluded["files"]):
+            raise ValueError("excluded recovery cache receipt differs from archived proof")
     return members
 
 
@@ -338,7 +369,7 @@ try:
    any(not pathlib.Path(v['remote_path']).is_file() or sha(pathlib.Path(v['remote_path']))!=v['sha256']
        for v in prior.get('volumes',[]))):raise RuntimeError('existing shared source receipt differs')
   print(json.dumps(prior));sys.exit(0)
- items={}
+ items={};excluded_recovery_cache=None
  for entry in request['preparations']:
   port,run_id,day,role=entry['port'],entry['run_id'],entry['day'],entry['role']
   root=base/str(port)/'archive'/'outputs/workbench/jobs'/run_id
@@ -360,13 +391,83 @@ try:
   prep=job['dataset_preparation'];source=base/'source'/role/day
   pinfile=source/'source_preflight.json';pin=json.loads(pinfile.read_text())
   archive=source/prep['archive_name'];artifacts=json.loads((root/'artifacts.json').read_text())
+  raw_sha=sha(archive)
   if (pin['archive_name']!=archive.name or pin['expected_bytes']!=archive.stat().st_size or
    sha(pinfile)!=prep['files']['source_preflight.json']['sha256'] or
-   sha(archive)!=artifacts['raw_archive_sha256']):
+   raw_sha!=artifacts['raw_archive_sha256']):
    raise RuntimeError('shared official raw archive differs from frozen preparation')
+  if day=='2024-02-07' and role=='validation':
+   proof_path=pathlib.Path(request['recovery_proof_path'])
+   if (proof_path.is_symlink() or not proof_path.is_file() or
+    not proof_path.resolve().is_relative_to(base/'20473'/'ops') or
+    sha(proof_path)!=request['recovery_proof_sha256']):
+    raise RuntimeError('Feb07 recovery proof source/SHA differs')
+   proof=json.loads(proof_path.read_text())
+   canonical=proof.get('canonical_tar') or {}
+   if (proof.get('experiment_id')!='S1-D12A' or proof.get('role')!='validation' or
+    proof.get('date_utc')!=day or proof.get('all_reconstructable') is not True or
+    proof.get('source_preflight_sha256')!=sha(pinfile) or
+    pin.get('asset_id')!=150440724 or
+    canonical.get('path')!=str(archive) or canonical.get('bytes')!=archive.stat().st_size or
+    canonical.get('sha256')!=raw_sha or canonical.get('expected_sha256')!=raw_sha):
+    raise RuntimeError('Feb07 recovery proof not bound to frozen canonical tar')
+   chunkdir=source/'chunks';manifest_file=chunkdir/'manifest.json'
+   metadata=proof.get('metadata_files') or []
+   if (chunkdir.is_symlink() or not chunkdir.is_dir() or len(metadata)!=1 or
+    metadata[0].get('path')!=str(manifest_file) or
+    metadata[0].get('sha256')!=sha(manifest_file) or
+    metadata[0].get('record')!=json.loads(manifest_file.read_text())):
+    raise RuntimeError('Feb07 recovery chunk manifest differs')
+   manifest=metadata[0]['record'];count=manifest.get('chunk_count')
+   if (count!=400 or manifest.get('expected_bytes')!=archive.stat().st_size or
+    not isinstance(manifest.get('chunk_size'),int) or manifest['chunk_size']<=0 or
+    len(manifest.get('chunks',[]))!=count or
+    proof.get('checked_bytes')!=archive.stat().st_size):
+    raise RuntimeError('Feb07 recovery chunk geometry differs')
+   partial=source/(archive.name+'.part')
+   expected_paths={str(chunkdir/('chunk_%04d.bin'%i)) for i in range(count)}|{str(partial)}
+   cache=proof.get('cache_files') or []
+   actual_chunks={str(path) for path in chunkdir.iterdir()}
+   if (len(cache)!=count+1 or {row.get('path') for row in cache}!=expected_paths or
+    actual_chunks!=(expected_paths-{str(partial)})|{str(manifest_file)} or
+    proof.get('unexpected') or proof.get('chunk_count')!=count or
+    sum(row.get('bytes',0) for row in cache if row.get('path')!=str(partial))!=archive.stat().st_size):
+    raise RuntimeError('Feb07 recovery cache inventory differs')
+   excluded=[]
+   for row in cache:
+    path=pathlib.Path(row['path'])
+    if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(source):
+     raise RuntimeError('Feb07 recovery cache path unsafe')
+    if path==partial:index=None;offset=0
+    else:
+     index=int(path.stem.split('_')[1]);offset=index*manifest['chunk_size']
+     if row.get('sha256')!=manifest['chunks'][index]['sha256']:
+      raise RuntimeError('Feb07 recovery chunk manifest SHA differs')
+    if (row.get('canonical_offset')!=offset or row.get('bytes')!=path.stat().st_size or
+     row.get('sha256')!=sha(path) or row.get('matches_canonical_bytes') is not True or
+     row.get('receipt_sha256_matches') is not True or
+     row.get('receipt_bytes_matches') is not True or
+     offset+path.stat().st_size>archive.stat().st_size):
+     raise RuntimeError('Feb07 recovery cache receipt differs')
+    with path.open('rb') as cached,archive.open('rb') as canonical_stream:
+     canonical_stream.seek(offset)
+     while block:=cached.read(8<<20):
+      if canonical_stream.read(len(block))!=block:
+       raise RuntimeError('Feb07 recovery cache differs from canonical bytes')
+    excluded.append({'path':str(path),'bytes':row['bytes'],'sha256':row['sha256'],
+     'canonical_offset':offset})
+   excluded_recovery_cache={'source_bundle_member':'shared_sources/'+day+'/'+archive.name,
+    'canonical_sha256':raw_sha,'proof_sha256':request['recovery_proof_sha256'],
+    'chunk_manifest_sha256':metadata[0]['sha256'],'files':excluded}
+   for name,path in (('source_recovery_cache_audit.json',proof_path),
+                     ('chunks_manifest.json',manifest_file)):
+    member='shared_sources/'+day+'/recovery/'+name
+    items[member]={'path':str(path),'bytes':path.stat().st_size,'sha256':sha(path)}
   allowed={prep['archive_name'],'source_preflight.json','selection_contract.json',
    'release_api.json','PREFERRED_RELEASES.txt','LICENSE-ODbL-official.txt'}
   for file in sorted(source.iterdir()):
+   if day=='2024-02-07' and role=='validation' and excluded_recovery_cache and file.name in ('chunks',archive.name+'.part'):
+    continue
    if file.name not in allowed:raise RuntimeError('unexpected shared source file')
    if file.is_symlink() or not file.is_file():raise RuntimeError('shared source member unsafe')
    member='shared_sources/'+day+'/'+file.name
@@ -389,7 +490,8 @@ try:
     for name,row in day_items.items()}})
  receipt={'experiment_id':'S1-D12A','run_id':'shared_sources','port':20418,
    'builder_ssh_port':request.get('builder_ssh_port',20418),
-   'source_commit':request['source_commit'],'volumes':volumes}
+    'source_commit':request['source_commit'],'volumes':volumes,
+    'excluded_recovery_cache':excluded_recovery_cache}
  (dest/'receipt.json').write_text(json.dumps(receipt))
  print(json.dumps(receipt))
 finally:
@@ -519,10 +621,24 @@ def one_source(planned):
             raise ValueError("existing source archive receipt commit differs")
         verify_source_receipt(receipt, existing.parent)
         return receipt
+    proof = json.loads(RECOVERY_PROOF.read_text(encoding="utf-8"))
+    if (proof.get("experiment_id") != "S1-D12A" or
+            proof.get("date_utc") != "2024-02-07" or
+            proof.get("role") != "validation" or
+            proof.get("all_reconstructable") is not True or
+            len(proof.get("cache_files", [])) != 401):
+        raise ValueError("Feb07 recovery cache proof incomplete")
+    proof_sha = digest(RECOVERY_PROOF)
+    remote_proof = ops.instance(20473)["ops"] + "/source_recovery_cache_audit.json"
+    uploaded = ops.upload(RECOVERY_PROOF, remote_proof, 20473)
+    if (uploaded.get("exit_code") != 0 or uploaded.get("local_sha256") != proof_sha or
+            uploaded.get("remote") != proof_sha or uploaded.get("path") != remote_proof):
+        raise RuntimeError("Feb07 recovery cache proof upload SHA differs")
     request = {"base": ops.BASE,
                "destination": ops.instance(20418)["ops"] + "/archive_d12a/shared_sources",
                "source_commit": planned["scientific_commit"],
-               "preparations": entries, "reserve": RESERVE, "builder_ssh_port": 20473}
+               "preparations": entries, "reserve": RESERVE, "builder_ssh_port": 20473,
+               "recovery_proof_path": remote_proof, "recovery_proof_sha256": proof_sha}
     code = "REQUEST_JSON=" + repr(json.dumps(request)) + "\n" + REMOTE_SOURCE_BUILD
     result = ops.remote_python(code, 20473, timeout=1800)
     if result["exit_code"]:
