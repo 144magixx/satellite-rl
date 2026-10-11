@@ -91,6 +91,27 @@ def scaled_scene(scene, multiplier):
     return value
 
 
+class FrozenInitialPhysics:
+    """Picklable teacher cache for the exact shared scene/I0, not a PHY proxy."""
+    def __init__(self,scene,initial,physical,max_beams=200):
+        from .core import layout_sha256
+        from ..variable_design import Layout
+        self.scene_sha=canonical_sha({"positions":scene.positions,"demands":scene.demands,
+                                      "aircraft_ids":scene.aircraft_ids})
+        self.initial_sha=layout_sha256(Layout.from_record(initial) if isinstance(initial,dict) else initial)
+        self.physical=physical
+        self.max_beams=max_beams
+
+    def __call__(self,scene,layout):
+        from .core import layout_sha256
+        actual=canonical_sha({"positions":scene.positions,"demands":scene.demands,
+                               "aircraft_ids":scene.aircraft_ids})
+        if actual!=self.scene_sha:raise ValueError("frozen initial PHY scene identity differs")
+        if layout_sha256(layout)==self.initial_sha:return deepcopy(self.physical)
+        from ..variable_downstream import evaluate_layout
+        return evaluate_layout(scene,layout,{"coverage":{"variable":{"max_beams":self.max_beams}}})
+
+
 def _initial_worker_setup():
     import torch
     torch.set_num_threads(1)
@@ -456,8 +477,16 @@ def _run_nondrl_job(directory, job, config, *, resume=False, preflight=None):
                         initial = initials.get(f"{index}:{multiplier:g}")
                         if initial is None:
                             raise ValueError("teacher shared initial evidence lacks scene")
-                        yield Problem(scaled_scene(scene, multiplier), NondrlConfig.from_dict(limits),
-                                      initial=initial["result"]["initial_layout"])
+                        scaled=scaled_scene(scene,multiplier)
+                        shared=initial["result"]
+                        cache=FrozenInitialPhysics(scaled,shared["initial_layout"],shared["initial_physical"],limits["max_beams"])
+                        problem=Problem(scaled, NondrlConfig.from_dict(limits),
+                                        initial=shared["initial_layout"],physical_evaluator=cache)
+                        problem.initial_provenance["physical_reference_scope"]="shared frozen I0 PHY reused; no new initial PHY computation"
+                        problem.calls["cached_initial_physical_reuses"]=1
+                        for key in ("allocation_decisions","independent_physics_checks","aircraft_link_checks"):
+                            problem.calls[key]-=int(shared["initial_physical"].get("calls",{}).get(key,0))
+                        yield problem
             teacher_progress = lambda values: progress(**{**values, "stage": "preparing"})
             result = generate_teacher(problems(), route, directory / "teacher", job.get("teacher_limits", config["teacher"]),
                                       stop_callback=stopped, progress_callback=teacher_progress, provenance=provenance,
