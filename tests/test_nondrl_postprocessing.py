@@ -119,6 +119,31 @@ class PostprocessingTests(unittest.TestCase):
         self.assertIsNone(result["relative_CV_change_ratio_of_means"])
         self.assertFalse(result["quality_branch_met"])
 
+    def test_gate_cannot_change_original_I0_or_hide_mechanism_gap(self):
+        measured = []
+        source_rows = []
+        for multiplier in (.75,1.,1.25):
+            row = raw_row(self.scene,self.initial,multiplier)
+            audited = strict_audit.audit_row(row,self.scene)
+            measured.append(audited)
+            source_rows.append({"index":0,"multiplier":multiplier,"mother_id":self.scene.scene_id,
+                "cv":audited["load_cv_all"],"initial_cv":audited["initial_cv"],
+                "carry":audited["aircraft_carry"],"initial_carry":audited["initial_carry"],
+                "feasible":True,"initial_sha256":audited["initial_sha256"]})
+        threshold={"relative_cv_improvement":.01,"minimum_improved_mothers":0}
+        audits={"micro_run":{"state":"completed","rows":measured,"raw_manifest_sha256":"b"*64}}
+        gate={"experiment_id":"S1-ND12","route":"03","threshold":threshold,"passed":True,
+              "sources":[{"run_id":"micro_run","manifest_sha256":"b"*64,"rows":source_rows}],
+              "actual_row_count":3,"expected_row_count":3,"mother_count":1,
+              "improved_mothers":[],"geometry_pass":True}
+        self.assertTrue(report.verify_gate(gate,threshold,audits)["actual_passed"])
+        forged=copy.deepcopy(gate);forged["sources"][0]["rows"][0]["initial_cv"]*=2
+        with self.assertRaisesRegex(ValueError,"initial_cv"):
+            report.verify_gate(forged,threshold,audits)
+        required={**threshold,"require_mechanism_audit":True};gate["threshold"]=required
+        with self.assertRaisesRegex(ValueError,"engineering gap"):
+            report.verify_gate(gate,required,audits)
+
     def test_incomplete_or_missing_mechanism_is_not_scientific_failure(self):
         plan = {"experiment_id": "S1-ND12", "scientific_commit": "a"*40,
                 "methods": {f"{i:02d}": ["main"] for i in range(1,13)},
@@ -150,17 +175,21 @@ class PostprocessingTests(unittest.TestCase):
                 files[prefix+"/raw.tar"] = day.encode()
                 files[prefix+"/source_preflight.json"]=b"pin"
                 files[prefix+"/selection_contract.json"]=b"selection"
+                run_id="prepare_"+day.replace("-","")
+                files[prefix+"/source_job_identity.json"]=json.dumps({"experiment_id":"S1-ND12","git_commit":"a"*40,"run_id":run_id}).encode()
+                files[prefix+"/source_job_status.json"]=b'{"stage":"completed"}'
+                files[prefix+"/source_job_artifacts.json"]=json.dumps({"raw_archive_sha256":hashlib.sha256(day.encode()).hexdigest()}).encode()
                 sources.append({"role":role,"date_utc":day,"source_bundle_member":prefix+"/raw.tar",
+                                "source_run_id":run_id,"source_port":20418,
                                 "bytes":len(day),"sha256":hashlib.sha256(day.encode()).hexdigest(),
                                 "source_preflight_sha256":hashlib.sha256(b"pin").hexdigest(),
                                 "selection_contract_sha256":hashlib.sha256(b"selection").hexdigest()})
-            volume=make_volume(root,"source.zip",files)
             files["shared_sources/partition_manifest.json"] = b"partition"
             volume=make_volume(root,"source.zip",files)
             receipt={"experiment_id":"S1-ND12","run_id":"shared_sources","source_commit":"a"*40,
                      "volumes":[volume],"source_refs":sources,
                      "partition_manifest_sha256":hashlib.sha256(b"partition").hexdigest()}
-            self.assertEqual(len(archive.verify_source_receipt(receipt,root)),10)
+            self.assertEqual(len(archive.verify_source_receipt(receipt,root)),19)
             receipt["source_refs"][0]["sha256"]="0"*64
             with self.assertRaisesRegex(ValueError,"identity"):
                 archive.verify_source_receipt(receipt,root)

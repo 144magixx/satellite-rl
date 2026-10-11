@@ -37,14 +37,37 @@ def plan(state, preparations=None):
         if name in tasks:
             raise ValueError("preparation task identity collision")
         tasks[name] = {"key": name, "port": int(task["port"]), "run_id": task["run_id"],
-                       "request_id": task.get("request_id"), "source_commit": commit, "kind": "prepare"}
+                       "request_id": task.get("request_id"), "source_commit": commit, "kind": "prepare",
+                       "preparation_day": task.get("source_date", task.get("date_utc", key)),
+                       "dataset_role": task.get("role")}
     identities = [(task["port"], task["run_id"]) for task in tasks.values()]
     if len(identities) != len(set(identities)):
         raise ValueError("duplicate workbench task ownership")
+    sources = (preparations or {}).get("sources", state.get("sources", []))
+    if not sources and preparations and preparations.get("all_completed") is True:
+        sources = []
+        for day, task in preparations["tasks"].items():
+            role = task["role"]
+            folder = ops.LOCAL / "source" / role / day
+            pin = json.loads((folder / "source_preflight.json").read_text())
+            sha = task.get("artifacts", {}).get("raw_archive_sha256")
+            if task.get("stage") != "completed" or not isinstance(sha, str) or len(sha) != 64:
+                raise ValueError("final prepared raw archive SHA required")
+            sources.append({"role": role, "date_utc": day,
+                "path": f"{ops.BASE}/source/{role}/{day}/{pin['archive_name']}", "sha256": sha,
+                "bytes": pin["expected_bytes"], "source_preflight_path": f"{ops.BASE}/source/{role}/{day}/source_preflight.json",
+                "source_preflight_sha256": digest(folder / "source_preflight.json"),
+                "selection_contract_path": f"{ops.BASE}/source/{role}/{day}/selection_contract.json",
+                "selection_contract_sha256": digest(folder / "selection_contract.json"),
+                "source_run_id": task["run_id"], "source_port": task["port"]})
+    partition_path = (preparations or {}).get("partition_manifest_path", state.get("partition_manifest_path"))
+    partition_sha = (preparations or {}).get("partition_manifest_sha256", state.get("partition_manifest_sha256"))
+    local_partition = ops.LOCAL / "source/partition_manifest.json"
+    if partition_path is None and local_partition.is_file():
+        partition_path, partition_sha = ops.BASE + "/source/partition_manifest.json", digest(local_partition)
     return {"experiment_id": "S1-ND12", "scientific_commit": commit, "tasks": tasks,
-            "sources": (preparations or {}).get("sources", state.get("sources", [])),
-            "partition_manifest_path": (preparations or {}).get("partition_manifest_path", state.get("partition_manifest_path")),
-            "partition_manifest_sha256": (preparations or {}).get("partition_manifest_sha256", state.get("partition_manifest_sha256")),
+            "sources": sources, "partition_manifest_path": partition_path,
+            "partition_manifest_sha256": partition_sha,
             "canonical_raw_source_copies": 1, "reserve_bytes_each_drive": RESERVE}
 
 
@@ -78,6 +101,20 @@ def verify_source_receipt(receipt, directory):
                           ("selection_contract.json", source["selection_contract_sha256"])):
             if members.get(prefix + "/" + name, {}).get("sha256") != sha:
                 raise ValueError("source metadata reference differs")
+        for name in ("source_job_identity.json", "source_job_status.json", "source_job_artifacts.json"):
+            if prefix + "/" + name not in members:
+                raise ValueError("source completed preparation evidence missing")
+        def record(name):
+            member_name = prefix + "/" + name
+            volume = next(v for v in receipt["volumes"] if member_name in v["members"])
+            with zipfile.ZipFile(volume_path(directory, volume)) as bundle:
+                return json.loads(bundle.read(member_name))
+        identity, status, artifacts = (record(name) for name in
+             ("source_job_identity.json", "source_job_status.json", "source_job_artifacts.json"))
+        if (identity.get("experiment_id") != "S1-ND12" or identity.get("git_commit") != receipt["source_commit"]
+                or identity.get("run_id") != source["source_run_id"] or status.get("stage") != "completed"
+                or artifacts.get("raw_archive_sha256") != source["sha256"]):
+            raise ValueError("raw source does not close against completed preparation")
     return members
 
 
@@ -167,6 +204,10 @@ try:
    p=safe(entry['path']);h=sha(p)
    if h!=entry['sha256'] or p.stat().st_size!=entry['bytes']:raise RuntimeError('final prepared raw SHA/size differs')
    prefix='shared_sources/'+entry['role']+'/'+entry['date_utc']
+   jd=base/str(entry['source_port'])/'archive/outputs/workbench/jobs'/entry['source_run_id']
+   identity=json.loads((jd/'job.json').read_text());terminal=json.loads((jd/'status.json').read_text());artifacts=json.loads((jd/'artifacts.json').read_text())
+   if identity.get('experiment_id')!='S1-ND12' or identity.get('git_commit')!=request['source_commit'] or identity.get('source_date')!=entry['date_utc'] or terminal.get('stage')!='completed' or artifacts.get('raw_archive_sha256')!=h:raise RuntimeError('source preparation outcome differs')
+   for name,filename in [('source_job_identity.json','job.json'),('source_job_status.json','status.json'),('source_job_artifacts.json','artifacts.json')]:add(prefix+'/'+name,jd/filename)
    add(prefix+'/'+p.name,p,h)
    for name,key in [('source_preflight.json','source_preflight'),('selection_contract.json','selection_contract')]:
     add(prefix+'/'+name,entry[key+'_path'],entry[key+'_sha256'])
@@ -272,6 +313,14 @@ def one_task(entry):
 def one_source(planned, *, port=20418):
     if len(planned.get("sources", [])) != 3:
         raise ValueError("three final prepared source SHA records required; pre-download hashes are insufficient")
+    planned = dict(planned)
+    planned["sources"] = [dict(source) for source in planned["sources"]]
+    for source in planned["sources"]:
+        if not source.get("source_run_id"):
+            matches = [task for task in planned["tasks"].values() if task.get("preparation_day") == source["date_utc"]]
+            if len(matches) != 1:
+                raise ValueError("source day does not identify exactly one completed prepare task")
+            source.update(source_run_id=matches[0]["run_id"], source_port=matches[0]["port"])
     local = LOCAL / "20418/shared_sources/receipt.json"
     if local.exists():
         receipt = json.loads(local.read_text())
