@@ -261,6 +261,15 @@ class Scheduler:
         command = [self.python, "-u", "-m", "satellite_rl.workbench.runner", "--job-dir", str(directory)]
         if job.get("resume"):
             command.append("--resume")
+        if job.get("experiment_id")=="S1-ND12" and job.get("runtime_extensions"):
+            try:
+                from .nondrl_datafeed import worker_command
+                command=worker_command(job,directory,self.python)
+                if not command:raise ValueError("unknown runtime extension")
+            except Exception as error:
+                self._status(directory,status,stage="failed",attention_required=True,
+                             error="冻结运行时扩展校验失败："+str(error))
+                return
         env = dict(os.environ)
         env["PYTHONPATH"] = str(Path(job["source_root"]) / "src")
         # Only SI-priority refinement jobs may use their frozen, isolated
@@ -292,6 +301,8 @@ class Scheduler:
             atomic_json(directory / "launch.json", {"pid": child.pid, "command": command,
                         "python": self.python, "source_root": job["source_root"], "at": now(),
                         "priority_solver_deps_path": job.get("priority_solver_deps_path"),
+                        "runtime_extensions": job.get("runtime_extensions",[]),
+                        "runtime_identity": "composite" if job.get("runtime_extensions") else "frozen_source",
                         "process_start_time": process_start_time(child.pid)})
         except Exception as error:
             self._status(directory, status, stage="failed", error=str(error))
