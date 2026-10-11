@@ -191,6 +191,7 @@ def audit_row(row, original_scene):
             "raw_rejection_reason": raw_reason,
             "published_I0": result["final_sha256"] == result["initial_sha256"],
             "timing": result["timing"], "task_seconds": row.get("measured_task_seconds"),
+            "shared_initial_seconds": row.get("shared_initial_seconds"),
             "total_seconds": row.get("end_to_end_segment_sum_seconds", row.get("measured_task_seconds")),
             "calls": result["calls"], "route": row.get("route"), "method": row.get("method")}
 
@@ -317,6 +318,9 @@ def audit_job(location, *, path_map=None):
             "method": config["coverage"]["nondrl"]["method"], "dataset_role": role,
             "git_commit": job["git_commit"], "rows": rows, "raw_manifest_sha256": digest_bytes(evidence.read("raw_scenes/manifest.json")),
             "config_sha256": manifest["provenance"]["config_sha256"],
+            "execution_environment": {"target": job.get("execution_target"), "device": job.get("execution_device"),
+                "preflight": status.get("preflight"), "concurrency": status.get("concurrency"),
+                "limitation": "missing device/thread/concurrency fields remain missing; no historical zeros filled"},
             "RF_audit_scope": "geometry and recorded TDMA algebra; RF link capacities not independently recalculated"}
 
 

@@ -30,7 +30,7 @@ def aggregate(rows):
     for row in rows:
         groups[row["mother_scene_id"]].append(row)
     keys = ("load_cv_all", "load_cv_positive", "demand_band_fraction", "aircraft_carry", "beam_carry",
-            "beam_mean_si", "beam_mean_sgm", "N", "total_power_w", "total_seconds", "task_seconds")
+            "beam_mean_si", "beam_mean_sgm", "N", "total_power_w", "total_seconds", "task_seconds", "shared_initial_seconds")
     mothers = []
     for mother, values in sorted(groups.items()):
         multipliers = [r["multiplier"] for r in values]
@@ -276,6 +276,25 @@ def markdown(report):
             t = s["total_seconds"]
             lines.append(f"| {route} | {method} | {fmt(s['load_cv_all']['mean'])} | {fmt(s['load_cv_positive']['mean'])} | {fmt(s['aircraft_carry']['mean'])} | {fmt(s['N']['mean'])} | {fmt(t['mean'])}/{fmt(t['median'])}/{fmt(t['p95'])} |")
     lines.extend(["", "所有失败、科学停止与未完成任务均保留。主法和消融分别列示；只有通过冻结开发门槛的路线才进入后续训练与新考核。单种子51001不能支持多种子稳定性结论。", ""])
+    lines += ["| 路线/方法 | 需求带内率 | 波束中心模型承载 | 波束SI | 波束SGM | 全景功率(W) | 原提议几何可行/有提议行 | 发布I0行 | 全零需求母 |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    for route,record in report["routes"].items():
+        for method,data in record["methods"].items():
+            s=data["summary"]
+            lines.append(f"| {route}/{method} | {fmt(s['demand_band_fraction']['mean'])} | {fmt(s['beam_carry']['mean'])} | {fmt(s['beam_mean_si']['mean'])} | {fmt(s['beam_mean_sgm']['mean'])} | {fmt(s['total_power_w']['mean'])} | {s['raw_geometry_feasible_rows']}/{s['raw_proposal_rows']} | {s['published_I0_rows']} | {s['zero_demand_mothers']} |")
+    lines += ["", "分段时间均为实测：共同I0成本由来源任务加入；算法在线时间包含内部候选与物理核验，求解/推理是其中子段，不能再次叠加。总时是共同初解与当前完整任务实测分段合计，不是“不调整”函数的近零耗时。", "",
+              "| 路线/方法 | 共同I0均值(s) | 在线算法均值(s) | 其中求解均值(s) | 终局核验均值(s) | 总时中位/P95(s) |",
+              "|---|---:|---:|---:|---:|---:|---:|"]
+    for route,record in report["routes"].items():
+        for method,data in record["methods"].items():
+            s=data["summary"];t=s["timing"]
+            mean=lambda key:t.get(key,{}).get("mean")
+            lines.append(f"| {route}/{method} | {fmt(s['shared_initial_seconds']['mean'])} | {fmt(mean('online_seconds'))} | {fmt(mean('solver_seconds'))} | {fmt(mean('final_verification_seconds'))} | {fmt(s['total_seconds']['median'])}/{fmt(s['total_seconds']['p95'])} |")
+    lines += ["", "设备、软件和并发条件保留于各任务的 execution_environment 与原始 job/status/preflight；缺项如实标缺失，异设备或不同争用条件的耗时不能当作严格同条件比较。", ""]
+    lines += ["配对归因检查：", ""]
+    for route,record in report["routes"].items():
+        for label,comparison in record.get("comparisons",{}).items():
+            lines.append(f"- {route} {label}：CV均值相对变化 {fmt(comparison['relative_CV_change_ratio_of_means'])}；逐机承载差 {fmt(comparison['aircraft_carry_delta'])}；质量门槛{'达标' if comparison['quality_branch_met'] else '未达标'}，效率门槛{'达标' if comparison['efficiency_branch_met'] else '未达标'}。")
     if report["issues"]:
         lines += ["证据缺口：", ""] + ["- " + issue for issue in report["issues"]]
     return "\n".join(lines) + "\n"
