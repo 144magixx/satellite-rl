@@ -96,7 +96,13 @@ def state_sample(problem, objects=None):
               "demand_multiplier": float(problem.scene.metadata.get("demand_multiplier", 1.)),
               "aircraft": aircraft.tolist(),
               "beams": beam_features(problem.scene, current.centers, current.assignment).tolist(),
-              "state": current.to_record()}
+              "state": current.to_record(),
+              # Audit-only payload; collate never supplies these to a network.
+              "scene_demands_bps": np.asarray(problem.scene.demands).tolist(),
+              "scene_positions": np.asarray(problem.scene.positions).tolist(),
+              "initial_layout_sha256": problem.initial_sha256,
+              "initial_carry": problem.carry(problem.initial_physical),
+              "initial_metrics": problem.initial_metrics}
     if objects is not None:
         sample["actions"] = [feature16(obj["features"]).tolist() for obj in objects]
         sample["objects"] = jsonable(objects)
@@ -243,16 +249,16 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
         return _parallel_teacher(problems, route, output, limits, stop_callback,
                                  progress_callback, provenance, resume)
     caps = {"01": (20000, 20000.), "02": (1000000, 50000.),
-            "03": (10000, 40000.), "04": (128000, 12800.), "05": (11520, 7200.)}
+            "03": (1280000, 40000.), "04": (128000, 12800.), "05": (11520, 7200.)}
     max_trials = int(limits.get("max_trials", caps[route][0]))
     max_seconds = float(limits.get("max_seconds", caps[route][1]))
     if not 0 < max_trials <= caps[route][0] or not 0 < max_seconds <= caps[route][1]:
         raise ValueError("teacher budget exceeds approved route bound")
     problem_caps = {"01": 20000, "02": 5000, "03": 10000, "04": 2000, "05": 960}
     max_problems = min(int(limits.get("max_problems", problem_caps[route])), problem_caps[route])
-    max_steps = min(int(limits.get("max_steps", 20)), 20)
-    per_problem = min(float(limits.get("per_problem_seconds", 10. if route == "02" else 4.)),
-                      10. if route == "02" else 4.)
+    max_steps = min(int(limits.get("max_steps", 4 if route == "03" else 20)), 4 if route == "03" else 20)
+    problem_seconds_cap = 1. if route == "01" else 10. if route == "02" else 4.
+    per_problem = min(float(limits.get("per_problem_seconds", problem_seconds_cap)), problem_seconds_cap)
     writer = EvidenceWriter(output, route, provenance, shard_rows=100000000, resume=resume)
     if resume and writer.manifest.get("limits", limits) != limits:
         raise ValueError("teacher same-ID recovery budget/config differs")
@@ -273,7 +279,7 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
         if state is not None and problem is not None:
             state.update(current=problem.current.to_record(), current_metrics=problem.current_metrics,
                          current_physical=problem.current_physical, calls=problem.calls.copy(),
-                         physical_cache=problem._physical_cache, times=problem.times.copy())
+                         physical_cache=problem._physical_cache, times=problem.times.copy(), trace=problem.trace)
         writer.flush()
 
     def can_start(local_start):
@@ -298,6 +304,7 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
             problem.calls.update(active["calls"])
             problem.times.update(active.get("times", {}))
             problem._physical_cache.update(active.get("physical_cache", {}))
+            problem.trace = list(active.get("trace", []))
             frozen = type(problem.current).from_record(active["frozen"])
             references = active["references"]
             local_start -= active["local_elapsed"]
@@ -439,6 +446,7 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
                            "references": [{"centers": ref["centers"], "assignment": ref["assignment"]}
                                           for ref in references[-4:]], "teacher_trials": trials,
                            "teacher_elapsed_seconds": time.perf_counter() - local_start})
+        _problem_receipt(writer, completed, problem, time.perf_counter() - local_start)
         completed += 1
         active = None
         persist()
@@ -453,6 +461,33 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
     writer.flush()
     return {**writer.manifest, "path": str(writer.folder / "manifest.json"),
             "sha256": digest(writer.folder / "manifest.json")}
+
+
+def _problem_receipt(writer, index, problem, elapsed):
+    """Complete actual problem facts, stored once for independent audit."""
+    folder = writer.folder / "problem_receipts"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"problem_{index:06d}.json.gz"
+    record = {"format": "s1_nondrl_teacher_problem_v1", "route": writer.route,
+              "provenance": writer.manifest["provenance"], "target_n": problem.n,
+              "mother_id": str(problem.scene.scene_id), "source_hash": str(problem.scene.source_hash),
+              "demand_multiplier": float(problem.scene.metadata.get("demand_multiplier", 1.)),
+              "scene_positions": np.asarray(problem.scene.positions).tolist(),
+              "scene_demands_bps": np.asarray(problem.scene.demands).tolist(),
+              "aircraft_ids": list(problem.scene.aircraft_ids),
+              "initial_layout": problem.initial.to_record(), "final_layout": problem.current.to_record(),
+              "initial_metrics_all": problem.initial_metrics, "final_metrics_all": problem.current_metrics,
+              "initial_physical": problem.initial_physical, "final_physical": problem.current_physical,
+              "initial_sha256": problem.initial_sha256, "config": problem.config.to_dict(),
+              "trace": problem.trace, "calls": problem.calls, "timing": problem.times,
+              "teacher_elapsed_seconds": elapsed}
+    temp = path.with_suffix(path.suffix + ".tmp")
+    with temp.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as packed:
+            packed.write(json.dumps(jsonable(record), separators=(",", ":"), allow_nan=False).encode())
+    temp.replace(path)
+    writer.manifest.setdefault("problem_receipts", []).append({"path": str(path.relative_to(writer.folder)),
+                "sha256": digest(path), "mother_id": record["mother_id"], "demand_multiplier": record["demand_multiplier"]})
 
 
 def _teacher_worker(problem, route, folder, limits, provenance):
@@ -507,19 +542,19 @@ def _parallel_teacher(problems, route, output, limits, stop_callback, progress_c
     if not 2 <= workers <= 8:
         raise ValueError("teacher CPU worker count must be 2..8")
     caps = {"01": (20000, 20000.), "02": (1000000, 50000.),
-            "03": (10000, 40000.), "04": (128000, 12800.), "05": (11520, 7200.)}
+            "03": (1280000, 40000.), "04": (128000, 12800.), "05": (11520, 7200.)}
     max_trials = int(limits.get("max_trials", caps[route][0]))
     max_seconds = float(limits.get("max_seconds", caps[route][1]))
     if not 0 < max_trials <= caps[route][0] or not 0 < max_seconds <= caps[route][1]:
         raise ValueError("parallel teacher budget exceeds approved route bound")
     problem_caps = {"01": 20000, "02": 5000, "03": 10000, "04": 2000, "05": 960}
     max_problems = min(int(limits.get("max_problems", problem_caps[route])), problem_caps[route])
-    max_steps = min(int(limits.get("max_steps", 20)), 20)
+    max_steps = min(int(limits.get("max_steps", 4 if route == "03" else 20)), 4 if route == "03" else 20)
     if route == "04":
         # At most 2000 labelled states, including multistep worker trajectories.
         max_problems = min(max_problems, problem_caps[route] // max_steps)
-    per_seconds = min(float(limits.get("per_problem_seconds", 10. if route == "02" else 4.)),
-                      10. if route == "02" else 4.)
+    problem_seconds_cap = 1. if route == "01" else 10. if route == "02" else 4.
+    per_seconds = min(float(limits.get("per_problem_seconds", problem_seconds_cap)), problem_seconds_cap)
     per_calls = 12 if route in ("01", "05") else 32 * max_steps
     writer = EvidenceWriter(output, route, provenance, resume=resume)
     manifest = writer.manifest
@@ -594,6 +629,9 @@ def _parallel_teacher(problems, route, output, limits, stop_callback, progress_c
             for shard in result["shards"]:
                 source = source_manifest.parent / shard["path"]
                 writer.manifest["shards"].append({**shard, "path": str(source.relative_to(writer.folder))})
+            for receipt in result.get("problem_receipts", []):
+                source = source_manifest.parent / receipt["path"]
+                writer.manifest.setdefault("problem_receipts", []).append({**receipt, "path": str(source.relative_to(writer.folder))})
             writer.rows += result["rows"]
             trials += result["trials"]
             compute_seconds += result["elapsed_seconds"]
