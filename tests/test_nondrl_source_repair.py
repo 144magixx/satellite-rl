@@ -204,6 +204,22 @@ class SourceRepairTests(unittest.TestCase):
             spawn.assert_not_called()
         self.assertTrue(read_json(self.directory / "status.json")["attention_required"])
 
+    def test_detail_exposes_source_contract_and_only_pinned_contract_can_download(self):
+        from satellite_rl.workbench.service import Application
+        self.do_repair()
+        application = Application(self.store.archive_root, self.repo)
+        detail = application.run_detail(self.run_id)
+        self.assertEqual(detail["job"]["git_commit"], self.execution)
+        self.assertEqual(detail["job"]["origin_commit"], self.origin)
+        self.assertIn("source_lineage/contract.json", detail["artifacts"])
+        mime, name, payload = application.download(self.run_id, "source_lineage/contract.json")
+        self.assertEqual(payload, self.contract_path.read_bytes())
+        with self.assertRaises(ValueError):
+            application.download(self.run_id, "source_lineage/origin/../../../../outside.json")
+        (self.directory / "source_lineage/contract.json").write_text("{}")
+        with self.assertRaisesRegex(ValueError, "SHA"):
+            application.download(self.run_id, "source_lineage/contract.json")
+
 
 if __name__ == "__main__":
     unittest.main()

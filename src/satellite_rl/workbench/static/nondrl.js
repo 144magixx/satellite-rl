@@ -16,7 +16,7 @@
   <label class="field">数据登记JSON（path、sha256、partition_role、partition_manifest_path及SHA）<textarea id="nd-import-json" rows="5">{}</textarea></label><button id="nd-import">校验并登记NPZ</button>
   <pre id="nd-datasets"></pre><p class="small muted">已完成模型及固定预算终点SHA：</p><pre id="nd-models"></pre><label class="field">任务参数JSON（dataset_ids、共同初解/教师/模型来源、官方日期与解析器）<textarea id="nd-task" rows="10">{"dataset_ids":{},"initial_source":{"port":"20418","run_id":"","route":"06"}}</textarea></label>
   <button id="nd-submit">提交并冻结工作台任务</button><p id="nd-message" class="notice muted"></p></div>
-  <div class="panel"><h2>真实任务进度与原始结果</h2><p class="small muted">非学习评价在DQN解释器中使用CPU；神经监督更新使用CUDA。进度来自任务状态，科学停止与执行失败分别记录。</p><div id="nd-runs"></div><pre id="nd-results"></pre></div>`;
+  <div class="panel"><h2>真实任务进度与原始结果</h2><p class="small muted">非学习评价在DQN解释器中使用CPU；神经监督更新使用CUDA。进度来自任务状态，科学停止与执行失败分别记录。</p><div id="nd-runs"></div><div id="nd-source-links"></div><pre id="nd-results"></pre></div>`;
   document.getElementById("page-coverage").parentElement.appendChild(section);
   const el = id => document.getElementById("nd-"+id);
   let catalog, loading = false;
@@ -41,7 +41,7 @@
       const [datasets,runs,models] = await Promise.all([request("coverage/nondrl/datasets"),request("coverage/nondrl/runs"),request("coverage/nondrl/models")]);
       el("datasets").textContent = JSON.stringify(datasets.datasets.map(d=>({id:d.id,role:d.partition_role,count:d.count,dates:d.dates,sha256:d.sha256})),null,2);
       el("models").textContent = JSON.stringify(models.models.map(m=>({run_id:m.run_id,route:m.route,path:m.path,sha256:m.sha256,updates:m.metadata.updates,selection:m.metadata.selection})),null,2);
-      el("runs").innerHTML = runs.runs.map(r=>`<div class="panel"><strong>${escape(r.name)} · ${escape(r.run_id)}</strong><p>${escape(JSON.stringify({stage:r.stage,kind:r.kind,route:r.variant,device:r.execution_device,completed_scenes:r.completed_scenes,total_scenes:r.total_scenes,updates:r.updates,update_step:r.update_step,budget_updates:r.budget_updates,problems:r.problems,samples:r.samples,trials:r.trials,heartbeat_at:r.heartbeat_at,error:r.error,stop_reason:r.stop_reason,scientific_stop:r.scientific_stop}))}</p><button data-nd-stop="${escape(r.run_id)}">停止</button> <button data-nd-resume="${escape(r.run_id)}">同ID恢复</button> <button data-nd-results="${escape(r.run_id)}">原始结果入口</button></div>`).join("") || "暂无S1-ND12任务";
+      el("runs").innerHTML = runs.runs.map(r=>`<div class="panel"><strong>${escape(r.name)} · ${escape(r.run_id)}</strong><p>${escape(JSON.stringify({stage:r.stage,kind:r.kind,route:r.variant,device:r.execution_device,completed_scenes:r.completed_scenes,total_scenes:r.total_scenes,updates:r.updates,update_step:r.update_step,budget_updates:r.budget_updates,problems:r.problems,samples:r.samples,trials:r.trials,heartbeat_at:r.heartbeat_at,error:r.error,stop_reason:r.stop_reason,scientific_stop:r.scientific_stop}))}</p><button data-nd-stop="${escape(r.run_id)}">停止</button> <button data-nd-resume="${escape(r.run_id)}">同ID恢复</button> <button data-nd-detail="${escape(r.run_id)}">配置与来源</button> <button data-nd-results="${escape(r.run_id)}">原始结果入口</button></div>`).join("") || "暂无S1-ND12任务";
     } catch(e) {message(e.message);} finally {loading=false;}
   }
   async function guarded(action) {try{await action();}catch(e){message(e.message);}}
@@ -59,7 +59,17 @@
     const target=event.target;
     if(target.dataset.ndStop) await request("runs/"+target.dataset.ndStop+"/stop",{});
     if(target.dataset.ndResume) await request("runs/"+target.dataset.ndResume+"/resume",{});
-    if(target.dataset.ndResults) el("results").textContent=JSON.stringify(await request("runs/"+target.dataset.ndResults+"/results"),null,2);
+    if(target.dataset.ndResults) {
+      el("source-links").textContent="";
+      el("results").textContent=JSON.stringify(await request("runs/"+target.dataset.ndResults+"/results"),null,2);
+    }
+    if(target.dataset.ndDetail) {
+      const id=target.dataset.ndDetail, detail=await request("runs/"+encodeURIComponent(id));
+      el("results").textContent=JSON.stringify(detail,null,2);
+      const job=detail.job||{};
+      el("source-links").innerHTML=`<p>执行源码：${escape(job.git_commit)}${job.origin_commit?`<br>原始源码：${escape(job.origin_commit)}`:""}</p>`+
+        (detail.artifacts?.["source_lineage/contract.json"]?`<a href="/api/runs/${encodeURIComponent(id)}/download?file=source_lineage%2Fcontract.json">下载冻结的来源修复合同</a>`:"");
+    }
     await refresh();
   });
   request("coverage/nondrl/catalog").then(value=>{catalog=value;defaults();}).catch(e=>message(e.message));

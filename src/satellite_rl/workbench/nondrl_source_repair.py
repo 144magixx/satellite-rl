@@ -46,6 +46,8 @@ DIFF_ALLOWLIST = {
     "src/satellite_rl/workbench/coverage_nondrl.py",
     "src/satellite_rl/workbench/storage.py",
     "src/satellite_rl/workbench/runtime.py",
+    "src/satellite_rl/workbench/service.py",
+    "src/satellite_rl/workbench/static/nondrl.js",
 }
 
 
