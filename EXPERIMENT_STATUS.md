@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-12 S2-F20公平算法对照方案已设计，未实施。** 用户要求先设计SAC/PPO/DQN共用Transformer、动作掩码、奖励和交互预算的效果/耗时比较，详见[第二阶段方案20](docs/第二阶段/方案/20_Transformer下SAC_PPO_DQN公平对照方案.md)。建议三构造式算法（DQN明确沿用Double DQN目标）同1000项联合频率起点/槽数、同掩码及3000/N规则功率；奖励为全N SI差分、gamma=1，最终同完整A+B。单seed51001正式各400000共1200000，短调参196608与工程检查6144另账；新40母1320景与8328次完整A+B均为待执行预算，输入/日期可用性尚待核验，未冻结科学源或建立正式任务。质量和速度门槛、母级统计及同硬件计时已写明，尚无优势结论；前端实施需新增三算法共同合同，本轮纯文档无需前端改动。未授权/启动该组计算或定时任务，不恢复旧组或干预正在运行的S1-ND12。
+
 **2026-10-12 S1-ND12已正式启动，四端冻结源码与工作台均通过核验。** 科学源`105d5f57ec241cce0c484b95f6341d6dc418b3fe`、[冻结计划](outputs/experiments/first_stage_nondrl12_20261012/run_plan.json) SHA`d4d5b097ffcb4db41725997541320ff4bbbaf80f1963a754d386516eee6db2c2`；112项代码/工作台/旧权重检查通过，四端五个默认网络共20次实际CUDA更新仅记工程验证。正式三prepare为Feb10/20473 `prepare_nondrl_20261012_033449_2428a355`、Feb11/20474 `prepare_nondrl_20261012_033454_f72b76aa`、Feb12/20418 `prepare_nondrl_20261012_033458_291a0c53`。03:42 API快照中后两日各50母完成，Feb10仍准备；尚无正式监督训练。运行快照不替代下次实际核查。
 
 唯一本地launcher38528/出生`1791747268.9194221`按[启动回执](outputs/experiments/first_stage_nondrl12_20261012/controller/launch_start.json)接续数据登记、四端共同初解、开发闸门、教师/监督训练流水及独立考核。首launcher16276因上传父目录缺失在正式任务前退出，client-only `8254e21`已修并保[历史](outputs/experiments/first_stage_nondrl12_20261012/controller/history/upload_parent_missing/launcher.json)，远端科学源和计划不改；不得双起协调器。新工作台8940–8943与[持久隧道](outputs/experiments/first_stage_nondrl12_20261012/preflight/tunnels/receipt.json)已实际核，远端页面可见准备任务；[现场API/进程/输入SHA](outputs/experiments/first_stage_nondrl12_20261012/preflight/first_launch_live_check.json)确认下载增量和冻结包。
