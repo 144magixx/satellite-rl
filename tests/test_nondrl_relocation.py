@@ -68,6 +68,55 @@ class RelocationTests(unittest.TestCase):
             kill.assert_not_called()
             ns['send_exact'](77,110.,command,15);kill.assert_called_once_with(77,15)
 
+    def test_empty_exit_argv_rechecks_birth_without_signalling_reused_pid(self):
+        with tempfile.TemporaryDirectory() as f:
+            ns={'REQUEST_JSON':json.dumps(move.request(root=f))}
+            with patch.dict(sys.modules,{'fcntl':SimpleNamespace()}):exec(move.COMMON,ns)
+            sleep=Mock();ns['time']=SimpleNamespace(sleep=sleep)
+            empty={'pid':77,'alive':True,'process_start_time':110.,'command':[''],'start_ticks':1}
+            ns['proc']=Mock(side_effect=[empty,{'pid':77,'alive':False}])
+            self.assertFalse(ns['identity'](77,110.,['worker'])['alive']);sleep.assert_called_once_with(.05)
+            sleep.reset_mock();ns['proc']=Mock(return_value={**empty,'process_start_time':111.})
+            with self.assertRaisesRegex(RuntimeError,'birth'):ns['identity'](77,110.,['worker'])
+            sleep.assert_not_called()
+
+    def test_reconciliation_preserves_original_stop_and_lost_inflight_fact(self):
+        import time as real_time
+        with tempfile.TemporaryDirectory() as f:
+            root=Path(f);jd=root/'archive/outputs/workbench/jobs'/move.RUN_ID;jd.mkdir(parents=True)
+            (jd/'config.json').write_text('{}',encoding='utf-8');move.save(jd/'status.json',{'stage':'interrupted'})
+            rd=root/'ops/relocation'/move.MIGRATION_ID;rd.mkdir(parents=True)
+            retained={'rows':[],'committed_count':3,'provenance':{},'manifest_sha256':'old'}
+            before={'job':{'run_id':move.RUN_ID,'git_commit':move.SOURCE},'queued':[],
+                'worker':{'pid':10988,'alive':True,'cpu_seconds':2670.},'server':{'pid':12143,'alive':True},
+                'group_processes':[{'pid':10988},{'pid':12143}],
+                'launch':{'pid':10988,'process_start_time':100.,'command':['worker']},
+                'service':{'pid':12143,'start_ticks':200},'config_sha256':move.digest(jd/'config.json'),
+                'ledger':retained,'status':{'heartbeat_at':'2026-10-11T20:30:00+00:00'}}
+            move.save(rd/'before.json',before);move.save(rd/'api_stop.json',{'at':'original API stop'})
+            before_bytes=(rd/'before.json').read_bytes();api_bytes=(rd/'api_stop.json').read_bytes()
+            proof={'experiment_id':'S1-ND12','run_id':move.RUN_ID,'worker_pid':10988,'worker_process_start_time':100.,
+                'worker_absent_observed':True,'signal_delivery_confirmed':'SIGTERM','signal_time_utc':None,
+                'observation_utc':'2026-10-11T20:40:00+00:00'}
+            payload=move.request(root=str(root),reconcile_existing_stop=True,reconciliation_proof=proof,
+                reconciliation_sha256='pinned-proof',client_release_sha256='client',cooperative_seconds=10,allow_force=True)
+            ns={'REQUEST_JSON':json.dumps(payload)}
+            with patch.dict(sys.modules,{'fcntl':SimpleNamespace(LOCK_EX=1,LOCK_NB=2,flock=Mock())}):exec(move.COMMON,ns)
+            ns['facts']=lambda:{**before,'worker':{'pid':10988,'alive':False},'status':{'stage':'interrupted'}}
+            server_alive=[True];signals=[]
+            ns['identity']=lambda pid,birth=None,cmd=None,ticks=None:{'pid':pid,'alive':server_alive[0] if pid==12143 else False,'command':['server']}
+            def send(pid,*args,**kwargs):signals.append(pid);server_alive[0]=False
+            ns['send_exact']=send;ns['api']=Mock(side_effect=AssertionError('must preserve prior API stop, never reissue'))
+            ns['ledger']=lambda:retained;ns['queue']=lambda:[];ns['nd12_processes']=lambda:[];ns['listening']=lambda:False
+            ns['time']=SimpleNamespace(sleep=lambda _:None,monotonic=real_time.monotonic,time=real_time.time)
+            with redirect_stdout(StringIO()):exec(move.RELEASE[len(move.COMMON):],ns)
+            result=move.read(rd/'release_receipt.json')
+            self.assertEqual((rd/'before.json').read_bytes(),before_bytes);self.assertEqual((rd/'api_stop.json').read_bytes(),api_bytes)
+            self.assertEqual(result['before']['worker']['cpu_seconds'],2670.)
+            self.assertTrue(result['inflight_discarded']);self.assertEqual(result['signals'][0]['signal'],'SIGTERM')
+            self.assertIsNone(result['signals'][0]['at']);self.assertTrue(result['signals'][0]['signal_time_unknown'])
+            self.assertEqual(signals,[12143])
+
     def test_activation_reuses_guarded_service_and_no_repeat_resume(self):
         with tempfile.TemporaryDirectory() as f:
             root=Path(f);archive=root/'archive';jobdir=archive/'outputs/workbench/jobs'/move.RUN_ID

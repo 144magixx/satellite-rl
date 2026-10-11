@@ -71,15 +71,20 @@ def put(p,v):
 def proc(pid):
  p=pathlib.Path('/proc')/str(pid)
  if not p.exists():return {'pid':pid,'alive':False}
- a=(p/'stat').read_text(encoding='utf-8');v=a[a.rfind(')')+2:].split();ticks=int(v[19]);boot=next(int(x.split()[1]) for x in pathlib.Path('/proc/stat').read_text(encoding='utf-8').splitlines() if x.startswith('btime '))
- return {'pid':pid,'alive':v[0]!='Z','state':v[0],'start_ticks':ticks,'process_start_time':boot+ticks/os.sysconf('SC_CLK_TCK'),'cpu_seconds':(int(v[11])+int(v[12]))/os.sysconf('SC_CLK_TCK'),'rss_bytes':int(v[21])*os.sysconf('SC_PAGE_SIZE'),'command':(p/'cmdline').read_bytes().decode('utf-8','replace').strip('\0').split('\0')}
+ try:
+  a=(p/'stat').read_text(encoding='utf-8');v=a[a.rfind(')')+2:].split();ticks=int(v[19]);boot=next(int(x.split()[1]) for x in pathlib.Path('/proc/stat').read_text(encoding='utf-8').splitlines() if x.startswith('btime '));command=(p/'cmdline').read_bytes().decode('utf-8','replace').strip('\0').split('\0')
+ except FileNotFoundError:return {'pid':pid,'alive':False,'exit_read_race':True}
+ return {'pid':pid,'alive':v[0]!='Z','state':v[0],'start_ticks':ticks,'process_start_time':boot+ticks/os.sysconf('SC_CLK_TCK'),'cpu_seconds':(int(v[11])+int(v[12]))/os.sysconf('SC_CLK_TCK'),'rss_bytes':int(v[21])*os.sysconf('SC_PAGE_SIZE'),'command':command}
 def identity(pid,birth,command=None,ticks=None):
- p=proc(pid)
- if not p['alive']:return p
- if ticks is not None and p['start_ticks']!=ticks:raise RuntimeError('service PID birth differs')
- if birth is not None and abs(p['process_start_time']-birth)>=.01:raise RuntimeError('worker PID birth differs')
- if command is not None and p['command']!=command:raise RuntimeError('worker exact command differs')
- return p
+ for attempt in range(5):
+  p=proc(pid)
+  if not p['alive']:return p
+  if ticks is not None and p['start_ticks']!=ticks:raise RuntimeError('service PID birth differs')
+  if birth is not None and abs(p['process_start_time']-birth)>=.01:raise RuntimeError('worker PID birth differs')
+  if command is not None and p['command']!=command:
+   if not any(p['command']) and attempt<4:time.sleep(.05);continue
+   raise RuntimeError('worker exact command differs; no signal eligibility')
+  return p
 def send_exact(pid,birth,command,signo,ticks=None):
  p=identity(pid,birth,command,ticks)
  if not p['alive']:return
@@ -136,22 +141,33 @@ try:
   old=read(saved)
   if old.get('migration_id')!=r['migration_id'] or nd12_processes() or listening() or queue():raise RuntimeError('existing release no longer holds')
   print(json.dumps(old));raise SystemExit(0)
- before=facts()
+ signals=[];reconciled=False
+ if (receipt_dir/'before.json').exists() or (receipt_dir/'api_stop.json').exists():
+  if not r.get('reconcile_existing_stop'):raise RuntimeError('prior stop evidence exists; explicit reconciliation required, never overwrite before')
+  before=read(receipt_dir/'before.json');prior_api=read(receipt_dir/'api_stop.json');live=facts();proof=r.get('reconciliation_proof') or {}
+  if live['worker']['alive'] or live['status'].get('stage')!='interrupted':raise RuntimeError('prior worker exit/interrupted evidence not established')
+  if before['job']['run_id']!=r['run_id'] or before['job']['git_commit']!=r['source_commit'] or before['config_sha256']!=live['config_sha256']:raise RuntimeError('prior stop identity/source differs')
+  launch=before['launch']
+  if proof.get('experiment_id')!='S1-ND12' or proof.get('run_id')!=r['run_id'] or proof.get('worker_pid')!=launch['pid'] or proof.get('worker_process_start_time')!=launch['process_start_time'] or proof.get('worker_absent_observed') is not True or proof.get('signal_delivery_confirmed') not in ('SIGTERM','SIGKILL'):raise RuntimeError('pinned actual signal/exit reconciliation proof required')
+  signals=[{'signal':proof['signal_delivery_confirmed'],'pid':launch['pid'],'at':proof.get('signal_time_utc'),'observation_upper_bound':proof.get('observation_utc'),'signal_time_unknown':proof.get('signal_time_utc') is None,'source':'root pinned reconciliation proof','proof_sha256':r['reconciliation_sha256']}]
+  put(receipt_dir/'reconciliation.json',{'proof':proof,'proof_sha256':r['reconciliation_sha256'],'live':live,'prior_api_stop_sha256':sha(receipt_dir/'api_stop.json'),'original_before_sha256':sha(receipt_dir/'before.json')});reconciled=True
+ else:before=facts()
  if before['queued']:raise RuntimeError('pending work must be drained by root before relocation')
  unrelated=[p for p in before['group_processes'] if p['pid'] not in (before['worker']['pid'],before['server']['pid'])]
  if unrelated:raise RuntimeError('unexpected logical74 process; no broad signals allowed')
- hold=api('/api/dispatch/hold',{'ttl_seconds':600,'reason':'S1-ND12 authorized logical74 relocation'})
- stopped=api('/api/runs/'+r['run_id']+'/stop',{})
- put(receipt_dir/'before.json',before);put(receipt_dir/'api_stop.json',{'at':now(),'response':stopped,'hold':hold,'force_supported':False})
- launch=before['launch'];signals=[];until=time.monotonic()+r['cooperative_seconds']
+ if not reconciled:
+  hold=api('/api/dispatch/hold',{'ttl_seconds':600,'reason':'S1-ND12 authorized logical74 relocation'})
+  stopped=api('/api/runs/'+r['run_id']+'/stop',{})
+  put(receipt_dir/'before.json',before);put(receipt_dir/'api_stop.json',{'at':now(),'response':stopped,'hold':hold,'force_supported':False})
+ launch=before['launch'];until=time.monotonic()+r['cooperative_seconds']
  while identity(launch['pid'],launch['process_start_time'],launch['command'])['alive'] and time.monotonic()<until:time.sleep(.5)
  if identity(launch['pid'],launch['process_start_time'],launch['command'])['alive']:
   if not r['allow_force']:raise RuntimeError('cooperative native stop timed out; force not authorized; no release')
-  send_exact(launch['pid'],launch['process_start_time'],launch['command'],signal.SIGTERM);signals.append({'signal':'SIGTERM','pid':launch['pid'],'at':now()})
+  send_exact(launch['pid'],launch['process_start_time'],launch['command'],signal.SIGTERM);signals.append({'signal':'SIGTERM','pid':launch['pid'],'at':now()});put(receipt_dir/'signals.json',signals)
   until=time.monotonic()+5
   while identity(launch['pid'],launch['process_start_time'],launch['command'])['alive'] and time.monotonic()<until:time.sleep(.5)
   if identity(launch['pid'],launch['process_start_time'],launch['command'])['alive']:
-   send_exact(launch['pid'],launch['process_start_time'],launch['command'],signal.SIGKILL);signals.append({'signal':'SIGKILL','pid':launch['pid'],'at':now()})
+   send_exact(launch['pid'],launch['process_start_time'],launch['command'],signal.SIGKILL);signals.append({'signal':'SIGKILL','pid':launch['pid'],'at':now()});put(receipt_dir/'signals.json',signals)
  until=time.monotonic()+5
  while identity(launch['pid'],launch['process_start_time'],launch['command'])['alive'] and time.monotonic()<until:time.sleep(.5)
  if identity(launch['pid'],launch['process_start_time'],launch['command'])['alive']:raise RuntimeError('exact worker has not exited')
@@ -265,12 +281,19 @@ def validate_release(record):
     return record
 
 
-def release(client_receipt,client_sha,*,allow_force=False,cooperative_seconds=10):
+def release(client_receipt,client_sha,*,allow_force=False,cooperative_seconds=10,reconcile_existing_stop=False,
+            reconciliation_proof=None,reconciliation_sha256=None):
     if not 8<=cooperative_seconds<=600:raise ValueError("cooperative wait must be8..600s")
     verify_client_release(client_receipt,client_sha)
+    proof=None
+    if reconcile_existing_stop:
+        if reconciliation_proof is None or digest(reconciliation_proof)!=reconciliation_sha256:
+            raise ValueError('pinned reconciliation proof required')
+        proof=read(reconciliation_proof)
     with worker_lock(LOCAL):
         result=remote(OLD_PHYSICAL,RELEASE,request(client_release_sha256=client_sha,allow_force=allow_force,
-                      cooperative_seconds=cooperative_seconds),timeout=cooperative_seconds+60)
+                      cooperative_seconds=cooperative_seconds,reconcile_existing_stop=reconcile_existing_stop,
+                      reconciliation_proof=proof,reconciliation_sha256=reconciliation_sha256),timeout=cooperative_seconds+60)
         validate_release(result)
         save(LOCAL/'release_receipt.json',result)
         return result
@@ -296,13 +319,18 @@ def main():
     parser.add_argument('--client-release-receipt',type=Path)
     parser.add_argument('--client-release-sha256')
     parser.add_argument('--allow-force-native-stop',action='store_true')
+    parser.add_argument('--reconcile-existing-stop',action='store_true')
+    parser.add_argument('--reconciliation-proof',type=Path)
+    parser.add_argument('--reconciliation-sha256')
     parser.add_argument('--release-receipt',type=Path)
     parser.add_argument('--release-sha256')
     parser.add_argument('--workers',type=int,default=2)
     args=parser.parse_args()
     if args.action!='plan' and not(args.client_release_receipt and args.client_release_sha256):parser.error('pinned old-client release required')
     if args.action=='plan':value=plan()
-    elif args.action=='release':value=release(args.client_release_receipt,args.client_release_sha256,allow_force=args.allow_force_native_stop)
+    elif args.action=='release':value=release(args.client_release_receipt,args.client_release_sha256,allow_force=args.allow_force_native_stop,
+        reconcile_existing_stop=args.reconcile_existing_stop,reconciliation_proof=args.reconciliation_proof,
+        reconciliation_sha256=args.reconciliation_sha256)
     else:
         if not(args.release_receipt and args.release_sha256):parser.error('pinned old-owner release required')
         value=activate(args.client_release_receipt,args.client_release_sha256,args.release_receipt,args.release_sha256,workers=args.workers)
