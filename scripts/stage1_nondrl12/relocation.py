@@ -208,9 +208,11 @@ try:
   put(service_file,record) # Save owner birth before the first potentially unknown network result.
   until=time.monotonic()+45
   while not listening() and time.monotonic()<until:
-   if not identity(child.pid,server['process_start_time'],command)['alive']:raise RuntimeError('new service exited')
+   if not identity(child.pid,server['process_start_time'])['alive']:raise RuntimeError('new service exited')
    time.sleep(.5)
   if not listening():raise RuntimeError('new service8943 did not listen')
+  ready=identity(child.pid,server['process_start_time'],command)
+  if not ready['alive'] or (pathlib.Path('/proc')/str(child.pid)/'cwd').resolve()!=repo.resolve():raise RuntimeError('ready service exact command/cwd differs')
  api('/api/coverage/nondrl/catalog')
  hold_release=api('/api/dispatch/hold/release',{})
  if hold_release.get('active') is not False:raise RuntimeError('new logical dispatch hold remains active')

@@ -41,6 +41,9 @@ class RelocationTests(unittest.TestCase):
         self.assertIn("SATELLITE_RL_SSH_PORT='20474'",move.ACTIVATE)
         self.assertIn("SATELLITE_RL_PHYSICAL_SSH_PORT='20473'",move.ACTIVATE)
         self.assertLess(move.ACTIVATE.index("api('/api/dispatch/hold/release'"),move.ACTIVATE.index("resume=api('/api/runs/'"))
+        self.assertIn("identity(child.pid,server['process_start_time'])",move.ACTIVATE)
+        self.assertLess(move.ACTIVATE.index("if not listening():raise RuntimeError('new service8943 did not listen')"),
+                        move.ACTIVATE.index("ready=identity(child.pid,server['process_start_time'],command)"))
 
     def test_native_identity_null_arguments_and_pid_birth_guard(self):
         with tempfile.TemporaryDirectory() as f:
