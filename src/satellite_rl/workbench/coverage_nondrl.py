@@ -31,11 +31,15 @@ MODEL_METHODS = {"01": ("main", "M", "MO"), "02": ("main", "BC"), "03": ("main",
                  "04": ("main", "L"), "05": ("main", "L")}
 TEACHER_CAPS = {
     "01": {"max_problems": 20000, "max_trials": 20000, "max_seconds": 20000.},
-    "02": {"max_problems": 5000, "max_trials": 1000000, "max_seconds": 50000.},
-    "03": {"max_problems": 10000, "max_trials": 10000, "max_seconds": 40000.},
-    "04": {"max_problems": 2000, "max_trials": 121600, "max_seconds": 12800.},
+    "02": {"max_problems": 4940, "max_trials": 961600, "max_seconds": 49400.},
+    "03": {"max_problems": 9940, "max_trials": 1272320, "max_seconds": 39760.},
+    "04": {"max_problems": 2000, "max_trials": 121600, "max_seconds": 11520.},
     "05": {"max_problems": 960, "max_trials": 11520, "max_seconds": 7200.},
 }
+PROBE_CAPS = {"02": {"max_problems": 60, "max_trials": 38400, "max_seconds": 600.,
+                     "max_steps": 20, "per_problem_seconds": 10.},
+              "03": {"max_problems": 60, "max_trials": 7680, "max_seconds": 240.,
+                     "max_steps": 4, "per_problem_seconds": 4.}}
 
 
 def default_nondrl_config(route="06"):
@@ -51,11 +55,17 @@ def default_nondrl_config(route="06"):
                          "checkpoint_interval": 1000, "validation_interval": 1000, "microbatch_size": 4},
             "preparation": {"initial_workers": 8},
             "teacher": {**deepcopy(TEACHER_CAPS.get(route, {"max_problems": 0, "max_trials": 0,
-                                                        "max_seconds": 0.})), "workers": 8, "worker_threads": 1},
+                                                        "max_seconds": 0.})), "workers": 8, "worker_threads": 1,
+                        "max_steps": 4 if route == "03" else 1 if route in ("04", "05") else 20,
+                        "per_problem_seconds": 10. if route == "02" else 1. if route == "01" else 4.},
             "evaluation": {"demand_multipliers": [.75, 1., 1.25]}, "datasets": {}}
 
 
 def validate_nondrl_config(supplied):
+    if not isinstance(supplied, dict) or not isinstance(supplied.get("coverage", {}), dict):
+        raise ValueError("non-DRL configuration and coverage must be objects")
+    if not isinstance(supplied.get("coverage", {}).get("nondrl", {}), dict):
+        raise ValueError("non-DRL route configuration must be an object")
     route = supplied.get("coverage", {}).get("nondrl", {}).get("route", "06")
     default = default_nondrl_config(route)
     value = _merge(default, supplied)
@@ -200,15 +210,21 @@ def submit(application, body):
         from .nondrl_preparation import submit_dataset
         return submit_dataset(application, body, config, port)
     initial_mode = kind == "prepare" and mode == "initial"
+    ranking_audit_mode = kind == "prepare" and mode == "ranking_audit"
+    probe_mode = kind == "prepare" and mode == "teacher_probe"
+    if probe_mode and route not in PROBE_CAPS:
+        raise ValueError("development teacher probe is implemented only for02/03")
+    if ranking_audit_mode and route != "04":
+        raise ValueError("fixed candidate audit is only implemented for route04")
     if (kind == "train" or kind == "prepare" and not initial_mode) and route not in LEARNED:
         raise ValueError("non-learning routes have no teacher or training job")
-    role = body.get("dataset_role", "test") if kind == "evaluate" or initial_mode else None
+    role = body.get("dataset_role", "test") if kind == "evaluate" or initial_mode or ranking_audit_mode or probe_mode else None
     purpose = body.get("experiment_role", "formal")
-    if purpose not in ("formal", "verification") or role not in (ROLES if initial_mode else (None,) if kind != "evaluate" else ROLES[1:]):
+    if purpose not in ("formal", "verification") or role not in (ROLES if initial_mode else ("validation",) if ranking_audit_mode else ("development",) if probe_mode else (None,) if kind != "evaluate" else ROLES[1:]):
         raise ValueError("invalid task purpose or evaluation partition")
     if kind == "evaluate" and role == "test" and purpose != "formal":
         raise ValueError("test cannot be used for engineering selection")
-    required = {role} if kind == "evaluate" or initial_mode else ({"development", "validation"} if kind == "train" and route == "05" else {"train", "validation"} if kind == "train" else {"development" if route == "05" else "train"})
+    required = {role} if kind == "evaluate" or initial_mode or ranking_audit_mode or probe_mode else ({"development", "validation"} if kind == "train" and route == "05" else {"train", "validation"} if kind == "train" else {"development" if route == "05" else "train"})
     supplied = body.get("dataset_ids", {})
     if set(supplied) != required:
         raise ValueError(f"requires exactly {sorted(required)} datasets")
@@ -230,10 +246,25 @@ def submit(application, body):
              "experiment_role": purpose, "dataset_role": role, "execution_target": f"u2024110224@10.160.17.102:{port}",
              "dataset_sha256": {r: d["sha256"] for r, d in datasets.items()},
              "execution_device": "cuda" if kind == "train" or needs_model and kind == "evaluate" else "cpu"}
+    if kind == "evaluate" and role == "development" and route == "04" and config["coverage"]["nondrl"]["method"] == "F":
+        per_case = 5120 // (datasets[role]["count"] * len(config["evaluation"]["demand_multipliers"]))
+        extra["resolved_limits"] = {**config["coverage"]["nondrl"]["limits"],
+                                    "max_candidates": per_case, "max_physical_calls": per_case}
+        extra["offline_label_account"] = {"role": "development", "total_trial_ceiling": 5120,
+                                           "per_case_trial_ceiling": per_case,
+                                           "note": "shared cap applies across all mother shards and demand levels"}
     if kind == "prepare":
-        if mode not in ("teacher", "initial"):
+        if mode not in ("teacher", "initial", "ranking_audit", "teacher_probe"):
             raise ValueError("unknown preparation mode")
         extra["preparation_mode"] = mode
+        if ranking_audit_mode:
+            extra["teacher_limits"] = {**config["teacher"], "max_problems": 20, "max_trials": 1280,
+                                       "max_seconds": 128., "max_steps": 1, "per_problem_seconds": 4.}
+        if probe_mode:
+            extra["teacher_limits"] = {**config["teacher"], **PROBE_CAPS[route]}
+        if mode in ("teacher", "ranking_audit", "teacher_probe"):
+            teacher_role = next(iter(required))
+            extra["initial_source"] = _initial_dependencies(body, "initial_source", datasets[teacher_role]["sha256"])
     if kind == "train":
         gate = body.get("gate_source", {})
         gate_path = _pin(gate.get("path", ""), gate.get("sha256"))
@@ -250,11 +281,27 @@ def submit(application, body):
             raise ValueError("teacher completion/data lineage differs")
         extra["teacher_source"] = {"path": str(path), "sha256": digest(path), "run_id": source_job["run_id"]}
         extra["validation_initial_source"] = _initial_dependencies(body, "validation_initial_source", datasets["validation"]["sha256"])
+        if route == "04":
+            directory, source_job = _dependency(body, "ranking_audit_source", "prepare", route)
+            path = directory / "teacher_manifest.json"
+            manifest = read_json(path, {})
+            if (source_job.get("preparation_mode") != "ranking_audit" or manifest.get("completed") is not True or
+                    manifest.get("dataset_sha256") != datasets["validation"]["sha256"]):
+                raise ValueError("fixed route04 ranking audit dataset/completion differs")
+            extra["ranking_audit_source"] = {"path": str(path), "sha256": digest(path), "run_id": source_job["run_id"]}
     if kind == "evaluate":
         extra["initial_source"] = _initial_dependencies(body, "initial_source", datasets[role]["sha256"])
     if kind == "evaluate" and needs_model:
         directory, source_job = _dependency(body, "model_source", "train", route)
         model = Path(source_job["model_dir"]) / "final"
+        metadata = read_json(model / "model.json", {})
+        source_config = read_json(directory / "config.json", {})
+        if (metadata.get("route") != route or metadata.get("schema_version") != 7 or
+                metadata.get("selection") != "fixed_budget_endpoint" or
+                metadata.get("updates") != source_config.get("training", {}).get("updates") or
+                metadata.get("policy_sha256") != digest(model / "policy.pt") or
+                metadata.get("provenance", {}).get("run_id") != source_job["run_id"]):
+            raise ValueError("model endpoint route/budget/provenance differs")
         extra.update(model_path=str(model), model_source_run_id=source_job["run_id"],
                      model_files=[{"path": str(model / name), "sha256": digest(model / name)} for name in ("policy.pt", "model.json")])
     indices = body.get("scene_indices")
@@ -269,7 +316,7 @@ def freeze_sources(extra, destination):
     frozen = deepcopy(extra)
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
-    for key in ("teacher_source", "dataset_source", "initial_source", "reachability_source", "validation_initial_source"):
+    for key in ("teacher_source", "dataset_source", "initial_source", "reachability_source", "validation_initial_source", "ranking_audit_source"):
         source = frozen.get(key)
         if source:
             values = source if isinstance(source, list) else [source]
@@ -298,7 +345,8 @@ def api(application, method, parts, body):
     if parts == ["catalog"] and method == "GET":
         return {"group": GROUP, "routes": list(ROUTES), "learning_routes": list(LEARNED),
                 "defaults": {r: default_nondrl_config(r) for r in ROUTES}, "update_caps": UPDATE_CAPS,
-                "teacher_caps": TEACHER_CAPS, "methods": {r: list(m) + ["I0", "BH"] for r, m in METHODS.items()},
+                "teacher_caps": TEACHER_CAPS, "teacher_probe_caps": PROBE_CAPS,
+                "methods": {r: list(m) + ["I0", "BH"] for r, m in METHODS.items()},
                 "roles": list(ROLES), "kinds": ["prepare", "train", "evaluate"]}
     if parts == ["validate"] and method == "POST":
         return {"config": validate_nondrl_config(body)}
@@ -308,6 +356,17 @@ def api(application, method, parts, body):
         return merge_datasets(application, body)
     if parts == ["datasets"] and method == "GET":
         return {"datasets": [r for r in application.store.records("scenes") if r.get("schema_version") == 7]}
+    if parts == ["models"] and method == "GET":
+        models = []
+        for job, status in application.store.jobs():
+            if job.get("experiment_id") != GROUP or job.get("kind") != "train" or status.get("stage") != "completed":
+                continue
+            root = Path(job["model_dir"]) / "final"
+            metadata = read_json(root / "model.json", {})
+            if (root / "policy.pt").is_file() and metadata.get("policy_sha256") == digest(root / "policy.pt"):
+                models.append({"run_id": job["run_id"], "route": job["variant"], "path": str(root),
+                               "sha256": metadata["policy_sha256"], "metadata": metadata})
+        return {"models": models}
     if parts == ["runs"] and method == "POST":
         return submit(application, body)
     if parts == ["runs"] and method == "GET":

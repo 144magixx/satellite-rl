@@ -16,6 +16,8 @@ def inputs():
             "methods": {r: ["main"] for r in METHODS},
             "gate_thresholds": {r: {"development_methods": [m], "primary_method": m,
                 "minimum_improved_mothers": 6, "relative_cv_improvement": .01} for r, m in development.items()}}
+    for route in ("02", "03"):
+        plan["gate_thresholds"][route]["teacher_probe_required"] = True
     roles = {r: {"id": r + "_fixture", "sha256": str(i) * 64, "path": "/fixture/" + r,
                  "count": 20} for i, r in enumerate(("train", "development", "validation", "test"), 1)}
     registry = {"experiment_id": "S1-ND12", "scientific_commit": "1" * 40,
@@ -101,6 +103,7 @@ class NondrlControllerTests(unittest.TestCase):
             transport = FakeTransport()
             controller = Controller(tmp, plan, registry, transport)
             controller.state["phase"] = "test"
+            controller.finished = lambda prefix: prefix == "initial/test/"
             controller.state["routes"] = {r: {"passed": r == "06"} for r in METHODS}
             controller.testing()
             self.assertEqual(len(transport.jobs), 4)
@@ -130,8 +133,46 @@ class NondrlControllerTests(unittest.TestCase):
             self.assertEqual(len(gate["improved_mothers"]), 20)
             missing = controller.make_gate("05")
             self.assertIsNone(missing)
+            self.assertEqual(len(transport.jobs), 1)  # Same-ID teacher05 precedes its oracle gate.
+            teacher = controller.state["jobs"]["teacher/05"]
+            teacher["stage"] = "completed"
+            transport.remote_python = lambda *a, **k: {"exit_code": 0, "stdout": json.dumps({"status": "attention_required", "passed": False, "reason": "unknown candidate pools"}), "stderr": ""}
+            self.assertIsNone(controller.make_gate("05"))
             self.assertEqual(controller.state["phase"], "attention_required")
             self.assertNotEqual(controller.state.get("stop_reason"), "science_stopped")
+
+    def test_shared_bh_runs_after_route06_scientific_stop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan, registry = inputs()
+            plan["methods"]["06"] = ["main", "BH"]
+            transport = FakeTransport()
+            controller = Controller(tmp, plan, registry, transport)
+            controller.finished = lambda prefix: prefix == "initial/test/"
+            controller.state["phase"] = "test"
+            controller.state["routes"] = {r: {"passed": False} for r in METHODS}
+            controller.testing()
+            self.assertEqual(len(transport.jobs), 4)
+            self.assertTrue(all(record["method"] == "BH" for record in controller.state["jobs"].values()))
+            self.assertFalse(controller.state["routes"]["06"]["passed"])
+
+    def test_ready_teacher_immediately_pipelines_train(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan, registry = inputs()
+            transport = FakeTransport()
+            controller = Controller(tmp, plan, registry, transport)
+            controller.finished = lambda _: True
+            controller.state["phase"] = "teacher"
+            controller.state["routes"] = {r: {"passed": r in ("01", "02"),
+                                             "gate_source": {"path": "/fixture/gate", "sha256": "a" * 64}}
+                                          for r in METHODS}
+            job = controller.ensure("teacher/01", 20418,
+                controller.body("01", "main", "prepare", "train", 20418, preparation_mode="teacher"))
+            job["stage"] = "completed"
+            controller.teacher()
+            self.assertIn("train/01", controller.state["jobs"])
+            self.assertIn("teacher/02", controller.state["jobs"])
+            self.assertNotIn("train/02", controller.state["jobs"])
+            self.assertEqual(controller.state["phase"], "teacher")
 
 
 if __name__ == "__main__":

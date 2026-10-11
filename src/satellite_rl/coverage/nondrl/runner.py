@@ -196,8 +196,8 @@ def _initials(job, expected_sha, key="initial_source"):
 
 def fixed_validation(directory, job, config, provenance, progress, stopped):
     """Return a callback; retain every validation layout and fixed-input hash."""
-    from .core import solve
-    from .learning import LearningPolicy
+    from .core import solve, metrics_all
+    from .learning import LearningPolicy, audit_ranker
     source = config["datasets"]["validation"]
     if digest(source["path"]) != source["sha256"]:
         raise ValueError("fixed validation dataset SHA differs")
@@ -229,8 +229,23 @@ def fixed_validation(directory, job, config, provenance, progress, stopped):
                                initial=initial["result"]["initial_layout"], policy=policy)
                 if result["initial_sha256"] != initial["result"]["initial_sha256"]:
                     raise ValueError("validation changed shared initial")
+                extra = {}
+                if route == "03":
+                    raw = result.get("raw_layout")
+                    try:
+                        raw_metrics = metrics_all(scaled_scene(original, multiplier), raw,
+                                                  config["coverage"]["nondrl"]["limits"]) if raw is not None else None
+                        extra["raw_scene_feasible"] = (raw_metrics is not None and
+                            raw_metrics["beam_count"] == result["initial_metrics_all"]["beam_count"] and
+                            all(raw_metrics.get(k) is True for k in ("geometry_feasible", "unique_assignment", "demand_conserved")))
+                        extra["raw_metrics_all"] = raw_metrics
+                    except (ValueError, TypeError, AttributeError) as error:
+                        extra.update(raw_scene_feasible=False, raw_error=str(error))
+                    if context["updates"] == 2000:
+                        extra["HR_result"] = solve(scaled_scene(original, multiplier), "03",
+                            config["coverage"]["nondrl"]["limits"], initial=initial["result"]["initial_layout"], method="HR")
                 store.append(key, {"key": key, "dataset_index": index, "mother_scene_id": original.scene_id,
-                                  "demand_multiplier": multiplier, "result": result})
+                                  "demand_multiplier": multiplier, "result": result, **extra})
                 progress(stage="validating", validation_updates=context["updates"],
                          validation_completed_scenes=len(store.keys), validation_total_scenes=total)
         rows = [store.load(row) for row in store.manifest["rows"]]
@@ -242,10 +257,61 @@ def fixed_validation(directory, job, config, provenance, progress, stopped):
             mothers.append({"dataset_index": index, "cv_mean": float(np.mean(valid)) if valid else None,
                             "all_zero_demand": not valid})
         valid = [m["cv_mean"] for m in mothers if m["cv_mean"] is not None]
-        return {"completed_scenes": len(rows), "expected_scenes": total, "mother_count": len(mothers),
+        summary = {"completed_scenes": len(rows), "expected_scenes": total, "mother_count": len(mothers),
                 "mother_equal_cv_mean": float(np.mean(valid)) if valid else None,
                 "zero_demand_mothers": sum(m["all_zero_demand"] for m in mothers),
                 "mother_metrics": mothers, "raw_manifest_path": str(store.path), "raw_manifest_sha256": digest(store.path)}
+        if context["updates"] == 2000 and route == "03":
+            if len(rows) != total or any("raw_scene_feasible" not in row or "HR_result" not in row for row in rows):
+                return {**summary, "attention_required": True, "reason": "route03 raw/HR pilot evidence incomplete"}
+            raw_rate = sum(row["raw_scene_feasible"] for row in rows) / len(rows)
+            improved = []
+            for index in range(len(dataset.scenes)):
+                subset = [row for row in rows if row["dataset_index"] == index]
+                model = [row["result"]["metrics_all"]["load_cv_all"] for row in subset]
+                baseline = [row["HR_result"]["metrics_all"]["load_cv_all"] for row in subset]
+                if all(x is not None for x in model + baseline):
+                    base_mean, model_mean = float(np.mean(baseline)), float(np.mean(model))
+                    if base_mean > 1e-12 and (base_mean - model_mean) / base_mean > .01:
+                        improved.append(index)
+            summary.update(pilot={"raw_scene_feasible_fraction": raw_rate, "improved_over_HR_mothers": improved,
+                                  "passed": raw_rate >= .8 and len(improved) >= 6})
+            if not summary["pilot"]["passed"]:
+                summary.update(scientific_stop=True, stop_reason="measured_route03_2000_update_gate_failed")
+        if context["updates"] == 2000 and route == "04":
+            source = job.get("ranking_audit_source")
+            if not source or digest(source["path"]) != source["sha256"]:
+                return {**summary, "attention_required": True, "reason": "fixed route04 candidate evidence source missing"}
+            wrapper = read_json(source["path"])
+            path = Path(wrapper["evidence_path"])
+            if digest(path) != wrapper["sha256"]:
+                return {**summary, "attention_required": True, "reason": "fixed route04 candidate manifest SHA differs"}
+            manifest = read_json(path)
+            audits = []
+            for shard in manifest["shards"]:
+                file = path.parent / shard["path"]
+                if digest(file) != shard["sha256"]:
+                    return {**summary, "attention_required": True, "reason": "fixed route04 candidate shard SHA differs"}
+                with gzip.open(file, "rt", encoding="utf-8") as stream:
+                    for line in stream:
+                        sample = json.loads(line)
+                        audit = audit_ranker(policy, sample, topk=8)
+                        audits.append({"mother_id": sample["mother_id"], **audit})
+            atomic_json(store.root / "ranking_audit.json", audits)
+            if len(audits) != len(dataset.scenes) or any(a.get("complete") is not True for a in audits):
+                return {**summary, "attention_required": True, "reason": "route04 fixed labelled pools incomplete or omitted mothers",
+                        "ranking_audit_path": str(store.root / "ranking_audit.json")}
+            relevant = [a for a in audits if a.get("model_topk_recall") is not None]
+            recall_gain = float(np.mean([a["model_topk_recall"] - a["rule_topk_recall"] for a in relevant])) if relevant else None
+            best_gain = float(np.mean([a["model_completed_best_improvement"] - a["rule_completed_best_improvement"] for a in audits]))
+            passed = recall_gain is not None and recall_gain >= .05 and best_gain >= -1e-12
+            summary.update(pilot={"passed": passed, "top8_recall_gain_over_rule": recall_gain,
+                                  "mean_true_best_gain_delta": best_gain, "states_without_improvement": len(audits) - len(relevant),
+                                  "ranking_audit_path": str(store.root / "ranking_audit.json"),
+                                  "ranking_audit_sha256": digest(store.root / "ranking_audit.json")})
+            if not passed:
+                summary.update(scientific_stop=True, stop_reason="measured_route04_2000_update_gate_failed")
+        return summary
     return callback
 
 
@@ -291,7 +357,7 @@ def evaluate(directory, job, config, provenance, *, resume, progress, stopped):
                 raise ValueError("common I0 evidence lacks requested scene")
             initial = shared["result"]["initial_layout"] if shared else None
             effective_route = "I0" if mode == "initial" or method == "I0" else "BH" if method == "BH" else route
-            result = solve(scene, effective_route, config["coverage"]["nondrl"]["limits"], initial=initial, policy=policy,
+            result = solve(scene, effective_route, job.get("resolved_limits", config["coverage"]["nondrl"]["limits"]), initial=initial, policy=policy,
                            method="main" if method in ("I0", "BH") or mode == "initial" else method)
             if shared and result["initial_sha256"] != shared["result"]["initial_sha256"]:
                 raise ValueError("route changed common I0 layout")
@@ -368,24 +434,32 @@ def _run_nondrl_job(directory, job, config, *, resume=False, preflight=None):
         if job["kind"] == "prepare" and job.get("preparation_mode") == "dataset":
             from satellite_rl.workbench.nondrl_preparation import run_dataset
             result = run_dataset(directory, job, config, resume=resume, progress=progress, stopped=stopped)
-        elif job["kind"] == "prepare" and job.get("preparation_mode") == "teacher":
+        elif job["kind"] == "prepare" and job.get("preparation_mode") in ("teacher", "ranking_audit", "teacher_probe"):
             from .core import Problem
             from .config import NondrlConfig
             from .teachers import generate_teacher
-            role = "development" if route == "05" else "train"
+            audit_mode = job.get("preparation_mode") == "ranking_audit"
+            role = "validation" if audit_mode else "development" if route == "05" or job.get("preparation_mode") == "teacher_probe" else "train"
             source = config["datasets"][role]
             if digest(source["path"]) != source["sha256"]:
                 raise ValueError("teacher data SHA differs")
             dataset = load_variable_dataset(source["path"])
-            limits = {**config["coverage"]["nondrl"]["limits"], "online_seconds": {"01": 1., "02": 10., "03": 4., "04": 6.4, "05": 1.2}[route]}
+            limits = {**config["coverage"]["nondrl"]["limits"], "online_seconds": {"01": 1., "02": 10., "03": 4., "04": 6.4, "05": 4.}[route]}
+            if audit_mode:
+                limits["max_menu"] = 64
+            initials = _initials(job, source["sha256"])
             def problems():
-                for scene in dataset.scenes:
-                    for multiplier in config["evaluation"]["demand_multipliers"]:
+                for index, scene in enumerate(dataset.scenes):
+                    for multiplier in ([1.] if audit_mode else config["evaluation"]["demand_multipliers"]):
                         if stopped():
                             return
-                        yield Problem(scaled_scene(scene, multiplier), NondrlConfig.from_dict(limits))
+                        initial = initials.get(f"{index}:{multiplier:g}")
+                        if initial is None:
+                            raise ValueError("teacher shared initial evidence lacks scene")
+                        yield Problem(scaled_scene(scene, multiplier), NondrlConfig.from_dict(limits),
+                                      initial=initial["result"]["initial_layout"])
             teacher_progress = lambda values: progress(**{**values, "stage": "preparing"})
-            result = generate_teacher(problems(), route, directory / "teacher", config["teacher"],
+            result = generate_teacher(problems(), route, directory / "teacher", job.get("teacher_limits", config["teacher"]),
                                       stop_callback=stopped, progress_callback=teacher_progress, provenance=provenance,
                                       resume=resume)
             atomic_json(directory / "teacher_manifest.json", {**jsonable(result),

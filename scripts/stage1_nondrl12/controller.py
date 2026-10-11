@@ -52,6 +52,8 @@ def validate_plan(plan, registry):
         if not isinstance(methods, list) or not methods or len(set(methods)) != len(methods) or any(m not in METHODS[route] + ("I0", "BH") for m in methods):
             raise ValueError(f"invalid frozen method matrix for {route}")
         gate = plan["gate_thresholds"][route]
+        if route in ("02", "03") and gate.get("teacher_probe_required") is not True:
+            raise ValueError("02/03 must require actual strong development teacher proof")
         if (not isinstance(gate.get("development_methods"), list) or not gate["development_methods"] or
                 any(m not in METHODS[route] + ("I0", "BH") or m in MODEL_METHODS.get(route, ()) for m in gate["development_methods"]) or
                 gate.get("primary_method") not in gate["development_methods"] or
@@ -107,9 +109,11 @@ class Controller:
             result["dataset_ids"] = {r: self.record(port, r)["id"] for r in (teacher_role, "validation")}
         else:
             result["dataset_ids"] = {role: self.record(port, role)["id"]}
-        if kind == "evaluate" or extra.get("preparation_mode") == "initial":
+        if kind == "evaluate" or extra.get("preparation_mode") in ("initial", "ranking_audit", "teacher_probe"):
             result["dataset_role"] = role
         if kind == "evaluate":
+            result["initial_source"] = self.initial_refs(role)
+        if kind == "prepare" and extra.get("preparation_mode") in ("teacher", "ranking_audit", "teacher_probe"):
             result["initial_source"] = self.initial_refs(role)
         result.update(extra)
         return result
@@ -254,26 +258,44 @@ print(json.dumps({{'run_id':{run_id!r},'port':{record['port']},'manifest_path':s
                     m["feasible"] and (m["carry_delta"] is None or m["carry_delta"] >= -.005)]
         geometry_pass = all(m["feasible"] for m in mothers)
         passed = geometry_pass and len(improved) >= threshold["minimum_improved_mothers"]
+        if route in ("02", "03"):
+            measured = self.teacher_reachability(route)
+            if measured is None:
+                return None
+            if measured.get("status") == "attention_required":
+                self.attention("development strong teacher evidence requires engineering repair", route=route, receipt=measured)
+                return None
+            # Rule/online-search results remain diagnostics, rather than
+            # standing in for the separately budgeted strong offline teacher.
+            passed = measured["passed"] is True
+        else:
+            measured = None
         # Oracle-region and fixed ranking labels require their own actual audit.
         # A missing audit is an engineering gap, never a measured scientific fail.
-        audit = threshold.get("mechanism_audit")
         if passed and (threshold.get("require_mechanism_audit") or threshold.get("required_mechanism")):
-            if not isinstance(audit, dict) or not audit.get("path") or not audit.get("sha256"):
-                self.attention("missing route mechanism audit; repair audit interface", route=route)
+            actual = self.mechanism(route, keys)
+            if actual is None:
                 return None
-            receipt = self.transport.remote_python(f"import json,hashlib; from pathlib import Path; p=Path({audit['path']!r}); assert hashlib.sha256(p.read_bytes()).hexdigest()=={audit['sha256']!r}; print(p.read_text())", PORTS[0])
-            actual = json.loads(receipt["stdout"])
-            if actual.get("route") != route or actual.get("experiment_id") != "S1-ND12" or "passed" not in actual:
-                self.attention("invalid mechanism audit receipt", route=route)
+            if actual.get("status") == "attention_required":
+                self.attention("route mechanism evidence requires engineering repair", route=route, receipt=actual)
                 return None
             passed = passed and actual["passed"] is True
+        else:
+            actual = None
         result = {"experiment_id": "S1-ND12", "route": route, "passed": passed,
                   "status": "passed" if passed else "science_stopped", "source_commit": self.plan["scientific_commit"],
                   "partition_manifest_sha256": self.registry["partition_manifest_sha256"],
                   "dataset_sha256": self.record(PORTS[0], "development")["sha256"], "mother_count": len(mothers),
                   "expected_row_count": len(expected), "actual_row_count": len(rows), "improved_mothers": improved,
                   "geometry_pass": geometry_pass, "mother_metrics": mothers, "sources": sources,
-                  "threshold": threshold, "created_at": now()}
+                  "threshold": threshold, "mechanism": actual, "teacher_reachability": measured, "created_at": now()}
+        if measured is not None:
+            result["authority"] = "actual_strong_teacher_probe"
+            result["proxy_diagnostics"] = {"method": threshold["primary_method"], "improved_mothers": improved,
+                                            "mother_metrics": mothers, "sources": sources}
+            result["improved_mothers"] = measured["statistics"]["improved_mothers"]
+            result["mother_metrics"] = measured["statistics"].get("mother_metrics", [])
+            result["sources"] = measured.get("sources", [])
         path = self.root / "gates" / f"route_{route}.json"
         atomic_json(path, result)
         remote = ops.BASE + "/source/gates/" + path.name
@@ -282,45 +304,169 @@ print(json.dumps({{'run_id':{run_id!r},'port':{record['port']},'manifest_path':s
         self.event("development_gate", route=route, passed=passed, improved_mothers=improved)
         return result
 
+    def mechanism(self, route, primary_jobs):
+        """Generate a receipt from actual worker evidence after it exists.
+
+        Its eventual hash lives in controller state and the training gate; the
+        immutable plan freezes the rule, rather than guessing a result hash.
+        """
+        if route == "05":
+            job = self.ensure("teacher/05", PORTS[0],
+                              self.body("05", "main", "prepare", "development", PORTS[0], preparation_mode="teacher"))
+            if job is None or job["stage"] not in TERMINAL:
+                return None
+            if job["stage"] != "completed":
+                return {"status": "attention_required", "passed": False,
+                        "reason": "region teacher did not produce a complete oracle evidence source", "run_id": job["run_id"]}
+            selected = [job]
+        else:
+            selected = list(primary_jobs)
+        control_jobs = {method: [j for k, j in self.state["jobs"].items()
+                                if k.startswith(f"development/{route}/{method}/")]
+                        for method in ("voronoi", "integer")} if route == "08" else {}
+        tasks = [{"port": j["port"], "run_id": j["run_id"]} for j in selected]
+        controls = {method: [{"port": j["port"], "run_id": j["run_id"]} for j in jobs]
+                    for method, jobs in control_jobs.items()}
+        code = f'''import json,gzip,hashlib,sys
+from pathlib import Path
+base=Path({ops.BASE!r}); tasks={tasks!r}; controls={controls!r}
+expected_commit={self.plan['scientific_commit']!r}
+def folder(ref): return base/str(ref['port'])/'archive/outputs/workbench/jobs'/ref['run_id']
+first=folder(tasks[0]); job=json.loads((first/'job.json').read_text())
+assert job['git_commit']==expected_commit
+sys.path.insert(0,str(Path(job['source_root'])/'src'))
+from satellite_rl.coverage.nondrl.mechanism_audit import audit_scene_traces,audit_region_oracle
+def read_rows(refs):
+ rows=[]; sources=[]
+ for ref in refs:
+  d=folder(ref); j=json.loads((d/'job.json').read_text()); assert j['git_commit']==expected_commit
+  p=d/'raw_scenes/manifest.json'; m=json.loads(p.read_text())
+  assert m['provenance']['git_commit']==expected_commit
+  for item in m['rows']:
+   f=(d/'raw_scenes'/item['file']).resolve(); assert f.is_relative_to((d/'raw_scenes').resolve())
+   assert hashlib.sha256(f.read_bytes()).hexdigest()==item['sha256']
+   rows.append(json.loads(gzip.decompress(f.read_bytes())))
+  sources.append({{'run_id':ref['run_id'],'port':ref['port'],'path':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'git_commit':expected_commit,'config_sha256':m['provenance']['config_sha256']}})
+ return rows,sources
+if {route!r}=='05':
+ wrapper=first/'teacher_manifest.json'; config=json.loads((first/'config.json').read_text())
+ record=config['datasets']['development']; p=Path(record['path']); assert hashlib.sha256(p.read_bytes()).hexdigest()==record['sha256']
+ from satellite_rl.coverage.variable_dataset import load_variable_dataset
+ mother_indices={{s.scene_id:i for i,s in enumerate(load_variable_dataset(p).scenes)}}
+ result=audit_region_oracle(wrapper,hashlib.sha256(wrapper.read_bytes()).hexdigest(),mother_indices=mother_indices,sources=[{{'run_id':tasks[0]['run_id'],'port':tasks[0]['port'],'dataset_sha256':record['sha256'],'source_commit':expected_commit,'path':str(wrapper),'sha256':hashlib.sha256(wrapper.read_bytes()).hexdigest()}}])
+else:
+ rows,sources=read_rows(tasks)
+ other={{k:read_rows(v)[0] for k,v in controls.items()}}
+ result=audit_scene_traces(rows,{route!r},sources,controls=other)
+print(json.dumps(result,allow_nan=False))
+'''
+        response = self.transport.remote_python(code, PORTS[0], timeout=120)
+        if response["exit_code"]:
+            return {"status": "attention_required", "passed": False,
+                    "reason": "mechanism helper/source interface failed", "error": response["stderr"][-1000:]}
+        actual = json.loads(response["stdout"].splitlines()[-1])
+        if "passed" not in actual or actual.get("status") not in ("passed", "science_stopped", "attention_required"):
+            return {"status": "attention_required", "passed": False, "reason": "invalid mechanism receipt schema"}
+        path = self.root / "mechanisms" / f"route_{route}.json"
+        atomic_json(path, actual)
+        actual["receipt_source"] = {"path": str(path), "sha256": digest(path)}
+        return actual
+
+    def teacher_reachability(self, route):
+        port = PORTS[1] if route == "02" else PORTS[2]
+        task = self.ensure(f"teacher_probe/{route}", port,
+                           self.body(route, "main", "prepare", "development", port, preparation_mode="teacher_probe"))
+        if task is None or task["stage"] not in TERMINAL:
+            return None
+        if task["stage"] != "completed" and task.get("scientific_stop") is not True:
+            return {"status": "attention_required", "passed": False, "reason": "strong teacher probe did not retain terminal evidence"}
+        directory = ops.BASE + f"/{port}/archive/outputs/workbench/jobs/{task['run_id']}"
+        code = f'''import json,hashlib,sys
+from pathlib import Path
+d=Path({directory!r}); job=json.loads((d/'job.json').read_text()); assert job['git_commit']=={self.plan['scientific_commit']!r}
+sys.path.insert(0,str(Path(job['source_root'])/'src'))
+from satellite_rl.coverage.nondrl.mechanism_audit import audit_teacher_reachability
+from satellite_rl.coverage.variable_dataset import load_variable_dataset
+config=json.loads((d/'config.json').read_text()); data=config['datasets']['development']; p=Path(data['path'])
+assert hashlib.sha256(p.read_bytes()).hexdigest()==data['sha256']
+indices={{s.scene_id:i for i,s in enumerate(load_variable_dataset(p).scenes)}}
+wrapper=d/'teacher_manifest.json'
+result=audit_teacher_reachability(wrapper,hashlib.sha256(wrapper.read_bytes()).hexdigest(),{route!r},mother_indices=indices)
+result['task_source']={{'run_id':job['run_id'],'port':{port},'wrapper_path':str(wrapper),'wrapper_sha256':hashlib.sha256(wrapper.read_bytes()).hexdigest(),'dataset_sha256':data['sha256'],'scientific_commit':job['git_commit']}}
+print(json.dumps(result,allow_nan=False))
+'''
+        response = self.transport.remote_python(code, port, timeout=120)
+        if response["exit_code"]:
+            return {"status": "attention_required", "passed": False,
+                    "reason": "strong teacher reachability audit interface failed", "error": response["stderr"][-1000:]}
+        actual = json.loads(response["stdout"].splitlines()[-1])
+        if "passed" not in actual or actual.get("status") not in ("passed", "science_stopped", "attention_required"):
+            return {"status": "attention_required", "passed": False, "reason": "invalid strong teacher receipt"}
+        path = self.root / "teacher_reachability" / f"route_{route}.json"
+        atomic_json(path, actual)
+        actual["receipt_source"] = {"path": str(path), "sha256": digest(path)}
+        return actual
+
     def teacher(self):
         for index, route in enumerate(("01", "02", "03", "04", "05")):
             if not self.state["routes"][route]["passed"]:
                 continue
             port = PORTS[index % len(PORTS)]
             role = "development" if route == "05" else "train"
+            if not self.finished(f"initial/{role}/"):
+                continue
             self.ensure(f"teacher/{route}", port, self.body(route, "main", "prepare", role, port, preparation_mode="teacher"))
             if self.state["phase"] == "attention_required":
                 return
         rows = [j for k, j in self.state["jobs"].items() if k.startswith("teacher/")]
-        if all(j["stage"] in TERMINAL for j in rows):
-            for j in rows:
-                if j.get("scientific_stop"):
-                    self.state["routes"][j["route"]].update(status="science_stopped", passed=False, stop_reason=j.get("stop_reason"))
+        for j in rows:
+            if j.get("scientific_stop"):
+                self.state["routes"][j["route"]].update(status="science_stopped", passed=False, stop_reason=j.get("stop_reason"))
+        expected = sum(self.state["routes"][r]["passed"] for r in ("01", "02", "03", "04", "05"))
+        available = [j for j in rows if self.state["routes"][j["route"]]["passed"]]
+        if len(available) == expected and all(j["stage"] == "completed" for j in available):
             self.state["phase"] = "train"
+        self.training()
 
     def training(self):
-        if any(self.state["routes"][r]["passed"] for r in ("03", "04")) and not self.plan.get("pilot_audit_implementation_receipt"):
-            self.attention("03/04 pilot telemetry implementation receipt missing; complete engineering before publication")
-            return
+        audit_ready = False
+        if self.state["routes"]["04"]["passed"]:
+            teacher = self.state["jobs"].get("teacher/04")
+            if teacher and teacher["stage"] == "completed":
+                port = teacher["port"]
+                audit = self.ensure("ranking_audit/04", port,
+                                    self.body("04", "main", "prepare", "validation", port, preparation_mode="ranking_audit"))
+                audit_ready = audit is not None and audit["stage"] == "completed"
+                if audit is not None and audit["stage"] in TERMINAL and not audit_ready:
+                    self.attention("fixed route04 validation labels require engineering review", run_id=audit["run_id"])
+                    return
         for route in ("01", "02", "03", "04", "05"):
             if not self.state["routes"][route]["passed"]:
                 continue
-            teacher = self.state["jobs"][f"teacher/{route}"]
+            teacher = self.state["jobs"].get(f"teacher/{route}")
+            if not teacher or teacher["stage"] != "completed" or route == "04" and not audit_ready:
+                continue
             port = teacher["port"]
-            self.ensure(f"train/{route}", port, self.body(route, "main", "train", None, port,
-                teacher_source={"port": str(port), "run_id": teacher["run_id"]},
-                gate_source=self.state["routes"][route]["gate_source"],
-                validation_initial_source=self.initial_refs("validation")))
+            extra = {"teacher_source": {"port": str(port), "run_id": teacher["run_id"]},
+                     "gate_source": self.state["routes"][route]["gate_source"],
+                     "validation_initial_source": self.initial_refs("validation")}
+            if route == "04":
+                audit = self.state["jobs"]["ranking_audit/04"]
+                extra["ranking_audit_source"] = {"port": str(audit["port"]), "run_id": audit["run_id"]}
+            self.ensure(f"train/{route}", port, self.body(route, "main", "train", None, port, **extra))
             if self.state["phase"] == "attention_required":
                 return
         rows = [j for k, j in self.state["jobs"].items() if k.startswith("train/")]
-        if all(j["stage"] in TERMINAL for j in rows):
+        expected = sum(self.state["routes"][r]["passed"] for r in ("01", "02", "03", "04", "05"))
+        if len(rows) == expected and all(j["stage"] in TERMINAL for j in rows):
             for j in rows:
                 if j.get("scientific_stop"):
                     self.state["routes"][j["route"]].update(status="science_stopped", passed=False, stop_reason=j.get("stop_reason"))
             self.state["phase"] = "test"
 
     def testing(self):
+        if not self.finished("initial/test/"):
+            return
         count = self.record(PORTS[0], "test")["count"]
         # One test task per lane at a time fixes concurrency for paired timings.
         # Training and preparation previously use all scheduler concurrency.
@@ -328,9 +474,9 @@ print(json.dumps({{'run_id':{run_id!r},'port':{record['port']},'manifest_path':s
             if any(j["port"] == port and k.startswith("test/") and j["stage"] not in TERMINAL for k, j in self.state["jobs"].items()):
                 continue
             for route, methods in self.plan["methods"].items():
-                if not self.state["routes"][route]["passed"]:
-                    continue
                 for method in methods:
+                    if method != "BH" and not self.state["routes"][route]["passed"]:
+                        continue
                     key = f"test/{route}/{method}/{port}"
                     if key in self.state["jobs"]:
                         continue
@@ -343,7 +489,8 @@ print(json.dumps({{'run_id':{run_id!r},'port':{record['port']},'manifest_path':s
                 else:
                     continue
                 break
-        expected = sum(len(methods) * len(PORTS) for r, methods in self.plan["methods"].items() if self.state["routes"][r]["passed"])
+        expected = sum(sum(m == "BH" or self.state["routes"][r]["passed"] for m in methods) * len(PORTS)
+                       for r, methods in self.plan["methods"].items())
         rows = [j for k, j in self.state["jobs"].items() if k.startswith("test/")]
         if len(rows) == expected and all(j["stage"] == "completed" for j in rows):
             self.state.update(phase="report_pending", completed_at=now(), report_scope="actual passed/failed routes; no fabricated endpoints")

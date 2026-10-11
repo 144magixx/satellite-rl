@@ -62,6 +62,9 @@ class NondrlWorkbenchTests(unittest.TestCase):
             self.assertEqual(set(METHODS[route]), set(methods) | {"main"})
 
     def test_all_routes_budget_and_reject_unknown(self):
+        for malformed in ([], {"coverage": []}, {"coverage": {"nondrl": []}}):
+            with self.assertRaises(ValueError):
+                validate_nondrl_config(malformed)
         for i in range(1, 13):
             route = f"{i:02d}"
             config = default_nondrl_config(route)
