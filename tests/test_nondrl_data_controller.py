@@ -122,12 +122,16 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(json.loads((root/"controller/launcher.json").read_text())["phase"],"attention_required")
 
     def test_upload_rejects_traversal_and_shell_characters(self):
-        with patch.object(ops.transport,"upload",return_value={"ok":True}) as send:
+        with patch.object(ops.transport,"upload",return_value={"ok":True}) as send, \
+                patch.object(ops,"remote_python",return_value={"exit_code":0,"stdout":"","stderr":""}) as prepare:
             ops.upload(Path("a"),ops.BASE+"/20418/ops/a.bundle",20418)
             self.assertEqual(send.call_count,1)
+            self.assertEqual(prepare.call_count,1)
+            self.assertIn(".parent.mkdir(parents=True,exist_ok=True)",prepare.call_args.args[0])
             for path in (ops.BASE+"/../old/x",ops.BASE+"_other/x",ops.BASE+"/a b",ops.BASE+"/a;echo",ops.BASE+"/a$(secret)"):
                 with self.assertRaises(ValueError):ops.upload(Path("a"),path,20418)
             self.assertEqual(send.call_count,1)
+            self.assertEqual(prepare.call_count,1)
 
     def test_serve_command_matches_current_server_flags_and_pinned_source(self):
         calls=[]
