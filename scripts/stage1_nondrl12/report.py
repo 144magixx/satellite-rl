@@ -163,6 +163,23 @@ def task_location(root, record):
     raise FileNotFoundError("task evidence missing: " + record["run_id"])
 
 
+def shared_baseline(audits):
+    """BH is a common baseline task family, independent of route06 passing."""
+    candidates = [audit for audit in audits.values() if audit.get("dataset_role") == "test"
+                  and audit.get("method") == "BH" and
+                  (audit.get("key", "").startswith("test/06/BH/") or
+                   audit.get("key", "").startswith("shared_baseline/"))]
+    if len(candidates) != 4 or {audit.get("port") for audit in candidates} != {20418,20424,20473,20474}:
+        return None
+    if any(audit["state"] != "completed" for audit in candidates):
+        return None
+    rows = [row for audit in candidates for row in audit["rows"]]
+    summary, mothers = aggregate(rows)
+    return {"summary": summary, "mothers": mothers, "run_ids": [audit["run_id"] for audit in candidates],
+            "scope": "single shared BH family; does not count as route06 algorithm passing",
+            "evidence_keys": [audit["key"] for audit in candidates]}
+
+
 def build(plan, state, root, *, path_map=None, gate_directory=None):
     root = Path(root)
     if plan.get("experiment_id") != "S1-ND12" or state.get("experiment_id") != "S1-ND12":
@@ -194,12 +211,15 @@ def build(plan, state, root, *, path_map=None, gate_directory=None):
                     issues.append("duplicate common initial mother/level " + str(key))
                 common_initials[key] = row["initial_sha256"]
     for audit in audits.values():
-        if audit.get("key", "").startswith(("test/", "development/")):
+        if audit.get("key", "").startswith(("test/", "development/", "shared_baseline/")):
             role = audit.get("dataset_role")
             for row in audit["rows"]:
                 key = (role, row["mother_scene_id"], row["multiplier"])
                 if common_initials.get(key) != row["initial_sha256"]:
                     issues.append(audit["key"] + ": shared I0 source does not close " + str(key))
+    common_BH = shared_baseline(audits)
+    if common_BH is None:
+        issues.append("shared BH baseline lacks four completed, independent lane shards")
     for route in (f"{i:02d}" for i in range(1, 13)):
         status = state.get("routes", {}).get(route, {})
         result = {"status": status.get("status", "pending"), "methods": {}, "gate": None}
@@ -216,6 +236,10 @@ def build(plan, state, root, *, path_map=None, gate_directory=None):
                 issues.append(route + ": " + str(error))
         if status.get("passed"):
             for method in plan["methods"][route]:
+                if method == "BH" and common_BH is not None:
+                    if route == "06":
+                        result["methods"]["BH"] = common_BH
+                    continue
                 subset = [a for a in audits.values() if a.get("key", "").startswith(f"test/{route}/{method}/")]
                 if len(subset) != 4 or any(a["state"] != "completed" for a in subset):
                     issues.append(f"{route}/{method}: incomplete four-lane test evidence")
@@ -232,6 +256,8 @@ def build(plan, state, root, *, path_map=None, gate_directory=None):
                     issues.append(route + ": route stopped without measured failure or task scientific stop")
         else:
             issues.append(route + ": pending or engineering attention, no scientific failure inferred")
+        if route == "06" and common_BH is not None:
+            result["methods"]["BH"] = common_BH
         routes[route] = result
         result["comparisons"] = {}
         required = {"01": (("M","H"),("MO","HO"),("MO","O")),
@@ -240,8 +266,9 @@ def build(plan, state, root, *, path_map=None, gate_directory=None):
                     "08": (("main","voronoi"),("main","integer")),
                     "12": (("main","BH"),("main","single_objective"))}.get(route, (("main","BH"),))
         for primary, baseline in required:
-            if primary in result["methods"] and baseline in result["methods"]:
-                result["comparisons"][primary+"/"+baseline] = paired_comparison(result["methods"][primary], result["methods"][baseline])
+            baseline_data = common_BH if baseline == "BH" else result["methods"].get(baseline)
+            if primary in result["methods"] and baseline_data is not None:
+                result["comparisons"][primary+"/"+baseline] = paired_comparison(result["methods"][primary], baseline_data)
             elif status.get("passed"):
                 issues.append(route+": required attribution comparison missing "+primary+"/"+baseline)
     if state.get("phase") != "report_pending":
@@ -252,6 +279,7 @@ def build(plan, state, root, *, path_map=None, gate_directory=None):
             "formal_ready": not issues, "issues": issues, "routes": routes,
             "tasks": {run_id: {k: v for k, v in a.items() if k != "rows"} for run_id, a in audits.items()},
             "row_audits": {run_id: a["rows"] for run_id, a in audits.items()}, "locations": locations,
+            "shared_baseline": common_BH,
             "statistics_unit": "mean of three levels per mother, then equal mothers",
             "RF_scope": "frozen model estimate; recorded TDMA algebra verified; no independent RF recomputation"}
 

@@ -144,6 +144,24 @@ class PostprocessingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"engineering gap"):
             report.verify_gate(gate,required,audits)
 
+    def test_shared_BH_does_not_require_route06_scientific_pass(self):
+        base=strict_audit.audit_row(self.row,self.scene)
+        audits={}
+        for port in (20418,20424,20473,20474):
+            rows=[]
+            for multiplier in (.75,1.,1.25):
+                row=copy.deepcopy(base);row.update(mother_scene_id=f"mother{port}",multiplier=multiplier)
+                rows.append(row)
+            run_id=f"baseline_{port}"
+            audits[run_id]={"run_id":run_id,"key":f"test/06/BH/{port}","port":port,"method":"BH",
+                            "dataset_role":"test","state":"completed","rows":rows}
+        result=report.shared_baseline(audits)
+        self.assertEqual(result["summary"]["row_count"],12)
+        self.assertEqual(result["summary"]["mother_count"],4)
+        self.assertIn("does not count as route06",result["scope"])
+        incomplete=copy.deepcopy(audits);incomplete.pop("baseline_20474")
+        self.assertIsNone(report.shared_baseline(incomplete))
+
     def test_incomplete_or_missing_mechanism_is_not_scientific_failure(self):
         plan = {"experiment_id": "S1-ND12", "scientific_commit": "a"*40,
                 "methods": {f"{i:02d}": ["main"] for i in range(1,13)},
