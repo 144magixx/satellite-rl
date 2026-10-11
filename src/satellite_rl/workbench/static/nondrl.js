@@ -27,6 +27,9 @@
   }
   function message(text) { el("message").textContent = text; }
   function defaults() {
+    const currentMethod = el("method").value;
+    el("method").innerHTML = catalog.methods[el("route").value].map(m=>`<option value="${escape(m)}">${escape(m)}</option>`).join("");
+    if(catalog.methods[el("route").value].includes(currentMethod))el("method").value=currentMethod;
     const config = structuredClone(catalog.defaults[el("route").value]);
     config.coverage.nondrl.method = el("method").value;
     el("config").value = JSON.stringify(config,null,2);

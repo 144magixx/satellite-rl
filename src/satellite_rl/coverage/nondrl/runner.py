@@ -89,8 +89,8 @@ def scaled_scene(scene, multiplier):
     return value
 
 
-def _initials(job, expected_sha):
-    source = job.get("initial_source")
+def _initials(job, expected_sha, key="initial_source"):
+    source = job.get(key)
     if not source:
         return {}
     if digest(source["path"]) != source["sha256"]:
@@ -101,6 +101,61 @@ def _initials(job, expected_sha):
     raw = Path(manifest["evidence_path"])
     evidence = RowStore(raw, manifest["provenance"], resume=True)
     return {row["key"]: evidence.load(row) for row in evidence.manifest["rows"]}
+
+
+def fixed_validation(directory, job, config, provenance, progress, stopped):
+    """Return a callback; retain every validation layout and fixed-input hash."""
+    from .core import solve
+    from .learning import LearningPolicy
+    source = config["datasets"]["validation"]
+    if digest(source["path"]) != source["sha256"]:
+        raise ValueError("fixed validation dataset SHA differs")
+    dataset = load_variable_dataset(source["path"])
+    initials = _initials(job, source["sha256"], "validation_initial_source")
+    route = config["coverage"]["nondrl"]["route"]
+    def callback(context):
+        model_sha = hashlib.sha256()
+        for name, value in context["model"].state_dict().items():
+            model_sha.update(name.encode())
+            model_sha.update(value.detach().cpu().contiguous().numpy().tobytes())
+        node = {**provenance, "updates": context["updates"], "model_sha256": model_sha.hexdigest()}
+        store = RowStore(Path(directory) / "validation" / f"update_{context['updates']:06d}", node,
+                         resume=(Path(directory) / "validation" / f"update_{context['updates']:06d}" / "manifest.json").exists())
+        policy = LearningPolicy(route, context["model"], context["contract"], context["device"], "main")
+        total = len(dataset.scenes) * len(config["evaluation"]["demand_multipliers"])
+        for index, original in enumerate(dataset.scenes):
+            for multiplier in config["evaluation"]["demand_multipliers"]:
+                key = f"{index}:{multiplier:g}"
+                if key in store.keys:
+                    continue
+                if stopped():
+                    return {"stopped": True, "completed_scenes": len(store.keys), "expected_scenes": total}
+                initial = initials.get(key)
+                if initial is None:
+                    raise ValueError("fixed validation initial is incomplete")
+                result = solve(scaled_scene(original, multiplier), route,
+                               config["coverage"]["nondrl"]["limits"],
+                               initial=initial["result"]["initial_layout"], policy=policy)
+                if result["initial_sha256"] != initial["result"]["initial_sha256"]:
+                    raise ValueError("validation changed shared initial")
+                store.append(key, {"key": key, "dataset_index": index, "mother_scene_id": original.scene_id,
+                                  "demand_multiplier": multiplier, "result": result})
+                progress(stage="validating", validation_updates=context["updates"],
+                         validation_completed_scenes=len(store.keys), validation_total_scenes=total)
+        rows = [store.load(row) for row in store.manifest["rows"]]
+        mothers = []
+        for index in range(len(dataset.scenes)):
+            subset = [r for r in rows if r["dataset_index"] == index]
+            cvs = [r["result"]["metrics_all"]["load_cv_all"] for r in subset]
+            valid = [cv for cv in cvs if cv is not None]
+            mothers.append({"dataset_index": index, "cv_mean": float(np.mean(valid)) if valid else None,
+                            "all_zero_demand": not valid})
+        valid = [m["cv_mean"] for m in mothers if m["cv_mean"] is not None]
+        return {"completed_scenes": len(rows), "expected_scenes": total, "mother_count": len(mothers),
+                "mother_equal_cv_mean": float(np.mean(valid)) if valid else None,
+                "zero_demand_mothers": sum(m["all_zero_demand"] for m in mothers),
+                "mother_metrics": mothers, "raw_manifest_path": str(store.path), "raw_manifest_sha256": digest(store.path)}
+    return callback
 
 
 def evaluate(directory, job, config, provenance, *, resume, progress, stopped):
@@ -141,9 +196,8 @@ def evaluate(directory, job, config, provenance, *, resume, progress, stopped):
                 raise ValueError("common I0 evidence lacks requested scene")
             initial = shared["result"]["initial_layout"] if shared else None
             effective_route = "I0" if mode == "initial" or method == "I0" else "BH" if method == "BH" else route
-            if method not in ("main", "I0", "BH"):
-                raise ValueError("comparison method is not yet implemented; refusing to substitute main")
-            result = solve(scene, effective_route, config["coverage"]["nondrl"]["limits"], initial=initial, policy=policy)
+            result = solve(scene, effective_route, config["coverage"]["nondrl"]["limits"], initial=initial, policy=policy,
+                           method="main" if method in ("I0", "BH") or mode == "initial" else method)
             if shared and result["initial_sha256"] != shared["result"]["initial_sha256"]:
                 raise ValueError("route changed common I0 layout")
             row = {"key": key, "run_id": job["run_id"], "route": route, "method": method,
@@ -252,6 +306,7 @@ def _run_nondrl_job(directory, job, config, *, resume=False, preflight=None):
             provenance["reachability_sha"] = gate["sha256"]
             result = train(evidence, route, config["training"], job["model_dir"],
                            resume=resume, stop_callback=stopped,
+                           validation_callback=fixed_validation(directory, job, config, provenance, progress, stopped),
                            progress_callback=lambda values: progress(**{**values, "stage": "training"}), provenance=provenance)
         else:
             result = evaluate(directory, job, config, provenance, resume=resume, progress=progress, stopped=stopped)

@@ -75,6 +75,27 @@ def freeze_preparation(extra, destination):
     return result
 
 
+def bind_parser_source(reference, work, prep, contract, archive):
+    """Set the frozen preferred instance, and reject any parser fallback source."""
+    instance = contract.get("source_instance")
+    if isinstance(instance, str):
+        instance = instance.removeprefix("planes-readsb-")
+    if instance not in ("prod-0", "staging-0"):
+        raise ValueError("UTC selection contract must freeze preferred source instance")
+    expected = f"v{prep['date_utc'].replace('-', '.')}-planes-readsb-{instance}.tar"
+    if prep["archive_name"] != expected:
+        raise ValueError("preferred source instance and official archive name differ")
+    linked = Path(work) / "raw" / expected
+    if not linked.is_file() or not linked.samefile(archive):
+        raise ValueError("parser raw archive must link the frozen downloaded source")
+    reference.SOURCE_INSTANCE = instance
+    # Verification precedes process_day, whose historical missing-file branch
+    # could otherwise wait for or obtain another default staging archive.
+    if Path(reference.ROOT) / "raw" / expected != linked:
+        raise ValueError("parser root differs from isolated preparation directory")
+    return reference
+
+
 def _download(directory, prep, progress, stopped):
     root = PARENT / "source" / prep["role"] / prep["date_utc"]
     root.mkdir(parents=True, exist_ok=True)
@@ -151,6 +172,7 @@ def run_dataset(directory, job, config, *, resume, progress, stopped):
             except OSError:
                 linked.symlink_to(archive)
         reference = _reference(prep["files"]["parser"]["path"], job["source_root"], work, contract)
+        bind_parser_source(reference, work, prep, contract, archive)
         rows, candidates = reference.process_day(prep["date_utc"], {"status": "processing", "date": prep["date_utc"]})
         if len(rows) != contract["count"] or len(candidates) != contract["count"]:
             raise ValueError("official parser omitted selected UTC snapshots")

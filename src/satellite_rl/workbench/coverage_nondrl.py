@@ -20,6 +20,15 @@ ROLES = ("train", "development", "validation", "test")
 ROUTES = tuple(f"{i:02d}" for i in range(1, 13))
 LEARNED = ROUTES[:5]
 UPDATE_CAPS = dict(zip(LEARNED, (10000, 10000, 12000, 8000, 4000)))
+METHODS = {"01": ("main", "M", "MO", "O", "HO", "H"),
+           "02": ("main", "BC", "H", "T", "R"), "03": ("main", "D", "DR", "H", "HR"),
+           "04": ("main", "L", "H", "R", "F"), "05": ("main", "L", "rule", "worst", "random"),
+           "06": ("main", "assign_only"), "07": ("main", "assign_only"),
+           "08": ("main", "voronoi", "integer"), "09": ("main", "distance", "demand", "geometric"),
+           "10": ("main", "initial_pool"), "11": ("main", "random", "single"),
+           "12": ("main", "single_objective")}
+MODEL_METHODS = {"01": ("main", "M", "MO"), "02": ("main", "BC"), "03": ("main", "D", "DR"),
+                 "04": ("main", "L"), "05": ("main", "L")}
 TEACHER_CAPS = {
     "01": {"max_problems": 20000, "max_trials": 20000, "max_seconds": 20000.},
     "02": {"max_problems": 5000, "max_trials": 1000000, "max_seconds": 50000.},
@@ -59,7 +68,7 @@ def validate_nondrl_config(supplied):
     if c["nondrl"]["track"] != "fixed_count":
         raise ValueError("first round supports fixed-count mechanism track only")
     # Methods are explicitly dispatched by the core, never silently interpreted as main.
-    if c["nondrl"]["method"] not in ("main", "I0", "BH", "rule", "random", "ablation"):
+    if c["nondrl"]["method"] not in METHODS[route] + ("I0", "BH"):
         raise ValueError("unknown comparison method")
     NondrlConfig.from_dict(c["nondrl"]["limits"])
     if c["nondrl"]["limits"] != default["coverage"]["nondrl"]["limits"]:
@@ -193,10 +202,11 @@ def submit(application, body):
     if len({r["partition_manifest_sha256"] for r in datasets.values()}) != 1:
         raise ValueError("dataset partition contracts differ")
     config["datasets"] = datasets
+    needs_model = config["coverage"]["nondrl"]["method"] in MODEL_METHODS.get(route, ())
     extra = {"experiment_id": GROUP, "research_stage": "coverage", "variant": route,
              "experiment_role": purpose, "dataset_role": role, "execution_target": f"u2024110224@10.160.17.102:{port}",
              "dataset_sha256": {r: d["sha256"] for r, d in datasets.items()},
-             "execution_device": "cuda" if kind == "train" or route in LEARNED and kind == "evaluate" else "cpu"}
+             "execution_device": "cuda" if kind == "train" or needs_model and kind == "evaluate" else "cpu"}
     if kind == "prepare":
         if mode not in ("teacher", "initial"):
             raise ValueError("unknown preparation mode")
@@ -216,6 +226,14 @@ def submit(application, body):
                 manifest.get("dataset_sha256") not in extra["dataset_sha256"].values()):
             raise ValueError("teacher completion/data lineage differs")
         extra["teacher_source"] = {"path": str(path), "sha256": digest(path), "run_id": source_job["run_id"]}
+        directory, source_job = _dependency(body, "validation_initial_source", "prepare",
+                                            body["validation_initial_source"].get("route", route))
+        path = directory / "initial_manifest.json"
+        manifest = read_json(path, {})
+        if (source_job.get("preparation_mode") != "initial" or manifest.get("completed") is not True or
+                manifest.get("dataset_sha256") != datasets["validation"]["sha256"]):
+            raise ValueError("fixed validation initial provenance differs")
+        extra["validation_initial_source"] = {"path": str(path), "sha256": digest(path), "run_id": source_job["run_id"]}
     if kind == "evaluate":
         directory, source_job = _dependency(body, "initial_source", "prepare", body["initial_source"].get("route", route))
         path = directory / "initial_manifest.json"
@@ -225,7 +243,7 @@ def submit(application, body):
                 manifest.get("completed") is not True):
             raise ValueError("shared I0 provenance differs")
         extra["initial_source"] = {"path": str(path), "sha256": digest(path), "run_id": source_job["run_id"]}
-    if kind == "evaluate" and route in LEARNED and config["coverage"]["nondrl"]["method"] == "main":
+    if kind == "evaluate" and needs_model:
         directory, source_job = _dependency(body, "model_source", "train", route)
         model = Path(source_job["model_dir"]) / "final"
         extra.update(model_path=str(model), model_source_run_id=source_job["run_id"],
@@ -242,7 +260,7 @@ def freeze_sources(extra, destination):
     frozen = deepcopy(extra)
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
-    for key in ("teacher_source", "dataset_source", "initial_source", "reachability_source"):
+    for key in ("teacher_source", "dataset_source", "initial_source", "reachability_source", "validation_initial_source"):
         source = frozen.get(key)
         if source:
             path = _pin(source["path"], source["sha256"])
@@ -266,7 +284,8 @@ def api(application, method, parts, body):
     if parts == ["catalog"] and method == "GET":
         return {"group": GROUP, "routes": list(ROUTES), "learning_routes": list(LEARNED),
                 "defaults": {r: default_nondrl_config(r) for r in ROUTES}, "update_caps": UPDATE_CAPS,
-                "teacher_caps": TEACHER_CAPS, "roles": list(ROLES), "kinds": ["prepare", "train", "evaluate"]}
+                "teacher_caps": TEACHER_CAPS, "methods": {r: list(m) + ["I0", "BH"] for r, m in METHODS.items()},
+                "roles": list(ROLES), "kinds": ["prepare", "train", "evaluate"]}
     if parts == ["validate"] and method == "POST":
         return {"config": validate_nondrl_config(body)}
     if parts == ["datasets", "import"] and method == "POST":

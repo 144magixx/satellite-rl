@@ -10,6 +10,7 @@ from satellite_rl.training.run_monitor import atomic_json
 from satellite_rl.workbench.coverage_nondrl import (default_nondrl_config, validate_nondrl_config,
     partition_contract, resume_job)
 from satellite_rl.workbench.storage import Store, digest
+from satellite_rl.workbench.nondrl_preparation import bind_parser_source
 
 
 class NondrlWorkbenchTests(unittest.TestCase):
@@ -60,6 +61,28 @@ class NondrlWorkbenchTests(unittest.TestCase):
             scheduler = type("Scheduler", (), {"store": store})()
             with self.assertRaises(ValueError):
                 resume_job(scheduler, "nd12_test")
+
+    def test_parser_uses_frozen_prod_source_and_never_default_staging(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "work"
+            (work / "raw").mkdir(parents=True)
+            name = "v2024.02.12-planes-readsb-prod-0.tar"
+            archive = root / name
+            archive.write_bytes(b"isolated short source fixture")
+            (work / "raw" / name).hardlink_to(archive)
+            reference = type("Reference", (), {"ROOT": work, "SOURCE_INSTANCE": "staging-0"})()
+            prep = {"date_utc": "2024-02-12", "archive_name": name}
+            bind_parser_source(reference, work, prep, {"source_instance": "planes-readsb-prod-0"}, archive)
+            self.assertEqual(reference.SOURCE_INSTANCE, "prod-0")
+            with self.assertRaises(ValueError):
+                bind_parser_source(reference, work, prep, {"source_instance": "staging-0"}, archive)
+            with self.assertRaises(ValueError):
+                bind_parser_source(reference, work, prep, {}, archive)
+            (work / "raw" / name).unlink()
+            (work / "raw" / name).write_bytes(b"wrong original source")
+            with self.assertRaises(ValueError):
+                bind_parser_source(reference, work, prep, {"source_instance": "prod-0"}, archive)
 
 
 if __name__ == "__main__":
