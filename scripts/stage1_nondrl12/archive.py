@@ -160,6 +160,12 @@ def verify_receipt(receipt, directory, source_receipt=None, source_directory=Non
             raise ValueError("archive receipt repaired source identity differs")
     elif receipt.get("origin_commit", receipt["source_commit"]) != receipt["source_commit"]:
         raise ValueError("archive changed source without strict repair lineage")
+    if identity.get("runtime_extensions") or identity.get("model_runtime_extensions"):
+        from .datafeed_evidence import audit_runtime
+        runtime=audit_runtime(identity,evidence,evidence.json("config.json"),completed=receipt.get("status")=="completed")
+        if runtime.get("execution_role")=="model_only_consumer" and any(
+                n.endswith(("/cache/data.bin","/cache/index.sqlite")) for n in members):
+            raise ValueError("model consumer duplicates the one canonical training cache")
     if receipt.get("source_refs"):
         if source_receipt is None or source_directory is None:
             raise ValueError("shared source receipt required")
@@ -285,6 +291,24 @@ try:
     p=safe(record['path'])
     if sha(p)!=record['sha256']:raise RuntimeError('dependency manifest SHA differs')
     deps.append({'kind':key,'run_id':record.get('run_id'),'sha256':record['sha256'],'path':record.get('source_path',record['path'])})
+  runtime_marker=None
+  if job.get('runtime_extensions'):
+   entries=job['runtime_extensions']
+   if run_id!='train_nondrl_20261012_055310_890a4cba' or job.get('kind')!='train' or job['git_commit']!='a21d50ae49f55f1ac2210ba6aaf0778e33f25f8d' or len(entries)!=1:raise RuntimeError('runtime extension outside approved single training task')
+   extension=jobdir/'runtime_extensions/nd12_01_compact_evidence_v1';entry=entries[0]
+   if sha(extension/'contract.json')!=entry['contract_sha256']:raise RuntimeError('runtime extension contract changed')
+   c=json.loads((extension/'contract.json').read_text(encoding='utf-8'));runtime_marker=entry['marker']
+   if c.get('run_id')!=run_id or c.get('format')!='s1_nd12_datafeed_extension_v1' or c.get('extension_id')!='nd12_01_compact_evidence_v1' or runtime_marker.get('contract_sha256')!=entry['contract_sha256']:raise RuntimeError('runtime extension archived identity differs')
+   for name,key in [('provider.py','provider'),('bootstrap.py','bridge'),('cache/manifest.json','cache_manifest'),('origin_checkpoint.pt','checkpoint'),('checkpoint_audit.json','checkpoint_audit')]:
+    if sha(extension/name)!=c[key]['sha256']:raise RuntimeError('frozen external runtime member changed')
+   cache=json.loads((extension/'cache/manifest.json').read_text(encoding='utf-8'))
+   if set(cache.get('files',{}))!={'data.bin','index.sqlite'}:raise RuntimeError('cache enum differs')
+   for name,pin in cache['files'].items():
+    if sha(extension/'cache'/name)!=pin['sha256']:raise RuntimeError('canonical cache bytes changed')
+  elif job.get('model_runtime_extensions'):
+   if job.get('model_source_run_id')!='train_nondrl_20261012_055310_890a4cba' or job.get('kind')!='evaluate' or job.get('variant')!='01' or len(job['model_runtime_extensions'])!=1:raise RuntimeError('composite model consumer differs')
+   runtime_marker=job['model_runtime_extensions'][0]
+   deps.append({'kind':'runtime_extension','run_id':job['model_source_run_id'],'sha256':runtime_marker['contract_sha256'],'path':'runtime_extensions/nd12_01_compact_evidence_v1/contract.json'})
   tree(prefix,jobdir,skip)
   if job.get('source_repair_contract'):
    contract=json.loads((jobdir/'source_lineage/contract.json').read_text())
@@ -328,7 +352,7 @@ try:
   if group and size+r['bytes']>request['part_bytes']:flush();group=[];size=0
   group.append((name,r));size+=r['bytes']
  flush()
- receipt={'experiment_id':'S1-ND12','port':port,'run_id':run_id,'source_commit':request['source_commit'],'origin_commit':request.get('origin_commit',request['source_commit']),'source_repair_contract_sha256':request.get('source_repair_contract_sha256'),'status':status['stage'],'source_refs':refs,'dependency_refs':deps,'volumes':volumes,'partition_manifest_sha256':request.get('partition_manifest_sha256')}
+ receipt={'experiment_id':'S1-ND12','port':port,'run_id':run_id,'source_commit':request['source_commit'],'origin_commit':request.get('origin_commit',request['source_commit']),'source_repair_contract_sha256':request.get('source_repair_contract_sha256'),'status':status['stage'],'source_refs':refs,'dependency_refs':deps,'volumes':volumes,'partition_manifest_sha256':request.get('partition_manifest_sha256'),'runtime_extension':runtime_marker if request['mode']=='task' else None}
  (dest/'receipt.json').write_text(json.dumps(receipt));print(json.dumps(receipt))
 finally:lock.rmdir()
 '''

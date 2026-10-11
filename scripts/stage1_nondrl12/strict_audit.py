@@ -19,6 +19,7 @@ from satellite_rl.coverage.nondrl.core import layout_sha256
 from satellite_rl.coverage.variable_design import Layout
 from satellite_rl.coverage.variable_dataset import _loaded_arrays, load_variable_dataset
 from scripts.stage1_nondrl12.execution_sources import audit_lineage, manifest_origin, verify_marker
+from scripts.stage1_nondrl12.datafeed_evidence import audit_runtime, training_segments
 
 
 def digest_bytes(value):
@@ -370,6 +371,8 @@ def audit_job(location, *, path_map=None, verified_volume_cache=None):
     lineage = audit_lineage(job, evidence) if job.get("source_repair_contract") else {
         "origin_commit": job["git_commit"], "execution_commit": job["git_commit"], "repaired": False}
     stage = status.get("stage")
+    runtime=audit_runtime(job,evidence,config,completed=stage=="completed") if (
+        job.get("runtime_extensions") or job.get("model_runtime_extensions")) else None
     if job.get("preparation_mode") == "teacher_probe" and stage in ("completed", "stopped"):
         proof = audit_teacher_probe(evidence,job,config,path_map=path_map)
         return {"run_id": job["run_id"], "state": "completed" if stage=="completed" else (
@@ -382,7 +385,7 @@ def audit_job(location, *, path_map=None, verified_volume_cache=None):
         if "failure.json" not in evidence.names():
             raise ValueError("failed task lacks failure evidence")
         return {"run_id": job["run_id"], "state": "failure", "formal_terminal": True,
-                "rows": [], "failure": evidence.json("failure.json")}
+                "rows": [], "failure": evidence.json("failure.json"),"runtime_extension":runtime}
     if stage == "stopped" and status.get("scientific_stop") is True:
         gate = job.get("reachability_source")
         if job["kind"] == "train" and (gate is None or not isinstance(gate.get("sha256"), str) or len(gate["sha256"]) != 64):
@@ -403,7 +406,7 @@ def audit_job(location, *, path_map=None, verified_volume_cache=None):
             if gate_record.get("experiment_id") != "S1-ND12" or gate_record.get("passed") is not True:
                 raise ValueError("training scientific stop has no actual passed development source")
         return {"run_id": job["run_id"], "state": "scientific_stop", "formal_terminal": True,
-                "gate_source": gate, "stop_reason": status.get("stop_reason"), "rows": []}
+                "gate_source": gate, "stop_reason": status.get("stop_reason"), "rows": [],"runtime_extension":runtime}
     partial_engineering = stage == "stopped" and lineage["repaired"] and status.get("scientific_stop") is not True
     if partial_engineering and job.get("kind") != "evaluate":
         return {"run_id":job["run_id"], "state":"engineering_stopped", "formal_terminal":True,
@@ -417,6 +420,7 @@ def audit_job(location, *, path_map=None, verified_volume_cache=None):
         record = {"run_id": job["run_id"], "state": "completed", "formal_terminal": True,
                   "kind": job["kind"], "results": result, "rows": [], "git_commit": job["git_commit"],
                   "origin_commit": lineage["origin_commit"], "source_lineage": lineage}
+        if runtime:record["runtime_extension"]=runtime
         if job.get("preparation_mode") in ("teacher","ranking_audit"):
             record.update(supervision_sources=supervision_sources(evidence,job),git_commit=job["git_commit"])
         if job["kind"] == "train":
@@ -435,7 +439,11 @@ def audit_job(location, *, path_map=None, verified_volume_cache=None):
                 raise ValueError("fixed endpoint model SHA differs")
             if model.get("updates") != result["updates"] or model.get("selection") != "fixed_budget_endpoint":
                 raise ValueError("model selection/update differs")
+            if model.get("runtime_extensions") and runtime is None:
+                raise ValueError("model runtime metadata lacks its approved job extension")
             record["curve_losses"] = losses
+            record["endpoint_sha256"]=policy_sha
+            if runtime:record["training_datafeed_segments"]=training_segments(losses,runtime)
             validation = evidence.json("models/validation.json")
             record["curve_validation"] = validation
             for node in validation:
@@ -488,6 +496,7 @@ def audit_job(location, *, path_map=None, verified_volume_cache=None):
             "method": config["coverage"]["nondrl"]["method"], "dataset_role": role,
             "git_commit": job["git_commit"], "origin_commit": lineage["origin_commit"], "source_lineage": lineage,
             "execution_segments": manifest.get("execution_segments", []),
+            "runtime_extension":runtime,
             "rows": rows, "raw_manifest_sha256": digest_bytes(evidence.read("raw_scenes/manifest.json")),
             "config_sha256": manifest["provenance"]["config_sha256"],
             "execution_environment": {"target": job.get("execution_target"), "device": job.get("execution_device"),

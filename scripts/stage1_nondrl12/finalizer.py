@@ -195,6 +195,10 @@ def export_endpoints(root,receipts,cache,model_root=None):
         evidence=strict_audit.Evidence(receipt_path(root,receipt),cache)
         job=evidence.json("job.json");status=evidence.json("status.json")
         if job.get("kind")!="train" or status.get("stage")!="completed":continue
+        runtime=None
+        if job.get("runtime_extensions"):
+            from .datafeed_evidence import audit_runtime
+            runtime=audit_runtime(job,evidence,evidence.json("config.json"),completed=True)
         relative="models/final/policy.pt"
         member=evidence.prefix+relative
         if member not in evidence.members:raise Attention("completed training endpoint absent from canonical ZIP")
@@ -220,7 +224,8 @@ def export_endpoints(root,receipts,cache,model_root=None):
         if metadata.exists() and metadata.read_bytes()!=model:raise Attention("existing endpoint metadata differs")
         if not metadata.exists():metadata.write_bytes(model)
         outputs.append({"run_id":receipt["run_id"],"path":str(target.resolve()),**expected,
-                        "model_json_sha256":archive.digest(metadata),"canonical_receipt":str(receipt_path(root,receipt).resolve())})
+                        "model_json_sha256":archive.digest(metadata),"canonical_receipt":str(receipt_path(root,receipt).resolve()),
+                        "runtime_extension":runtime})
     return outputs
 
 
@@ -293,8 +298,13 @@ def _run(root=ops.LOCAL,*,wait_hours=48,poll_seconds=60,resume_after_attention=F
     from . import execution_sources
     from satellite_rl.workbench import nondrl_source_repair
     from satellite_rl.coverage.nondrl import source_lineage
+    from . import datafeed_evidence
     modules=[Path(__file__),Path(archive.__file__),Path(report.__file__),Path(strict_audit.__file__),Path(ops.__file__),
-             Path(execution_sources.__file__),Path(nondrl_source_repair.__file__),Path(source_lineage.__file__)]
+             Path(execution_sources.__file__),Path(nondrl_source_repair.__file__),Path(source_lineage.__file__),Path(datafeed_evidence.__file__)]
+    # These operations modules validate the external runtime; a21 science stays
+    # in its existing snapshot and is never replaced by this import.
+    from satellite_rl.workbench import nondrl_datafeed, nondrl_datafeed_bootstrap
+    modules.extend((Path(nondrl_datafeed.__file__),Path(nondrl_datafeed_bootstrap.__file__)))
     disposition_path=root/"controller/bounded_dispositions.json"
     if disposition_path.is_file():modules.append(disposition_path)
     if transport is not None:modules.extend((Path(placement_transport.__file__),transport.path))
