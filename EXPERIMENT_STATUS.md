@@ -1,5 +1,11 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-12 05:18 S1-ND12三物理端交接完成，正在接续工程修复；尚无正式监督训练结果。** 物理20474已交给S2-F20并由对方独立验收；本组只用20418/20424/20473，原逻辑20474、8943工作台及四分片数据保持，实际迁到20473。直到对方正式归还前不再向物理20474提交计算。[实际释放回执](outputs/experiments/first_stage_nondrl12_20261012/preflight/physical20474_release_final.json)与[固定映射](outputs/experiments/first_stage_nondrl12_20261012/controller/execution_placement.json)保存进程、归属和持久排除证据；旧四物理端启动记录仅为历史。
+
+三日新数据及576/20/20/100母规范输入已准备并注册。开发闸门已通过01/06/07/09/11/12，04/05/08按原实测门槛停止；02/03因强教师参考记录不全待修，10因原生整数求解器实际超时待修，不能据此称算法不可行。05:17真实API仍有四个10主评价进程，已提交6/10/6/5条；根05:18经原工作台stop、核PID出生并等待协作退出后，仅终止这四个未返回的原生求解进程，27条已提交原文及SHA保持。MLM教师正常预算超时未捕获，已有样本/游标保留；两强教师预算用尽只有53/60、50/60完整参考，后续只补明确标记的未搜索I0参考，不追加试算、不伪造强教师收益。[实际现场](outputs/experiments/first_stage_nondrl12_20261012/preflight/repair_epoch/live_before.json) · [有界停止证据](outputs/experiments/first_stage_nondrl12_20261012/preflight/repair_epoch/all_stops.json)。
+
+原科学105及run_plan字节未改，候选修复e1ae189/e6aab64仅本地专项检查通过，尚未正式部署。GPT-6.1 Sol正在补严格来源接续契约、工作台API、旧记录和新执行源分列及Linux工程检查。唯一流水34748与等待中的finalizer36680已在无网络边界受控停止，原回执保存在[修复历史](outputs/experiments/first_stage_nondrl12_20261012/preflight/repair_epoch/local_stop_receipt.json)，不可按旧PID重启；需采用经核验的新启动回执。预算、数据、种子和科学闸门不改，native超时与修复空窗单独记账。Jan08/09/12原始数据的唯一4.68GB补档已完成，本地E与三允许物理端整卷/成员SHA闭合：[补档回执](outputs/experiments/first_stage_nondrl12_20261012/source/reused_january_archive_receipt.json)。报告、模型、最终考核和完整交付仍待，小时跟进保持ACTIVE。
+
 **2026-10-12 S2-F20公平算法对照方案已设计，未实施。** 用户要求先设计SAC/PPO/DQN共用Transformer、动作掩码、奖励和交互预算的效果/耗时比较，详见[第二阶段方案20](docs/第二阶段/方案/20_Transformer下SAC_PPO_DQN公平对照方案.md)。建议三构造式算法（DQN明确沿用Double DQN目标）同1000项联合频率起点/槽数、同掩码及3000/N规则功率；奖励为全N SI差分、gamma=1，最终同完整A+B。单seed51001正式各400000共1200000，短调参196608与工程检查6144另账；新40母1320景与8328次完整A+B均为待执行预算，输入/日期可用性尚待核验，未冻结科学源或建立正式任务。质量和速度门槛、母级统计及同硬件计时已写明，尚无优势结论；前端实施需新增三算法共同合同，本轮纯文档无需前端改动。未授权/启动该组计算或定时任务，不恢复旧组或干预正在运行的S1-ND12。
 
 **2026-10-12 S1-ND12已正式启动，四端冻结源码与工作台均通过核验。** 科学源`105d5f57ec241cce0c484b95f6341d6dc418b3fe`、[冻结计划](outputs/experiments/first_stage_nondrl12_20261012/run_plan.json) SHA`d4d5b097ffcb4db41725997541320ff4bbbaf80f1963a754d386516eee6db2c2`；112项代码/工作台/旧权重检查通过，四端五个默认网络共20次实际CUDA更新仅记工程验证。正式三prepare为Feb10/20473 `prepare_nondrl_20261012_033449_2428a355`、Feb11/20474 `prepare_nondrl_20261012_033454_f72b76aa`、Feb12/20418 `prepare_nondrl_20261012_033458_291a0c53`。03:42 API快照中后两日各50母完成，Feb10仍准备；尚无正式监督训练。运行快照不替代下次实际核查。
