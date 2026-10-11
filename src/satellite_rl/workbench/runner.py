@@ -1764,6 +1764,9 @@ def run_job(job_dir, *, resume=False):
 
     directory = Path(job_dir).resolve()
     research_stage = _read_json(directory / "config.json", {}).get("research_stage")
+    if research_stage == "fair20":
+        from .fair20_runner import run_job as run_fair20_job
+        return run_fair20_job(directory, resume=resume)
     if research_stage == "sac_improvement":
         from satellite_rl.sac_improvement import run_job as run_sac_improvement_job
         return run_sac_improvement_job(directory, resume=resume)

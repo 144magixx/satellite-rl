@@ -185,7 +185,8 @@ class Scheduler:
             active = []
             for job, status in jobs:
                 stage = status.get("stage")
-                if stage in TERMINAL or stage == "queued":
+                if (stage in TERMINAL or stage in ("queued", "queued_resources") or
+                        (job.get("experiment_id") == "S2-F20" and stage == "attention_required")):
                     old_child = self.children.get(job["run_id"])
                     if old_child is not None and old_child.poll() is not None:
                         self.children.pop(job["run_id"], None)
@@ -250,6 +251,29 @@ class Scheduler:
 
     def _launch(self, job, status):
         directory = self.store.job_dir(job["run_id"])
+        if job.get("experiment_id") == "S2-F20" and job.get("resource_hold"):
+            from .storage import digest
+            proof_path = directory / "resource_admission.json"
+            proof = read_json(proof_path, {})
+            if (not proof_path.is_file() or proof.get("admitted") is not True or
+                    proof.get("run_id") != job["run_id"] or
+                    status.get("admission_sha256") != digest(proof_path)):
+                self._status(directory, status, stage="queued_resources",
+                             queue_reason="S2-F20缺少本任务资源放行证据，禁止创建worker")
+                return
+            try:
+                from .fair20_service import validate_admission_proof
+                validate_admission_proof(proof, job)
+                from .fair20_guard import local_observation, admission_reasons
+                observation=local_observation(job["archive_root"])
+                atomic_json(directory / "resource_before_launch.json", observation)
+                reasons=admission_reasons(observation, proof["release"], job["git_commit"],
+                                          read_json(proof["release_receipt_path"], {}))
+                if reasons:
+                    raise ValueError("创建worker前实时资源核验拒绝：" + "; ".join(reasons))
+            except (ValueError, TypeError, OSError, subprocess.SubprocessError) as error:
+                self._status(directory, status, stage="queued_resources", queue_reason=str(error))
+                return
         command = [self.python, "-u", "-m", "satellite_rl.workbench.runner", "--job-dir", str(directory)]
         if job.get("resume"):
             command.append("--resume")

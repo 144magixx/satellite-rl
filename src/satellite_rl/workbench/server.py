@@ -75,7 +75,10 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict):
                         raise ValueError("请求须为JSON对象")
-                if len(parts) == 4 and parts[1] == "runs" and parts[3] == "download" and method == "GET":
+                if parts[1:2] == ["fair20"]:
+                    from .fair20_service import Fair20Application
+                    self._json(Fair20Application(self.server.application).api(method, parts[2:], body))
+                elif len(parts) == 4 and parts[1] == "runs" and parts[3] == "download" and method == "GET":
                     content_type, filename, data = self.server.application.download(parts[2], query.get("file", [""])[0])
                     self._headers(200, content_type, len(data), filename)
                     self.wfile.write(data)
@@ -87,7 +90,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(self.server.application.api(method, parts[1:], query, body))
             elif method == "GET":
                 root = Path(__file__).parent / "static"
-                path = inside(root / (parsed.path.lstrip("/") or "index.html"), root)
+                page = "fair20.html" if parsed.path in ("/fair20", "/fair20/") else (parsed.path.lstrip("/") or "index.html")
+                path = inside(root / page, root)
                 if path.suffix not in (".html", ".js", ".css", ".svg", ".ico") or not path.is_file():
                     raise FileNotFoundError("页面不存在")
                 data = path.read_bytes()
