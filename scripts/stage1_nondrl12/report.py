@@ -102,6 +102,8 @@ def verify_gate(gate, threshold, audits_by_run, path_map=None):
     """Recompute the scientific gate from audited exact scene evidence."""
     if gate.get("experiment_id") != "S1-ND12" or gate.get("threshold") != threshold:
         raise ValueError("development gate group/threshold differs")
+    if gate.get("authority")=="bounded_teacher_disposition":
+        return verify_bounded_teacher_disposition(gate,audits_by_run,path_map)
     if gate.get("authority") == "actual_strong_teacher_probe":
         return verify_teacher_gate(gate, audits_by_run)
     rows = []
@@ -260,6 +262,58 @@ def verify_teacher_gate(gate, audits_by_run):
             "proxy_diagnostics_retained": bool(gate.get("proxy_diagnostics"))}
 
 
+def verify_bounded_teacher_disposition(gate,audits,path_map=None):
+    """Bounded closure remains inconclusive, never a scientific negative label."""
+    from .execution_sources import validate_disposition
+    def mapped(path):
+        for old,new in (path_map or {}).items():
+            if isinstance(new,str) and path.startswith(old):return new+path[len(old):]
+        return path
+    source=gate.get("disposition_source",{})
+    payload=Path(mapped(source["path"])).read_bytes()
+    if digest_bytes(payload)!=source.get("sha256"):raise ValueError("bounded disposition raw source SHA differs")
+    scope=json.loads(payload);route=gate["route"]
+    receipt=gate["teacher_reachability"];item=validate_disposition(scope,route,receipt)
+    original=gate.get("original_helper_receipt_source",{})
+    if original.get("path")!=item["helper_receipt_path"] or original.get("sha256")!=item["helper_receipt_sha256"]:
+        raise ValueError("bounded disposition original helper pin differs")
+    small_path=mapped(original["path"])
+    helper_bytes=Path(small_path).read_bytes();saved=json.loads(helper_bytes)
+    if digest_bytes(helper_bytes)!=original["sha256"]:
+        if saved.get("original_receipt_source",{}).get("sha256")!=original["sha256"]:
+            raise ValueError("bounded disposition compact helper lacks its canonical original SHA")
+    audit=audits.get(item["run_id"],{});proof=audit.get("teacher_probe",{})
+    if (audit.get("state")!="completed" or audit.get("source_lineage",{}).get("contract_sha256")!=scope["contract_sha256"] or
+            proof.get("wrapper_sha256")!=item["teacher_wrapper_sha256"] or
+            proof.get("evidence_manifest_sha256")!=item["teacher_evidence_manifest_sha256"] or
+            proof.get("complete_problems")!=60 or proof.get("teacher_recorded_seconds",0)<{"02":600.,"03":240.}[route]):
+        raise ValueError("bounded disposition does not close to complete exhausted real teacher evidence")
+    groups=defaultdict(list)
+    for row in proof["rows"]:groups[row["dataset_index"]].append(row)
+    if set(groups)!=set(range(20)) or any(sorted(r["multiplier"] for r in rows)!=[.75,1.,1.25] for rows in groups.values()):
+        raise ValueError("bounded disposition real60-reference denominator differs")
+    improved=[]
+    for index,rows in groups.items():
+        base=[r["initial_cv"] for r in rows if r["initial_cv"] is not None]
+        final=[r["load_cv_all"] for r in rows if r["load_cv_all"] is not None]
+        before=float(np.mean(base)) if base else None
+        gain=(before-float(np.mean(final)))/before if before is not None and before>1e-12 else None
+        if gain is not None and gain>.01 and all(r["hard_feasible"] for r in rows):improved.append(index)
+    if (len(improved)>=6 or improved!=receipt["statistics"]["improved_mothers"] or
+            not all(r["hard_feasible"] for r in proof["rows"]) or not proof.get("unknown_search_problems") or
+            gate.get("passed") is not False or gate.get("scientific_stop") is not False or
+            gate.get("status")!="budget_limited_inconclusive"):
+        raise ValueError("bounded disposition actual quality/unknown status differs")
+    if any(a.get("key")==f"train/{route}" or (a.get("key","").startswith(f"test/{route}/") and a.get("method")!="BH") for a in audits.values()):
+        raise ValueError("inconclusive route unexpectedly received new training or independent method tests")
+    return {"actual_passed":False,"passed_quality":False,"scientific_stop":False,
+        "status":"budget_limited_inconclusive","improved_mothers":len(improved),"complete_problems":60,
+        "searched_problems":proof.get("searched_problems"),"reference_only_problems":proof.get("reference_only_problems"),
+        "legacy_problems_without_explicit_scope":proof.get("legacy_problems_without_explicit_scope"),
+        "explicit_complete_search_problems":proof.get("explicit_complete_search_problems"),
+        "training_performed":False,"independent_test_performed":False,"reason":item["reason"]}
+
+
 def task_location(root, record):
     if record.get("local_job_dir"):
         return Path(record["local_job_dir"])
@@ -299,7 +353,7 @@ def frozen_source_refs(root, state):
             raise ValueError("repaired report lacks immutable source-policy final_input")
         return {}
     snapshot=json.loads(snapshot_path.read_bytes())
-    files={k:v for k,v in snapshot["files"].items() if k.startswith(("source_","reused_"))}
+    files={k:v for k,v in snapshot["files"].items() if k.startswith(("source_","reused_","bounded_","postops_"))}
     payloads={}
     for key,item in files.items():
         path=Path(item["path"])
@@ -397,6 +451,9 @@ def build(plan, state, root, *, path_map=None, gate_directory=None, verified_vol
                          and a["state"] == "scientific_stop"]
                 if not stops:
                     issues.append(route + ": route stopped without measured failure or task scientific stop")
+        elif status.get("status")=="budget_limited_inconclusive":
+            if not result["gate"] or result["gate"].get("status")!="budget_limited_inconclusive":
+                issues.append(route+": bounded evidence-insufficient disposition did not close")
         else:
             issues.append(route + ": pending or engineering attention, no scientific failure inferred")
         if route == "06" and common_BH is not None:
@@ -444,12 +501,17 @@ def markdown(report):
         return "缺失/未定义" if value is None else f"{value:.4f}"
     for route, record in report["routes"].items():
         if not record["methods"]:
-            lines.append(f"| {route} | {record['status']} | — | — | — | — | — |")
+            label="预算内证据不足，未训练/未独立考核" if record['status']=="budget_limited_inconclusive" else record['status']
+            lines.append(f"| {route} | {label} | — | — | — | — | — |")
         for method, data in record["methods"].items():
             s = data["summary"]
             t = s["total_seconds"]
             lines.append(f"| {route} | {method} | {fmt(s['load_cv_all']['mean'])} | {fmt(s['load_cv_positive']['mean'])} | {fmt(s['aircraft_carry']['mean'])} | {fmt(s['N']['mean'])} | {fmt(t['mean'])}/{fmt(t['median'])}/{fmt(t['p95'])} |")
     lines.extend(["", "所有失败、科学停止与未完成任务均保留。主法和消融分别列示；只有通过冻结开发门槛的路线才进入后续训练与新考核。单种子51001不能支持多种子稳定性结论。", ""])
+    for route,record in report["routes"].items():
+        if record['status']=="budget_limited_inconclusive":
+            gate=record.get("gate") or {}
+            lines.append(f"- {route}：有界教师验证已结束，60个合法参考中仅{gate.get('improved_mothers','缺项')}个母场景达到改善阈值；I0补参考{gate.get('reference_only_problems','缺项')}题，原搜索无显式完整性标记{gate.get('legacy_problems_without_explicit_scope','缺项')}题。该路线未获后续训练或独立考核证据，不能据此断言算法不可行，也不追加预算。")
     if report.get("source_policy_sha256"):
         lines += ["原方案与来源保持105冻结；本轮有白名单工程修复，实际执行提交、合同SHA、旧记录和来源空窗分别保留。补I0参考只闭合合法参考，不增加教师搜索、监督标签或试算预算。", ""]
         for run_id,task in report["tasks"].items():
