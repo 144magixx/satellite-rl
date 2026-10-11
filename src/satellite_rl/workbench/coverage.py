@@ -559,6 +559,9 @@ class CoverageApplication:
         return proof
 
     def api(self, method, parts, query, body):
+        if parts and parts[0] == "nondrl":
+            from .coverage_nondrl import api
+            return api(self, method, parts[1:], body)
         if parts == ["catalog"] and method == "GET":
             from .coverage_variable import ARCHIVE_PARENT, LANES, variable_default_config
             from .coverage_drl_r04 import PARENT as DRL_PARENT, PORTS as DRL_PORTS, default_drl_r04_config
