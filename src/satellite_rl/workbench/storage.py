@@ -162,7 +162,7 @@ class Store:
     def create_job(self, config, *, kind="train", request_id=None, extra=None):
         if kind not in ("train", "evaluate", "refine", "prepare"):
             raise ValueError("未知任务类型")
-        if kind == "prepare" and not (config.get("research_stage") == "s2p19_preparation" or
+        if kind == "prepare" and not (config.get("research_stage") in ("s2p19_preparation", "fair20") or
                 (config.get("research_stage") == "coverage" and config.get("schema_version") in (5, 6, 7))):
             raise ValueError("准备任务须声明受校验的S2-P19准备类型")
         if request_id is not None:
@@ -184,6 +184,9 @@ class Store:
             model_dir = self.models_root / run_id
             model_dir.mkdir()
             frozen_extra = dict(extra or {})
+            if config.get("research_stage") == "fair20":
+                from .fair20_service import freeze_fair20_sources
+                frozen_extra = freeze_fair20_sources(frozen_extra, directory / "input_sources")
             if config.get("research_stage") == "s2p19_preparation":
                 from copy import deepcopy
                 from .s2p19_service import freeze_preparation
@@ -280,7 +283,7 @@ class Store:
                    **frozen_extra}
             atomic_json(directory / "config.json", config)
             atomic_json(directory / "status.json", {
-                "run_id": run_id, "stage": "queued", "created_at": now(),
+                "run_id": run_id, "stage": "queued_resources" if frozen_extra.get("resource_hold") else "queued", "created_at": now(),
                 "env_step": 0, "update_step": 0, "episode": 0,
                 "budget_env_steps": (0 if config.get("schema_version") == 6 and
                                      (kind == "prepare" or frozen_extra.get("train_mode") == "BC")
