@@ -99,6 +99,8 @@ def _initials(job, expected_sha, key="initial_source"):
     if manifest.get("dataset_sha256") != expected_sha or manifest.get("completed") is not True:
         raise ValueError("common initial dataset/completion differs")
     raw = Path(manifest["evidence_path"])
+    if digest(raw / "manifest.json") != manifest.get("raw_manifest_sha256"):
+        raise ValueError("common initial raw manifest SHA differs")
     evidence = RowStore(raw, manifest["provenance"], resume=True)
     return {row["key"]: evidence.load(row) for row in evidence.manifest["rows"]}
 
@@ -215,7 +217,8 @@ def evaluate(directory, job, config, provenance, *, resume, progress, stopped):
                      latest_metrics=jsonable(result.get("metrics_all", {})), latest_timing=jsonable(result.get("timing", {})))
     if mode == "initial":
         atomic_json(directory / "initial_manifest.json", {"completed": True, "dataset_sha256": source["sha256"],
-                    "evidence_path": str(store.root), "provenance": provenance, "rows": len(store.keys)})
+                    "evidence_path": str(store.root), "raw_manifest_sha256": digest(store.path),
+                    "provenance": provenance, "rows": len(store.keys)})
     return {"summary": {"rows": len(store.keys), "mother_count": len(indices), "route": route,
                         "dataset_sha256": source["sha256"], "raw_manifest": str(store.path)}}
 
@@ -299,7 +302,10 @@ def _run_nondrl_job(directory, job, config, *, resume=False, preflight=None):
             source = job["teacher_source"]
             if digest(source["path"]) != source["sha256"]:
                 raise ValueError("teacher manifest SHA differs")
-            evidence = read_json(source["path"])["evidence_path"]
+            teacher_manifest = read_json(source["path"])
+            evidence = teacher_manifest["evidence_path"]
+            if digest(evidence) != teacher_manifest.get("sha256"):
+                raise ValueError("frozen teacher evidence manifest SHA differs")
             gate = job["reachability_source"]
             if digest(gate["path"]) != gate["sha256"]:
                 raise ValueError("frozen development gate SHA differs")
