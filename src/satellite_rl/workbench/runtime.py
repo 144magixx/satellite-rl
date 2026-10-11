@@ -250,6 +250,14 @@ class Scheduler:
 
     def _launch(self, job, status):
         directory = self.store.job_dir(job["run_id"])
+        if job.get("experiment_id") == "S1-ND12" and job.get("source_repair_contract"):
+            try:
+                from .nondrl_source_repair import validate_execution_job
+                validate_execution_job(self.store, job)
+            except Exception as error:
+                self._status(directory, status, stage="failed", attention_required=True,
+                             error="执行来源合同校验失败：" + str(error))
+                return
         command = [self.python, "-u", "-m", "satellite_rl.workbench.runner", "--job-dir", str(directory)]
         if job.get("resume"):
             command.append("--resume")
