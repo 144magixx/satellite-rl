@@ -397,6 +397,13 @@ def train(evidence_path, route, config, output, resume=False, stop_callback=None
                                                 "device": device, "contract": contract}, sampler)
                     validation_rows.append({"updates": updates, "metrics": result})
                     atomic_json(folder / "validation.json", validation_rows)
+                    if isinstance(result, dict) and result.get("attention_required"):
+                        status = "stopped"
+                        record = checkpoint()
+                        record.update(attention_required=True,
+                                      stop_reason="engineering_attention: " + str(result.get("reason", "incomplete_validation_evidence")))
+                        atomic_json(folder / "status.json", record)
+                        return record
                     if isinstance(result, dict) and result.get("scientific_stop"):
                         status = "scientific_stop"
                         record = checkpoint()
