@@ -8,12 +8,50 @@ from unittest.mock import patch
 
 from satellite_rl.training.run_monitor import atomic_json
 from satellite_rl.workbench.coverage_nondrl import (default_nondrl_config, validate_nondrl_config,
-    partition_contract, resume_job, METHODS)
+    partition_contract, resume_job, METHODS, merge_datasets)
 from satellite_rl.workbench.storage import Store, digest
 from satellite_rl.workbench.nondrl_preparation import bind_parser_source
 
 
 class NondrlWorkbenchTests(unittest.TestCase):
+    def test_cross_lane_merge_keeps_source_task_lineage(self):
+        import numpy as np
+        from satellite_rl.coverage.scenes import CoverageDataset, CoverageScene
+        from satellite_rl.coverage.variable_dataset import save_variable_dataset, load_variable_dataset
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_path = root / "partition.json"
+            roles = {r: {"dates": [f"2024-01-{i:02d}"], "count": 1}
+                     for i, r in enumerate(("train", "development", "validation"), 1)}
+            roles["test"] = {"dates": ["2024-02-11", "2024-02-12"], "count": 2}
+            atomic_json(manifest_path, {"group": "S1-ND12", "roles": roles})
+            refs = []
+            for port, day in (("20418", "2024-02-11"), ("20474", "2024-02-12")):
+                store = Store(root / port / "archive")
+                identifier = "source_" + port
+                directory = store.record_dir("scenes", identifier)
+                path = directory / "inputs.npz"
+                scene = CoverageScene(day, np.array([[45., 13.]]), np.array([1.e6]), np.empty((0, 2)), ["aircraft"],
+                                      {"source_dates": [day], "selected_time_utc": day + "T00:00:00Z"}, "rawsha")
+                save_variable_dataset(CoverageDataset([scene], {"partition_role": "test", "source_dates": [day]}), path)
+                record = {"id": identifier, "path": str(path), "sha256": digest(path), "schema_version": 7,
+                          "partition_role": "test", "dates": [day], "count": 1, "source_run_id": "prep_" + port,
+                          "partition_manifest_path": str(manifest_path), "partition_manifest_sha256": digest(manifest_path)}
+                store.save_record("scenes", record)
+                jobdir = store.job_dir(record["source_run_id"])
+                atomic_json(jobdir / "job.json", {"experiment_id": "S1-ND12", "preparation_mode": "dataset", "dataset_role": "test", "source_date": day})
+                atomic_json(jobdir / "status.json", {"stage": "completed"})
+                atomic_json(jobdir / "artifacts.json", {"prepared_dataset": str(path), "prepared_dataset_sha256": digest(path)})
+                refs.append({"port": port, "id": identifier})
+            application = type("Application", (), {"store": Store(root / "20418" / "archive")})()
+            with patch("satellite_rl.workbench.coverage_nondrl.PARENT", root), patch("satellite_rl.workbench.coverage_nondrl.deployment", return_value="20418"):
+                result = merge_datasets(application, {"source_datasets": refs})
+                self.assertEqual(result["count"], 2)
+                self.assertEqual(result["dates"], roles["test"]["dates"])
+                merged = load_variable_dataset(result["path"])
+                self.assertEqual({r["source_port"] for r in merged.metadata["source_datasets"]}, {"20418", "20474"})
+                self.assertTrue(all(r["source_run_id"] for r in merged.metadata["source_datasets"]))
+
     def test_catalog_methods_match_executors(self):
         from satellite_rl.coverage.nondrl.classical import CLASSICAL_METHODS
         from satellite_rl.coverage.nondrl.learning import LEARNING_METHODS

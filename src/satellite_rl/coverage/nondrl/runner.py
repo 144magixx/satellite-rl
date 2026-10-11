@@ -10,6 +10,8 @@ from pathlib import Path
 import time
 import traceback
 from contextlib import contextmanager
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeout
+import multiprocessing
 
 import numpy as np
 
@@ -89,10 +91,97 @@ def scaled_scene(scene, multiplier):
     return value
 
 
+def _initial_worker_setup():
+    import torch
+    torch.set_num_threads(1)
+
+
+def _initial_worker(payload):
+    """Single CPU scene; receipt remains usable if its coordinator dies."""
+    from .core import solve
+    target = Path(payload["receipt"])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with worker_lock(target.parent / target.stem):
+        existing = read_json(target)
+        if existing:
+            if existing.get("provenance_sha256") != payload["provenance_sha256"]:
+                raise ValueError("initial worker receipt provenance differs")
+            return str(target)
+        begin = time.perf_counter()
+        scene = payload["scene"]
+        result = solve(scaled_scene(scene, payload["multiplier"]), "I0", payload["limits"])
+        row = {"key": payload["key"], "run_id": payload["run_id"], "route": payload["route"], "method": "I0",
+               "dataset_index": payload["index"], "mother_scene_id": scene.scene_id, "source_hash": scene.source_hash,
+               "demand_multiplier": payload["multiplier"], "aircraft_background": {"dataset_sha256": payload["dataset_sha256"], "index": payload["index"]},
+               "result": jsonable(result), "measured_task_seconds": time.perf_counter() - begin,
+               "worker_pid": os.getpid(), "worker_device": "cpu", "shared_initial_record": None}
+        atomic_json(target, {"provenance_sha256": payload["provenance_sha256"], "row": row})
+    return str(target)
+
+
+def parallel_initial(directory, job, config, provenance, dataset, source, indices, store, progress, stopped):
+    """Bounded spawn pool, fixed order commits, completed orphan receipts retained."""
+    workers = min(config["preparation"]["initial_workers"], len(indices) * 3)
+    todo = [(i, m) for i in indices for m in config["evaluation"]["demand_multipliers"]
+            if f"{i}:{m:g}" not in store.keys]
+    provenance_sha = canonical_sha(provenance)
+    total = len(indices) * len(config["evaluation"]["demand_multipliers"])
+    pending, cursor = [], 0
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=workers, mp_context=context, initializer=_initial_worker_setup) as pool:
+        while cursor < len(todo) or pending:
+            while cursor < len(todo) and len(pending) < workers * 2 and not stopped():
+                index, multiplier = todo[cursor]
+                key = f"{index}:{multiplier:g}"
+                receipt = directory / "initial_receipts" / (canonical_sha(key)[:24] + ".json")
+                payload = {"scene": dataset.scenes[index], "multiplier": multiplier, "index": index,
+                           "key": key, "receipt": str(receipt), "provenance_sha256": provenance_sha,
+                           "dataset_sha256": source["sha256"], "limits": config["coverage"]["nondrl"]["limits"],
+                           "run_id": job["run_id"], "route": config["coverage"]["nondrl"]["route"]}
+                # Reuse a complete orphan receipt without repeating its calculation.
+                old = read_json(receipt)
+                if old is not None:
+                    if old.get("provenance_sha256") != provenance_sha:
+                        raise ValueError("initial receipt belongs to another frozen task")
+                    pending.append((key, receipt, None))
+                else:
+                    pending.append((key, receipt, pool.submit(_initial_worker, payload)))
+                cursor += 1
+            if not pending:
+                break
+            key, receipt, future = pending[0]
+            if future is not None:
+                try:
+                    future.result(timeout=5)
+                except FutureTimeout:
+                    progress(stage="preparing", completed_scenes=len(store.keys), total_scenes=total,
+                             initial_workers=workers, initial_inflight=len(pending))
+                    continue
+            value = read_json(receipt)
+            if value is None or value.get("provenance_sha256") != provenance_sha or value["row"]["key"] != key:
+                raise ValueError("initial worker returned an invalid complete receipt")
+            store.append(key, value["row"])
+            # Commit first, then remove the temporary complete receipt. Native
+            # crashes between these operations are safe because RowStore wins.
+            receipt.unlink(missing_ok=True)
+            pending.pop(0)
+            progress(stage="preparing", completed_scenes=len(store.keys), total_scenes=total,
+                     initial_workers=workers, initial_inflight=len(pending))
+    return {"stopped": stopped(), "completed_scenes": len(store.keys)}
+
+
 def _initials(job, expected_sha, key="initial_source"):
     source = job.get(key)
     if not source:
         return {}
+    if isinstance(source, list):
+        combined = {}
+        for value in source:
+            rows = _initials({key: value}, expected_sha, key)
+            if set(combined).intersection(rows):
+                raise ValueError("common initial shard sources overlap")
+            combined.update(rows)
+        return combined
     if digest(source["path"]) != source["sha256"]:
         raise ValueError("initial manifest SHA differs")
     manifest = read_json(source["path"])
@@ -183,6 +272,10 @@ def evaluate(directory, job, config, provenance, *, resume, progress, stopped):
                 raise ValueError("frozen evaluation model SHA differs")
         policy = load_policy(Path(job["model_path"]) / "policy.pt", expected_provenance={"route": route, "schema_version": 7},
                              device=job.get("execution_device", "cpu"), mode=method)
+    if mode == "initial" and config["preparation"]["initial_workers"] > 1 and len(store.keys) < total:
+        outcome = parallel_initial(directory, job, config, provenance, dataset, source, indices, store, progress, stopped)
+        if outcome["stopped"]:
+            return outcome
     for index in indices:
         original = dataset.scenes[index]
         for multiplier in multipliers:
@@ -226,6 +319,7 @@ def evaluate(directory, job, config, provenance, *, resume, progress, stopped):
 @contextmanager
 def worker_lock(directory):
     """OS-held job lock releases on process death, with no stale PID guessing."""
+    Path(directory).mkdir(parents=True, exist_ok=True)
     path = Path(directory) / "worker.lock"
     with path.open("a+b") as stream:
         if stream.tell() == 0:

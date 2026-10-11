@@ -48,9 +48,10 @@ def default_nondrl_config(route="06"):
                                     "method": "main", "limits": NondrlConfig().to_dict()}},
             "training": {"device": "cuda", "seed": 51001, "total_steps": 0,
                          "updates": UPDATE_CAPS.get(route, 0), "batch_size": 16 if route in ("03", "04") else 32,
-                         "checkpoint_interval": 1000, "validation_interval": 1000},
-            "teacher": deepcopy(TEACHER_CAPS.get(route, {"max_problems": 0, "max_trials": 0,
-                                                        "max_seconds": 0.})),
+                         "checkpoint_interval": 1000, "validation_interval": 1000, "microbatch_size": 4},
+            "preparation": {"initial_workers": 8},
+            "teacher": {**deepcopy(TEACHER_CAPS.get(route, {"max_problems": 0, "max_trials": 0,
+                                                        "max_seconds": 0.})), "workers": 8, "worker_threads": 1},
             "evaluation": {"demand_multipliers": [.75, 1., 1.25]}, "datasets": {}}
 
 
@@ -75,6 +76,8 @@ def validate_nondrl_config(supplied):
         raise ValueError("formal geometry/search limits must use frozen common limits")
     if value["training"] != default["training"] or value["teacher"] != default["teacher"]:
         raise ValueError("non-DRL seed, teacher or update budget differs")
+    if value["preparation"]["initial_workers"] not in (1, 2, 4, 8) or type(value["preparation"]["initial_workers"]) is not int:
+        raise ValueError("initial worker count must be 1,2,4 or8")
     if value["evaluation"] != default["evaluation"]:
         raise ValueError("demand multiplier contract differs")
     if not isinstance(value["datasets"], dict) or set(value["datasets"]) - set(ROLES):
@@ -168,6 +171,23 @@ def _dependency(body, key, required_kind, route):
     return directory, job
 
 
+def _initial_dependencies(body, key, dataset_sha):
+    supplied = body.get(key)
+    values = supplied if isinstance(supplied, list) else [supplied]
+    if not values or any(not isinstance(v, dict) for v in values):
+        raise ValueError(f"{key} requires frozen common initial source tasks")
+    records = []
+    for value in values:
+        directory, source_job = _dependency({key: value}, key, "prepare", value.get("route", "06"))
+        path = directory / "initial_manifest.json"
+        manifest = read_json(path, {})
+        if (source_job.get("preparation_mode") != "initial" or manifest.get("completed") is not True or
+                manifest.get("dataset_sha256") != dataset_sha):
+            raise ValueError("common initial partition provenance differs")
+        records.append({"path": str(path), "sha256": digest(path), "run_id": source_job["run_id"]})
+    return records
+
+
 def submit(application, body):
     config = validate_nondrl_config(body["config"])
     port = deployment(application.store)
@@ -229,23 +249,9 @@ def submit(application, body):
                 manifest.get("dataset_sha256") not in extra["dataset_sha256"].values()):
             raise ValueError("teacher completion/data lineage differs")
         extra["teacher_source"] = {"path": str(path), "sha256": digest(path), "run_id": source_job["run_id"]}
-        directory, source_job = _dependency(body, "validation_initial_source", "prepare",
-                                            body["validation_initial_source"].get("route", route))
-        path = directory / "initial_manifest.json"
-        manifest = read_json(path, {})
-        if (source_job.get("preparation_mode") != "initial" or manifest.get("completed") is not True or
-                manifest.get("dataset_sha256") != datasets["validation"]["sha256"]):
-            raise ValueError("fixed validation initial provenance differs")
-        extra["validation_initial_source"] = {"path": str(path), "sha256": digest(path), "run_id": source_job["run_id"]}
+        extra["validation_initial_source"] = _initial_dependencies(body, "validation_initial_source", datasets["validation"]["sha256"])
     if kind == "evaluate":
-        directory, source_job = _dependency(body, "initial_source", "prepare", body["initial_source"].get("route", route))
-        path = directory / "initial_manifest.json"
-        manifest = read_json(path, {})
-        if (source_job.get("preparation_mode") != "initial" or
-                manifest.get("dataset_sha256") != datasets[role]["sha256"] or
-                manifest.get("completed") is not True):
-            raise ValueError("shared I0 provenance differs")
-        extra["initial_source"] = {"path": str(path), "sha256": digest(path), "run_id": source_job["run_id"]}
+        extra["initial_source"] = _initial_dependencies(body, "initial_source", datasets[role]["sha256"])
     if kind == "evaluate" and needs_model:
         directory, source_job = _dependency(body, "model_source", "train", route)
         model = Path(source_job["model_dir"]) / "final"
@@ -253,7 +259,7 @@ def submit(application, body):
                      model_files=[{"path": str(model / name), "sha256": digest(model / name)} for name in ("policy.pt", "model.json")])
     indices = body.get("scene_indices")
     if indices is not None:
-        if kind != "evaluate" or not isinstance(indices, list) or not indices or len(set(indices)) != len(indices) or any(type(i) is not int or i not in range(datasets[role]["count"]) for i in indices):
+        if not (kind == "evaluate" or initial_mode) or not isinstance(indices, list) or not indices or len(set(indices)) != len(indices) or any(type(i) is not int or i not in range(datasets[role]["count"]) for i in indices):
             raise ValueError("scene index selection invalid")
         extra["scene_indices"] = indices
     return application.store.create_job(config, kind=kind, request_id=body.get("request_id"), extra=extra)
@@ -266,10 +272,15 @@ def freeze_sources(extra, destination):
     for key in ("teacher_source", "dataset_source", "initial_source", "reachability_source", "validation_initial_source"):
         source = frozen.get(key)
         if source:
-            path = _pin(source["path"], source["sha256"])
-            target = destination / path.name
-            shutil.copyfile(path, target)
-            frozen[key] = {**source, "source_path": str(path), "path": str(target)}
+            values = source if isinstance(source, list) else [source]
+            records = []
+            for index, item in enumerate(values):
+                path = _pin(item["path"], item["sha256"])
+                target = destination / key / str(index) / path.name
+                target.parent.mkdir(parents=True)
+                shutil.copyfile(path, target)
+                records.append({**item, "source_path": str(path), "path": str(target)})
+            frozen[key] = records if isinstance(source, list) else records[0]
     if frozen.get("model_files"):
         target = destination / "model"
         target.mkdir()
@@ -337,10 +348,33 @@ def merge_datasets(application, body):
     from satellite_rl.coverage.scenes import CoverageDataset
     from satellite_rl.coverage.variable_dataset import load_variable_dataset, save_variable_dataset
     deployment(application.store)
-    ids = body.get("dataset_ids")
-    if not isinstance(ids, list) or len(ids) < 2 or len(set(ids)) != len(ids):
-        raise ValueError("merge requires distinct source dataset IDs")
-    records = [application.store.get_record("scenes", i) for i in ids]
+    references = body.get("source_datasets")
+    if references is not None:
+        from .storage import Store
+        if (not isinstance(references, list) or len(references) < 2 or
+                any(not isinstance(r, dict) or str(r.get("port")) not in PORTS for r in references) or
+                len({(str(r["port"]), r.get("id")) for r in references}) != len(references)):
+            raise ValueError("cross-lane merge requires distinct authorized port/record references")
+        records = []
+        for reference in references:
+            store = Store(PARENT / str(reference["port"]) / "archive")
+            record = store.get_record("scenes", validate_id(reference.get("id")))
+            directory = store.job_dir(record.get("source_run_id", ""))
+            source_job = read_json(directory / "job.json", {})
+            artifacts = read_json(directory / "artifacts.json", {})
+            if (source_job.get("experiment_id") != GROUP or source_job.get("preparation_mode") != "dataset" or
+                    read_json(directory / "status.json", {}).get("stage") != "completed" or
+                    source_job.get("dataset_role") != record.get("partition_role") or
+                    record.get("dates") != [source_job.get("source_date")] or
+                    artifacts.get("prepared_dataset") != record.get("path") or
+                    artifacts.get("prepared_dataset_sha256") != record.get("sha256")):
+                raise ValueError("cross-lane daily dataset must come from completed official ND12 prepare")
+            records.append({**record, "source_port": str(reference["port"]), "source_dataset_id": record["id"]})
+    else:
+        ids = body.get("dataset_ids")
+        if not isinstance(ids, list) or len(ids) < 2 or len(set(ids)) != len(ids):
+            raise ValueError("merge requires distinct source dataset IDs")
+        records = [application.store.get_record("scenes", i) for i in ids]
     roles = {r.get("partition_role") for r in records}
     manifests = {r.get("partition_manifest_sha256") for r in records}
     if len(roles) != 1 or len(manifests) != 1 or any(r.get("schema_version") != 7 for r in records):
@@ -358,7 +392,8 @@ def merge_datasets(application, body):
     identifier = new_id("nondrl_scenes")
     directory = application.store.record_dir("scenes", identifier)
     dataset = CoverageDataset(scenes, {"partition_role": role, "source_dates": sorted(dates),
-                              "source_datasets": [{"id": r["id"], "sha256": r["sha256"]} for r in records]})
+                              "source_datasets": [{"id": r["id"], "sha256": r["sha256"],
+                                  "source_port": r.get("source_port"), "source_run_id": r.get("source_run_id")} for r in records]})
     save_variable_dataset(dataset, directory / "inputs.npz")
     shutil.copyfile(records[0]["partition_manifest_path"], directory / "partition_manifest.json")
     record = {"id": identifier, "name": f"S1-ND12 merged {role}", "schema_version": 7,

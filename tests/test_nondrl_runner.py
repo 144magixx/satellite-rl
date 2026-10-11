@@ -59,6 +59,7 @@ class NondrlRunnerTests(unittest.TestCase):
             save_variable_dataset(CoverageDataset([scene], {"partition_role": "development"}), npz)
             record = {"path": str(npz), "sha256": digest(npz), "partition_role": "development"}
             config = default_nondrl_config("06")
+            config["preparation"]["initial_workers"] = 2
             config["datasets"] = {"development": record}
             initial_dir = root / "initial"
             initial_dir.mkdir()
