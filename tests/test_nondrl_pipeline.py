@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from scripts.stage1_nondrl12.controller import Controller, PORTS, stable_sha
+from scripts.stage1_nondrl12 import controller as original_controller, launcher as original_launcher
 from scripts.stage1_nondrl12.controller_pipeline import PipelineController
 from scripts.stage1_nondrl12.launcher_pipeline import load_resume_inputs, verify_registered_roles, sha_bytes
 from satellite_rl.workbench.coverage_nondrl import METHODS
@@ -45,6 +47,39 @@ def gate(route, passed=True):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_unknown_pipeline_phase_fails_closed_in_legacy_tick(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan, registry = inputs(); transport = FakeTransport()
+            controller = PipelineController(tmp, plan, registry, transport)
+            bootstrap(controller, transport, slow_route="10")
+            self.assertEqual(controller.state["phase"], "route_pipeline")
+            original = Controller(tmp, plan, registry, transport)
+            writes = sum(body is not None for _, _, body in transport.requests)
+            with self.assertRaises(KeyError):
+                original.tick()
+            self.assertEqual(sum(body is not None for _, _, body in transport.requests), writes)
+
+    def test_two_logical_shards_share_one_physical_test_slot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan, registry = inputs(); plan["methods"]["06"] = ["main", "BH"]
+            transport = FakeTransport()
+            transport.physical_port = lambda p: 20473 if p == 20474 else p
+            controller = PipelineController(tmp, plan, registry, transport)
+            bootstrap(controller, transport)
+            controller.state["routes"] = {r: gate(r, False) for r in METHODS}
+            controller.workers_quiet = lambda: True
+            controller.testing()
+            tests = {k: j for k, j in controller.state["jobs"].items() if k.startswith("test/")}
+            self.assertEqual(len(tests), 3)
+            self.assertIn("test/06/BH/20473", tests)
+            self.assertNotIn("test/06/BH/20474", tests)
+            mark(transport, tests["test/06/BH/20473"], "completed")
+            controller.testing()
+            self.assertIn("test/06/BH/20474", controller.state["jobs"])
+            request = next(body for p, path, body in transport.requests if p == 20474 and body and body.get("kind") == "evaluate" and body.get("dataset_role") == "test")
+            self.assertEqual(request["scene_indices"], list(range(3, 20, 4)))
+            live = [j for k, j in controller.state["jobs"].items() if k.startswith("test/") and j["stage"] not in ("completed", "stopped", "failed", "interrupted", "cancelled")]
+            self.assertEqual(sum(transport.physical_port(j["port"]) == 20473 for j in live), 1)
     def test_slow10_does_not_block_ready01_or_strong_probe02(self):
         with tempfile.TemporaryDirectory() as tmp:
             plan, registry = inputs(); transport = FakeTransport()
@@ -154,6 +189,18 @@ class PipelineTests(unittest.TestCase):
 
 
 class RegistryResumeTests(unittest.TestCase):
+    def test_legacy_cli_lease_guard_precedes_any_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); (root / "controller").mkdir()
+            (root / "controller/execution_placement.json").write_text("{}")
+            with patch.object(original_launcher.ops, "LOCAL", root), patch.object(original_launcher, "run") as run:
+                with self.assertRaises(RuntimeError):
+                    original_launcher.main()
+                run.assert_not_called()
+            with patch.object(original_controller, "Controller") as constructor:
+                with self.assertRaises(RuntimeError):
+                    original_controller.main(["--directory", str(root / "controller"), "--plan", "unused", "--registry", "unused"])
+                constructor.assert_not_called()
     def test_original_registry_bytes_reused_and_changed_timestamp_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); plan, registry = inputs()

@@ -19,6 +19,7 @@ from scripts.stage1_nondrl12 import ops
 from scripts.stage1_nondrl12 import controller as original_controller
 from scripts.stage1_nondrl12.controller import stable_sha, validate_plan
 from scripts.stage1_nondrl12 import controller_pipeline
+from scripts.stage1_nondrl12 import placement_transport
 from satellite_rl.coverage.nondrl.runner import worker_lock
 from satellite_rl.training.run_monitor import atomic_json
 from satellite_rl.workbench.runtime import process_start_time
@@ -62,19 +63,23 @@ def main(argv=None):
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--directory", type=Path, default=ops.LOCAL / "controller")
+    parser.add_argument("--placement-file", type=Path)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
     directory = args.directory.resolve()
     # Do not call prepare/register. Existing data registry bytes are immutable.
     with worker_lock(directory / "launcher_lock"), worker_lock(directory):
         values, raw, hashes = load_resume_inputs(args.plan, directory, args.commit)
-        verify_registered_roles(values["registry"])
+        placement_path = args.placement_file or directory / "execution_placement.json"
+        transport = placement_transport.Transport.from_file(placement_path)
+        verify_registered_roles(values["registry"], transport)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_pipeline_" + str(os.getpid())
         history = directory / "history" / stamp
         history.mkdir(parents=True)
         for key, payload in raw.items():
             (history / (key + ".before.json")).write_bytes(payload)
-        modules = [Path(__file__), Path(controller_pipeline.__file__), Path(original_controller.__file__), Path(ops.__file__)]
+        modules = [Path(__file__), Path(controller_pipeline.__file__), Path(original_controller.__file__),
+                   Path(placement_transport.__file__), Path(ops.__file__)]
         guards = {str(path): sha_bytes(path.read_bytes()) for path in modules}
         atomic_json(history / "transition.json", {"from_launcher_pid": values["launcher"].get("pid"),
                     "previous_byte_sha256": hashes, "new_module_sha256": guards,
@@ -82,14 +87,16 @@ def main(argv=None):
         launcher = {**values["launcher"], "pid": os.getpid(), "process_start_time": process_start_time(os.getpid()),
                     "phase": "running_workbench_dag", "client_type": "route_readiness_pipeline_v1",
                     "resumed_utc": now(), "resume_history": str(history), "module_sha256": guards,
-                    "registry_file_sha256": hashes["registry"]}
+                    "registry_file_sha256": hashes["registry"], "placement_file": str(transport.path),
+                    "placement_sha256": transport.mapping_sha256, "logical_to_physical": transport.mapping}
         def save(**fields):
             launcher.update(observed_utc=now(), **fields)
             atomic_json(directory / "launcher.json", launcher)
-        controller = controller_pipeline.PipelineController(directory, values["plan"], values["registry"])
+        controller = controller_pipeline.PipelineController(directory, values["plan"], values["registry"], transport)
         save(controller_phase=controller.state["phase"], jobs=len(controller.state["jobs"]))
         while True:
             try:
+                transport.verify_unchanged()
                 if (sha_bytes(args.plan.read_bytes()) != hashes["plan"] or
                         sha_bytes((directory / "dataset_registry.json").read_bytes()) != hashes["registry"] or
                         any(sha_bytes(Path(path).read_bytes()) != sha for path, sha in guards.items())):

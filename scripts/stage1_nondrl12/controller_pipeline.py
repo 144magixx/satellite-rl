@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 
 from scripts.stage1_nondrl12.controller import Controller, PORTS, TERMINAL
-from satellite_rl.workbench.coverage_nondrl import METHODS
+from satellite_rl.workbench.coverage_nondrl import METHODS, MODEL_METHODS
 from satellite_rl.workbench.storage import now
 
 LEARNED = ("01", "02", "03", "04", "05")
@@ -21,6 +21,14 @@ def route_of(key):
 
 
 class PipelineController(Controller):
+    def save(self):
+        if self.state["phase"] in ("initial", "development", "teacher", "train", "test"):
+            self.state.update(pipeline_stage=self.state["phase"], phase="route_pipeline")
+        super().save()
+
+    def physical_port(self, logical):
+        return self.transport.physical_port(logical) if hasattr(self.transport, "physical_port") else logical
+
     def route_attention(self, route, reason, **fields):
         record = {"reason": reason, "at": now(), **fields}
         old = self.state.setdefault("route_attention", {}).get(route)
@@ -203,8 +211,46 @@ print(json.dumps({{'quiet':not live and not unknown,'live':live,'unknown_birth':
             return
         if not self.workers_quiet():
             return
-        self.state["phase"] = "test"
-        super().testing()
+        self.state.update(phase="route_pipeline", pipeline_stage="test")
+        count = self.record(PORTS[0], "test")["count"]
+        physical_groups = {}
+        for port in PORTS:
+            physical_groups.setdefault(self.physical_port(port), []).append(port)
+        cursors = self.state.setdefault("physical_test_cursor", {})
+        for physical, logicals in physical_groups.items():
+            if any(key.startswith("test/") and self.physical_port(j["port"]) == physical and j["stage"] not in TERMINAL
+                   for key, j in self.state["jobs"].items()):
+                continue
+            offset = cursors.get(str(physical), 0) % len(logicals)
+            order = logicals[offset:] + logicals[:offset]
+            launched = False
+            for port in order:
+                lane = PORTS.index(port)
+                for route, methods in self.plan["methods"].items():
+                    for method in methods:
+                        if method != "BH" and not self.state["routes"][route]["passed"]:
+                            continue
+                        key = f"test/{route}/{method}/{port}"
+                        if key in self.state["jobs"]:
+                            continue
+                        extra = {"scene_indices": list(range(lane, count, len(PORTS)))}
+                        if method in MODEL_METHODS.get(route, ()):
+                            model = self.state["jobs"][f"train/{route}"]
+                            extra["model_source"] = {"port": str(model["port"]), "run_id": model["run_id"]}
+                        self.ensure(key, port, self.body(route, method, "evaluate", "test", port, **extra))
+                        cursors[str(physical)] = (logicals.index(port) + 1) % len(logicals)
+                        launched = True
+                        break
+                    if launched:
+                        break
+                if launched:
+                    break
+        expected = sum(sum(m == "BH" or self.state["routes"][r]["passed"] for m in methods) * len(PORTS)
+                       for r, methods in self.plan["methods"].items())
+        rows = [j for key, j in self.state["jobs"].items() if key.startswith("test/")]
+        if len(rows) == expected and all(j["stage"] == "completed" for j in rows):
+            self.state.update(phase="report_pending", completed_at=now(), report_scope="actual closed route gates and physically isolated tests")
+            self.event("report_pending", test_tasks=len(rows), routes=self.state["routes"])
 
     def update_route_view(self):
         view = {}
@@ -230,9 +276,11 @@ print(json.dumps({{'quiet':not live and not unknown,'live':live,'unknown_birth':
             return self.state
         if not self.refresh():
             return self.state
-        if self.state["phase"] == "initial":
+        self.save()
+        if self.state.get("pipeline_stage") == "initial":
             self.initial()
-        if self.state["phase"] != "initial":
+            self.save()
+        if self.state.get("pipeline_stage") != "initial":
             self.development()
             if self.state["phase"] != "attention_required":
                 self.testing()
