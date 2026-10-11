@@ -1,5 +1,11 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-12 S1-ND12已正式启动，四端冻结源码与工作台均通过核验。** 科学源`105d5f57ec241cce0c484b95f6341d6dc418b3fe`、[冻结计划](outputs/experiments/first_stage_nondrl12_20261012/run_plan.json) SHA`d4d5b097ffcb4db41725997541320ff4bbbaf80f1963a754d386516eee6db2c2`；112项代码/工作台/旧权重检查通过，四端五个默认网络共20次实际CUDA更新仅记工程验证。正式三prepare为Feb10/20473 `prepare_nondrl_20261012_033449_2428a355`、Feb11/20474 `prepare_nondrl_20261012_033454_f72b76aa`、Feb12/20418 `prepare_nondrl_20261012_033458_291a0c53`。03:42 API快照中后两日各50母完成，Feb10仍准备；尚无正式监督训练。运行快照不替代下次实际核查。
+
+唯一本地launcher38528/出生`1791747268.9194221`按[启动回执](outputs/experiments/first_stage_nondrl12_20261012/controller/launch_start.json)接续数据登记、四端共同初解、开发闸门、教师/监督训练流水及独立考核。首launcher16276因上传父目录缺失在正式任务前退出，client-only `8254e21`已修并保[历史](outputs/experiments/first_stage_nondrl12_20261012/controller/history/upload_parent_missing/launcher.json)，远端科学源和计划不改；不得双起协调器。新工作台8940–8943与[持久隧道](outputs/experiments/first_stage_nondrl12_20261012/preflight/tunnels/receipt.json)已实际核，远端页面可见准备任务；[现场API/进程/输入SHA](outputs/experiments/first_stage_nondrl12_20261012/preflight/first_launch_live_check.json)确认下载增量和冻结包。
+
+本组十二路线含五种监督模型，seed51001最多44000更新；固定0.5°、同景同N、每机覆盖及N≤200，首轮不证明宽度/动态全目标。02/03用真实开发强教师而非弱规则代理判可达性，试算/问题/秒从原总账扣除；03的10000是教师问题，另冻1280000候选试算上限。05/11共享含64飞机工程上限的候选菜单，超限筛除不算物理不可行；BH即使06停也保留为共享对照。新Feb10/11/12分别用于验证/考核，旧考核不回流训练，模型不按test选择。[运行清单](outputs/experiments/first_stage_nondrl12_20261012/run_manifest.json)保存来源和实际任务；小时跟进`s1-nd12`已ACTIVE并[精确回读](outputs/experiments/first_stage_nondrl12_20261012/followup/automation_after_launch_readback.json)。报告、原始曲线、权重和完整双端归档仍待，当前没有新效果结论。
+
 **2026-10-12 第二阶段SAC/PPO/DQN效果差异问答核查（仅解释既有证据）。** 旧默认100景重评中T-SAC终态总满意度95.36/100，旧PPO direct67.11、DQN73.23；旧训练来源与物理实现有限制，不据此宣称当前欧洲环境下同预算重训的算法排名。该套T-SAC的直接行为优势是频率避让与槽数兑现，功率几乎固定20 W；经验回放、熵、双价值网络及Transformer各自贡献未由该对照识别。当前PPO direct熵正则未进入策略损失，但仍随机采样，不能倒推旧权重训练配置。详见[问答](Q&A/算法与训练/第二阶段SAC与PPO及DQN的效果差异.md)。本轮未新增或恢复训练/评价、未改变已授权范围；纯说明无需前端变更。
 
 **2026-10-12 S1-ND12十二路线已获四端实施授权，正在并行实现。** 用户要求GPT-6.1 Sol实现、四端验证至报告/曲线/完整归档，中途不确认；一次主动中断后已要求继续并确认远端可连。根实际重新核20418/20424/20473/20474全部SSH成功、四个不同GPU UUID的4090D、DQN/CUDA可用，GPU当前无计算进程；新8940–8943端口空闲。尚未启动正式prepare/训练/评价，不把资源就绪当算法已运行。
