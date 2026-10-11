@@ -56,6 +56,8 @@ def metrics_all(scene, layout, config=None):
     cfg = NondrlConfig.from_dict(config)
     legal, loads = _check(scene, layout, variable_config(cfg), allow_partial=False)
     total = float(np.sum(scene.demands))
+    if not np.isfinite(total) or not np.isfinite(loads).all():
+        raise ValueError("aggregate demand cannot be represented as finite float64")
     positive = loads[loads > 0]
     mean = float(loads.mean()) if len(loads) else 0.0
     cv = float(loads.std() / mean) if mean > 0 else None
@@ -248,6 +250,11 @@ class Problem:
             self.times["physical_seconds"] += elapsed
         for key in ("allocation_decisions", "independent_physics_checks", "aircraft_link_checks"):
             self.calls[key] += int(result.get("calls", {}).get(key, 0))
+        carry = self.carry(result)
+        power = result.get("metrics", {}).get("total_power_w", 0.0)
+        if (carry is not None and (not np.isfinite(carry) or not 0 <= carry <= 1 + 1e-10)
+                or not np.isfinite(power) or power < -1e-10 or power > 3000 + 1e-7):
+            raise ValueError("nonfinite or out-of-range physical service/resource result")
         self._physical_cache[sha] = result
         return result
 
@@ -297,7 +304,7 @@ class Problem:
             self.last_repaired = clone(layout)
             return trial
         except ValueError as error:
-            trial["reason"] = "geometry_or_identity_rejected: " + str(error)
+            trial["reason"] = "validation_rejected: " + str(error)
             return trial
         except BudgetStop as error:
             trial["reason"] = "budget_exhausted_before_full_validation: " + str(error)
@@ -524,6 +531,8 @@ def solve(scene, route, config=None, initial=None, policy=None, *, method="main"
         route = f"{int(route):02d}"
     if route not in ("I0", "BH", *(f"{i:02d}" for i in range(1, 13))):
         raise ValueError("unknown non-DRL route")
+    if route == "I0" and method != "main":
+        raise ValueError("unsupported non-DRL I0 method")
     problem = Problem(scene, config, initial, physical_evaluator)
     try:
         if route == "I0":

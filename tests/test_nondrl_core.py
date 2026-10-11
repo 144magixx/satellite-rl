@@ -113,6 +113,41 @@ class NondrlCoreTests(unittest.TestCase):
             solve(scene, "06", {"online_seconds": 2.}, initial, method="made_up",
                   physical_evaluator=constant_physical)
 
+    def test_actual_200_beams_are_allowed_and_201_rejected(self):
+        for count in (200, 201):
+            positions = np.tile([45., 13.], (count, 1))
+            scene = CoverageScene("count", positions, np.ones(count), np.empty((0, 2)),
+                                  [f"a{i}" for i in range(count)])
+            layout = Layout(positions, np.full(count, .5), np.arange(count), tuple(scene.aircraft_ids))
+            if count == 200:
+                result = metrics_all(scene, layout)
+                self.assertEqual(result["beam_count"], 200)
+                self.assertEqual(result["load_cv_all"], 0.)
+            else:
+                with self.assertRaisesRegex(ValueError, "beam count"):
+                    metrics_all(scene, layout)
+
+    def test_nonfinite_physical_result_cannot_be_published(self):
+        scene, initial = small_scene()
+        problem = Problem(scene, {"online_seconds": 2.}, initial, constant_physical)
+        problem._physical_evaluator = lambda scene, layout: {
+            "aircraft_service": {"demand_weighted_carried_fraction": float("nan")},
+            "metrics": {"total_power_w": 0.}}
+        before = layout_sha256(problem.current)
+        trial = problem.preview({"kind": "transfer", "aircraft": 1, "target": 1})
+        self.assertFalse(problem.commit(trial))
+        self.assertIn("physical", trial["reason"])
+        self.assertEqual(layout_sha256(problem.current), before)
+
+    def test_expired_menu_reports_truncation_without_exposure(self):
+        scene, initial = small_scene()
+        problem = Problem(scene, {"online_seconds": 2.}, initial, constant_physical)
+        problem.deadline = problem.online_started - 1
+        with self.assertRaises(BudgetStop):
+            problem.menu()
+        self.assertTrue(problem.trace[-1]["truncated"])
+        self.assertEqual(problem.trace[-1]["returned_actions"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
