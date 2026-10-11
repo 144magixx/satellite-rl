@@ -8,15 +8,46 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import os
+import math
 
 from satellite_rl.training.run_monitor import atomic_json
 from .storage import digest, now, read_json
 from . import nondrl_datafeed_bootstrap as bootstrap
 
 
+def worker_exited(directory,pid,birth):
+    """Only this datafeed handoff recognizes a reparented, FD-free Linux zombie."""
+    from .runtime import pid_alive,process_start_time
+    if type(pid)is not int or pid<=0 or not isinstance(birth,(int,float)) or not math.isfinite(birth):
+        return False
+    if os.name=="nt":return not pid_alive(pid,birth)
+    return linux_worker_exited(directory,pid,birth)
+
+
+def linux_worker_exited(directory,pid,birth,proc_root=Path("/proc")):
+    from .runtime import process_start_time
+    try:
+        process=proc_root/str(int(pid))
+        if not process.exists():return True
+        fields=(process/"stat").read_text().rsplit(")",1)[1].split()
+        actual=process_start_time(pid)
+        if actual is None:return False
+        if abs(actual-birth)>=.01:return True  # A recycled PID is not the original worker.
+        if fields[0]!="Z" or any((process/"fd").iterdir()):
+            return False
+        # Verify the same OS-held worker lock can actually be acquired. No
+        # unlink, kill, stale-PID inference, or generic scheduler change.
+        import fcntl
+        with (Path(directory)/"worker.lock").open("r+b") as stream:
+            fcntl.flock(stream.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+            fcntl.flock(stream.fileno(),fcntl.LOCK_UN)
+        return True
+    except (OSError,ValueError,IndexError):return False
+
+
 def audit_checkpoint(job_dir):
     """Read-only safe-stop proof. Caller must first stop via the ordinary API."""
-    from .runtime import pid_alive
     import torch
     directory=Path(job_dir).resolve();job=read_json(directory/"job.json",{})
     status,launch=read_json(directory/"status.json",{}),read_json(directory/"launch.json",{})
@@ -24,11 +55,12 @@ def audit_checkpoint(job_dir):
             job.get("git_commit")!=bootstrap.BASE_COMMIT or status.get("stage")!="stopped" or
             status.get("scientific_stop") or not launch.get("pid") or
             not isinstance(launch.get("process_start_time"),(int,float)) or
-            pid_alive(launch["pid"],launch["process_start_time"])):
+            not worker_exited(directory,launch["pid"],launch["process_start_time"])):
         raise ValueError("extension audit requires the authorized task stopped and original birth exited")
     model=Path(job["model_dir"]).resolve();checkpoint=model/"checkpoint.pt"
     before=digest(checkpoint);state=torch.load(checkpoint,map_location="cpu",weights_only=False)
     update=state.get("updates",-1);config=read_json(directory/"config.json",{})
+    bootstrap.validate_rng(state.get("rng"))
     if (type(update)is not int or not 1000<update<10000 or not 25<=update%1000<=900 or
             state.get("total_updates")!=10000 or state.get("format")!="s1_nondrl_checkpoint_v1" or
             config["training"].get("updates")!=10000 or not state.get("model") or
@@ -70,6 +102,8 @@ def audit_checkpoint(job_dir):
         "loss_sha256":state["loss_sha256"],"loss_bytes":state["loss_bytes"],"loss_rows":len(rows),
         "validation_manifests":manifests,"complete_optimizer_rng_cursor":True,"complete_validation_nodes":True,
         "original_pid":launch["pid"],"original_process_start_time":launch["process_start_time"],
+        "origin_records":{name:{"path":str(directory/(name+".json")),"sha256":digest(directory/(name+".json"))}
+                          for name in ("job","launch","status")},
         "base_learning_contract":state["contract"]}
 
 
@@ -94,6 +128,7 @@ def validate_job_extension(job,job_dir,*,read_artifact=None):
         for name,key in (("provider.py","provider"),("bootstrap.py","bridge"),("checkpoint_audit.json","checkpoint_audit"),
                          ("cache/manifest.json","cache_manifest"),("origin_checkpoint.pt","checkpoint")):
             payload(name,contract[key]["sha256"])
+        for name,item in contract["origin_records"].items():payload("origin_"+name+".json",item["sha256"])
         cache=json.loads(payload("cache/manifest.json",contract["cache_manifest"]["sha256"]))
         for name,item in cache["files"].items():payload("cache/"+name,item["sha256"])
         payload("origin_losses_prefix.bin",contract["loss_prefix"]["sha256"])
@@ -105,6 +140,8 @@ def validate_job_extension(job,job_dir,*,read_artifact=None):
     for name,key in (("provider.py","provider"),("bootstrap.py","bridge"),("checkpoint_audit.json","checkpoint_audit"),
                      ("cache/manifest.json","cache_manifest"),("origin_checkpoint.pt","checkpoint")):
         bootstrap.pin({"path":str(root/name),"sha256":contract[key]["sha256"]})
+    for name,item in contract["origin_records"].items():
+        bootstrap.pin({"path":str(root/("origin_"+name+".json")),"sha256":item["sha256"]})
     bootstrap.current_checkpoint(job,contract,runtime)
     return runtime
 
@@ -157,8 +194,9 @@ def extend_job(scheduler,run_id,body):
         raise ValueError("datafeed extension only accepts the one approved run and frozen contract")
     with scheduler.lock,scheduler.store.lock:
         directory=scheduler.store.job_dir(run_id)
+        original_job=read_json(directory/"job.json",{})
         contract,job,runtime=bootstrap.validate(body["contract_path"],body["contract_sha256"],directory,
-                                               initial=not read_json(directory/"job.json",{}).get("runtime_extensions"))
+                                               initial=not original_job.get("runtime_extensions"))
         if job.get("runtime_extensions"):
             validate_job_extension(job,directory)
             if job["runtime_extensions"][0]["contract_sha256"]!=body["contract_sha256"]:
@@ -170,11 +208,14 @@ def extend_job(scheduler,run_id,body):
                 job["runtime_extension_pending"]=False;atomic_json(directory/"job.json",job)
                 return status
             return read_json(directory/"status.json",{})
+        if contract["bridge"]["sha256"]!=digest(Path(bootstrap.__file__)):
+            raise ValueError("first installation bridge is not the currently reviewed service bootstrap")
         actual=audit_checkpoint(directory);expected=read_json(contract["checkpoint_audit"]["path"])
         if actual!=expected:raise ValueError("current full-state audit differs from the approved quiet proof")
         root=directory/"runtime_extensions"/bootstrap.EXTENSION_ID;root.mkdir(parents=True,exist_ok=True)
         files={"contract.json":body["contract_path"],"origin_checkpoint.pt":contract["checkpoint"]["path"],
                "origin_status.json":directory/"status.json","provider.py":contract["provider"]["path"],
+               "origin_job.json":directory/"job.json","origin_launch.json":directory/"launch.json",
                "bootstrap.py":contract["bridge"]["path"],"checkpoint_audit.json":contract["checkpoint_audit"]["path"],
                "cache/manifest.json":contract["cache_manifest"]["path"]}
         cache=read_json(contract["cache_manifest"]["path"])

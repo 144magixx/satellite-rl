@@ -10,6 +10,7 @@ import importlib.util
 import json
 from pathlib import Path
 import runpy
+import random
 import sys
 
 FORMAT="s1_nd12_datafeed_extension_v1"
@@ -102,6 +103,7 @@ def validate(contract_path,contract_sha,job_dir,*,initial=False):
             proof.get("config_sha256")!=contract["config"]["sha256"] or
             proof.get("loss_sha256")!=loss["sha256"] or proof.get("loss_bytes")!=loss["bytes"] or
             proof.get("validation_manifests")!=contract["validation_manifests"] or
+            proof.get("origin_records")!=contract.get("origin_records") or
             proof.get("complete_optimizer_rng_cursor") is not True or proof.get("complete_validation_nodes") is not True):
         raise ValueError("safe checkpoint/curve/validation proof is incomplete")
     update=contract["start_update"]
@@ -121,6 +123,12 @@ def validate(contract_path,contract_sha,job_dir,*,initial=False):
     if not required.issubset(observed):raise ValueError("provider equivalence/compatibility proofs are absent")
     if initial:
         pin(contract["checkpoint"])
+        if set(contract.get("origin_records",{}))!={"job","launch","status"}:
+            raise ValueError("extension requires all original job/launch/status record pins")
+        for name,item in contract["origin_records"].items():
+            if Path(item["path"]).resolve()!=directory/(name+".json"):
+                raise ValueError("original record path differs from the task")
+            pin(item)
     return contract,job,marker(contract,contract_sha)
 
 
@@ -130,6 +138,7 @@ def current_checkpoint(job,contract,runtime):
     before=sha(path)
     state=torch.load(path,map_location="cpu",weights_only=False)
     original=read(contract["checkpoint_audit"]["path"])
+    validate_rng(state.get("rng"))
     if (state.get("format")!="s1_nondrl_checkpoint_v1" or state.get("total_updates")!=10000 or
             not contract["start_update"]<=state.get("updates",-1)<=10000 or
             state.get("cursor",-1)!=state["updates"]*32 or
@@ -151,6 +160,37 @@ def current_checkpoint(job,contract,runtime):
     validate_loss_rows(rows,state)
     if sha(path)!=before:raise ValueError("checkpoint changed while validating its full state")
     return state
+
+
+def validate_rng(value):
+    """Check private generator state formats without advancing any global RNG."""
+    import numpy as np
+    import torch
+    try:
+        if not isinstance(value,dict) or set(value)!={"python","numpy","torch","cuda","sampler"}:
+            raise ValueError("RNG keys differ")
+        private_python=random.Random(0);private_python.setstate(value["python"])
+        private_numpy=np.random.RandomState(0);private_numpy.set_state(value["numpy"])
+        private_sampler=np.random.PCG64(0);private_sampler.state=value["sampler"]
+        cpu=value["torch"]
+        if not isinstance(cpu,torch.Tensor) or cpu.dtype!=torch.uint8 or cpu.ndim!=1:
+            raise ValueError("CPU RNG byte tensor format differs")
+        torch.Generator(device="cpu").set_state(cpu.detach().cpu())
+        cuda=value["cuda"]
+        if not isinstance(cuda,list) or not cuda:raise ValueError("CUDA RNG topology is absent")
+        if torch.cuda.is_available() and len(cuda)!=torch.cuda.device_count():
+            raise ValueError("CUDA RNG topology differs from this execution environment")
+        for index,state in enumerate(cuda):
+            # PyTorch2.3 stores Philox seed/offset as two uint64 values. CUDA's
+            # offset advances in groups of four. Offline audits can check the
+            # same byte format even without a CUDA runtime.
+            if (not isinstance(state,torch.Tensor) or state.dtype!=torch.uint8 or state.ndim!=1 or state.numel()!=16 or
+                    int.from_bytes(bytes(state.detach().cpu().tolist()[8:]),"little")%4):
+                raise ValueError("CUDA2.3 Philox RNG byte format differs")
+            if torch.cuda.is_available():
+                torch.Generator(device=f"cuda:{index}").set_state(state.detach().cpu())
+    except (ValueError,TypeError,RuntimeError,KeyError,IndexError) as error:
+        raise ValueError("incomplete or invalid private RNG state: "+str(error)) from error
 
 
 def validate_loss_rows(rows,state):

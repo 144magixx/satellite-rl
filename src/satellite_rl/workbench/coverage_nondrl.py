@@ -404,7 +404,11 @@ def resume_job(scheduler, run_id):
     launch = read_json(directory / "launch.json", {})
     if status.get("stage") not in ("stopped", "failed", "interrupted") or status.get("scientific_stop") is True:
         raise ValueError("S1-ND12 task cannot resume from this state")
-    if pid_alive(status.get("pid"), launch.get("process_start_time")):
+    alive=pid_alive(status.get("pid"),launch.get("process_start_time"))
+    if job.get("runtime_extensions"):
+        from .nondrl_datafeed import worker_exited
+        alive=not worker_exited(directory,status.get("pid") or launch.get("pid"),launch.get("process_start_time"))
+    if alive:
         raise ValueError("original worker still alive")
     if job.get("runtime_extensions"):
         from .nondrl_datafeed import preserve_checkpoint_tail

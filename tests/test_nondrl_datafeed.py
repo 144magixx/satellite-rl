@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import random
 from unittest.mock import patch
 
 import numpy as np
@@ -49,7 +50,7 @@ class DatafeedTests(unittest.TestCase):
         (self.model/"losses.jsonl").write_bytes(losses);atomic_json(self.model/"validation.json",nodes)
         self.state={"format":"s1_nondrl_checkpoint_v1","updates":1025,"total_updates":10000,"cursor":32800,
              "model":{"w":torch.ones(2)},"optimizer":{"state":{0:{"step":torch.tensor(1025.),"exp_avg":torch.zeros(2),"exp_avg_sq":torch.zeros(2)}},"param_groups":[{"params":[0]}]},
-             "rng":{"python":None,"numpy":None,"torch":torch.zeros(8,dtype=torch.uint8),"cuda":[torch.zeros(8,dtype=torch.uint8)],"sampler":{}},
+             "rng":learning.rng_state(np.random.default_rng(51001)),
              "contract":{"source_sha":bridge.BASE_COMMIT,"dataset_sha":digest(self.source),"source_manifest_sha256":digest(snapshot/"source_manifest.json")},
              "validation":nodes,"sampled_last":self.refs,"loss_bytes":len(losses),"loss_sha256":hashlib.sha256(losses).hexdigest()}
         torch.save(self.state,self.model/"checkpoint.pt")
@@ -73,6 +74,7 @@ class DatafeedTests(unittest.TestCase):
               "bridge":item(self.bootstrap),"checkpoint_audit":item(self.audit_path),"start_update":1025,
               "loss_prefix":{**item(self.model/"losses.jsonl"),"bytes":len(losses),"rows":1025},
               "validation_manifests":audit["validation_manifests"],"equivalence_proofs":self.proofs}
+        self.contract["origin_records"]=audit["origin_records"]
         self.path=self.base/"20424/contract.json";self.publish();self.scheduler=Scheduler(self.store)
 
     def publish(self):
@@ -93,6 +95,9 @@ class DatafeedTests(unittest.TestCase):
         command=feed.worker_command(current,self.directory,"python")
         self.assertIn("bootstrap.py",command[2]);self.assertIn("--resume",command)
         self.assertEqual(runtime,feed.validate_job_extension(current,Path("/archive_only"),read_artifact=lambda r:(self.directory/r).read_bytes()))
+        origin=self.directory/"runtime_extensions"/bridge.EXTENSION_ID
+        for name,item in self.contract["origin_records"].items():
+            self.assertEqual(digest(origin/("origin_"+name+".json")),item["sha256"])
 
     def test_live_worker_unknown_run_and_changed_provider_are_rejected(self):
         with self.assertRaisesRegex(ValueError,"one approved"):
@@ -113,6 +118,49 @@ class DatafeedTests(unittest.TestCase):
         self.state["validation"]=[];torch.save(self.state,self.model/"checkpoint.pt")
         with self.assertRaisesRegex(ValueError,"missing/unfinished"):
             feed.audit_checkpoint(self.directory)
+
+    def test_initial_bridge_must_be_reviewed_but_existing_resume_keeps_frozen_copy(self):
+        original=self.bootstrap.read_bytes()
+        self.bootstrap.write_bytes(original+b"\n# arbitrary extra script\n")
+        self.contract["bridge"]["sha256"]=digest(self.bootstrap);self.publish()
+        with self.assertRaisesRegex(ValueError,"currently reviewed"):
+            feed.extend_job(self.scheduler,bridge.RUN_ID,self.body)
+        self.assertNotIn("runtime_extensions",read_json(self.directory/"job.json"))
+        self.bootstrap.write_bytes(original);self.contract["bridge"]["sha256"]=digest(self.bootstrap);self.publish()
+        feed.extend_job(self.scheduler,bridge.RUN_ID,self.body);job=read_json(self.directory/"job.json")
+        with patch.object(bridge,"__file__",str(self.base/"unrelated_new_service.py")):
+            self.assertIsNotNone(feed.worker_command(job,self.directory,"python"))
+
+    def test_rng_formats_are_real_and_private_checks_preserve_global_states(self):
+        sampler=np.random.default_rng(19)
+        before=learning.rng_state(sampler)
+        bridge.validate_rng(copy.deepcopy(self.state["rng"]))
+        after=learning.rng_state(sampler)
+        self.assertEqual(before["python"],after["python"])
+        self.assertEqual(before["numpy"][0],after["numpy"][0]);np.testing.assert_array_equal(before["numpy"][1],after["numpy"][1])
+        self.assertEqual(before["numpy"][2:],after["numpy"][2:]);self.assertTrue(torch.equal(before["torch"],after["torch"]))
+        self.assertTrue(all(torch.equal(a,b) for a,b in zip(before["cuda"],after["cuda"])));self.assertEqual(before["sampler"],after["sampler"])
+        for key,bad in (("python",None),("numpy",None),("sampler",{}),("torch",torch.zeros(8,dtype=torch.uint8)),("cuda",[torch.zeros(8,dtype=torch.uint8)])):
+            value=copy.deepcopy(self.state["rng"]);value[key]=bad
+            with self.subTest(key=key),self.assertRaisesRegex(ValueError,"invalid private RNG"):
+                bridge.validate_rng(value)
+
+    def test_linux_zombie_requires_exact_birth_no_fds_and_released_lock(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        proc=self.base/"mock_proc";process=proc/"991222";process.mkdir(parents=True);(process/"fd").mkdir()
+        (process/"stat").write_text("991222 (worker) Z "+"0 "*30)
+        (self.directory/"worker.lock").write_bytes(b"0")
+        flock=MagicMock();fcntl=SimpleNamespace(LOCK_EX=2,LOCK_NB=4,LOCK_UN=8,flock=flock)
+        with patch("satellite_rl.workbench.runtime.process_start_time",return_value=100.),patch.dict("sys.modules",{"fcntl":fcntl}):
+            self.assertTrue(feed.linux_worker_exited(self.directory,991222,100.,proc))
+            self.assertEqual(flock.call_count,2)
+            (process/"fd/3").write_bytes(b"open")
+            self.assertFalse(feed.linux_worker_exited(self.directory,991222,100.,proc));(process/"fd/3").unlink()
+            flock.side_effect=BlockingIOError("worker lock still held")
+            self.assertFalse(feed.linux_worker_exited(self.directory,991222,100.,proc))
+        with patch("satellite_rl.workbench.runtime.process_start_time",return_value=None):
+            self.assertFalse(feed.linux_worker_exited(self.directory,991222,100.,proc))
 
     def test_crash_tail_is_saved_and_bad_cursor_or_adam_count_cannot_pass(self):
         feed.extend_job(self.scheduler,bridge.RUN_ID,self.body);job=read_json(self.directory/"job.json")
