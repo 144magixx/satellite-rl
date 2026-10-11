@@ -218,6 +218,31 @@ def dataset_for(evidence, config, role, path_map=None):
     return _loaded_arrays(BytesIO(value))
 
 
+def supervision_sources(evidence, job):
+    """Close wrapper, immutable supervision shards and completed problem files."""
+    wrapper_bytes=evidence.read("teacher_manifest.json")
+    wrapper=json.loads(wrapper_bytes)
+    raw=evidence.read("teacher/manifest.json")
+    if digest_bytes(raw)!=wrapper.get("sha256"):
+        raise ValueError("supervision manifest SHA differs")
+    manifest=json.loads(raw)
+    if (manifest.get("format")!="s1_nondrl_teacher_v1" or
+            manifest.get("provenance",{}).get("run_id")!=job["run_id"] or
+            manifest.get("provenance",{}).get("git_commit")!=job["git_commit"]):
+        raise ValueError("supervision source/run provenance differs")
+    verified={"teacher_manifest.json":digest_bytes(wrapper_bytes),"teacher/manifest.json":digest_bytes(raw)}
+    for item in manifest.get("shards",[])+manifest.get("problem_receipts",[]):
+        relative="teacher/"+item["path"];payload=evidence.read(relative)
+        if digest_bytes(payload)!=item["sha256"]:
+            raise ValueError("supervision source shard/problem SHA differs")
+        if "rows" in item and len([line for line in gzip.decompress(payload).splitlines() if line.strip()])!=item["rows"]:
+            raise ValueError("supervision source shard row count differs")
+        verified[relative]=digest_bytes(payload)
+    if sum(item["rows"] for item in manifest.get("shards",[]))!=manifest.get("rows"):
+        raise ValueError("supervision source sample denominator differs")
+    return verified
+
+
 def audit_teacher_probe(evidence, job, config, *, path_map=None):
     """Recompute 60 real offline teacher references against frozen mother input."""
     route = config["coverage"]["nondrl"]["route"]
@@ -234,6 +259,16 @@ def audit_teacher_probe(evidence, job, config, *, path_map=None):
     provenance = manifest.get("provenance", {})
     if provenance.get("run_id") != job["run_id"] or provenance.get("git_commit") != job["git_commit"]:
         raise ValueError("offline teacher frozen source/run provenance differs")
+    if manifest.get("format") != "s1_nondrl_teacher_v1":
+        raise ValueError("offline teacher evidence format differs")
+    for shard in manifest.get("shards", []):
+        raw = evidence.read("teacher/" + shard["path"])
+        if digest_bytes(raw) != shard["sha256"]:
+            raise ValueError("offline teacher supervision shard SHA differs")
+        if len([line for line in gzip.decompress(raw).splitlines() if line.strip()]) != shard["rows"]:
+            raise ValueError("offline teacher supervision shard rows differ")
+    if sum(shard["rows"] for shard in manifest.get("shards", [])) != manifest.get("rows"):
+        raise ValueError("offline teacher supervision total row count differs")
     dataset = dataset_for(evidence, config, "development", path_map)
     source = config["datasets"]["development"]
     if wrapper.get("dataset_sha256") != source["sha256"]:
@@ -244,9 +279,11 @@ def audit_teacher_probe(evidence, job, config, *, path_map=None):
     if len(receipts) != len(expected):
         raise ValueError("offline teacher full-problem denominator incomplete")
     cap = {"02": (60,38400,600.), "03": (60,7680,240.)}[route]
-    if manifest.get("problems",0) != len(expected) or manifest.get("trials",0) > cap[1] or len(receipts)>cap[0]:
+    if (manifest.get("problems",0) != len(expected) or type(manifest.get("trials")) is not int
+            or not 0 <= manifest["trials"] <= cap[1] or len(receipts)>cap[0]
+            or not np.isfinite(manifest.get("elapsed_seconds",-1)) or manifest.get("elapsed_seconds",-1)<0):
         raise ValueError("offline teacher reserved problem/trial ledger differs")
-    rows, identities = [], set()
+    rows, identities, candidate_calls = [], set(), 0
     for receipt in receipts:
         raw = evidence.read("teacher/" + receipt["path"])
         if digest_bytes(raw) != receipt["sha256"]:
@@ -254,7 +291,16 @@ def audit_teacher_probe(evidence, job, config, *, path_map=None):
         problem = json.loads(gzip.decompress(raw))
         if problem.get("format") != "s1_nondrl_teacher_problem_v1" or problem.get("route") != route:
             raise ValueError("offline teacher problem schema/route differs")
+        if problem.get("provenance") != provenance or problem.get("target_n") != len(problem["initial_layout"]["centers"]):
+            raise ValueError("offline teacher problem provenance/targetN differs")
+        elapsed = problem.get("teacher_elapsed_seconds",-1)
+        calls = problem.get("calls",{}).get("candidates",-1)
+        if not np.isfinite(elapsed) or elapsed<0 or type(calls) is not int or calls<0:
+            raise ValueError("offline teacher raw call/time ledger invalid")
+        candidate_calls += calls
         mother, multiplier = problem["mother_id"], float(problem["demand_multiplier"])
+        if receipt.get("mother_id") != mother or float(receipt.get("demand_multiplier",-1)) != multiplier:
+            raise ValueError("offline teacher receipt identity differs from its raw problem")
         if (mother,multiplier) not in expected or (mother,multiplier) in identities:
             raise ValueError("offline teacher problem mother/tier duplicate or foreign")
         identities.add((mother,multiplier))
@@ -279,9 +325,12 @@ def audit_teacher_probe(evidence, job, config, *, path_map=None):
                 audited.update(problem_receipt_path="teacher/"+receipt["path"], problem_receipt_sha256=receipt["sha256"],
                                teacher_elapsed_seconds=problem["teacher_elapsed_seconds"])
                 rows.append(audited)
+    if candidate_calls > manifest["trials"]:
+        raise ValueError("offline teacher true-trial ledger smaller than raw charged candidates")
     return {"rows": rows, "wrapper_sha256": digest_bytes(wrapper_bytes), "evidence_manifest_sha256": digest_bytes(manifest_bytes),
             "dataset_sha256": source["sha256"], "true_trials": manifest["trials"],
-            "complete_problems": len(receipts), "teacher_recorded_seconds": manifest["elapsed_seconds"],
+            "complete_problems": len(receipts), "raw_candidate_calls": candidate_calls,
+            "teacher_recorded_seconds": manifest["elapsed_seconds"],
             "teacher_overrun_seconds": max(0.,manifest["elapsed_seconds"]-cap[2]),
             "scope": "actual complete offline teacher references; zero new teacher/PHY calls"}
 
@@ -332,6 +381,8 @@ def audit_job(location, *, path_map=None):
         result = evidence.json("results.json")
         record = {"run_id": job["run_id"], "state": "completed", "formal_terminal": True,
                   "kind": job["kind"], "results": result, "rows": []}
+        if job.get("preparation_mode") in ("teacher","ranking_audit"):
+            record.update(supervision_sources=supervision_sources(evidence,job),git_commit=job["git_commit"])
         if job["kind"] == "train":
             if result.get("updates") != config["training"]["updates"]:
                 raise ValueError("completed training did not reach frozen update budget")
@@ -404,7 +455,7 @@ def main():
     parser.add_argument("--path-map", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    result = audit_job(args.job, path_map=json.loads(args.path_map.read_text()) if args.path_map else None)
+    result = audit_job(args.job, path_map=json.loads(args.path_map.read_text(encoding="utf-8")) if args.path_map else None)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
