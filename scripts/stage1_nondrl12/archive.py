@@ -49,7 +49,7 @@ def plan(state, preparations=None):
         for day, task in preparations["tasks"].items():
             role = task["role"]
             folder = ops.LOCAL / "source" / role / day
-            pin = json.loads((folder / "source_preflight.json").read_text())
+            pin = json.loads((folder / "source_preflight.json").read_text(encoding="utf-8"))
             sha = task.get("artifacts", {}).get("raw_archive_sha256")
             if task.get("stage") != "completed" or not isinstance(sha, str) or len(sha) != 64:
                 raise ValueError("final prepared raw archive SHA required")
@@ -179,7 +179,7 @@ dest.mkdir(parents=True,exist_ok=True);lock=dest/'.lock';lock.mkdir()
 try:
  prior=dest/'receipt.json'
  if prior.exists():
-  receipt=json.loads(prior.read_text())
+  receipt=json.loads(prior.read_text(encoding="utf-8"))
   if receipt.get('source_commit')!=request['source_commit'] or receipt.get('run_id')!=run_id:raise RuntimeError('archive retry identity differs')
   for v in receipt['volumes']:
    if sha(pathlib.Path(v['remote_path']))!=v['sha256']:raise RuntimeError('archive retry SHA differs')
@@ -205,7 +205,7 @@ try:
    if h!=entry['sha256'] or p.stat().st_size!=entry['bytes']:raise RuntimeError('final prepared raw SHA/size differs')
    prefix='shared_sources/'+entry['role']+'/'+entry['date_utc']
    jd=base/str(entry['source_port'])/'archive/outputs/workbench/jobs'/entry['source_run_id']
-   identity=json.loads((jd/'job.json').read_text());terminal=json.loads((jd/'status.json').read_text());artifacts=json.loads((jd/'artifacts.json').read_text())
+   identity=json.loads((jd/'job.json').read_text(encoding="utf-8"));terminal=json.loads((jd/'status.json').read_text(encoding="utf-8"));artifacts=json.loads((jd/'artifacts.json').read_text(encoding="utf-8"))
    if identity.get('experiment_id')!='S1-ND12' or identity.get('git_commit')!=request['source_commit'] or identity.get('source_date')!=entry['date_utc'] or terminal.get('stage')!='completed' or artifacts.get('raw_archive_sha256')!=h:raise RuntimeError('source preparation outcome differs')
    for name,filename in [('source_job_identity.json','job.json'),('source_job_status.json','status.json'),('source_job_artifacts.json','artifacts.json')]:add(prefix+'/'+name,jd/filename)
    add(prefix+'/'+p.name,p,h)
@@ -218,8 +218,8 @@ try:
   add('shared_sources/partition_manifest.json',request['partition_manifest_path'],request['partition_manifest_sha256'])
   status={'stage':'completed'}
  else:
-  job=json.loads((jobdir/'job.json').read_text());status=json.loads((jobdir/'status.json').read_text())
-  launch=json.loads((jobdir/'launch.json').read_text()) if (jobdir/'launch.json').exists() else {}
+  job=json.loads((jobdir/'job.json').read_text(encoding="utf-8"));status=json.loads((jobdir/'status.json').read_text(encoding="utf-8"))
+  launch=json.loads((jobdir/'launch.json').read_text(encoding="utf-8")) if (jobdir/'launch.json').exists() else {}
   if job.get('experiment_id')!='S1-ND12' or job.get('run_id')!=run_id or job.get('git_commit')!=request['source_commit'] or job.get('archive_root')!=request['archive']:raise RuntimeError('workbench group/source/identity differs')
   if request.get('request_id') and job.get('request_id')!=request['request_id']:raise RuntimeError('request identity differs')
   if status.get('stage') not in ('completed','failed','stopped'):raise RuntimeError('task is not terminal')
@@ -231,14 +231,14 @@ try:
    if proc.exists():
     born=launch.get('process_start_time')
     if not isinstance(born,(int,float)):raise RuntimeError('live PID birth unknown')
-    raw=proc.read_text();ticks=int(raw[raw.rfind(')')+2:].split()[19])
-    boot=next(int(x.split()[1]) for x in pathlib.Path('/proc/stat').read_text().splitlines() if x.startswith('btime '))
+    raw=proc.read_text(encoding="utf-8");ticks=int(raw[raw.rfind(')')+2:].split()[19])
+    boot=next(int(x.split()[1]) for x in pathlib.Path('/proc/stat').read_text(encoding="utf-8").splitlines() if x.startswith('btime '))
     if abs(boot+ticks/os.sysconf('SC_CLK_TCK')-born)<.02:raise RuntimeError('same-birth worker remains live')
   prefix=str(port)+'/'+run_id;skip=[]
   prep=job.get('dataset_preparation')
   if prep:
    p=base/'source'/prep['role']/prep['date_utc']/prep['archive_name'];h=sha(safe(p))
-   artifact=json.loads((jobdir/'artifacts.json').read_text())
+   artifact=json.loads((jobdir/'artifacts.json').read_text(encoding="utf-8"))
    if artifact['raw_archive_sha256']!=h or p.stat().st_size!=prep['expected_bytes']:raise RuntimeError('prepared raw source differs')
    linked=jobdir/'preparation/raw'/p.name
    if not linked.exists() or not linked.samefile(p):raise RuntimeError('raw source hardlink differs')
@@ -252,12 +252,12 @@ try:
     if sha(p)!=record['sha256']:raise RuntimeError('dependency manifest SHA differs')
     deps.append({'kind':key,'run_id':record.get('run_id'),'sha256':record['sha256'],'path':record.get('source_path',record['path'])})
   tree(prefix,jobdir,skip)
-  config=json.loads((jobdir/'config.json').read_text())
+  config=json.loads((jobdir/'config.json').read_text(encoding="utf-8"))
   for role,record in config.get('datasets',{}).items():
    p=safe(record['path'])
    if sha(p)!=record['sha256']:raise RuntimeError('dataset SHA differs')
    if not p.is_relative_to(jobdir):add(prefix+'/scene_inputs/'+role+'/inputs.npz',p,record['sha256'])
-  source=safe(job['source_root']);manifest=json.loads((source/'source_manifest.json').read_text())
+  source=safe(job['source_root']);manifest=json.loads((source/'source_manifest.json').read_text(encoding="utf-8"))
   if manifest.get('git_commit')!=request['source_commit']:raise RuntimeError('source manifest commit differs')
   for relative,h in manifest.get('files',{}).items():
    if sha(safe(source/relative))!=h:raise RuntimeError('frozen source member changed')
@@ -288,7 +288,7 @@ def one_task(entry):
     port = entry["port"]
     local = LOCAL / str(port) / entry["run_id"] / "receipt.json"
     if local.is_file():
-        receipt = json.loads(local.read_text())
+        receipt = json.loads(local.read_text(encoding="utf-8"))
         if receipt["source_commit"] != entry["source_commit"]:
             raise ValueError("existing local receipt source differs")
         for volume in receipt["volumes"]:
@@ -323,7 +323,7 @@ def one_source(planned, *, port=20418):
             source.update(source_run_id=matches[0]["run_id"], source_port=matches[0]["port"])
     local = LOCAL / "20418/shared_sources/receipt.json"
     if local.exists():
-        receipt = json.loads(local.read_text())
+        receipt = json.loads(local.read_text(encoding="utf-8"))
         if receipt["source_commit"] != planned["scientific_commit"]:
             raise ValueError("source receipt source differs")
         verify_source_receipt(receipt, local.parent)
@@ -354,8 +354,8 @@ def main():
     parser.add_argument("--source-receipt", type=Path)
     parser.add_argument("--dependencies", type=Path, nargs="*")
     args = parser.parse_args()
-    state = json.loads(args.state.read_text())
-    preparation = json.loads(args.preparations.read_text()) if args.preparations else None
+    state = json.loads(args.state.read_text(encoding="utf-8"))
+    preparation = json.loads(args.preparations.read_text(encoding="utf-8")) if args.preparations else None
     planned = plan(state, preparation)
     if args.action == "plan":
         print(json.dumps({"experiment_id": "S1-ND12", "tasks": len(planned["tasks"]), "sources": len(planned["sources"])}));return
@@ -363,7 +363,7 @@ def main():
         result = one_source(planned)
     elif args.action == "verify-source":
         path = args.source_receipt or LOCAL / "20418/shared_sources/receipt.json"
-        result = {"members": len(verify_source_receipt(json.loads(path.read_text()), path.parent)), "closed": True}
+        result = {"members": len(verify_source_receipt(json.loads(path.read_text(encoding="utf-8")), path.parent)), "closed": True}
     else:
         if args.key not in planned["tasks"]:
             parser.error("--key must identify a frozen task")
@@ -372,9 +372,9 @@ def main():
             result = one_task(entry)
         else:
             directory = LOCAL / str(entry["port"]) / entry["run_id"]
-            source = json.loads(args.source_receipt.read_text()) if args.source_receipt else None
-            dependencies = [json.loads(path.read_text()) for path in args.dependencies] if args.dependencies is not None else None
-            result = verify_receipt(json.loads((directory / "receipt.json").read_text()), directory, source,
+            source = json.loads(args.source_receipt.read_text(encoding="utf-8")) if args.source_receipt else None
+            dependencies = [json.loads(path.read_text(encoding="utf-8")) for path in args.dependencies] if args.dependencies is not None else None
+            result = verify_receipt(json.loads((directory / "receipt.json").read_text(encoding="utf-8")), directory, source,
                                     args.source_receipt.parent if args.source_receipt else None, dependencies)
     print(json.dumps({key: result.get(key) for key in ("run_id", "closed", "members", "source_refs", "dependencies_closed")}))
 

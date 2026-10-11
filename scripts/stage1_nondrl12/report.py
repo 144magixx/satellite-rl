@@ -130,9 +130,16 @@ def verify_gate(gate, threshold, audits_by_run, path_map=None):
     if sorted(improved) != sorted(gate["improved_mothers"]) or gate["geometry_pass"] != geometry:
         raise ValueError("gate improvements/feasibility differ")
     # A separate required mechanism audit can veto a quality-passing gate.
-    if not threshold.get("require_mechanism_audit") and gate["passed"] != passed:
+    required=threshold.get("require_mechanism_audit") or threshold.get("required_mechanism")
+    if not passed and gate["passed"] is True:
+        raise ValueError("quality-failed gate cannot be marked passed by a mechanism")
+    if not required and gate["passed"] != passed:
         raise ValueError("gate outcome differs from measured threshold")
-    if threshold.get("require_mechanism_audit"):
+    if threshold.get("required_mechanism") and passed:
+        mechanism_record=verify_dynamic_mechanism(gate,audits_by_run,path_map)
+        if gate["passed"]!=(passed and mechanism_record["passed"] is True):
+            raise ValueError("gate dynamic mechanism outcome differs")
+    elif threshold.get("require_mechanism_audit"):
         mechanism = threshold.get("mechanism_audit")
         if not isinstance(mechanism, dict) or not mechanism.get("sha256") or not mechanism.get("path"):
             raise ValueError("required mechanism audit missing; engineering gap, not science failure")
@@ -144,12 +151,45 @@ def verify_gate(gate, threshold, audits_by_run, path_map=None):
         path = Path(location)
         if not path.is_file() or digest_bytes(path.read_bytes()) != mechanism["sha256"]:
             raise ValueError("required mechanism audit source does not close")
-        mechanism_record = json.loads(path.read_text())
+        mechanism_record = json.loads(path.read_text(encoding="utf-8"))
         if mechanism_record.get("experiment_id") != "S1-ND12" or mechanism_record.get("route") != gate["route"]:
             raise ValueError("required mechanism audit identity differs")
         if gate["passed"] != (passed and mechanism_record.get("passed") is True):
             raise ValueError("gate mechanism outcome differs")
     return {"passed_quality": passed, "actual_passed": gate["passed"], "improved_mothers": len(improved)}
+
+
+def verify_dynamic_mechanism(gate,audits,path_map=None):
+    receipt=gate.get("mechanism",{})
+    source=receipt.get("receipt_source",{})
+    location=source.get("path","")
+    for old,new in (path_map or {}).items():
+        if location.startswith(old):location=new+location[len(old):];break
+    path=Path(location)
+    if not path.is_file() or digest_bytes(path.read_bytes())!=source.get("sha256"):
+        raise ValueError("required dynamic mechanism receipt/source missing; engineering gap")
+    saved=json.loads(path.read_text(encoding="utf-8"))
+    if saved!={k:v for k,v in receipt.items() if k!="receipt_source"}:
+        raise ValueError("dynamic mechanism receipt fields differ from pinned content")
+    if (saved.get("experiment_id")!="S1-ND12" or saved.get("route")!=gate["route"]
+            or saved.get("status") not in ("passed","science_stopped")):
+        raise ValueError("dynamic mechanism is incomplete; engineering attention")
+    if not saved.get("sources"):
+        raise ValueError("dynamic mechanism has no actual task source")
+    for item in saved["sources"]:
+        run_id=item.get("run_id")
+        if run_id is None:
+            run_id=next((key for key in audits if f"/jobs/{key}/" in item.get("path","")),None)
+        audit=audits.get(run_id)
+        if not audit or audit["state"]!="completed":
+            raise ValueError("dynamic mechanism source task is not fully audited")
+        if audit.get("raw_manifest_sha256")==item.get("sha256"):
+            continue
+        marker=f"/jobs/{run_id}/"
+        relative=item.get("path","").split(marker,1)[-1]
+        if audit.get("supervision_sources",{}).get(relative)!=item.get("sha256"):
+            raise ValueError("dynamic mechanism source SHA does not close to immutable task evidence")
+    return saved
 
 
 def verify_teacher_gate(gate, audits_by_run):
@@ -255,7 +295,7 @@ def build(plan, state, root, *, path_map=None, gate_directory=None):
                     issues.append("duplicate common initial mother/level " + str(key))
                 common_initials[key] = row["initial_sha256"]
     for audit in audits.values():
-        if audit.get("key", "").startswith(("test/", "development/", "shared_baseline/")):
+        if audit.get("key", "").startswith(("test/", "development/", "shared_baseline/", "teacher_probe/")):
             role = audit.get("dataset_role")
             for row in audit["rows"]:
                 key = (role, row["mother_scene_id"], row["multiplier"])
@@ -428,8 +468,8 @@ def main():
     parser.add_argument("--path-map", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    report = build(json.loads(args.plan.read_text()), json.loads(args.state.read_text()), args.root,
-                   path_map=json.loads(args.path_map.read_text()) if args.path_map else None,
+    report = build(json.loads(args.plan.read_text(encoding="utf-8")), json.loads(args.state.read_text(encoding="utf-8")), args.root,
+                   path_map=json.loads(args.path_map.read_text(encoding="utf-8")) if args.path_map else None,
                    gate_directory=args.state.parent / "gates")
     args.output.mkdir(parents=True, exist_ok=True)
     report["figures"] = figures(report, args.output / "figures")

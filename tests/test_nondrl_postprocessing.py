@@ -12,9 +12,12 @@ from unittest.mock import patch
 import numpy as np
 
 from satellite_rl.coverage.nondrl import solve
+from satellite_rl.coverage.nondrl import metrics_all
 from satellite_rl.coverage.nondrl.runner import jsonable, RowStore
 from satellite_rl.coverage.scenes import CoverageDataset
 from satellite_rl.coverage.variable_dataset import save_variable_dataset
+from satellite_rl.coverage.variable_design import Layout
+from satellite_rl.coverage.variable_downstream import evaluate_layout
 from scripts.stage1_nondrl12 import archive, report, strict_audit
 from test_nondrl_core import small_scene
 
@@ -161,6 +164,127 @@ class PostprocessingTests(unittest.TestCase):
         self.assertIn("does not count as route06",result["scope"])
         incomplete=copy.deepcopy(audits);incomplete.pop("baseline_20474")
         self.assertIsNone(report.shared_baseline(incomplete))
+
+    def _teacher_probe_fixture(self, root, route="02"):
+        root=Path(root)
+        mothers=[]
+        for index in range(20):
+            mother=copy.deepcopy(self.scene)
+            mother.scene_id=f"teacher_mother_{index}";mother.source_hash=f"fixture_source_{index}"
+            mothers.append(mother)
+        dataset_path=root/"scene_inputs/development/inputs.npz"
+        save_variable_dataset(CoverageDataset(mothers,{"partition_role":"development"}),dataset_path)
+        job={"experiment_id":"S1-ND12","kind":"prepare","preparation_mode":"teacher_probe",
+             "run_id":"teacher_probe_fixture","git_commit":"a"*40}
+        config={"coverage":{"nondrl":{"route":route}},"datasets":{"development":{"path":str(dataset_path),"sha256":archive.digest(dataset_path)}},
+                "evaluation":{"demand_multipliers":[.75,1.,1.25]}}
+        provenance={"run_id":job["run_id"],"git_commit":job["git_commit"],"config_sha256":"b"*64}
+        templates={}
+        for multiplier in (.75,1.,1.25):
+            before=raw_row(self.scene,self.initial,multiplier)["result"]
+            scaled=copy.deepcopy(self.scene);scaled.demands*=multiplier
+            final=Layout.from_record(self.initial.to_record());final.assignment[1]=1
+            templates[multiplier]=(before,final.to_record(),metrics_all(scaled,final),evaluate_layout(scaled,final,{}))
+        receipts=[]
+        for index,mother in enumerate(mothers):
+            for multiplier in (.75,1.,1.25):
+                before,final,final_metrics,final_physical=templates[multiplier]
+                improved=index<6
+                problem={"format":"s1_nondrl_teacher_problem_v1","route":route,"provenance":provenance,"target_n":2,
+                    "mother_id":mother.scene_id,"source_hash":mother.source_hash,"demand_multiplier":multiplier,
+                    "scene_positions":mother.positions.tolist(),"scene_demands_bps":(mother.demands*multiplier).tolist(),
+                    "aircraft_ids":mother.aircraft_ids,"initial_layout":before["initial_layout"],
+                    "final_layout":final if improved else before["final_layout"],
+                    "initial_metrics_all":before["initial_metrics_all"],"final_metrics_all":final_metrics if improved else before["metrics_all"],
+                    "initial_physical":before["initial_physical"],"final_physical":final_physical if improved else before["physical"],
+                    "initial_sha256":before["initial_sha256"],"config":before["config"],"trace":[],
+                    "timing":before["timing"],"calls":before["calls"],"teacher_elapsed_seconds":.01}
+                relative=f"problem_receipts/problem_{len(receipts):06d}.json.gz"
+                path=root/"teacher"/relative;path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_bytes(gzip.compress(json.dumps(problem).encode(),mtime=0))
+                receipts.append({"path":relative,"sha256":archive.digest(path),"mother_id":mother.scene_id,"demand_multiplier":multiplier})
+        manifest={"format":"s1_nondrl_teacher_v1","route":route,"status":"completed","provenance":provenance,
+                  "rows":0,"shards":[],"problems":60,"trials":60,"elapsed_seconds":.6,"problem_receipts":receipts}
+        wrapper={"dataset_sha256":archive.digest(dataset_path),"sha256":"","completed":True,
+                 "evidence_path":str(root/"teacher/manifest.json")}
+        for name,value in (("job.json",job),("config.json",config),("status.json",{"run_id":job["run_id"],"stage":"completed"}),
+                           ("teacher/manifest.json",manifest)):
+            path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(value))
+        wrapper["sha256"]=archive.digest(root/"teacher/manifest.json")
+        (root/"teacher_manifest.json").write_text(json.dumps(wrapper))
+        return manifest,wrapper
+
+    def _rewrite_teacher_manifest(self,root,manifest,wrapper):
+        (root/"teacher/manifest.json").write_text(json.dumps(manifest))
+        wrapper["sha256"]=archive.digest(root/"teacher/manifest.json")
+        (root/"teacher_manifest.json").write_text(json.dumps(wrapper))
+
+    def test_full_teacher60_problem_proof_and_true_authority_over_online_proxy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);self._teacher_probe_fixture(root)
+            audit=strict_audit.audit_job(root);proof=audit["teacher_probe"]
+            self.assertEqual(proof["complete_problems"],60)
+            self.assertEqual(len(proof["rows"]),60)
+            measured={"status":"passed","passed":True,"task_source":{"run_id":audit["run_id"],"wrapper_sha256":proof["wrapper_sha256"],
+                      "dataset_sha256":proof["dataset_sha256"],"scientific_commit":audit["git_commit"]},
+                      "statistics":{"actual_complete_problems":60,"legal_reference_mothers":list(range(20)),"improved_mothers":list(range(6))}}
+            gate={"route":"02","source_commit":"a"*40,"passed":True,"improved_mothers":list(range(6)),
+                  "teacher_reachability":measured,"proxy_diagnostics":{"method":"T","improved_mothers":[]}}
+            verdict=report.verify_teacher_gate(gate,{audit["run_id"]:audit})
+            self.assertTrue(verdict["actual_passed"]);self.assertTrue(verdict["proxy_diagnostics_retained"])
+            forged=copy.deepcopy(gate);forged["teacher_reachability"]["statistics"]["improved_mothers"].append(6)
+            with self.assertRaisesRegex(ValueError,"statistics"):
+                report.verify_teacher_gate(forged,{audit["run_id"]:audit})
+
+    def test_teacher_fullproof_tampering_even_with_recomputed_container_hashes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);manifest,wrapper=self._teacher_probe_fixture(root,"03")
+            original_manifest=copy.deepcopy(manifest);raw_path=root/"teacher"/manifest["problem_receipts"][0]["path"]
+            original_raw=raw_path.read_bytes();original_problem=json.loads(gzip.decompress(original_raw))
+            for mutation in ("demand","airtime","initial_sha","provenance","target_n"):
+                problem=copy.deepcopy(original_problem);manifest=copy.deepcopy(original_manifest)
+                if mutation=="demand":problem["scene_demands_bps"][0]+=1e6
+                elif mutation=="airtime":problem["final_physical"]["aircraft_service"]["airtime_fraction"][0]/=2
+                elif mutation=="initial_sha":problem["initial_sha256"]="0"*64
+                elif mutation=="provenance":problem["provenance"]["git_commit"]="0"*40
+                else:problem["target_n"]=3
+                raw_path.write_bytes(gzip.compress(json.dumps(problem).encode(),mtime=0))
+                manifest["problem_receipts"][0]["sha256"]=archive.digest(raw_path)
+                self._rewrite_teacher_manifest(root,manifest,wrapper)
+                with self.assertRaises(ValueError,msg=mutation):strict_audit.audit_job(root)
+            raw_path.write_bytes(original_raw)
+            missing=copy.deepcopy(original_manifest);missing["problem_receipts"].pop()
+            self._rewrite_teacher_manifest(root,missing,wrapper)
+            with self.assertRaisesRegex(ValueError,"denominator"):
+                strict_audit.audit_job(root)
+            over=copy.deepcopy(original_manifest);over["trials"]=7681
+            self._rewrite_teacher_manifest(root,over,wrapper)
+            with self.assertRaisesRegex(ValueError,"ledger"):
+                strict_audit.audit_job(root)
+
+    def test_dynamic_mechanism_pins_utf8_content_and_immutable_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);path=root/"中文机制核验.json"
+            saved={"experiment_id":"S1-ND12","route":"06","status":"science_stopped","passed":False,
+                   "reason":"真实机会不足，保留失败", "sources":[{"run_id":"dev06","path":"/jobs/dev06/raw_scenes/manifest.json","sha256":"b"*64}]}
+            path.write_text(json.dumps(saved,ensure_ascii=False),encoding="utf-8")
+            gate={"route":"06","mechanism":{**saved,"receipt_source":{"path":str(path),"sha256":archive.digest(path)}}}
+            audits={"dev06":{"state":"completed","raw_manifest_sha256":"b"*64}}
+            self.assertFalse(report.verify_dynamic_mechanism(gate,audits)["passed"])
+            bad=copy.deepcopy(gate);bad["mechanism"]["reason"]="伪造已通过"
+            with self.assertRaisesRegex(ValueError,"fields"):
+                report.verify_dynamic_mechanism(bad,audits)
+            with self.assertRaisesRegex(ValueError,"SHA"):
+                report.verify_dynamic_mechanism(gate,{"dev06":{"state":"completed","raw_manifest_sha256":"c"*64}})
+
+    def test_all_postops_read_text_uses_explicit_utf8(self):
+        import ast
+        for module in (report,strict_audit,archive):
+            tree=ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=="read_text":
+                    self.assertTrue(any(k.arg=="encoding" and isinstance(k.value,ast.Constant) and k.value.value=="utf-8" for k in node.keywords),
+                                    f"{module.__name__}:{node.lineno}")
 
     def test_incomplete_or_missing_mechanism_is_not_scientific_failure(self):
         plan = {"experiment_id": "S1-ND12", "scientific_commit": "a"*40,
