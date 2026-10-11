@@ -37,7 +37,8 @@ def aggregate(rows):
         if len(values) != 3 or sorted(multipliers) != [.75, 1., 1.25]:
             raise ValueError("mother lacks exactly three frozen demand levels")
         result = {"mother_scene_id": mother, "all_zero_demand": all(r["all_zero_demand"] for r in values),
-                  "hard_feasible": all(r["hard_feasible"] for r in values)}
+                  "hard_feasible": all(r["hard_feasible"] for r in values),
+                  "online_budget_overrun": any(r.get("online_overrun_seconds",0.) > 1e-6 for r in values)}
         for key in keys:
             observed = [r.get(key) for r in values]
             if any(v is None for v in observed) and not all(v is None for v in observed):
@@ -48,6 +49,13 @@ def aggregate(rows):
         mothers.append(result)
     summary = {key: statistics([m[key] for m in mothers]) for key in keys}
     summary.update(mother_count=len(mothers), row_count=len(rows),
+                   source_versions=sorted({r["execution_commit"] for r in rows if r.get("execution_commit")}),
+                   online_budget_overrun_rows=sum(r.get("online_overrun_seconds",0.) > 1e-6 for r in rows),
+                   online_budget_overrun_seconds=statistics([r.get("online_overrun_seconds") for r in rows]),
+                   source_timing_strata={version: {"rows":len([r for r in rows if r.get("execution_commit")==version]),
+                         "actual_total_seconds":statistics([r["total_seconds"] for r in rows if r.get("execution_commit")==version]),
+                         "actual_online_seconds":statistics([r["timing"].get("online_seconds") for r in rows if r.get("execution_commit")==version])}
+                         for version in sorted({r["execution_commit"] for r in rows if r.get("execution_commit")})},
                    zero_demand_mothers=sum(m["all_zero_demand"] for m in mothers),
                    published_I0_rows=sum(r["published_I0"] for r in rows),
                    raw_proposal_rows=sum(r["raw_proposal_present"] for r in rows),
@@ -77,10 +85,15 @@ def paired_comparison(method, baseline):
     comparable_cv = relative <= .02 if relative is not None else bool(cv_a) and max(abs(x-y) for x,y in zip(cv_a,cv_b)) <= 1e-10
     efficiency = (protected and comparable_cv and times_a["median"] is not None and times_b["median"] is not None
                   and times_a["median"] <= .5*times_b["median"] and times_a["p95"] <= times_b["p95"])
+    timing_comparable = not any(x.get("online_budget_overrun") or y.get("online_budget_overrun") for x,y in pairs)
+    timing_comparable &= len(method.get("summary",{}).get("source_versions",[])) <= 1
+    timing_comparable &= len(baseline.get("summary",{}).get("source_versions",[])) <= 1
+    efficiency &= timing_comparable
     return {"paired_mothers": len(pairs), "relative_CV_change_ratio_of_means": relative,
             "absolute_CV_change": float(np.mean(np.asarray(cv_a)-cv_b)) if cv_a else None,
             "aircraft_carry_delta": carry_delta, "quality_branch_met": quality,
-            "efficiency_branch_met": bool(efficiency), "zero_baseline_relative_undefined": base_mean is not None and base_mean <= 1e-12,
+            "efficiency_branch_met": bool(efficiency), "timing_budget_comparable": bool(timing_comparable),
+            "zero_baseline_relative_undefined": base_mean is not None and base_mean <= 1e-12,
             "worse_CV_mothers": sum(x["load_cv_all"] > y["load_cv_all"]+1e-10 for x,y in pairs if x["load_cv_all"] is not None),
             "worse_carry_mothers": sum(x["aircraft_carry"] < y["aircraft_carry"]-1e-10 for x,y in pairs if x["aircraft_carry"] is not None)}
 
@@ -96,6 +109,10 @@ def verify_gate(gate, threshold, audits_by_run, path_map=None):
         audit = audits_by_run.get(source["run_id"])
         if not audit or audit["state"] != "completed" or audit.get("raw_manifest_sha256") != source["manifest_sha256"]:
             raise ValueError("development gate source does not close to audited task")
+        if source.get("source_commit") is not None and source["source_commit"]!=audit.get("git_commit"):
+            raise ValueError("development gate actual execution source differs")
+        if audit.get("source_lineage",{}).get("repaired") and source.get("contract_sha256")!=audit["source_lineage"]["contract_sha256"]:
+            raise ValueError("development gate source contract SHA differs")
         actual = {(r["mother_scene_id"], r["multiplier"]): r for r in audit["rows"]}
         for row in source["rows"]:
             match = actual.get((row["mother_id"], row["multiplier"]))
@@ -201,8 +218,13 @@ def verify_teacher_gate(gate, audits_by_run):
             or not audit or audit.get("preparation_mode") != "teacher_probe" or not audit.get("teacher_probe")):
         raise ValueError("strong teacher complete proof missing; engineering attention")
     proof = audit["teacher_probe"]
+    if (audit.get("source_lineage",{}).get("repaired") and
+            source.get("contract_sha256")!=audit["source_lineage"]["contract_sha256"]):
+        raise ValueError("strong teacher actual source contract SHA differs")
     if (source.get("wrapper_sha256") != proof["wrapper_sha256"] or source.get("dataset_sha256") != proof["dataset_sha256"]
-            or source.get("scientific_commit") != audit.get("git_commit") or audit.get("git_commit") != gate["source_commit"]):
+            or source.get("scientific_commit") != audit.get("origin_commit",audit.get("git_commit"))
+            or audit.get("origin_commit",audit.get("git_commit")) != gate["source_commit"]
+            or source.get("execution_commit",source.get("scientific_commit")) != audit.get("git_commit")):
         raise ValueError("strong teacher task/source SHA closure differs")
     rows = proof["rows"]
     groups = defaultdict(list)
@@ -220,6 +242,8 @@ def verify_teacher_gate(gate, audits_by_run):
         if gain is not None and gain>.01 and all(r["hard_feasible"] for r in values):
             improved.append(index)
     passed = len(improved)>=6 and all(r["hard_feasible"] for r in rows)
+    if not passed and proof.get("unknown_search_problems",0):
+        raise ValueError("bounded strong-teacher search evidence gap; I0 references are not measured scientific failures")
     statistics = measured.get("statistics", {})
     if (statistics.get("actual_complete_problems") != 60 or statistics.get("legal_reference_mothers") != list(range(20))
             or sorted(statistics.get("improved_mothers", [])) != sorted(improved)
@@ -230,6 +254,8 @@ def verify_teacher_gate(gate, audits_by_run):
         if not mechanism or mechanism.get("status") != "science_stopped" or mechanism.get("passed") is not False:
             raise ValueError("strong teacher gate outcome differs")
     return {"passed_quality": passed, "actual_passed": gate["passed"], "improved_mothers": len(improved),
+            "searched_problems": proof.get("searched_problems"), "reference_only_problems":proof.get("reference_only_problems"),
+            "unknown_search_problems":proof.get("unknown_search_problems"),
             "authority": "actual_strong_teacher_probe", "complete_problems": 60,
             "proxy_diagnostics_retained": bool(gate.get("proxy_diagnostics"))}
 
@@ -264,6 +290,35 @@ def shared_baseline(audits):
             "evidence_keys": [audit["key"] for audit in candidates]}
 
 
+def frozen_source_refs(root, state):
+    """Read only final_input bytes; never chase a live source-policy path."""
+    from .execution_sources import contract_bytes
+    snapshot_path=Path(root)/"analysis/final_input/snapshot.json"
+    if not snapshot_path.is_file():
+        if state.get("source_policy_sha256"):
+            raise ValueError("repaired report lacks immutable source-policy final_input")
+        return {}
+    snapshot=json.loads(snapshot_path.read_bytes())
+    files={k:v for k,v in snapshot["files"].items() if k.startswith(("source_","reused_"))}
+    payloads={}
+    for key,item in files.items():
+        path=Path(item["path"])
+        if not path.resolve().is_relative_to(snapshot_path.parent.resolve()):
+            raise ValueError("source final_input reference escaped immutable snapshot")
+        payload=path.read_bytes()
+        if digest_bytes(payload)!=item["sha256"]:raise ValueError("source final_input raw SHA differs")
+        payloads[key]=payload
+    if state.get("source_policy_sha256"):
+        policy=json.loads(payloads["source_policy"])
+        contract=contract_bytes(payloads["source_contract"],state["source_policy_sha256"])
+        if policy["contract_sha256"]!=state["source_policy_sha256"]:
+            raise ValueError("frozen policy differs from controller binding")
+        actual={digest_bytes(v) for k,v in payloads.items() if k.startswith("source_validation_")}
+        if actual!={r["sha256"] for r in contract["validation_receipts"]}:
+            raise ValueError("frozen source validation receipt index differs")
+    return files
+
+
 def build(plan, state, root, *, path_map=None, gate_directory=None, verified_volume_cache=None):
     root = Path(root)
     if plan.get("experiment_id") != "S1-ND12" or state.get("experiment_id") != "S1-ND12":
@@ -271,16 +326,20 @@ def build(plan, state, root, *, path_map=None, gate_directory=None, verified_vol
     if state.get("plan_sha256") != stable_sha(plan):
         raise ValueError("controller frozen plan SHA differs")
     issues, audits, locations = [], {}, {}
+    try:
+        source_refs=frozen_source_refs(root,state)
+    except (ValueError,KeyError,FileNotFoundError) as error:
+        source_refs={};issues.append("frozen source references: "+str(error))
     for key, record in state.get("jobs", {}).items():
         try:
             location = task_location(root, record)
             audit = audit_job(location, path_map=path_map,verified_volume_cache=verified_volume_cache)
             audit.update(key=key, port=record["port"])
-            if audit["run_id"] != record["run_id"] or (audit.get("git_commit") and audit["git_commit"] != plan["scientific_commit"]):
+            if audit["run_id"] != record["run_id"] or (audit.get("git_commit") and audit.get("origin_commit",audit["git_commit"]) != plan["scientific_commit"]):
                 raise ValueError("controller task/source differs")
             audits[record["run_id"]] = audit
             locations[record["run_id"]] = str(location)
-            if not audit["formal_terminal"] or audit["state"] == "failure":
+            if not audit["formal_terminal"] or audit["state"] in ("failure","engineering_stopped"):
                 issues.append(key + ": " + audit["state"])
         except (ValueError, KeyError, FileNotFoundError) as error:
             issues.append(key + ": " + str(error))
@@ -364,6 +423,9 @@ def build(plan, state, root, *, path_map=None, gate_directory=None, verified_vol
             "tasks": {run_id: {k: v for k, v in a.items() if k != "rows"} for run_id, a in audits.items()},
             "row_audits": {run_id: a["rows"] for run_id, a in audits.items()}, "locations": locations,
             "shared_baseline": common_BH,
+            "source_repair_attention_history": state.get("source_repair_attention_history", []),
+            "source_policy_sha256": state.get("source_policy_sha256"),
+            "frozen_source_references":source_refs,
             "statistics_unit": "mean of three levels per mother, then equal mothers",
             "RF_scope": "frozen model estimate; recorded TDMA algebra verified; no independent RF recomputation"}
 
@@ -388,6 +450,13 @@ def markdown(report):
             t = s["total_seconds"]
             lines.append(f"| {route} | {method} | {fmt(s['load_cv_all']['mean'])} | {fmt(s['load_cv_positive']['mean'])} | {fmt(s['aircraft_carry']['mean'])} | {fmt(s['N']['mean'])} | {fmt(t['mean'])}/{fmt(t['median'])}/{fmt(t['p95'])} |")
     lines.extend(["", "所有失败、科学停止与未完成任务均保留。主法和消融分别列示；只有通过冻结开发门槛的路线才进入后续训练与新考核。单种子51001不能支持多种子稳定性结论。", ""])
+    if report.get("source_policy_sha256"):
+        lines += ["原方案与来源保持105冻结；本轮有白名单工程修复，实际执行提交、合同SHA、旧记录和来源空窗分别保留。补I0参考只闭合合法参考，不增加教师搜索、监督标签或试算预算。", ""]
+        for run_id,task in report["tasks"].items():
+            proof=task.get("teacher_probe")
+            if proof:
+                lines.append(f"- {run_id}：完整参考{proof['complete_problems']}题，实际搜索{proof.get('searched_problems','缺项')}题，I0补参考{proof.get('reference_only_problems','缺项')}题，搜索未知{proof.get('unknown_search_problems','缺项')}题；教师实际超时{fmt(proof.get('teacher_overrun_seconds'))}秒。")
+        lines.append("")
     lines += ["| 路线/方法 | 需求带内率 | 波束中心模型承载 | 波束SI | 波束SGM | 全景功率(W) | 原提议几何可行/有提议行 | 发布I0行 | 全零需求母 |",
               "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for route,record in report["routes"].items():
@@ -403,6 +472,11 @@ def markdown(report):
             mean=lambda key:t.get(key,{}).get("mean")
             lines.append(f"| {route}/{method} | {fmt(s['shared_initial_seconds']['mean'])} | {fmt(mean('online_seconds'))} | {fmt(mean('solver_seconds'))} | {fmt(mean('final_verification_seconds'))} | {fmt(s['total_seconds']['median'])}/{fmt(s['total_seconds']['p95'])} |")
     lines += ["", "设备、软件和并发条件保留于各任务的 execution_environment 与原始 job/status/preflight；缺项如实标缺失，异设备或不同争用条件的耗时不能当作严格同条件比较。", ""]
+    for route,record in report["routes"].items():
+        for method,data in record["methods"].items():
+            s=data["summary"]
+            if s.get("online_budget_overrun_rows") or len(s.get("source_versions",[]))>1:
+                lines.append(f"- {route}/{method}：保留质量结果；{s.get('online_budget_overrun_rows',0)}行超过在线预算，按实际源码分层的耗时见source_timing_strata，不称同2秒效率比较。")
     lines += ["配对归因检查：", ""]
     for route,record in report["routes"].items():
         for label,comparison in record.get("comparisons",{}).items():
