@@ -313,6 +313,9 @@ def submit(application, body):
             raise ValueError("model endpoint route/budget/provenance differs")
         extra.update(model_path=str(model), model_source_run_id=source_job["run_id"],
                      model_files=[{"path": str(model / name), "sha256": digest(model / name)} for name in ("policy.pt", "model.json")])
+        from .nondrl_datafeed import validate_model_consumer
+        runtime=validate_model_consumer(source_job,directory,metadata,model/"policy.pt")
+        if runtime:extra["model_runtime_extensions"]=runtime
     indices = body.get("scene_indices")
     if indices is not None:
         if not (kind == "evaluate" or initial_mode) or not isinstance(indices, list) or not indices or len(set(indices)) != len(indices) or any(type(i) is not int or i not in range(datasets[role]["count"]) for i in indices):
@@ -351,6 +354,10 @@ def freeze_sources(extra, destination):
 
 
 def api(application, method, parts, body):
+    if len(parts)==3 and parts[0]=="runs" and parts[2]=="datafeed-extension" and method=="POST":
+        deployment(application.store)
+        from .nondrl_datafeed import extend_job
+        return extend_job(application.app.scheduler,validate_id(parts[1]),body)
     if len(parts) == 3 and parts[0] == "runs" and parts[2] == "source-repair" and method == "POST":
         deployment(application.store)
         from .nondrl_source_repair import repair_job
@@ -397,8 +404,15 @@ def resume_job(scheduler, run_id):
     launch = read_json(directory / "launch.json", {})
     if status.get("stage") not in ("stopped", "failed", "interrupted") or status.get("scientific_stop") is True:
         raise ValueError("S1-ND12 task cannot resume from this state")
-    if pid_alive(status.get("pid"), launch.get("process_start_time")):
+    alive=pid_alive(status.get("pid"),launch.get("process_start_time"))
+    if job.get("runtime_extensions"):
+        from .nondrl_datafeed import worker_exited
+        alive=not worker_exited(directory,status.get("pid") or launch.get("pid"),launch.get("process_start_time"))
+    if alive:
         raise ValueError("original worker still alive")
+    if job.get("runtime_extensions"):
+        from .nondrl_datafeed import preserve_checkpoint_tail
+        preserve_checkpoint_tail(job,directory)
     config = validate_nondrl_config(read_json(directory / "config.json", {}))
     for record in config["datasets"].values():
         _pin(record["path"], record["sha256"])

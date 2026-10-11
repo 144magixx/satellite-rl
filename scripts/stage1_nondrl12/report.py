@@ -415,6 +415,14 @@ def build(plan, state, root, *, path_map=None, gate_directory=None, verified_vol
                 if common_initials.get(key) != row["initial_sha256"]:
                     issues.append(audit["key"] + ": shared I0 source does not close " + str(key))
     common_BH = shared_baseline(audits)
+    for audit in audits.values():
+        extension=audit.get("runtime_extension")
+        if not extension or extension.get("execution_role")!="model_only_consumer":continue
+        owner=audits.get(extension["model_source_run_id"],{})
+        if (owner.get("runtime_extension",{}).get("marker")!=extension.get("marker") or
+                owner.get("state")!="completed" or not owner.get("endpoint_sha256") or
+                not any(f.get("sha256")==owner["endpoint_sha256"] for f in extension.get("model_files",[]))):
+            issues.append(audit["key"]+": model runtime extension does not close to the exact approved fixed endpoint")
     if common_BH is None:
         issues.append("shared BH baseline lacks four completed, independent lane shards")
     for route in (f"{i:02d}" for i in range(1, 13)):
@@ -483,6 +491,7 @@ def build(plan, state, root, *, path_map=None, gate_directory=None, verified_vol
             "source_repair_attention_history": state.get("source_repair_attention_history", []),
             "source_policy_sha256": state.get("source_policy_sha256"),
             "frozen_source_references":source_refs,
+            "runtime_extensions":{run_id:a["runtime_extension"] for run_id,a in audits.items() if a.get("runtime_extension")},
             "statistics_unit": "mean of three levels per mother, then equal mothers",
             "RF_scope": "frozen model estimate; recorded TDMA algebra verified; no independent RF recomputation"}
 
@@ -508,6 +517,12 @@ def markdown(report):
             t = s["total_seconds"]
             lines.append(f"| {route} | {method} | {fmt(s['load_cv_all']['mean'])} | {fmt(s['load_cv_positive']['mean'])} | {fmt(s['aircraft_carry']['mean'])} | {fmt(s['N']['mean'])} | {fmt(t['mean'])}/{fmt(t['median'])}/{fmt(t['p95'])} |")
     lines.extend(["", "所有失败、科学停止与未完成任务均保留。主法和消融分别列示；只有通过冻结开发门槛的路线才进入后续训练与新考核。单种子51001不能支持多种子稳定性结论。", ""])
+    if report.get("runtime_extensions"):
+        lines += ["MLM训练的实际运行时由原a21快照和冻结的等价数据读取器组成；来源105→a21链、原学习合同、数据与预算保持原记录，外部provider/bootstrap/cache与数值等价证明分别列SHA。该训练不能简称为纯a21运行时。", ""]
+        for run_id,task in report["tasks"].items():
+            if task.get("training_datafeed_segments"):
+                for segment in task["training_datafeed_segments"]:
+                    lines.append(f"- {run_id} 更新{segment['first_update']}–{segment['last_update']}：{segment['datafeed']}，实际记录{segment['recorded_updates']}次更新，活动时间{fmt(segment.get('checkpoint_active_seconds'))}秒；不同供给段不作统一原算法速度结论。")
     for route,record in report["routes"].items():
         if record['status']=="budget_limited_inconclusive":
             gate=record.get("gate") or {}
@@ -584,6 +599,10 @@ def figures(report, directory):
             fig, axes = plt.subplots(1, 2, figsize=(10, 3.7), layout="constrained")
             axes[0].plot([v["update"] for v in losses], [v["loss"] for v in losses], color="#0072B2", linewidth=.7)
             axes[0].set(xlabel="Supervised update", ylabel="Raw supervised loss", title="Every recorded update; no smoothing")
+            if task.get("runtime_extension") and task["runtime_extension"].get("activation_update"):
+                boundary=task["runtime_extension"]["activation_update"]
+                axes[0].axvline(boundary,color="#D55E00",linestyle="--",linewidth=.9,label="Reader extension boundary")
+                axes[0].legend(fontsize=7)
             xs = [v["updates"] for v in validation]
             ys = [v["metrics"].get("mother_equal_cv_mean", np.nan) for v in validation]
             axes[1].plot(xs, [np.nan if y is None else y for y in ys], color="#D55E00", marker="o")
