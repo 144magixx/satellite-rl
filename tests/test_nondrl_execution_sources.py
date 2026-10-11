@@ -1,6 +1,7 @@
 """Offline source-repair corruption and controller boundary checks; no jobs run."""
 from copy import deepcopy
 import hashlib
+import gzip
 import json
 from pathlib import Path
 import tempfile
@@ -89,6 +90,8 @@ class PolicyTransport:
         return {"exit_code":0,"stderr":"","stdout":json.dumps({"run_id":self.job["run_id"],"passed":True,
             "execution_commit":self.job["git_commit"],"contract_sha256":self.contract_sha})}
 
+    def upload(self,*args):pass
+
 
 class ExecutionSourcesTests(unittest.TestCase):
     def test_archive_directory_and_zip_preserve_both_sources_and_old_evidence(self):
@@ -167,6 +170,10 @@ class ExecutionSourcesTests(unittest.TestCase):
             self.assertNotIn("01",controller.state["route_attention"])
             self.assertIn("05",controller.state["route_attention"])
             self.assertEqual(controller.state["source_repair_attention_history"][0]["previous_attention"]["key"],"teacher/01")
+            controller.route_attention("01","workbench task explicitly stopped; continuation needs diagnosis",key="teacher/01")
+            controller.reconcile_source_attention(snapshot)
+            self.assertIn("01",controller.state["route_attention"])
+            self.assertEqual(len(controller.state["source_repair_attention_history"]),1)
             controller.route_attention("01","measured failure",key="teacher/01")
             controller.state["routes"]["01"]={"status":"science_stopped"}
             controller.reconcile_source_attention(snapshot)
@@ -223,6 +230,66 @@ class ExecutionSourcesTests(unittest.TestCase):
                 current[key]=value;(root/"teacher/manifest.json").write_bytes(raw(current))
                 with self.assertRaisesRegex(ValueError,"budget|provenance"):
                     sources.audit_lineage(job,Evidence(root))
+
+    def test_compact_receipt_bounds_payload_and_is_idempotent(self):
+        result={"status":"attention_required","statistics":{"actual_complete_problems":60,"mother_metrics":[{"dataset_index":i} for i in range(20)],
+            "problem_metrics":[{"dataset_index":i//3,"result":{"metrics_all":{"load_cv_all":.2,"geometry_feasible":True,"unique_assignment":True,"demand_conserved":True,"beam_demand_bps":[2]*10000},
+            "physical":{"aircraft_service":{"demand_weighted_carried_fraction":.99,"per_aircraft":[1]*10000}}}} for i in range(60)]},"sources":[{"sha256":"a"*64,"path":"canonical raw"}]}
+        compact=sources.compact_receipt(result)
+        self.assertLess(len(raw(compact)),30000)
+        self.assertEqual(len(compact["statistics"]["problem_metrics"]),60)
+        self.assertEqual(compact,sources.compact_receipt(compact))
+        self.assertNotIn("per_aircraft",json.dumps(compact))
+        self.assertEqual(compact["statistics"]["problem_metrics"][0]["final_carry"],.99)
+
+    def test_verified_existing_gzip_reused_once_without_raw_recopy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);path=root/"controller/state.json";path.parent.mkdir()
+            state={"route_attention":{"02":{"reason":"gap","receipt":{"statistics":{"problem_metrics":[{"result":{"physical":{"huge":[1]*1000}}}]}}}}}
+            payload=raw(state);path.write_bytes(payload)
+            saved=root/"preflight/repair_epoch/postops_censored";saved.mkdir(parents=True)
+            packed=saved/"original.gz";packed.write_bytes(gzip.compress(payload))
+            (saved/"preservation.json").write_bytes(raw([{"source":str(path),"source_sha256":sha(payload),"gzip":str(packed),"gzip_sha256":sha(packed.read_bytes())}]))
+            (saved/"history_roundtrip.json").write_bytes(raw({"passed":True,"checks":[{"gzip":str(packed),"uncompressed_sha256":sha(payload),"bytes":len(payload),"passed":True}]}))
+            sources.compact_state_history(path,state)
+            self.assertEqual(state["payload_compaction_history"][0]["path"],str(packed))
+            self.assertFalse((path.parent/"history").exists())
+            path.write_bytes(raw(state));sources.compact_state_history(path,state)
+            self.assertEqual(len(state["payload_compaction_history"]),1)
+            self.assertEqual(gzip.decompress(packed.read_bytes()),payload)
+
+    def test_bounded_disposition_closes_only_exact_exhausted_unknown_probe_and_no_repeat(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);job,contract,_=lineage_fixture(root)
+            run="prepare_nondrl_20261012_045228_1d87b8e0";job["run_id"]=run;job["variant"]="02";job["preparation_mode"]="teacher_probe"
+            path=root/"source_lineage/contract.json";pin=sha(path.read_bytes())
+            (root/"source_policy.json").write_bytes(raw({"contract_path":"/remote/contract.json","contract_sha256":pin,"local_contract_path":str(path)}))
+            plan,registry=inputs();plan["scientific_commit"]=registry["scientific_commit"]=sources.ORIGIN_COMMIT
+            transport=PolicyTransport(job,pin);transport.stage="completed"
+            controller=PipelineController(root,plan,registry,transport)
+            record={"run_id":run,"port":20418,"stage":"completed"};controller.state["jobs"]["teacher_probe/02"]=record
+            receipt={"status":"attention_required","passed":False,"scientific_stop":False,
+                "reason":"offline_teacher_search_evidence_gap: bounded unknown/reference-only problems remain",
+                "statistics":{"actual_complete_problems":60,"legal_reference_mothers":list(range(20)),"improved_mothers":[0,1],
+                    "unknown_search_problems":7,"recorded_teacher_seconds":601.,"true_trials":123},
+                "task_source":{"run_id":run,"contract_sha256":pin,"wrapper_sha256":"4"*64,"evidence_manifest_sha256":"5"*64}}
+            helper=root/"teacher_reachability/route_02.json";helper.parent.mkdir();helper.write_bytes(raw(receipt))
+            entry={"run_id":run,"status":"budget_limited_inconclusive","reason":"authorized evidence insufficiency",
+                "teacher_wrapper_sha256":"4"*64,"teacher_evidence_manifest_sha256":"5"*64,"helper_receipt_path":str(helper),"helper_receipt_sha256":sha(helper.read_bytes())}
+            scope={"format":"s1_nd12_bounded_dispositions_v1","origin_commit":sources.ORIGIN_COMMIT,"contract_sha256":pin,"scientific_stop":False,"entries":{"02":entry}}
+            (root/"bounded_dispositions.json").write_bytes(raw(scope))
+            snapshots={20418:{run:{"stage":"completed"}}}
+            controller.apply_bounded_dispositions(snapshots)
+            gate=controller.state["routes"]["02"]
+            self.assertEqual(gate["status"],"budget_limited_inconclusive")
+            self.assertFalse(gate["passed"]);self.assertFalse(gate["scientific_stop"])
+            calls=transport.verifications;controller.apply_bounded_dispositions(snapshots)
+            self.assertEqual(transport.verifications,calls)
+            self.assertNotIn("train/02",controller.state["jobs"])
+            bad=deepcopy(receipt);bad["statistics"]["recorded_teacher_seconds"]=599.
+            with self.assertRaises(ValueError):sources.validate_disposition(scope,"02",bad)
+            bad=deepcopy(receipt);bad["statistics"]["improved_mothers"]=list(range(6))
+            with self.assertRaises(ValueError):sources.validate_disposition(scope,"02",bad)
 
 
 if __name__=="__main__":unittest.main()

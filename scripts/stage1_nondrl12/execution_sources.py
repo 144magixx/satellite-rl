@@ -1,6 +1,7 @@
 """Narrow client and offline proof boundary for the signed ND12 source repair."""
 from __future__ import annotations
 import hashlib
+import gzip
 import json
 from pathlib import Path
 import re
@@ -30,6 +31,130 @@ def contract_bytes(payload, expected):
             any(f["path"] not in DIFF_ALLOWLIST for f in files) or not value.get("validation_receipts")):
         raise ValueError("source repair diff or validation receipt missing")
     return value
+
+
+def compact_receipt(value):
+    """At most20 mother summaries and60 scalar rows; canonical raw stays external."""
+    def scalars(record):
+        return {k:v for k,v in record.items() if v is None or isinstance(v,(str,int,float,bool))}
+    result={k:v for k,v in value.items() if k not in ("statistics","rows","result","physical","trace")}
+    statistics=value.get("statistics",{})
+    reduced=scalars(statistics)
+    for key,entry in statistics.items():
+        if isinstance(entry,list) and all(v is None or isinstance(v,(str,int,float,bool)) for v in entry):
+            if len(entry)<=60:reduced[key]=entry
+    reduced["mother_metrics"]=[scalars(r) for r in statistics.get("mother_metrics",[])[:20]]
+    if statistics.get("problem_metrics"):
+        rows=[]
+        for row in statistics["problem_metrics"][:60]:
+            small=scalars(row);large=row.get("result",{})
+            if large:
+                for name,key in (("initial_cv","initial_metrics_all"),("final_cv","metrics_all")):
+                    small[name]=large.get(key,{}).get("load_cv_all")
+                for name,key in (("initial_carry","initial_physical"),("final_carry","physical")):
+                    small[name]=large.get(key,{}).get("aircraft_service",{}).get("demand_weighted_carried_fraction")
+                small["reference_geometry_feasible"]=all(large.get("metrics_all",{}).get(k) is True for k in
+                    ("geometry_feasible","unique_assignment","demand_conserved"))
+            if isinstance(row.get("search_scope"),dict):small["search_scope"]=scalars(row["search_scope"])
+            rows.append(small)
+        reduced["problem_metrics"]=rows
+        reduced["legacy_search_problems_without_explicit_scope"]=sum(not r.get("search_scope") for r in rows)
+        reduced["explicit_complete_search_problems"]=sum(r.get("search_scope",{}).get("searched") is True and
+            r.get("search_scope",{}).get("complete_search") is True for r in rows)
+        if "complete_search_problems" in reduced:
+            reduced["helper_reported_complete_search_problems"]=reduced.pop("complete_search_problems")
+    result["statistics"]=reduced
+    return result
+
+
+def compact_attention(value):
+    result={k:v for k,v in value.items() if k not in ("receipt","status","previous_attention")}
+    if isinstance(value.get("receipt"),dict):result["receipt"]=compact_receipt(value["receipt"])
+    if isinstance(value.get("status"),dict):
+        result["status"]={k:v for k,v in value["status"].items() if k in (
+            "run_id","stage","scientific_stop","stop_reason","error","pid","process_start_time","git_commit","heartbeat_at")}
+    if isinstance(value.get("previous_attention"),dict):result["previous_attention"]=compact_attention(value["previous_attention"])
+    return result
+
+
+def compact_state_history(path, state):
+    """Preserve original bytes once, then reduce historical payloads on restart."""
+    if not Path(path).is_file():return
+    changed=False
+    for key in ("attention","route_attention"):
+        if key=="attention" and isinstance(state.get(key),dict):
+            trimmed=compact_attention(state[key]);changed|=trimmed!=state[key];state[key]=trimmed
+        elif key=="route_attention":
+            for route,value in state.get(key,{}).items():
+                trimmed=compact_attention(value);changed|=trimmed!=value;state[key][route]=trimmed
+    history=state.get("source_repair_attention_history",[])
+    for index,value in enumerate(history):
+        trimmed=compact_attention(value);changed|=trimmed!=value;history[index]=trimmed
+    for route,gate in state.get("routes",{}).items():
+        for key in ("teacher_reachability",):
+            if isinstance(gate.get(key),dict):
+                trimmed=compact_receipt(gate[key]);changed|=trimmed!=gate[key];gate[key]=trimmed
+    if changed:
+        path=Path(path);signature=hashlib.sha256()
+        with path.open("rb") as stream:
+            for block in iter(lambda:stream.read(8<<20),b""):signature.update(block)
+        sha=signature.hexdigest();target=None
+        reused=preserved_payload_ref(path,sha,path.stat().st_size)
+        if reused:target=Path(reused["path"])
+        if target is None:target=path.parent/"history"/("payload_before_compaction_"+sha+".json.gz")
+        target.parent.mkdir(parents=True,exist_ok=True)
+        if not target.exists():
+            partial=target.with_suffix(".partial")
+            with path.open("rb") as source, gzip.open(partial,"wb",compresslevel=6) as output:
+                for block in iter(lambda:source.read(8<<20),b""):output.write(block)
+            partial.replace(target)
+        state.setdefault("payload_compaction_history",[]).append({"path":str(target),"original_sha256":sha,
+            "original_bytes":path.stat().st_size,"gzip_sha256":hashlib.sha256(target.read_bytes()).hexdigest(),
+            "reason":"full original state preserved; compact canonical-evidence summaries for bounded coordinator"})
+
+
+def preserved_payload_ref(path,expected,bytes_count):
+    path=Path(path)
+    preserved=path.parent.parent/"preflight/repair_epoch/postops_censored/preservation.json"
+    roundtrip=preserved.with_name("history_roundtrip.json")
+    if not preserved.is_file() or not roundtrip.is_file():return None
+    proof=json.loads(roundtrip.read_bytes())
+    for old in json.loads(preserved.read_bytes()):
+        if old.get("source_sha256")!=expected or Path(old.get("source",".")).resolve()!=path.resolve():continue
+        checks=[r for r in proof.get("checks",[]) if r.get("gzip")==old["gzip"] and r.get("passed") is True and
+            r.get("uncompressed_sha256")==expected and r.get("bytes")==bytes_count]
+        candidate=Path(old["gzip"])
+        if (proof.get("passed") is True and checks and candidate.is_file() and
+                hashlib.sha256(candidate.read_bytes()).hexdigest()==old["gzip_sha256"]):
+            return {"path":str(candidate),"original_sha256":expected,"original_bytes":bytes_count,"gzip_sha256":old["gzip_sha256"]}
+    raise ValueError("existing payload preservation is not an exact verified copy")
+
+
+def validate_disposition(scope, route, receipt):
+    """Explicit operator closure of the two exhausted, unknown teacher probes."""
+    item=scope.get("entries",{}).get(route,{})
+    source=receipt.get("task_source",{});statistics=receipt.get("statistics",{})
+    ids={"02":"prepare_nondrl_20261012_045228_1d87b8e0","03":"prepare_nondrl_20261012_045232_8dca8863"}
+    if (scope.get("format")!="s1_nd12_bounded_dispositions_v1" or scope.get("origin_commit")!=ORIGIN_COMMIT or
+            scope.get("scientific_stop") is not False or set(scope.get("entries",{}))-set(ids) or
+            route not in ids or item.get("run_id")!=ids[route] or source.get("run_id")!=ids[route] or
+            item.get("status")!="budget_limited_inconclusive" or not item.get("reason") or
+            source.get("contract_sha256")!=scope.get("contract_sha256") or
+            source.get("wrapper_sha256")!=item.get("teacher_wrapper_sha256")):
+        raise ValueError("bounded disposition task/source scope differs")
+    manifest_sha=source.get("evidence_manifest_sha256") or next((s["sha256"] for s in receipt.get("sources",[])
+        if s.get("path","").endswith("/teacher/manifest.json")),None)
+    if manifest_sha!=item.get("teacher_evidence_manifest_sha256"):
+        raise ValueError("bounded disposition canonical teacher SHA differs")
+    if (receipt.get("status")!="attention_required" or receipt.get("passed") is not False or
+            receipt.get("scientific_stop") is not False or
+            receipt.get("reason")!="offline_teacher_search_evidence_gap: bounded unknown/reference-only problems remain" or
+            statistics.get("actual_complete_problems")!=60 or statistics.get("legal_reference_mothers")!=list(range(20)) or
+            len(statistics.get("improved_mothers",[]))>=6 or statistics.get("unknown_search_problems",0)<=0 or
+            statistics.get("recorded_teacher_seconds",0)<{"02":600.,"03":240.}[route] or
+            not 0<=statistics.get("true_trials",-1)<={"02":38400,"03":7680}[route]):
+        raise ValueError("bounded disposition has not met its evidence-insufficient terminal scope")
+    return item
 
 
 def role_allowed(contract, body):

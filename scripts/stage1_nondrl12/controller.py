@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -19,7 +20,8 @@ from satellite_rl.workbench.coverage_nondrl import default_nondrl_config, METHOD
 from satellite_rl.workbench.runtime import process_start_time
 from satellite_rl.workbench.storage import digest, now, read_json
 from scripts.stage1_nondrl12 import ops
-from scripts.stage1_nondrl12.execution_sources import contract_bytes, role_allowed
+from scripts.stage1_nondrl12.execution_sources import (
+    contract_bytes, role_allowed, compact_receipt, compact_attention, compact_state_history)
 
 PORTS = (20418, 20424, 20473, 20474)
 TERMINAL = {"completed", "stopped", "failed", "interrupted", "cancelled"}
@@ -77,6 +79,7 @@ class Controller:
                                            "created_at": now()}
         if self.state["plan_sha256"] != self.plan_sha or self.state["registry_sha256"] != self.registry_sha:
             raise ValueError("existing controller belongs to another frozen plan/registry")
+        compact_state_history(self.path,self.state)
         self.state.update(pid=os.getpid(), process_start_time=process_start_time(os.getpid()))
         self.source_policy = read_json(self.root / "source_policy.json")
         self.source_contract = None
@@ -101,8 +104,9 @@ class Controller:
             stream.write(json.dumps({"at": now(), "event": event_name, **fields}, ensure_ascii=False, allow_nan=False) + "\n")
 
     def attention(self, reason, **fields):
-        self.state.update(phase="attention_required", attention={"reason": reason, "at": now(), **fields})
-        self.event("attention_required", reason=reason, **fields)
+        record=compact_attention({"reason": reason, "at": now(), **fields})
+        self.state.update(phase="attention_required", attention=record)
+        self.event("attention_required", **record)
         self.save()
 
     def record(self, port, role):
@@ -459,14 +463,15 @@ assert hashlib.sha256(p.read_bytes()).hexdigest()==data['sha256']
 indices={{s.scene_id:i for i,s in enumerate(load_variable_dataset(p).scenes)}}
 wrapper=d/'teacher_manifest.json'
 result=audit_teacher_reachability(wrapper,hashlib.sha256(wrapper.read_bytes()).hexdigest(),{route!r},mother_indices=indices)
-result['task_source']={{'run_id':job['run_id'],'port':{port},'wrapper_path':str(wrapper),'wrapper_sha256':hashlib.sha256(wrapper.read_bytes()).hexdigest(),'dataset_sha256':data['sha256'],'scientific_commit':job.get('origin_commit',job['git_commit']),'execution_commit':job['git_commit'],'contract_sha256':job.get('source_repair_contract',{{}}).get('contract_sha256')}}
-print(json.dumps(result,allow_nan=False))
+result['task_source']={{'run_id':job['run_id'],'port':{port},'wrapper_path':str(wrapper),'wrapper_sha256':hashlib.sha256(wrapper.read_bytes()).hexdigest(),'evidence_manifest_sha256':hashlib.sha256(Path(json.loads(wrapper.read_text())['evidence_path']).read_bytes()).hexdigest(),'dataset_sha256':data['sha256'],'scientific_commit':job.get('origin_commit',job['git_commit']),'execution_commit':job['git_commit'],'contract_sha256':job.get('source_repair_contract',{{}}).get('contract_sha256')}}
+{inspect.getsource(compact_receipt)}
+print(json.dumps(compact_receipt(result),allow_nan=False))
 '''
         response = self.transport.remote_python(code, port, timeout=120)
         if response["exit_code"]:
             return {"status": "attention_required", "passed": False,
                     "reason": "strong teacher reachability audit interface failed", "error": response["stderr"][-1000:]}
-        actual = json.loads(response["stdout"].splitlines()[-1])
+        actual = compact_receipt(json.loads(response["stdout"].splitlines()[-1]))
         if "passed" not in actual or actual.get("status") not in ("passed", "science_stopped", "attention_required"):
             return {"status": "attention_required", "passed": False, "reason": "invalid strong teacher receipt"}
         path = self.root / "teacher_reachability" / f"route_{route}.json"

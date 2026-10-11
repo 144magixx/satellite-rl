@@ -80,7 +80,13 @@ def main(argv=None):
         history = directory / "history" / stamp
         history.mkdir(parents=True)
         for key, payload in raw.items():
-            (history / (key + ".before.json")).write_bytes(payload)
+            if key in ("controller_state","launcher") and len(payload)>1<<20:
+                source=directory/("state.json" if key=="controller_state" else "launcher.json")
+                ref=execution_sources.preserved_payload_ref(source,hashes[key],len(payload))
+                if ref is None:raise ValueError("large previous coordinator bytes need explicit verified preservation")
+                atomic_json(history/(key+".before.ref.json"),ref)
+            else:
+                (history / (key + ".before.json")).write_bytes(payload)
         modules = [Path(__file__), Path(controller_pipeline.__file__), Path(original_controller.__file__),
                    Path(placement_transport.__file__), Path(ops.__file__),Path(execution_sources.__file__),
                    Path(nondrl_source_repair.__file__),Path(source_lineage.__file__)]
@@ -94,6 +100,8 @@ def main(argv=None):
                 path=Path(policy.get("validation_path_map",{}).get(receipt["path"],receipt.get("local_path",receipt["path"])))
                 if sha_bytes(path.read_bytes())!=receipt["sha256"]:raise ValueError("repair validation byte SHA differs")
                 modules.append(path)
+        disposition_path=directory/"bounded_dispositions.json"
+        if disposition_path.is_file():modules.append(disposition_path)
         guards = {str(path): sha_bytes(path.read_bytes()) for path in modules}
         atomic_json(history / "transition.json", {"from_launcher_pid": values["launcher"].get("pid"),
                     "previous_byte_sha256": hashes, "new_module_sha256": guards,
@@ -103,6 +111,7 @@ def main(argv=None):
                     "resumed_utc": now(), "resume_history": str(history), "module_sha256": guards,
                     "registry_file_sha256": hashes["registry"], "placement_file": str(transport.path),
                     "placement_sha256": transport.mapping_sha256, "logical_to_physical": transport.mapping}
+        execution_sources.compact_state_history(directory/"launcher.json",launcher)
         # Previous failure bytes were preserved in the transition history.
         # Do not display them as the state of this new verified client.
         for stale in ("error", "traceback", "controller_attention"):

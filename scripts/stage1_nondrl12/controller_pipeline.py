@@ -7,11 +7,15 @@ Final test publication keeps a group-wide terminal/quiet barrier.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from copy import deepcopy
 
 from scripts.stage1_nondrl12.controller import Controller, PORTS, TERMINAL
 from satellite_rl.workbench.coverage_nondrl import METHODS, MODEL_METHODS
-from satellite_rl.workbench.storage import now
+from satellite_rl.workbench.storage import now, digest, read_json
+from satellite_rl.training.run_monitor import atomic_json
+from scripts.stage1_nondrl12 import ops
+from scripts.stage1_nondrl12.execution_sources import compact_attention, compact_receipt, validate_disposition
 
 LEARNED = ("01", "02", "03", "04", "05")
 
@@ -31,7 +35,7 @@ class PipelineController(Controller):
         return self.transport.physical_port(logical) if hasattr(self.transport, "physical_port") else logical
 
     def route_attention(self, route, reason, **fields):
-        record = {"reason": reason, "at": now(), **fields}
+        record = compact_attention({"reason": reason, "at": now(), **fields})
         old = self.state.setdefault("route_attention", {}).get(route)
         if old is None or old.get("reason") != reason:
             self.event("route_attention_required", route=route, **record)
@@ -50,6 +54,7 @@ class PipelineController(Controller):
     def refresh(self):
         snapshots = {p: {r["run_id"]: r for r in self.transport.api(p, "/api/coverage/nondrl/runs")["runs"]}
                      for p in PORTS}
+        self.apply_bounded_dispositions(snapshots)
         self.reconcile_source_attention(snapshots)
         for key, record in self.state["jobs"].items():
             row = snapshots[record["port"]].get(record["run_id"])
@@ -89,12 +94,69 @@ class PipelineController(Controller):
         self.save()
         return True
 
+    def apply_bounded_dispositions(self,snapshots):
+        path=self.root/"bounded_dispositions.json"
+        if not path.is_file():return
+        scope=read_json(path);signature=digest(path)
+        if not self.source_policy or scope.get("contract_sha256")!=self.source_policy["contract_sha256"]:
+            raise ValueError("bounded disposition is outside the active immutable source contract")
+        old=self.state.get("bounded_dispositions_sha256")
+        if old and old!=signature:raise ValueError("bounded disposition cannot change after consumption")
+        for route,item in scope.get("entries",{}).items():
+            if self.state.get("routes",{}).get(route,{}).get("status")=="budget_limited_inconclusive":continue
+            key=f"teacher_probe/{route}";record=self.state["jobs"].get(key)
+            row=snapshots.get((record or {}).get("port"),{}).get(item["run_id"],{})
+            if (not record or record["run_id"]!=item["run_id"] or row.get("stage")!="completed" or
+                    row.get("scientific_stop") is True):
+                raise ValueError("bounded disposition actual workbench probe is not completed")
+            actual=self.verify_execution(record)
+            if actual["status"].get("stage")!="completed" or actual["status"].get("scientific_stop") is True:
+                raise ValueError("bounded disposition actual task is not a non-scientific completed probe")
+            receipt_path=self.root/"teacher_reachability"/f"route_{route}.json"
+            if (receipt_path.resolve()!=Path(item["helper_receipt_path"]).resolve() or
+                    digest(receipt_path)!=item["helper_receipt_sha256"]):
+                raise ValueError("bounded disposition original helper receipt SHA differs")
+            receipt=compact_receipt(read_json(receipt_path))
+            validate_disposition(scope,route,receipt)
+            directory=ops.BASE+f"/{record['port']}/archive/outputs/workbench/jobs/{record['run_id']}"
+            code=f'''import json,hashlib
+from pathlib import Path
+d=Path({directory!r});w=d/'teacher_manifest.json';m=d/'teacher/manifest.json'
+assert hashlib.sha256(w.read_bytes()).hexdigest()=={item['teacher_wrapper_sha256']!r}
+assert hashlib.sha256(m.read_bytes()).hexdigest()=={item['teacher_evidence_manifest_sha256']!r}
+assert json.loads(m.read_bytes())['problems']==60
+print(json.dumps({{'passed':True,'run_id':{record['run_id']!r}}}))
+'''
+            result=self.transport.remote_python(code,record["port"],timeout=120)
+            if result["exit_code"] or json.loads(result["stdout"].splitlines()[-1]).get("passed") is not True:
+                raise ValueError("bounded disposition actual canonical teacher hashes differ")
+            gate={"experiment_id":"S1-ND12","route":route,"passed":False,"scientific_stop":False,
+                "status":"budget_limited_inconclusive","authority":"bounded_teacher_disposition",
+                "source_commit":self.plan["scientific_commit"],"threshold":self.plan["gate_thresholds"][route],
+                "teacher_reachability":receipt,"reason":item["reason"],"training_performed":False,"independent_test_performed":False,
+                "disposition_source":{"path":str(path),"sha256":signature},
+                "original_helper_receipt_source":{"path":str(receipt_path),"sha256":item["helper_receipt_sha256"]},
+                "dataset_sha256":self.record(record["port"],"development")["sha256"],"created_at":now()}
+            gate_path=self.root/"gates"/f"route_{route}.json";atomic_json(gate_path,gate)
+            remote=ops.BASE+"/source/gates/"+gate_path.name
+            self.transport.upload(gate_path,remote,PORTS[0]);gate["gate_source"]={"path":remote,"sha256":digest(gate_path)}
+            self.state["routes"][route]=gate
+            attention=self.state.get("route_attention",{}).pop(route,None)
+            self.state.setdefault("bounded_disposition_history",[]).append({"route":route,"at":now(),
+                "disposition_sha256":signature,"previous_attention":compact_attention(attention) if attention else None})
+            self.state.setdefault("source_attention_consumed",{})[route]=scope["contract_sha256"]
+            self.state["bounded_dispositions_sha256"]=signature
+            self.event("bounded_teacher_inconclusive",route=route,run_id=record["run_id"],disposition_sha256=signature)
+
     def reconcile_source_attention(self, snapshots):
         """Clear only the pinned repaired fault after API and byte-level checks."""
         if not self.source_contract:
             return
         allowed = set(self.source_contract["allowed_run_ids"])
         for route, attention in list(self.state.get("route_attention", {}).items()):
+            consumed=self.state.setdefault("source_attention_consumed",{})
+            if consumed.get(route)==self.source_policy["contract_sha256"]:
+                continue
             if self.state.get("routes", {}).get(route, {}).get("status") == "science_stopped":
                 continue
             candidates = [(key,r) for key,r in self.state["jobs"].items()
@@ -128,6 +190,7 @@ class PipelineController(Controller):
                 history = {"route": route, "previous_attention": previous, "at": now(),
                            "contract_sha256": self.source_policy["contract_sha256"], "actual_source_checks": checks}
                 self.state.setdefault("source_repair_attention_history", []).append(history)
+                consumed[route]=self.source_policy["contract_sha256"]
                 del self.state["route_attention"][route]
                 self.event("pinned_source_attention_reconciled", **history)
 
@@ -209,7 +272,7 @@ class PipelineController(Controller):
 
     def ready_for_test(self):
         return (set(self.state["routes"]) == set(METHODS) and not self.state.get("route_attention") and
-                all(type(g.get("passed")) is bool and g.get("status") in ("passed", "science_stopped")
+                all(type(g.get("passed")) is bool and g.get("status") in ("passed", "science_stopped", "budget_limited_inconclusive")
                     for g in self.state["routes"].values()) and
                 self.learning_terminal() and self.finished("initial/test/") and
                 all(j["stage"] in TERMINAL for key, j in self.state["jobs"].items() if not key.startswith("test/")))
@@ -305,7 +368,7 @@ print(json.dumps({{'quiet':not live and not unknown,'live':live,'unknown_birth':
             elif gate is None:
                 phase = "gate_pending" if self.development_ready(route) else "development_pending"
             elif not gate["passed"]:
-                phase = "science_stopped"
+                phase = gate.get("status","science_stopped")
             elif route not in LEARNED:
                 phase = "ready_for_final_test"
             else:
