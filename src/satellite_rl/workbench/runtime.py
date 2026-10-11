@@ -278,7 +278,17 @@ class Scheduler:
         if job.get("resume"):
             command.append("--resume")
         env = dict(os.environ)
-        env["PYTHONPATH"] = str(Path(job["source_root"]) / "src")
+        worker_source_root=job["source_root"]
+        if job.get("experiment_id")=="S2-F20" and job.get("execution_source"):
+            try:
+                from .fair20_source_repair import validate_execution_job,execution_view
+                if job.get("source_repair_pending"):raise ValueError("source repair transaction is not committed")
+                validate_execution_job(job,directory)
+                worker_source_root=execution_view(job)["source_root"]
+            except Exception as error:
+                self._status(directory,status,stage="attention_required",error="F20执行来源合同拒绝："+str(error))
+                return
+        env["PYTHONPATH"] = str(Path(worker_source_root) / "src")
         # Only SI-priority refinement jobs may use their frozen, isolated
         # solver dependencies. The frozen scientific source stays first and
         # unrelated workers keep the original single-source PYTHONPATH.
@@ -298,7 +308,7 @@ class Scheduler:
         self._status(directory, status, stage="starting", queue_reason=None)
         try:
             with (directory / "worker.log").open("ab", buffering=0) as log:
-                child = subprocess.Popen(command, cwd=job["source_root"], env=env,
+                child = subprocess.Popen(command, cwd=worker_source_root, env=env,
                                          stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                          creationflags=flags, close_fds=True, start_new_session=os.name != "nt")
             self.children[job["run_id"]] = child
@@ -307,6 +317,7 @@ class Scheduler:
                 self._status(directory, latest, stage="starting", pid=child.pid, command=command, started_at=now())
             atomic_json(directory / "launch.json", {"pid": child.pid, "command": command,
                         "python": self.python, "source_root": job["source_root"], "at": now(),
+                        "execution_source":job.get("execution_source"),"execution_cwd":worker_source_root,
                         "priority_solver_deps_path": job.get("priority_solver_deps_path"),
                         "process_start_time": process_start_time(child.pid)})
         except Exception as error:
@@ -330,6 +341,8 @@ class Scheduler:
                expected_repair_commit=None):
         with self.lock:
             candidate = read_json(self.store.job_dir(run_id) / "job.json", {})
+            if candidate.get("experiment_id") == "S2-F20":
+                raise ValueError("S2-F20必须使用/api/fair20/tasks/{run_id}/resume或SHA绑定的source-repair，通用恢复入口不接受本组任务")
             if candidate.get("experiment_id") == "S1-ND12":
                 if any(v is not None for v in (source_repair, repair_validation_path,
                                               repair_validation_sha256, expected_origin_commit, expected_repair_commit)):

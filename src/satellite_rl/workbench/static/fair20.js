@@ -56,6 +56,7 @@ async function refresh() {
       const row = document.createElement('div'); row.className='notice';
       const label = document.createElement('span');
       label.textContent = `${job.run_id} · ${job.mode} · ${job.algorithm} · ${status.stage} · ${status.env_step||0}/${status.budget_env_steps||0} · ${status.completed_scenes||0}景 `;
+      if(job.execution_source)label.textContent+=`科学源 ${job.git_commit.slice(0,8)} · 修复执行源 ${job.execution_source.execution_commit.slice(0,8)} `;
       row.append(label);
       for (const [caption,action] of [['详情与日志','detail'],['停止','stop'],['同ID恢复','resume']]) {
         const button=document.createElement('button'); button.type='button'; button.textContent=caption;

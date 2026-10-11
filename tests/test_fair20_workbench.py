@@ -226,7 +226,7 @@ class Fair20WorkbenchTests(unittest.TestCase):
         atomic_json(journal,{"phase":"B_complete","initial_sha256":fingerprint(initial),"A":solver,"B":solver,
                             "A_seconds":7.,"B_seconds":9.,"overhead_seconds":2.})
         ev=SimpleNamespace(capacity_bps=np.array([50.,50.]),beam_si=np.array([.5,.5]),beam_sgm=np.array([.6,.6]),si=.5,sgm=.6)
-        problem=SimpleNamespace(demand_bps=np.array([100.,100.]),evaluate=lambda power:ev)
+        problem=SimpleNamespace(demand_bps=np.array([100.,100.]),active=np.array([True,True]),evaluate=lambda power:ev)
         def verify(snap):snap["metrics"].update(SI=.5,SGM=.6);return problem
         with patch("satellite_rl.workbench.fair20_runner.verify_snapshot",side_effect=verify),patch("satellite_rl.power_refinement.optimizer.optimize_power") as A,patch("satellite_rl.power_refinement.priority.optimize_priority") as B:
             result=full_b_case(initial,lambda:False,journal=journal)

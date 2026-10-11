@@ -170,6 +170,8 @@ def select_candidate(rows):
 class Fair20Application:
     def __init__(self, app):
         self.app, self.store = app, app.store
+        from .fair20_source_repair import registered_source
+        registered_source(self.store)
 
     def task(self, run_id, completed=False):
         directory = self.store.job_dir(validate_id(run_id))
@@ -314,13 +316,24 @@ class Fair20Application:
         # Store's generic science input branch is intentionally bypassed. Its
         # fair20 hook freezes all inputs before publishing the semantic job kind.
         extra["candidate"] = config["candidate"]
-        return self.store.create_job(config, kind="prepare", extra=extra, request_id=body.get("request_id"))
+        with self.app.scheduler.lock,self.store.lock:
+            from .fair20_source_repair import bind_future_job
+            existed=any(record.get("request_id")==body.get("request_id") for record,_ in self.store.jobs())
+            job=self.store.create_job(config, kind="prepare", extra=extra, request_id=body.get("request_id"))
+            # An idempotent retry must not reinterpret an original failed or
+            # queued task as a newly created execution-source binding.
+            return job if existed else bind_future_job(self.store,job)
 
     def resume(self, run_id):
         with self.app.scheduler.lock, self.store.lock:
             directory, job, status = self.task(run_id)
             if status.get("stage") not in ("failed", "stopped", "interrupted"):
                 raise ValueError("仅异常或停止任务支持同ID恢复")
+            failure=read_json(directory/"failure.json",{})
+            if (not job.get("execution_source") and status.get("stage")=="failed" and
+                    str(status.get("phase","")).startswith("validation_") and
+                    "full_b_case" in failure.get("traceback","")):
+                raise ValueError("F20验证验收失败须使用SHA绑定的source-repair与validation-only证明，不能普通恢复")
             from .runtime import pid_alive
             launch = read_json(directory / "launch.json", {})
             if pid_alive(status.get("pid"), launch.get("process_start_time")):
@@ -356,7 +369,7 @@ class Fair20Application:
                     "default_config": default_config(), "formal_steps": 400000, "short_steps": 32768,
                     "validation_nodes": list(NODES), "warmup_included": True, "configurations": configurations}
         if method == "GET" and parts == ["tasks"]:
-            summary_keys=("run_id","kind","name","mode","algorithm","candidate","git_commit","prepare_run_id","created_at","model_dir","experiment_id")
+            summary_keys=("run_id","kind","name","mode","algorithm","candidate","git_commit","prepare_run_id","created_at","model_dir","experiment_id","execution_source")
             return {"tasks": [{"job": {key:job.get(key) for key in summary_keys}, "status": self.app.observed_status(status)}
                               for job, status in self.store.jobs() if job.get("experiment_id") == EXPERIMENT]}
         if len(parts) >= 2 and parts[0] == "tasks":
@@ -369,6 +382,9 @@ class Fair20Application:
                 return detail
             if method == "POST" and parts[2:] == ["resume"]:
                 return self.resume(parts[1])
+            if method == "POST" and parts[2:] == ["source-repair"]:
+                from .fair20_source_repair import repair_job
+                return repair_job(self.app.scheduler,parts[1],body)
             if method == "POST" and parts[2:] == ["stop"]:
                 directory, job, status = self.task(parts[1])
                 if status.get("stage") == "queued_resources":
@@ -376,6 +392,12 @@ class Fair20Application:
                     atomic_json(directory / "status.json", status)
                     return status
                 return self.app.scheduler.request_stop(parts[1])
+        if method == "GET" and parts == ["execution-source"]:
+            from .fair20_source_repair import registered_source
+            return {"execution_source":registered_source(self.store)}
+        if method == "POST" and parts == ["execution-source"]:
+            from .fair20_source_repair import register_group
+            return {"execution_source":register_group(self.app.scheduler,body)}
         if method == "POST" and parts == ["admit"]:
             with self.app.scheduler.lock:
                 directory, job, status = self.task(body["run_id"])

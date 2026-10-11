@@ -22,6 +22,104 @@ class Fair20RecoveryAttention(RuntimeError):
     """The retained checkpoint cannot account for all already spent interactions."""
 
 
+def execution_metadata(job):
+    return {"scientific_commit": job["git_commit"],
+            "execution_source": deepcopy(job.get("execution_source")),
+            "execution_commit": job.get("execution_source", {}).get("execution_commit", job["git_commit"])}
+
+
+def validation_only_resume_verified(job, directory, saved, log_tails):
+    """Require immutable SHA-bound evidence before excluding an unknown action.
+
+    A missing or contradictory proof retains the existing conservative recovery
+    rule. Validation cannot increment the learner interaction counter.
+    """
+    registration = job.get("validation_only_resume_proof", {})
+    try:
+        if log_tails or not registration or not job.get("execution_source"):
+            return False
+        path = Path(registration["proof_path"])
+        if digest(path) != registration["proof_sha256"]:
+            return False
+        proof = read_json(path)
+        step = saved["step"]
+        if (proof["version"] != "fair20_validation_only_resume_v1" or step != 100000
+                or saved["agent"]["interactions"] != step or step in saved["node_done"]
+                or proof["run_id"] != job["run_id"] or saved["run_id"] != job["run_id"]
+                or proof["scientific_commit"] != job["git_commit"]
+                or proof["execution_commit"] != job["execution_source"]["execution_commit"]
+                or proof["checkpoint_step"] != step or proof["agent_interactions"] != step
+                or proof["failed_phase"] != "validation_100000"
+                or proof["checkpoint_sha256"] != digest(Path(directory)/"checkpoint.pt")):
+            return False
+        records = proof["origin_records"]
+        if set(records) != {"job", "status", "config", "launch", "failure", "checkpoint"}:
+            return False
+        for reference in records.values():
+            if digest(Path(reference["path"])) != reference["sha256"]:
+                return False
+        origin_job = read_json(records["job"]["path"])
+        status = read_json(records["status"]["path"])
+        failure = read_json(records["failure"]["path"])
+        if (origin_job["run_id"] != job["run_id"] or origin_job["git_commit"] != job["git_commit"]
+                or records["checkpoint"]["sha256"] != proof["checkpoint_sha256"]
+                or records["config"]["sha256"] != saved["config_sha256"]
+                or records["config"]["sha256"] != digest(Path(directory)/"config.json")
+                or records["status"]["sha256"] != proof["failed_status_sha256"]
+                or records["failure"]["sha256"] != proof["failure_sha256"]
+                or status["run_id"] != job["run_id"] or status["stage"] != "failed"
+                or status["phase"] != "validation_100000" or status["env_step"] != step
+                or status["checkpoint_sha256"] != proof["checkpoint_sha256"]
+                or failure["run_id"] != job["run_id"] or failure["config_sha256"] != saved["config_sha256"]):
+            return False
+        stack = failure["traceback"]
+        if not all(marker in stack for marker in ("in validate_node", "in _evaluate", "in full_b_case")):
+            return False
+        if job["git_commit"] not in stack:
+            return False
+        if any(status["clock"][key] != saved["clock"][key] for key in
+               ("environment_seconds", "sampling_seconds", "update_seconds", "validation_seconds")):
+            return False
+        prior_io, measured_io = saved["clock"]["io_seconds"], status["clock"]["io_seconds"]
+        if not np.isfinite([prior_io, measured_io]).all() or measured_io < prior_io:
+            return False
+        if set(proof["training_logs"]) != set(saved["log_sizes"]):
+            return False
+        for name, size in saved["log_sizes"].items():
+            reference = proof["training_logs"][name]
+            current = Path(directory)/name
+            if (Path(reference["path"]).resolve() != current.resolve()
+                    or current.stat().st_size != size or reference["saved_size"] != size
+                    or proof["training_log_sizes"][name] != size or digest(current) != reference["sha256"]):
+                return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def validation_only_recovered_clock(job, saved):
+    """Called only after SHA-bound validation proof passes, preserving all work.
+
+    The failed status contains the measured checkpoint-write overhead that was
+    incremented after serialization. Incomplete validation wall time was never
+    recorded; persisted per-case costs remain available but cannot replace it.
+    """
+    proof = read_json(job["validation_only_resume_proof"]["proof_path"])
+    status = read_json(proof["origin_records"]["status"]["path"])
+    clock = deepcopy(saved["clock"])
+    previous_io = clock["io_seconds"]
+    clock["io_seconds"] = status["clock"]["io_seconds"]
+    metadata = {"post_checkpoint_measured_io_seconds_recovered": clock["io_seconds"]-previous_io,
+                "checkpoint_io_seconds": previous_io, "failed_status_io_seconds": clock["io_seconds"],
+                "source_failed_status_sha256": proof["failed_status_sha256"],
+                "historical_validation_wall_seconds": None,
+                "historical_validation_wall_missing_reason":
+                    "Validation failed before its wall time was committed. Original persisted Direct/A/B/overhead case timings are retained; unrecorded wall time is unavailable and is not counted as zero or reconstructed from repeat work.",
+                "validation_seconds_scope": "completed measured validation calls only; historical failed-call wall missing",
+                "training_environment_sampling_update_seconds_unchanged": True}
+    return clock, metadata
+
+
 class FrozenActionPolicy:
     """One deployment action network for every arm; no critics, V or optimizer."""
     def __init__(self, algorithm, candidate, state, device="cuda"):
@@ -244,13 +342,42 @@ def full_b_case(initial, stop, log=None, journal=None):
                 not solver.get("termination_reason") or solver["termination_reason"] == "user_stop"):
             raise ValueError(f"{name}优化结果缺少有限预算证据或尚未完成")
     power = np.asarray(B["power_w"])
-    ev = problem.evaluate(power)
     baseline = problem.evaluate(p0)
     floor = np.minimum(baseline.capacity_bps, .1*problem.demand_bps)
-    if (power.sum() > 3000+1e-7 or (power < 0).any() or
-            ev.si < baseline.si-1e-8 or ev.sgm < baseline.sgm-1e-8 or
-            np.any(ev.capacity_bps < floor-1e-7)):
-        raise ValueError("完整B终态违反SI/SGM/基本服务或资源保护")
+    reasons = []
+    valid_power = (power.shape == p0.shape and np.isfinite(power).all()
+                   and not (power < 0).any() and not (power[~problem.active] != 0).any())
+    if not valid_power:
+        reasons.append("invalid_power_domain")
+    elif power.sum() > 3000+1e-7:
+        reasons.append("total_power_budget")
+    candidate_ev = problem.evaluate(power) if valid_power else None
+    shortfall_indices = []
+    if candidate_ev is not None:
+        if candidate_ev.si < baseline.si-1e-8:
+            reasons.append("direct_si_protection")
+        if candidate_ev.sgm < baseline.sgm-1e-8:
+            reasons.append("direct_sgm_protection")
+        shortfall_indices = np.flatnonzero(candidate_ev.capacity_bps < floor-1e-7).tolist()
+        if shortfall_indices:
+            reasons.append("direct_basic_service_floor")
+    candidate = {"power_w": power.tolist(), "total_power_w": float(power.sum()),
+                 "SI": None if candidate_ev is None else candidate_ev.si,
+                 "SGM": None if candidate_ev is None else candidate_ev.sgm,
+                 "capacity_bps": None if candidate_ev is None else candidate_ev.capacity_bps.tolist(),
+                 "basic_met_count": None if candidate_ev is None else int(np.count_nonzero(
+                     candidate_ev.capacity_bps >= .1*problem.demand_bps)),
+                 "basic_fraction": None if candidate_ev is None else float(np.mean(
+                     candidate_ev.capacity_bps >= .1*problem.demand_bps)),
+                 "basic_floor_shortfall_beam_ids": shortfall_indices,
+                 "basic_floor_shortfall_bps": None if candidate_ev is None else
+                     np.maximum(floor-candidate_ev.capacity_bps, 0).tolist()}
+    # The original strict verifier and solver budgets stay unchanged. A rejected
+    # candidate is retained verbatim; the already verified Direct is the output.
+    fallback = bool(reasons)
+    ev = baseline if fallback else candidate_ev
+    if fallback:
+        power = p0.copy()
     for i, row in enumerate(original["beams"]):
         row.update(power_w=float(power[i]), rate_bps=float(ev.capacity_bps[i]),
                    si=float(ev.beam_si[i]), sgm=float(ev.beam_sgm[i]))
@@ -259,6 +386,14 @@ def full_b_case(initial, stop, log=None, journal=None):
     original["metrics"].update(total_power_w=float(power.sum()),
         total_capacity_bps=float(ev.capacity_bps.sum()), zero_service_fraction=float(np.mean(ev.capacity_bps == 0)))
     original.update(route="full_A_then_B", initial_allocation_reused=True,
+                    acceptance={"accepted": not fallback, "fallback": fallback,
+                        "fallback_source": "verified_direct" if fallback else None,
+                        "rejection_reasons": reasons, "candidate": candidate,
+                        "strict_guard": {"power_tolerance_w": 1e-7, "SI_tolerance": 1e-8,
+                            "SGM_tolerance": 1e-8, "service_floor_tolerance_bps": 1e-7},
+                        "returned_basic_met_count": int(np.count_nonzero(ev.capacity_bps >= .1*problem.demand_bps)),
+                        "returned_basic_fraction": float(np.mean(ev.capacity_bps >= .1*problem.demand_bps)),
+                        "additional_optimizer_calls": 0},
                     solver={"A": A, "B": B, "options_A": options,
                             "options_B": clean_json(bopts), "optimizer_seed": 63001,
                             "algorithm_randomness": "deterministic_LP", "no_extra_C": True})
@@ -276,7 +411,8 @@ def full_b_case(initial, stop, log=None, journal=None):
         recovered_A=reused_a, recovered_B=reused_b,
         total_timing_scope="persisted_A+B_measured_overheads_shared_initial_once")
     commit({"phase": "complete", "A": A, "B": B, "A_seconds": a_time, "B_seconds": b_time,
-            "overhead_seconds": cumulative_overhead, "timing": original["timing"]})
+            "overhead_seconds": cumulative_overhead, "timing": original["timing"],
+            "acceptance": original["acceptance"]})
     return original
 
 
@@ -285,12 +421,14 @@ def _export(agent, job, config, directory, step, checkpoint_sha):
     target = Path(job["model_dir"]) / ("final" if step == config["training"]["total_steps"] else f"step_{step:06d}")
     target.mkdir(parents=True, exist_ok=True)
     policy = {"format": "fair20_policy_v1", "algorithm": config["algorithm"],
+              **execution_metadata(job),
               "candidate": config["candidate"], "seed": 51001,
               "models": {"policy": agent.policy.state_dict()},
               "deployment_networks":1,
               "env_step": step, "updates": agent.update_count}
     save_torch(target / "policy.pt", policy)
     model = {"format": "fair20_policy_v1", "run_id": job["run_id"], "algorithm": config["algorithm"],
+             **execution_metadata(job),
              "candidate": config["candidate"], "config": config, "config_sha256": digest(directory / "config.json"),
              "git_commit": job["git_commit"], "env_step": step, "updates": agent.update_count,
              "policy_sha256": digest(target / "policy.pt"), "checkpoint_sha256": checkpoint_sha,
@@ -505,6 +643,7 @@ def _train(directory, job, config, resume, progress, stop):
     checkpoint = directory / "checkpoint.pt"
     recovery_budget = {"retained_interactions": 0, "known_uncommitted_interactions": 0,
                        "unknown_failed_interactions_upper_bound": 0, "strict_actual_budget_verified": True}
+    validation_failure_verified = False
     if resume:
         saved = torch.load(checkpoint, map_location="cuda", weights_only=False)
         if saved["config_sha256"] != digest(directory / "config.json") or saved["order_sha256"] != order_hash or saved["run_id"] != job["run_id"]:
@@ -554,13 +693,21 @@ def _train(directory, job, config, resume, progress, stop):
             atomic_json(recovery_root / "budget_attention.json", ledger)
             raise Fair20RecoveryAttention("断点后已有未提交交互/日志，原字节与开销账已保留；禁止回滚后重复交互扩大公平预算")
         if job.get("resume_origin_stage") in ("failed", "interrupted"):
-            recovery_budget["unknown_failed_interactions_upper_bound"] += 1
-            recovery_budget["strict_actual_budget_verified"] = False
-            recovery_budget["unknown_reason"] = "Crash may occur after environment action but before committed trace; at most one unlogged transition per failure is unknown."
+            if validation_only_resume_verified(job, directory, saved, log_tails):
+                validation_failure_verified = True
+                recovery_budget["validation_only_failure_verified"] = True
+                recovery_budget["validation_only_resume_proof"] = deepcopy(job["validation_only_resume_proof"])
+            else:
+                recovery_budget["unknown_failed_interactions_upper_bound"] += 1
+                recovery_budget["strict_actual_budget_verified"] = False
+                recovery_budget["unknown_reason"] = "Crash may occur after environment action but before committed trace; at most one unlogged transition per failure is unknown."
         agent.load_state_dict(saved["agent"])
         env.load_state_dict(saved["environment"])
         obs = env.observation()
         step, episode, node_done, clock = saved["step"], saved["episode"], saved["node_done"], saved["clock"]
+        if validation_failure_verified:
+            clock, timing_recovery = validation_only_recovered_clock(job, saved)
+            recovery_budget["timing_recovery"] = timing_recovery
         if agent.interactions != step:
             raise ValueError("agent与训练账交互数不一致")
         random.setstate(saved["rng"]["python"])
@@ -574,6 +721,7 @@ def _train(directory, job, config, resume, progress, stop):
     def persist(stage="training"):
         started = time.perf_counter()
         value = {"format": "fair20_checkpoint_v1", "run_id": job["run_id"], "config_sha256": digest(directory / "config.json"),
+                 **execution_metadata(job),
                  "order_sha256": order_hash, "step": step, "episode": episode,
                  "agent": agent.state_dict(), "environment": env.state_dict(), "node_done": node_done,
                  "clock": clock, "rng": {"python": random.getstate(), "numpy": np.random.get_state(),
@@ -585,6 +733,7 @@ def _train(directory, job, config, resume, progress, stop):
         sha = digest(checkpoint)
         clock["io_seconds"] += time.perf_counter()-started
         progress(stage=stage, env_step=step, update_step=agent.update_count, updates=agent.update_count,
+                 **execution_metadata(job),
                  episode=episode, checkpoint_sha256=sha, clock=clock, recovery_budget=recovery_budget,
                  **({"stop_reason": "user_stop"} if stage == "stopped" else {}))
         return sha
@@ -686,7 +835,9 @@ def run_job(job_dir, *, resume=False):
             raise ValueError("冻结任务输入合同发生变化")
         if job.get("experiment_id") != EXPERIMENT or config["mode"] != job.get("mode"):
             raise ValueError("任务身份不符")
-        preflight = strict_cuda_preflight(job)
+        from .fair20_service import validate_execution_job, execution_view
+        validate_execution_job(job, directory)
+        preflight = strict_cuda_preflight(execution_view(job))
         torch.set_num_threads(config["training"]["cpu_threads"])
         torch.set_num_interop_threads(1)
         torch.backends.cuda.matmul.allow_tf32 = False
@@ -695,7 +846,8 @@ def run_job(job_dir, *, resume=False):
         preflight.update(cpu_threads=torch.get_num_threads(), cpu_interop_threads=torch.get_num_interop_threads(),
                          precision="float32", cuda_matmul_tf32=False, cudnn_tf32=False,
                          float32_matmul_precision=torch.get_float32_matmul_precision())
-        progress(stage="initializing", preflight=preflight, budget_env_steps=config["training"]["total_steps"])
+        progress(stage="initializing", preflight=preflight, budget_env_steps=config["training"]["total_steps"],
+                 **execution_metadata(job))
         mode = config["mode"]
         if mode == "sourceprep":
             from .fair20_data import run_sourceprep
@@ -750,6 +902,7 @@ def run_job(job_dir, *, resume=False):
             result["summary"] = {key: float(np.mean([r[key] for r in result["case_files"]])) for key in ("SI", "SGM")}
         else:
             raise ValueError("未知S2-F20模式")
+        result.update(execution_metadata(job))
         atomic_json(directory / "results.json", clean_json(result))
         atomic_json(directory / "artifacts.json", {name: str(directory / name) for name in
             ("config.json", "status.json", "checkpoint.pt", "scene_order.json", "traces.jsonl", "episodes.jsonl",
