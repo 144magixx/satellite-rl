@@ -71,12 +71,24 @@ def plan(state, preparations=None):
             "canonical_raw_source_copies": 1, "reserve_bytes_each_drive": RESERVE}
 
 
-def verify_source_receipt(receipt, directory):
+def verify_cached_volume(path, expected, cache=None):
+    """One streaming verification per unchanged canonical ZIP in a batch."""
+    path=Path(path)
+    stat=path.stat()
+    signature=(str(path.resolve()),stat.st_dev,stat.st_ino,stat.st_size,stat.st_mtime_ns,
+               expected["sha256"],expected["bytes"],
+               hashlib.sha256(json.dumps(expected["members"],sort_keys=True,separators=(",",":")).encode()).hexdigest())
+    if cache is None or signature not in cache:
+        verify_volume(path,expected)
+        if cache is not None:cache.add(signature)
+
+
+def verify_source_receipt(receipt, directory, verified_volume_cache=None):
     if receipt.get("experiment_id") != "S1-ND12" or receipt.get("run_id") != "shared_sources":
         raise ValueError("wrong source receipt")
     members = {}
     for volume in receipt.get("volumes", []):
-        verify_volume(volume_path(directory, volume), volume)
+        verify_cached_volume(volume_path(directory, volume), volume, verified_volume_cache)
         for name, value in volume["members"].items():
             if name in members:
                 raise ValueError("duplicate source member")
@@ -118,12 +130,13 @@ def verify_source_receipt(receipt, directory):
     return members
 
 
-def verify_receipt(receipt, directory, source_receipt=None, source_directory=None, dependency_receipts=None):
+def verify_receipt(receipt, directory, source_receipt=None, source_directory=None, dependency_receipts=None,
+                   verified_volume_cache=None):
     if receipt.get("experiment_id") != "S1-ND12" or not receipt.get("volumes"):
         raise ValueError("wrong or empty ND12 receipt")
     members = {}
     for volume in receipt["volumes"]:
-        verify_volume(volume_path(directory, volume), volume)
+        verify_cached_volume(volume_path(directory, volume), volume, verified_volume_cache)
         for name, value in volume["members"].items():
             if name in members:
                 raise ValueError("member duplicated across volumes")
@@ -136,7 +149,7 @@ def verify_receipt(receipt, directory, source_receipt=None, source_directory=Non
     if receipt.get("source_refs"):
         if source_receipt is None or source_directory is None:
             raise ValueError("shared source receipt required")
-        sources = verify_source_receipt(source_receipt, source_directory)
+        sources = verify_source_receipt(source_receipt, source_directory, verified_volume_cache)
         for ref in receipt["source_refs"]:
             if sources.get(ref["source_bundle_member"]) != {"sha256": ref["sha256"], "bytes": ref["bytes"]}:
                 raise ValueError("task raw source reference does not close")
@@ -146,7 +159,7 @@ def verify_receipt(receipt, directory, source_receipt=None, source_directory=Non
         if dep.get("experiment_id") != "S1-ND12" or dep.get("source_commit") != receipt["source_commit"]:
             raise ValueError("dependency archive group/source differs")
         for volume in dep.get("volumes", []):
-            verify_volume(volume_path(LOCAL / str(dep["port"]) / dep["run_id"], volume), volume)
+            verify_cached_volume(volume_path(LOCAL / str(dep["port"]) / dep["run_id"], volume), volume, verified_volume_cache)
             for value in volume["members"].values():
                 available.add(value["sha256"])
                 dependency_by_sha.setdefault(value["sha256"], set()).add(dep["run_id"])

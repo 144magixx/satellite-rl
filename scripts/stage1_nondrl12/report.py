@@ -264,7 +264,7 @@ def shared_baseline(audits):
             "evidence_keys": [audit["key"] for audit in candidates]}
 
 
-def build(plan, state, root, *, path_map=None, gate_directory=None):
+def build(plan, state, root, *, path_map=None, gate_directory=None, verified_volume_cache=None):
     root = Path(root)
     if plan.get("experiment_id") != "S1-ND12" or state.get("experiment_id") != "S1-ND12":
         raise ValueError("report inputs must belong to S1-ND12")
@@ -274,7 +274,7 @@ def build(plan, state, root, *, path_map=None, gate_directory=None):
     for key, record in state.get("jobs", {}).items():
         try:
             location = task_location(root, record)
-            audit = audit_job(location, path_map=path_map)
+            audit = audit_job(location, path_map=path_map,verified_volume_cache=verified_volume_cache)
             audit.update(key=key, port=record["port"])
             if audit["run_id"] != record["run_id"] or (audit.get("git_commit") and audit["git_commit"] != plan["scientific_commit"]):
                 raise ValueError("controller task/source differs")

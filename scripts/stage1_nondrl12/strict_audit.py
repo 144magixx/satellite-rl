@@ -42,7 +42,7 @@ def assert_close(actual, expected, name, *, atol=1e-6):
 
 class Evidence:
     """Read a job directory or canonical archive receipt, without extraction."""
-    def __init__(self, location):
+    def __init__(self, location, verified_volume_cache=None):
         self.location = Path(location)
         self.members = {}
         self.prefix = ""
@@ -53,7 +53,10 @@ class Evidence:
             self.prefix = f"{receipt['port']}/{receipt['run_id']}/"
             for volume in receipt["volumes"]:
                 path = Path(volume.get("canonical_path", self.location.parent / volume["file"]))
-                if path.stat().st_size != volume["bytes"] or digest_file(path) != volume["sha256"]:
+                if verified_volume_cache is not None:
+                    from .archive import verify_cached_volume
+                    verify_cached_volume(path,volume,verified_volume_cache)
+                elif path.stat().st_size != volume["bytes"] or digest_file(path) != volume["sha256"]:
                     raise ValueError("archive volume identity differs")
                 for member, item in volume["members"].items():
                     if member in self.members:
@@ -201,6 +204,13 @@ def dataset_for(evidence, config, role, path_map=None):
     path = source["path"]
     for old, new in (path_map or {}).items():
         if path.startswith(old):
+            if isinstance(new,dict):
+                other=Evidence(new["receipt"])
+                relative=new.get("member",new.get("member_prefix","")+path[len(old):].lstrip("/"))
+                value=other.read(relative)
+                if digest_bytes(value)!=source["sha256"]:
+                    raise ValueError("canonical referenced dataset SHA differs")
+                return _loaded_arrays(BytesIO(value))
             path = new + path[len(old):]
             break
     local = Path(path)
@@ -335,8 +345,8 @@ def audit_teacher_probe(evidence, job, config, *, path_map=None):
             "scope": "actual complete offline teacher references; zero new teacher/PHY calls"}
 
 
-def audit_job(location, *, path_map=None):
-    evidence = Evidence(location)
+def audit_job(location, *, path_map=None, verified_volume_cache=None):
+    evidence = Evidence(location,verified_volume_cache)
     job, config, status = (evidence.json(name) for name in ("job.json", "config.json", "status.json"))
     if job.get("experiment_id") != "S1-ND12" or status.get("run_id", job["run_id"]) != job["run_id"]:
         raise ValueError("wrong task identity")
