@@ -16,6 +16,7 @@ class NondrlConfig:
     max_menu: int = 32
     max_regions: int = 12
     max_rebuilds: int = 40
+    local_aircraft_limit: int = 64
     centers_per_beam: int = 8
     mip_seconds: float = 0.1
     mip_relative_gap: float = 0.01
@@ -41,6 +42,7 @@ class NondrlConfig:
                 raise ValueError(f"{key} must be positive")
         integers = ("max_candidates", "max_physical_calls", "max_geometry_calls", "max_beams",
                     "seed", "max_rounds", "max_menu", "max_regions", "max_rebuilds",
+                    "local_aircraft_limit",
                     "centers_per_beam", "square_segments", "max_pool", "pool_expansions",
                     "ot_iterations", "population", "generations", "evolution_proposals", "initial_trials")
         if any(type(getattr(self, key)) is not int for key in integers):

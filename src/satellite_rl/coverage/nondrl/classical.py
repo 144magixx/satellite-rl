@@ -258,7 +258,7 @@ def rebuild_region(problem, region, candidate_pool=None, visible=None, edge_mask
     if not 2 <= len(beams) <= 6 or any(b < 0 or b >= problem.n for b in beams):
         raise ValueError("region must contain 2..6 existing beams")
     members = np.flatnonzero(np.isin(problem.current.assignment, beams))
-    if len(members) > 64:
+    if len(members) > problem.config.local_aircraft_limit:
         problem.trace.append({"source": "local_rebuild", "reason": "local_aircraft_limit",
                               "beams": list(beams), "aircraft": len(members)})
         return None
@@ -390,7 +390,7 @@ def run_demand_clustering(problem, *, move_centers=True):
             problem.guard()
             beams = tuple(region["beams"])
             members = np.flatnonzero(np.isin(problem.current.assignment, beams))
-            if len(members) > 64:
+            if len(members) > problem.config.local_aircraft_limit:
                 problem.trace.append({"source": "06_local_assignment", "reason": "local_aircraft_limit",
                                       "aircraft": len(members), "beams": list(beams)})
                 continue

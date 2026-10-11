@@ -148,6 +148,29 @@ class NondrlCoreTests(unittest.TestCase):
         self.assertTrue(problem.trace[-1]["truncated"])
         self.assertEqual(problem.trace[-1]["returned_actions"], 0)
 
+    def test_shared_regions_exclude_engineering_oversize_before_menu_truncation(self):
+        counts = [40,30,5,5]
+        centers = np.array([[45.,13.],[45.001,13.],[45.01,13.],[45.02,13.]])
+        owner = np.repeat(np.arange(4),counts)
+        positions = centers[owner]
+        scene = CoverageScene("regions",positions,np.ones(80),np.empty((0,2)),[f"a{i}" for i in range(80)])
+        initial = Layout(centers,[.5]*4,owner,tuple(scene.aircraft_ids))
+        first=Problem(scene,{"online_seconds":5.},initial,constant_physical)
+        second=Problem(scene,{"online_seconds":5.},initial,constant_physical)
+        menu_a,menu_b=first.regions(),second.regions()
+        self.assertEqual(menu_a,menu_b)
+        self.assertTrue(menu_a)
+        self.assertTrue(all(np.isin(owner,row["beams"]).sum()<=64 for row in menu_a))
+        self.assertGreater(first.trace[-1]["engineering_excluded_regions"],0)
+        self.assertIn("not geometric infeasibility",first.trace[-1]["reason"])
+        np.testing.assert_array_equal(first.current.assignment,owner)
+
+    def test_new_local_limit_is_in_default_frozen_api_config(self):
+        from satellite_rl.workbench.coverage_nondrl import default_nondrl_config,validate_nondrl_config
+        config=default_nondrl_config("05")
+        self.assertEqual(config["coverage"]["nondrl"]["limits"]["local_aircraft_limit"],64)
+        self.assertEqual(validate_nondrl_config(config),config)
+
 
 if __name__ == "__main__":
     unittest.main()

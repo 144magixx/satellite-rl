@@ -465,7 +465,7 @@ class Problem:
         br = satellite_rays_numpy(self.current.centers, self.config.profile)
         distance = ((br[:, None] - br[None]) ** 2).sum(axis=2)
         legal = self.legal()
-        rows, seen = [], set()
+        rows, seen, excluded = [], set(), []
         order = np.lexsort((np.arange(self.n), -np.abs(loads - mu)))
         for b in order:
             near = np.argsort(distance[b], kind="stable")
@@ -475,6 +475,9 @@ class Problem:
                     continue
                 seen.add(beams)
                 ids = np.flatnonzero(np.isin(self.current.assignment, beams))
+                if len(ids) > self.config.local_aircraft_limit:
+                    excluded.append({"beams": list(beams), "aircraft": len(ids)})
+                    continue
                 local = loads[list(beams)]
                 features = [len(beams) / self.n, len(ids) / max(len(self.demands), 1),
                             local.sum() / mu, local.std() / max(local.mean(), 1),
@@ -484,7 +487,15 @@ class Problem:
                 rows.append({"id": "r" + "-".join(map(str, beams)), "beams": beams,
                              "features": list(map(float, features))})
                 if len(rows) >= self.config.max_regions:
+                    self.trace.append({"source": "common_region_generation", "returned_regions": len(rows),
+                        "engineering_excluded_regions": len(excluded), "exclusions": excluded,
+                        "local_aircraft_limit": self.config.local_aircraft_limit,
+                        "reason": "engineering_local_aircraft_limit; not geometric infeasibility"})
                     return rows
+        self.trace.append({"source": "common_region_generation", "returned_regions": len(rows),
+            "engineering_excluded_regions": len(excluded), "exclusions": excluded,
+            "local_aircraft_limit": self.config.local_aircraft_limit,
+            "reason": "engineering_local_aircraft_limit; not geometric infeasibility"})
         return rows
 
     def rebuild(self, region, candidate_pool=None, visible=None, edge_mask=None):
