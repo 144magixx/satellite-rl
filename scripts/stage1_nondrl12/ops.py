@@ -32,6 +32,10 @@ def upload(path, remote_path, port):
     if (not target.is_relative_to(PurePosixPath(BASE)) or '..' in target.parts or
             not re.fullmatch(r'[A-Za-z0-9_./-]+', remote_path)):
         raise ValueError('ND12 uploads must stay inside the isolated group')
+    result = remote_python(
+        f"import pathlib;pathlib.Path({remote_path!r}).parent.mkdir(parents=True,exist_ok=True)", port)
+    if result['exit_code']:
+        raise RuntimeError('Could not create isolated ND12 upload parent: ' + result['stderr'][-500:])
     return transport.upload(Path(path), remote_path, port)
 
 def api(port, path, body=None, method=None, timeout=60):

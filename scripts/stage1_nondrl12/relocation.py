@@ -38,7 +38,7 @@ def digest(path):
 def save(path,value):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
     temporary=path.with_suffix(path.suffix+".tmp")
-    temporary.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding="utf-8")
+    temporary.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding="utf-8",newline="\n")
     temporary.replace(path)
 
 
