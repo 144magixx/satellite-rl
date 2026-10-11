@@ -290,6 +290,10 @@ def _run(root=ops.LOCAL,*,wait_hours=48,poll_seconds=60,resume_after_attention=F
         state.update(placement_file=str(transport.path),placement_sha256=transport.mapping_sha256,
                      logical_to_physical=transport.mapping,physical_ports=sorted(set(transport.mapping.values())))
     paths=input_paths(root)
+    # Mutable progress records are frozen only at terminal closure. The plan,
+    # source policy and validation receipts must stay fixed throughout waiting.
+    guards.update({str(path.resolve()):archive.digest(path) for name,path in paths.items()
+                   if name not in {"state", "preparations", "manifest"}})
     monotonic_deadline=time.monotonic()+min(max(0.,state["deadline_unix"]-time.time()),48*3600)
     def progress(phase,**fields):
         state.update(phase=phase,observed_at=now(),**fields);atomic_json(status_path,state)
