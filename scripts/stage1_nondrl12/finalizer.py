@@ -20,6 +20,7 @@ import zipfile
 from satellite_rl.coverage.nondrl.runner import worker_lock
 from satellite_rl.workbench.runtime import process_start_time
 from . import archive, ops, report, strict_audit
+from . import placement_transport
 
 MODEL_ROOT=Path("D:/paper/models/runs/first_stage_nondrl12_20261012")
 
@@ -236,11 +237,25 @@ def finalize(root,paths,guard,progress):
     return receipt
 
 
-def run(root=ops.LOCAL,*,wait_hours=48,poll_seconds=60,resume_after_attention=False):
+def run(root=ops.LOCAL,*,wait_hours=48,poll_seconds=60,resume_after_attention=False,placement_file=None):
+    root=Path(root).resolve()
+    selected=Path(placement_file).resolve() if placement_file is not None else root/"controller/execution_placement.json"
+    transport=placement_transport.Transport.from_file(selected) if placement_file is not None or selected.is_file() else None
+    original_transport=archive.ops
+    if transport is not None:archive.ops=transport
+    try:
+        return _run(root,wait_hours=wait_hours,poll_seconds=poll_seconds,
+                    resume_after_attention=resume_after_attention,transport=transport)
+    finally:
+        archive.ops=original_transport
+
+
+def _run(root=ops.LOCAL,*,wait_hours=48,poll_seconds=60,resume_after_attention=False,transport=None):
     root=Path(root).resolve()
     if not 0<wait_hours<=48 or poll_seconds!=60:raise ValueError("wait bounded at48h; polling fixed at60s")
     directory=root/"controller/finalizer";directory.mkdir(parents=True,exist_ok=True)
     modules=[Path(__file__),Path(archive.__file__),Path(report.__file__),Path(strict_audit.__file__),Path(ops.__file__)]
+    if transport is not None:modules.extend((Path(placement_transport.__file__),transport.path))
     guards={str(p.resolve()):archive.digest(p) for p in modules}
     status_path=directory/"status.json";prior=read(status_path) if status_path.is_file() else None
     if prior and prior.get("phase")=="complete":return prior
@@ -249,12 +264,16 @@ def run(root=ops.LOCAL,*,wait_hours=48,poll_seconds=60,resume_after_attention=Fa
            "started_at":prior.get("started_at",now()) if prior else now(),
            "deadline_unix":prior.get("deadline_unix",time.time()+wait_hours*3600) if prior else time.time()+wait_hours*3600,
            "module_sha256":guards,"phase":"waiting"}
+    if transport is not None:
+        state.update(placement_file=str(transport.path),placement_sha256=transport.mapping_sha256,
+                     logical_to_physical=transport.mapping,physical_ports=sorted(set(transport.mapping.values())))
     paths=input_paths(root)
     monotonic_deadline=time.monotonic()+min(max(0.,state["deadline_unix"]-time.time()),48*3600)
     def progress(phase,**fields):
         state.update(phase=phase,observed_at=now(),**fields);atomic_json(status_path,state)
         print(json.dumps({"at":state["observed_at"],"phase":phase,**fields},ensure_ascii=False),flush=True)
     def guard():
+        if transport is not None:transport.verify_unchanged()
         if any(archive.digest(p)!=sha for p,sha in guards.items()):raise Attention("finalizer module changed")
         if (directory/"stop.request").exists():raise Attention("explicit finalizer stop requested")
         if time.time()>=state["deadline_unix"] or time.monotonic()>=monotonic_deadline:
@@ -283,7 +302,9 @@ def main():
     parser.add_argument("--root",type=Path,default=ops.LOCAL)
     parser.add_argument("--wait-hours",type=float,default=48)
     parser.add_argument("--resume-after-attention",action="store_true")
-    args=parser.parse_args();value=run(args.root,wait_hours=args.wait_hours,resume_after_attention=args.resume_after_attention)
+    parser.add_argument("--placement-file",type=Path)
+    args=parser.parse_args();value=run(args.root,wait_hours=args.wait_hours,resume_after_attention=args.resume_after_attention,
+                                      placement_file=args.placement_file)
     raise SystemExit(0 if value.get("phase")=="complete" else 2)
 
 
