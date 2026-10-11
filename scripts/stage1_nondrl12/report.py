@@ -89,6 +89,8 @@ def verify_gate(gate, threshold, audits_by_run, path_map=None):
     """Recompute the scientific gate from audited exact scene evidence."""
     if gate.get("experiment_id") != "S1-ND12" or gate.get("threshold") != threshold:
         raise ValueError("development gate group/threshold differs")
+    if gate.get("authority") == "actual_strong_teacher_probe":
+        return verify_teacher_gate(gate, audits_by_run)
     rows = []
     for source in gate.get("sources", []):
         audit = audits_by_run.get(source["run_id"])
@@ -148,6 +150,48 @@ def verify_gate(gate, threshold, audits_by_run, path_map=None):
         if gate["passed"] != (passed and mechanism_record.get("passed") is True):
             raise ValueError("gate mechanism outcome differs")
     return {"passed_quality": passed, "actual_passed": gate["passed"], "improved_mothers": len(improved)}
+
+
+def verify_teacher_gate(gate, audits_by_run):
+    """02/03 gate authority is real offline references, never online T/HR."""
+    measured = gate.get("teacher_reachability", {})
+    source = measured.get("task_source", {})
+    audit = audits_by_run.get(source.get("run_id"))
+    if (gate.get("route") not in ("02", "03") or measured.get("status") not in ("passed", "science_stopped")
+            or not audit or audit.get("preparation_mode") != "teacher_probe" or not audit.get("teacher_probe")):
+        raise ValueError("strong teacher complete proof missing; engineering attention")
+    proof = audit["teacher_probe"]
+    if (source.get("wrapper_sha256") != proof["wrapper_sha256"] or source.get("dataset_sha256") != proof["dataset_sha256"]
+            or source.get("scientific_commit") != audit.get("git_commit") or audit.get("git_commit") != gate["source_commit"]):
+        raise ValueError("strong teacher task/source SHA closure differs")
+    rows = proof["rows"]
+    groups = defaultdict(list)
+    for row in rows:
+        groups[row["dataset_index"]].append(row)
+    if (proof["complete_problems"] != 60 or set(groups) != set(range(20)) or
+            any(sorted(r["multiplier"] for r in values) != [.75,1.,1.25] for values in groups.values())):
+        raise ValueError("strong teacher60 problems/20 mothers incomplete")
+    improved = []
+    for index, values in groups.items():
+        before = [r["initial_cv"] for r in values if r["initial_cv"] is not None]
+        after = [r["load_cv_all"] for r in values if r["load_cv_all"] is not None]
+        initial = float(np.mean(before)) if before else None
+        gain = (initial-float(np.mean(after)))/initial if initial is not None and initial>1e-12 else None
+        if gain is not None and gain>.01 and all(r["hard_feasible"] for r in values):
+            improved.append(index)
+    passed = len(improved)>=6 and all(r["hard_feasible"] for r in rows)
+    statistics = measured.get("statistics", {})
+    if (statistics.get("actual_complete_problems") != 60 or statistics.get("legal_reference_mothers") != list(range(20))
+            or sorted(statistics.get("improved_mothers", [])) != sorted(improved)
+            or sorted(gate.get("improved_mothers", [])) != sorted(improved) or measured.get("passed") is not passed):
+        raise ValueError("strong teacher measured gate statistics differ from full raw references")
+    if gate.get("passed") != passed:
+        mechanism = gate.get("mechanism")
+        if not mechanism or mechanism.get("status") != "science_stopped" or mechanism.get("passed") is not False:
+            raise ValueError("strong teacher gate outcome differs")
+    return {"passed_quality": passed, "actual_passed": gate["passed"], "improved_mothers": len(improved),
+            "authority": "actual_strong_teacher_probe", "complete_problems": 60,
+            "proxy_diagnostics_retained": bool(gate.get("proxy_diagnostics"))}
 
 
 def task_location(root, record):

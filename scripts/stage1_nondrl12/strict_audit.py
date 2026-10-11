@@ -218,12 +218,86 @@ def dataset_for(evidence, config, role, path_map=None):
     return _loaded_arrays(BytesIO(value))
 
 
+def audit_teacher_probe(evidence, job, config, *, path_map=None):
+    """Recompute 60 real offline teacher references against frozen mother input."""
+    route = config["coverage"]["nondrl"]["route"]
+    if route not in ("02", "03") or job.get("preparation_mode") != "teacher_probe":
+        raise ValueError("offline teacher proof is only defined for actual02/03 teacher_probe tasks")
+    wrapper_bytes = evidence.read("teacher_manifest.json")
+    wrapper = json.loads(wrapper_bytes)
+    manifest_bytes = evidence.read("teacher/manifest.json")
+    if digest_bytes(manifest_bytes) != wrapper.get("sha256"):
+        raise ValueError("offline teacher wrapper/evidence manifest SHA differs")
+    manifest = json.loads(manifest_bytes)
+    if manifest.get("route") != route or manifest.get("status") not in ("completed", "scientific_stop"):
+        raise ValueError("offline teacher manifest route/completion differs")
+    provenance = manifest.get("provenance", {})
+    if provenance.get("run_id") != job["run_id"] or provenance.get("git_commit") != job["git_commit"]:
+        raise ValueError("offline teacher frozen source/run provenance differs")
+    dataset = dataset_for(evidence, config, "development", path_map)
+    source = config["datasets"]["development"]
+    if wrapper.get("dataset_sha256") != source["sha256"]:
+        raise ValueError("offline teacher development dataset differs")
+    index_by_id = {scene.scene_id: index for index, scene in enumerate(dataset.scenes)}
+    expected = {(scene.scene_id,float(m)) for scene in dataset.scenes for m in config["evaluation"]["demand_multipliers"]}
+    receipts = manifest.get("problem_receipts", [])
+    if len(receipts) != len(expected):
+        raise ValueError("offline teacher full-problem denominator incomplete")
+    cap = {"02": (60,38400,600.), "03": (60,7680,240.)}[route]
+    if manifest.get("problems",0) != len(expected) or manifest.get("trials",0) > cap[1] or len(receipts)>cap[0]:
+        raise ValueError("offline teacher reserved problem/trial ledger differs")
+    rows, identities = [], set()
+    for receipt in receipts:
+        raw = evidence.read("teacher/" + receipt["path"])
+        if digest_bytes(raw) != receipt["sha256"]:
+            raise ValueError("offline teacher complete problem SHA differs")
+        problem = json.loads(gzip.decompress(raw))
+        if problem.get("format") != "s1_nondrl_teacher_problem_v1" or problem.get("route") != route:
+            raise ValueError("offline teacher problem schema/route differs")
+        mother, multiplier = problem["mother_id"], float(problem["demand_multiplier"])
+        if (mother,multiplier) not in expected or (mother,multiplier) in identities:
+            raise ValueError("offline teacher problem mother/tier duplicate or foreign")
+        identities.add((mother,multiplier))
+        original = dataset.scenes[index_by_id[mother]]
+        assert_close(problem["scene_positions"], original.positions, "teacher positions", atol=1e-10)
+        assert_close(problem["scene_demands_bps"], original.demands*multiplier, "teacher whole-aircraft demands")
+        if tuple(problem["aircraft_ids"]) != tuple(original.aircraft_ids) or problem["source_hash"] != original.source_hash:
+            raise ValueError("offline teacher aircraft/source identity differs")
+        common = {"initial_layout": problem["initial_layout"], "initial_sha256": problem["initial_sha256"],
+                  "config": problem["config"], "initial_physical": problem["initial_physical"],
+                  "timing": problem["timing"], "calls": problem["calls"], "raw_layout": None}
+        row = {"key": f"{index_by_id[mother]}:{multiplier:g}", "run_id": job["run_id"], "dataset_index": index_by_id[mother],
+               "mother_scene_id": mother, "demand_multiplier": multiplier, "route": route, "method": "offline_teacher_probe",
+               "measured_task_seconds": problem["teacher_elapsed_seconds"]}
+        for label, layout_key, metrics_key, physical_key in (("initial","initial_layout","initial_metrics_all","initial_physical"),
+                                                           ("final","final_layout","final_metrics_all","final_physical")):
+            current = problem[layout_key]
+            row["result"] = {**common, "final_layout": current, "final_sha256": layout_sha256(Layout.from_record(current)),
+                             "metrics_all": problem[metrics_key], "physical": problem[physical_key]}
+            audited = audit_row(row,original)
+            if label == "final":
+                audited.update(problem_receipt_path="teacher/"+receipt["path"], problem_receipt_sha256=receipt["sha256"],
+                               teacher_elapsed_seconds=problem["teacher_elapsed_seconds"])
+                rows.append(audited)
+    return {"rows": rows, "wrapper_sha256": digest_bytes(wrapper_bytes), "evidence_manifest_sha256": digest_bytes(manifest_bytes),
+            "dataset_sha256": source["sha256"], "true_trials": manifest["trials"],
+            "complete_problems": len(receipts), "teacher_recorded_seconds": manifest["elapsed_seconds"],
+            "teacher_overrun_seconds": max(0.,manifest["elapsed_seconds"]-cap[2]),
+            "scope": "actual complete offline teacher references; zero new teacher/PHY calls"}
+
+
 def audit_job(location, *, path_map=None):
     evidence = Evidence(location)
     job, config, status = (evidence.json(name) for name in ("job.json", "config.json", "status.json"))
     if job.get("experiment_id") != "S1-ND12" or status.get("run_id", job["run_id"]) != job["run_id"]:
         raise ValueError("wrong task identity")
     stage = status.get("stage")
+    if job.get("preparation_mode") == "teacher_probe" and stage in ("completed", "stopped"):
+        proof = audit_teacher_probe(evidence,job,config,path_map=path_map)
+        return {"run_id": job["run_id"], "state": "completed" if stage=="completed" else "scientific_stop",
+                "formal_terminal": True, "kind": "prepare", "preparation_mode": "teacher_probe",
+                "route": config["coverage"]["nondrl"]["route"], "dataset_role": "development",
+                "git_commit": job["git_commit"], "teacher_probe": proof, "rows": proof["rows"]}
     if stage == "failed":
         if "failure.json" not in evidence.names():
             raise ValueError("failed task lacks failure evidence")
