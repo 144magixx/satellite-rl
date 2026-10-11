@@ -6,15 +6,43 @@ import pickle
 from pathlib import Path
 import tempfile
 import unittest
+import numpy as np
 from unittest.mock import patch
 
-from satellite_rl.coverage.nondrl.core import BudgetStop,layout_sha256
+from satellite_rl.coverage.nondrl.core import BudgetStop,Problem,layout_sha256
 from satellite_rl.coverage.nondrl.runner import FrozenInitialPhysics
 from satellite_rl.coverage.nondrl.teachers import generate_teacher,trial_label,cv_value
 from test_nondrl_learning import fixture
 
 
 class TeacherBudgetTests(unittest.TestCase):
+    def test_frozen_I0_then_normal_candidate_has_identical_geometry_and_physics_charges(self):
+        problem = fixture(); scene = copy.deepcopy(problem.scene); scene.demands *= 100000000.
+        regular = Problem(scene, problem.config, initial=problem.initial)
+        cached = Problem(scene, problem.config, initial=problem.initial,
+                         physical_evaluator=FrozenInitialPhysics(scene, regular.initial,
+                                                                regular.initial_physical))
+        cached._physical_evaluator = None
+        proposed = type(problem.initial).from_record(problem.initial.to_record())
+        proposed.assignment = np.array([0, 0, 1, 1])
+        deltas = []
+        outcomes = []
+        for current in (regular, cached):
+            before = copy.deepcopy(current.calls)
+            outcomes.append(current.consider(proposed, 'real-geometry-budget-proof'))
+            deltas.append({k: current.calls[k] - before[k] for k in before})
+        self.assertEqual(outcomes[0]['metrics_all'], outcomes[1]['metrics_all'])
+        def numerical(value):
+            if isinstance(value, dict):
+                return {k: numerical(v) for k, v in value.items() if k not in ('timing', 'timings') and not k.endswith('_seconds')}
+            if isinstance(value, list):return [numerical(v) for v in value]
+            return value
+        self.assertEqual(numerical(outcomes[0]['physical']), numerical(outcomes[1]['physical']))
+        self.assertEqual(deltas[0], deltas[1])
+        self.assertGreater(deltas[1]['geometry_calls'], 1)
+        self.assertEqual(deltas[1]['physical_calls'], 1)
+        self.assertGreater(deltas[1]['aircraft_link_checks'], 0)
+
     def receipts(self,result):
         base=Path(result['path']).parent
         return [json.loads(gzip.decompress((base/item['path']).read_bytes())) for item in result['problem_receipts']]
