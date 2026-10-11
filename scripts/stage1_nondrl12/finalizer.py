@@ -79,6 +79,11 @@ def input_paths(root):
         if path.is_file():paths[name]=path
     audit = root/"preflight/reused_source_reference_audit.json"
     if audit.is_file():paths["reused_source_reference_audit"]=audit
+    for name,relative in (("bounded_dispositions","controller/bounded_dispositions.json"),
+            ("postops_preservation","preflight/repair_epoch/postops_censored/preservation.json"),
+            ("postops_history_roundtrip","preflight/repair_epoch/postops_censored/history_roundtrip.json")):
+        path=root/relative
+        if path.is_file():paths[name]=path
     return paths
 
 
@@ -129,6 +134,17 @@ def freeze_inputs(root,paths):
         for source in sorted(source_dir.glob("*.json")):
             target=destination/"controller_evidence"/category/source.name
             target.parent.mkdir(parents=True,exist_ok=True);reserve(target.parent,source.stat().st_size)
+            if category=="teacher_reachability" and source.stat().st_size>1<<20:
+                from .execution_sources import compact_receipt
+                summary=compact_receipt(read(source))
+                summary["original_receipt_source"]={"path":str(source.resolve()),"sha256":archive.digest(source),"bytes":source.stat().st_size}
+                encoded=json.dumps(summary,ensure_ascii=False,allow_nan=False,sort_keys=True).encode("utf-8")
+                if target.exists() and target.read_bytes()!=encoded:
+                    raise Attention("compact final helper receipt changed during snapshot")
+                if not target.exists():target.write_bytes(encoded)
+                files[f"{category}/{source.name}"]={"path":str(target.resolve()),"source_path":str(source.resolve()),
+                    "sha256":archive.digest(target),"bytes":len(encoded),"original_receipt_source":summary["original_receipt_source"]}
+                continue
             if target.exists() and archive.digest(target)!=archive.digest(source):
                 raise Attention("generated final evidence changed during snapshot")
             if not target.exists():shutil.copyfile(source,target)
@@ -165,6 +181,8 @@ def dependency_map(root,receipts,snapshot,cache):
             mapping[job["model_dir"].rstrip("/")+"/"]={"receipt":str(path.resolve()),"member_prefix":"models/"}
     for category in ("gates","mechanisms","teacher_reachability"):
         mapping[str((root/"controller"/category).resolve())+os.sep]=str((root/"analysis/final_input/controller_evidence"/category).resolve())+os.sep
+    for item in snapshot.get("files",{}).values():
+        if item.get("source_path") and item.get("path"):mapping[item["source_path"]]=item["path"]
     return mapping
 
 
@@ -277,6 +295,8 @@ def _run(root=ops.LOCAL,*,wait_hours=48,poll_seconds=60,resume_after_attention=F
     from satellite_rl.coverage.nondrl import source_lineage
     modules=[Path(__file__),Path(archive.__file__),Path(report.__file__),Path(strict_audit.__file__),Path(ops.__file__),
              Path(execution_sources.__file__),Path(nondrl_source_repair.__file__),Path(source_lineage.__file__)]
+    disposition_path=root/"controller/bounded_dispositions.json"
+    if disposition_path.is_file():modules.append(disposition_path)
     if transport is not None:modules.extend((Path(placement_transport.__file__),transport.path))
     guards={str(p.resolve()):archive.digest(p) for p in modules}
     status_path=directory/"status.json";prior=read(status_path) if status_path.is_file() else None

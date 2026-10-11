@@ -355,6 +355,9 @@ def audit_teacher_probe(evidence, job, config, *, path_map=None):
             "searched_problems": sum(bool(r["searched"]) for r in rows),
             "reference_only_problems": sum(bool(r["reference_only"]) for r in rows),
             "unknown_search_problems": sum(bool(r["unknown_search"]) for r in rows),
+            "legacy_problems_without_explicit_scope":sum(not r["search_scope"] for r in rows),
+            "explicit_complete_search_problems":sum(r["search_scope"].get("searched") is True and
+                r["search_scope"].get("complete_search") is True for r in rows),
             "execution_segments": manifest.get("execution_segments", []),
             "scope": "actual complete offline teacher references; zero new teacher/PHY calls"}
 
