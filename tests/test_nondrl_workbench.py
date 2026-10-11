@@ -8,12 +8,21 @@ from unittest.mock import patch
 
 from satellite_rl.training.run_monitor import atomic_json
 from satellite_rl.workbench.coverage_nondrl import (default_nondrl_config, validate_nondrl_config,
-    partition_contract, resume_job)
+    partition_contract, resume_job, METHODS)
 from satellite_rl.workbench.storage import Store, digest
 from satellite_rl.workbench.nondrl_preparation import bind_parser_source
 
 
 class NondrlWorkbenchTests(unittest.TestCase):
+    def test_catalog_methods_match_executors(self):
+        from satellite_rl.coverage.nondrl.classical import CLASSICAL_METHODS
+        from satellite_rl.coverage.nondrl.learning import LEARNING_METHODS
+        for route, methods in CLASSICAL_METHODS.items():
+            if route != "BH":
+                self.assertEqual(set(METHODS[route]), set(methods))
+        for route, methods in LEARNING_METHODS.items():
+            self.assertEqual(set(METHODS[route]), set(methods) | {"main"})
+
     def test_all_routes_budget_and_reject_unknown(self):
         for i in range(1, 13):
             route = f"{i:02d}"

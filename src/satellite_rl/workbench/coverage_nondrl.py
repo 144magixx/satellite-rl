@@ -198,7 +198,10 @@ def submit(application, body):
                 record.get("record_type") != "nondrl_aircraft_dataset"):
             raise ValueError("dataset schema/role differs")
         _pin(record["path"], record["sha256"])
-        partition_contract(record["partition_manifest_path"], record["partition_manifest_sha256"])
+        manifest = partition_contract(record["partition_manifest_path"], record["partition_manifest_sha256"])
+        spec = manifest["roles"][r]
+        if record.get("count") != spec["count"] or sorted(record.get("dates", [])) != sorted(spec["dates"]):
+            raise ValueError("task requires a complete frozen partition; merge daily source records first")
     if len({r["partition_manifest_sha256"] for r in datasets.values()}) != 1:
         raise ValueError("dataset partition contracts differ")
     config["datasets"] = datasets

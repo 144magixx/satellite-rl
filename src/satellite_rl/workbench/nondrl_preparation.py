@@ -46,6 +46,9 @@ def submit_dataset(application, body, config, port):
             assets[0].get("browser_download_url") != pin.get("archive_url") or
             pin.get("archive_url") not in (root / "PREFERRED_RELEASES.txt").read_text(encoding="utf-8")):
         raise ValueError("official preferred release asset differs")
+    instance = str(contract.get("source_instance", "")).removeprefix("planes-readsb-")
+    if instance not in ("prod-0", "staging-0") or pin["archive_name"] != f"v{day.replace('-', '.')}-planes-readsb-{instance}.tar":
+        raise ValueError("official archive must match the frozen preferred instance before download")
     parser = Path(body["parser_path"]).resolve()
     _pin(parser, body["parser_sha256"])
     files["parser"] = {"path": str(parser), "sha256": body["parser_sha256"]}
@@ -192,8 +195,13 @@ def run_dataset(directory, job, config, *, resume, progress, stopped):
                     "seed": 51001, "demand_multipliers_applied": [1.]}
         save_variable_dataset(CoverageDataset(scenes, metadata), prepared)
     loaded = load_variable_dataset(prepared)
-    if len(loaded.scenes) != contract["count"]:
-        raise ValueError("prepared scene count differs")
+    if (len(loaded.scenes) != contract["count"] or loaded.metadata.get("source_archive_sha256") != archive_sha or
+            loaded.metadata.get("partition_role") != prep["role"] or
+            [s.metadata.get("selected_time_utc") for s in loaded.scenes] != contract["selected_times_utc"] or
+            any(s.metadata.get("selection_contract_sha256") != prep["files"]["selection_contract.json"]["sha256"]
+                or s.metadata.get("source_preflight_sha256") != prep["files"]["source_preflight.json"]["sha256"]
+                for s in loaded.scenes)):
+        raise ValueError("prepared scene count/source/UTC lineage differs")
     store = Store(job["archive_root"], source_root=job["source_root"])
     record = next((r for r in store.records("scenes") if r.get("source_run_id") == job["run_id"]), None)
     if record is None:

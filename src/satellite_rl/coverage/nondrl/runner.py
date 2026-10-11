@@ -317,6 +317,13 @@ def _run_nondrl_job(directory, job, config, *, resume=False, preflight=None):
                  stop_reason=result.get("stop_reason", "user_stop" if is_stopped else None))
         return result
     except BaseException as error:
+        from .learning import ScientificStop
+        if isinstance(error, ScientificStop):
+            result = {"status": "scientific_stop", "scientific_stop": True, "stop_reason": str(error)}
+            atomic_json(directory / "scientific_stop.json", {**result, "at": now(), "traceback": traceback.format_exc()})
+            atomic_json(directory / "results.json", result)
+            progress(stage="stopped", ended_at=now(), scientific_stop=True, stop_reason=str(error))
+            return result
         progress(stage="failed", ended_at=now(), error=repr(error))
         atomic_json(directory / "failure.json", {"error": repr(error), "traceback": traceback.format_exc(), "at": now()})
         raise
