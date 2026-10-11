@@ -89,6 +89,10 @@ def main(argv=None):
                     "resumed_utc": now(), "resume_history": str(history), "module_sha256": guards,
                     "registry_file_sha256": hashes["registry"], "placement_file": str(transport.path),
                     "placement_sha256": transport.mapping_sha256, "logical_to_physical": transport.mapping}
+        # Previous failure bytes were preserved in the transition history.
+        # Do not display them as the state of this new verified client.
+        for stale in ("error", "traceback", "controller_attention"):
+            launcher.pop(stale, None)
         def save(**fields):
             launcher.update(observed_utc=now(), **fields)
             atomic_json(directory / "launcher.json", launcher)
