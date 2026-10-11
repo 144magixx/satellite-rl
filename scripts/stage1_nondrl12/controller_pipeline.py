@@ -7,6 +7,7 @@ Final test publication keeps a group-wide terminal/quiet barrier.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 from scripts.stage1_nondrl12.controller import Controller, PORTS, TERMINAL
 from satellite_rl.workbench.coverage_nondrl import METHODS, MODEL_METHODS
@@ -49,6 +50,7 @@ class PipelineController(Controller):
     def refresh(self):
         snapshots = {p: {r["run_id"]: r for r in self.transport.api(p, "/api/coverage/nondrl/runs")["runs"]}
                      for p in PORTS}
+        self.reconcile_source_attention(snapshots)
         for key, record in self.state["jobs"].items():
             row = snapshots[record["port"]].get(record["run_id"])
             if row is None:
@@ -86,6 +88,48 @@ class PipelineController(Controller):
                     return False
         self.save()
         return True
+
+    def reconcile_source_attention(self, snapshots):
+        """Clear only the pinned repaired fault after API and byte-level checks."""
+        if not self.source_contract:
+            return
+        allowed = set(self.source_contract["allowed_run_ids"])
+        for route, attention in list(self.state.get("route_attention", {}).items()):
+            if self.state.get("routes", {}).get(route, {}).get("status") == "science_stopped":
+                continue
+            candidates = [(key,r) for key,r in self.state["jobs"].items()
+                          if route_of(key) == route and r["run_id"] in allowed]
+            if not candidates:
+                continue
+            key = attention.get("key")
+            run_id = attention.get("run_id")
+            if key and key not in {k for k,r in candidates}:
+                continue
+            if run_id and run_id not in {r["run_id"] for k,r in candidates}:
+                continue
+            # A generic unrelated attention record is never implicitly waived.
+            if not key and not run_id and attention.get("reason") not in (
+                    "development strong teacher evidence requires engineering repair",):
+                continue
+            checks = []
+            for _, record in candidates:
+                row = snapshots[record["port"]].get(record["run_id"], {})
+                if row.get("scientific_stop") is True or row.get("stage") not in (
+                        "queued", "preparing", "evaluating", "training", "completed"):
+                    break
+                detail = self.verify_execution(record)
+                actual = (detail or {}).get("status", {})
+                if actual.get("scientific_stop") is True or actual.get("stage") not in (
+                        "queued", "preparing", "evaluating", "training", "completed"):
+                    break
+                checks.append(deepcopy(record["source_audit"]))
+            else:
+                previous = deepcopy(attention)
+                history = {"route": route, "previous_attention": previous, "at": now(),
+                           "contract_sha256": self.source_policy["contract_sha256"], "actual_source_checks": checks}
+                self.state.setdefault("source_repair_attention_history", []).append(history)
+                del self.state["route_attention"][route]
+                self.event("pinned_source_attention_reconciled", **history)
 
     def development_ready(self, route):
         keys = [f"development/{route}/{method}/{port}"
