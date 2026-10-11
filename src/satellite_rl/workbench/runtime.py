@@ -235,9 +235,15 @@ class Scheduler:
             elif len(external) >= 3 or (len(external) >= 2 and gpu.get("utilization_percent", 0) >= 95):
                 reason = "现有GPU作业繁忙，等待资源，不中断其他实验"
             if reason:
+                cpu_jobs = [(j, s) for j, s in queued if j.get("experiment_id") == "S1-ND12" and
+                            j.get("execution_device") == "cpu"]
                 for job, status in queued:
+                    if (job, status) in cpu_jobs:
+                        continue
                     if status.get("queue_reason") != reason:
                         self._status(self.store.job_dir(job["run_id"]), status, queue_reason=reason)
+                for job, status in cpu_jobs[:self.max_workers - len(active)]:
+                    self._launch(job, status)
                 return
             for job, status in queued[:self.max_workers - len(active)]:
                 self._launch(job, status)
@@ -299,6 +305,13 @@ class Scheduler:
                repair_validation_sha256=None, expected_origin_commit=None,
                expected_repair_commit=None):
         with self.lock:
+            candidate = read_json(self.store.job_dir(run_id) / "job.json", {})
+            if candidate.get("experiment_id") == "S1-ND12":
+                if any(v is not None for v in (source_repair, repair_validation_path,
+                                              repair_validation_sha256, expected_origin_commit, expected_repair_commit)):
+                    raise ValueError("S1-ND12 resumes frozen source only")
+                from .coverage_nondrl import resume_job
+                return resume_job(self, run_id)
             from .recovery import (S2P17_BOUNDARY_REPAIR_ID, S2P17_ORIGIN_COMMIT,
                                    S2P17_FAILED_RUN, S2P19_REPLAY_REPAIR_ID,
                                    S2P19_ORIGIN_COMMIT, S2P19_REPLAY_RUNS,

@@ -163,7 +163,7 @@ class Store:
         if kind not in ("train", "evaluate", "refine", "prepare"):
             raise ValueError("未知任务类型")
         if kind == "prepare" and not (config.get("research_stage") == "s2p19_preparation" or
-                (config.get("research_stage") == "coverage" and config.get("schema_version") in (5, 6))):
+                (config.get("research_stage") == "coverage" and config.get("schema_version") in (5, 6, 7))):
             raise ValueError("准备任务须声明受校验的S2-P19准备类型")
         if request_id is not None:
             validate_id(request_id)
@@ -200,6 +200,11 @@ class Store:
             if config.get("research_stage") == "coverage" and config.get("schema_version") == 6:
                 from .coverage_drl_r04 import freeze_drl_r04_sources
                 frozen_extra = freeze_drl_r04_sources(frozen_extra, directory / "input_sources")
+            if config.get("research_stage") == "coverage" and config.get("schema_version") == 7:
+                from .coverage_nondrl import freeze_sources
+                from .nondrl_preparation import freeze_preparation
+                frozen_extra = freeze_sources(frozen_extra, directory / "input_sources")
+                frozen_extra = freeze_preparation(frozen_extra, directory / "input_sources")
             is_coverage = config.get("research_stage") == "coverage"
             profile = (config["coverage"]["environment_profile"] if is_coverage else
                        config.get("environment", {}).get("profile", "china_legacy"))
