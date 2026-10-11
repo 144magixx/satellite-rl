@@ -59,9 +59,27 @@ def atomic_json(path,value):
 
 
 def input_paths(root):
-    return {"plan":root/"run_plan.json","state":root/"controller/state.json",
+    paths = {"plan":root/"run_plan.json","state":root/"controller/state.json",
             "preparations":root/"controller/data_preparation.json","manifest":root/"run_manifest.json",
             "registry":root/"controller/dataset_registry.json"}
+    policy_path = root/"controller/source_policy.json"
+    if policy_path.is_file():
+        from .execution_sources import contract_bytes
+        policy = read(policy_path)
+        contract_path = Path(policy["local_contract_path"])
+        contract = contract_bytes(contract_path.read_bytes(),policy["contract_sha256"])
+        paths.update(source_policy=policy_path,source_contract=contract_path)
+        for index,item in enumerate(contract["validation_receipts"]):
+            source = Path(policy.get("validation_path_map",{}).get(item["path"],item.get("local_path",item["path"])))
+            if archive.digest(source)!=item["sha256"]:
+                raise Attention("repair validation final-input SHA differs")
+            paths["source_validation_%03d"%index]=source
+    for name in ("reused_january_archive_receipt", "reused_raw_source_refs"):
+        path = root/"source"/(name+".json")
+        if path.is_file():paths[name]=path
+    audit = root/"preflight/reused_source_reference_audit.json"
+    if audit.is_file():paths["reused_source_reference_audit"]=audit
+    return paths
 
 
 def readiness(root,paths):
@@ -254,7 +272,11 @@ def _run(root=ops.LOCAL,*,wait_hours=48,poll_seconds=60,resume_after_attention=F
     root=Path(root).resolve()
     if not 0<wait_hours<=48 or poll_seconds!=60:raise ValueError("wait bounded at48h; polling fixed at60s")
     directory=root/"controller/finalizer";directory.mkdir(parents=True,exist_ok=True)
-    modules=[Path(__file__),Path(archive.__file__),Path(report.__file__),Path(strict_audit.__file__),Path(ops.__file__)]
+    from . import execution_sources
+    from satellite_rl.workbench import nondrl_source_repair
+    from satellite_rl.coverage.nondrl import source_lineage
+    modules=[Path(__file__),Path(archive.__file__),Path(report.__file__),Path(strict_audit.__file__),Path(ops.__file__),
+             Path(execution_sources.__file__),Path(nondrl_source_repair.__file__),Path(source_lineage.__file__)]
     if transport is not None:modules.extend((Path(placement_transport.__file__),transport.path))
     guards={str(p.resolve()):archive.digest(p) for p in modules}
     status_path=directory/"status.json";prior=read(status_path) if status_path.is_file() else None

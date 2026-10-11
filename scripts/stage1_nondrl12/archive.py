@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import zipfile
 from scripts.stage1_nondrl12 import ops
+from scripts.stage1_nondrl12.execution_sources import ORIGIN_COMMIT
 LOCAL=ops.LOCAL / "job_archives"
 BACKUP=Path("C:/paper_archives/outputs/experiments/first_stage_nondrl12_20261012/job_archives")
 EXTRA=Path("E:/paper_archives/outputs/experiments/first_stage_nondrl12_20261012/job_archives")
@@ -30,7 +31,8 @@ def plan(state, preparations=None):
         if not re.fullmatch(r"[A-Za-z0-9_-]+", task["run_id"]):
             raise ValueError("unsafe workbench run identity")
         tasks[key] = {"key": key, "port": int(task["port"]), "run_id": task["run_id"],
-                      "request_id": task.get("request_id"), "source_commit": commit,
+                      "request_id": task.get("request_id"), "source_commit": task.get("source_commit", commit),
+                      "origin_commit": commit, "source_repair_contract_sha256": task.get("source_repair_contract_sha256"),
                       "kind": task.get("kind"), "route": task.get("route"), "method": task.get("method")}
     for key, task in (preparations or {}).get("tasks", {}).items():
         name = "prepare/" + key
@@ -146,6 +148,18 @@ def verify_receipt(receipt, directory, source_receipt=None, source_directory=Non
         raise ValueError("workbench identity evidence missing")
     if any(name.endswith(".tar") for name in members):
         raise ValueError("task duplicates canonical raw source")
+    from .strict_audit import Evidence
+    from .execution_sources import audit_lineage
+    evidence = Evidence(Path(directory) / "receipt.json", verified_volume_cache, receipt=receipt)
+    identity = evidence.json("job.json")
+    if identity.get("source_repair_contract"):
+        lineage = audit_lineage(identity, evidence)
+        if (lineage["execution_commit"] != receipt["source_commit"] or
+                lineage["origin_commit"] != receipt.get("origin_commit") or
+                lineage["contract_sha256"] != receipt.get("source_repair_contract_sha256")):
+            raise ValueError("archive receipt repaired source identity differs")
+    elif receipt.get("origin_commit", receipt["source_commit"]) != receipt["source_commit"]:
+        raise ValueError("archive changed source without strict repair lineage")
     if receipt.get("source_refs"):
         if source_receipt is None or source_directory is None:
             raise ValueError("shared source receipt required")
@@ -156,7 +170,8 @@ def verify_receipt(receipt, directory, source_receipt=None, source_directory=Non
     available = set()
     dependency_by_sha = {}
     for dep in dependency_receipts or []:
-        if dep.get("experiment_id") != "S1-ND12" or dep.get("source_commit") != receipt["source_commit"]:
+        if (dep.get("experiment_id") != "S1-ND12" or
+                dep.get("origin_commit",dep.get("source_commit")) != receipt.get("origin_commit",receipt["source_commit"])):
             raise ValueError("dependency archive group/source differs")
         for volume in dep.get("volumes", []):
             verify_cached_volume(volume_path(LOCAL / str(dep["port"]) / dep["run_id"], volume), volume, verified_volume_cache)
@@ -234,10 +249,16 @@ try:
   job=json.loads((jobdir/'job.json').read_text(encoding="utf-8"));status=json.loads((jobdir/'status.json').read_text(encoding="utf-8"))
   launch=json.loads((jobdir/'launch.json').read_text(encoding="utf-8")) if (jobdir/'launch.json').exists() else {}
   if job.get('experiment_id')!='S1-ND12' or job.get('run_id')!=run_id or job.get('git_commit')!=request['source_commit'] or job.get('archive_root')!=request['archive']:raise RuntimeError('workbench group/source/identity differs')
+  if job.get('source_repair_contract'):
+   sys.path.insert(0,str(pathlib.Path(job['source_root'])/'src'))
+   from satellite_rl.workbench.nondrl_source_repair import validate_job_lineage
+   validate_job_lineage(job,jobdir)
+   if job.get('origin_commit')!=request.get('origin_commit') or job['source_repair_contract']['contract_sha256']!=request.get('source_repair_contract_sha256'):raise RuntimeError('archive signed source policy differs')
+  elif request.get('origin_commit',request['source_commit'])!=request['source_commit']:raise RuntimeError('execution source requires signed lineage')
   if request.get('request_id') and job.get('request_id')!=request['request_id']:raise RuntimeError('request identity differs')
   if status.get('stage') not in ('completed','failed','stopped'):raise RuntimeError('task is not terminal')
   if status['stage']=='failed' and not (jobdir/'failure.json').exists():raise RuntimeError('failed task lacks failure evidence')
-  if status['stage']=='stopped' and status.get('scientific_stop') is not True:raise RuntimeError('unexplained stopped task')
+  if status['stage']=='stopped' and status.get('scientific_stop') is not True and not job.get('source_repair_contract'):raise RuntimeError('unexplained stopped task')
   for pid in {launch.get('pid'),status.get('pid')}:
    if not isinstance(pid,int) or pid<=0:continue
    proc=pathlib.Path('/proc')/str(pid)/'stat'
@@ -265,6 +286,22 @@ try:
     if sha(p)!=record['sha256']:raise RuntimeError('dependency manifest SHA differs')
     deps.append({'kind':key,'run_id':record.get('run_id'),'sha256':record['sha256'],'path':record.get('source_path',record['path'])})
   tree(prefix,jobdir,skip)
+  if job.get('source_repair_contract'):
+   contract=json.loads((jobdir/'source_lineage/contract.json').read_text())
+   if job['source_repair_contract'].get('comparison_scope')=='new_execution_task':
+    for previous_id,pins in contract['runs'].items():
+     configurations=[a for a in pins['artifacts'] if a.get('kind')=='config' and a['relative_path']=='config.json']
+     if not configurations:continue
+     original=pathlib.Path(configurations[0]['path']).parent/'source_lineage/origin/source_manifest.json'
+     if not original.is_file():continue
+     add(prefix+'/source_lineage/origin/source_manifest.json',original,pins['origin_source_manifest_sha256'])
+     pin_path=dest/'origin_snapshot_pin.json';pin_path.write_text(json.dumps({'run_id':previous_id,'sha256':pins['origin_source_manifest_sha256']}),encoding='utf-8')
+     add(prefix+'/source_lineage/origin_snapshot_pin.json',pin_path)
+     break
+    else:raise RuntimeError('future repaired archive lacks a signed origin snapshot reference')
+   for validation in contract['validation_receipts']:
+    name=prefix+'/source_lineage/validation_receipts/'+validation['sha256']+'/'+pathlib.Path(validation['path']).name
+    if name not in items:add(name,validation['path'],validation['sha256'])
   config=json.loads((jobdir/'config.json').read_text(encoding="utf-8"))
   for role,record in config.get('datasets',{}).items():
    p=safe(record['path'])
@@ -291,7 +328,7 @@ try:
   if group and size+r['bytes']>request['part_bytes']:flush();group=[];size=0
   group.append((name,r));size+=r['bytes']
  flush()
- receipt={'experiment_id':'S1-ND12','port':port,'run_id':run_id,'source_commit':request['source_commit'],'status':status['stage'],'source_refs':refs,'dependency_refs':deps,'volumes':volumes,'partition_manifest_sha256':request.get('partition_manifest_sha256')}
+ receipt={'experiment_id':'S1-ND12','port':port,'run_id':run_id,'source_commit':request['source_commit'],'origin_commit':request.get('origin_commit',request['source_commit']),'source_repair_contract_sha256':request.get('source_repair_contract_sha256'),'status':status['stage'],'source_refs':refs,'dependency_refs':deps,'volumes':volumes,'partition_manifest_sha256':request.get('partition_manifest_sha256')}
  (dest/'receipt.json').write_text(json.dumps(receipt));print(json.dumps(receipt))
 finally:lock.rmdir()
 '''

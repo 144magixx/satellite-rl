@@ -19,6 +19,7 @@ from satellite_rl.workbench.coverage_nondrl import default_nondrl_config, METHOD
 from satellite_rl.workbench.runtime import process_start_time
 from satellite_rl.workbench.storage import digest, now, read_json
 from scripts.stage1_nondrl12 import ops
+from scripts.stage1_nondrl12.execution_sources import contract_bytes, role_allowed
 
 PORTS = (20418, 20424, 20473, 20474)
 TERMINAL = {"completed", "stopped", "failed", "interrupted", "cancelled"}
@@ -77,6 +78,18 @@ class Controller:
         if self.state["plan_sha256"] != self.plan_sha or self.state["registry_sha256"] != self.registry_sha:
             raise ValueError("existing controller belongs to another frozen plan/registry")
         self.state.update(pid=os.getpid(), process_start_time=process_start_time(os.getpid()))
+        self.source_policy = read_json(self.root / "source_policy.json")
+        self.source_contract = None
+        if self.source_policy:
+            policy = self.source_policy
+            payload = Path(policy["local_contract_path"]).read_bytes()
+            self.source_contract = contract_bytes(payload, policy["contract_sha256"])
+            if self.source_contract["origin_commit"] != plan["scientific_commit"]:
+                raise ValueError("source policy belongs to another frozen plan")
+            previous = self.state.get("source_policy_sha256")
+            if previous and previous != policy["contract_sha256"]:
+                raise ValueError("controller source policy cannot change after binding")
+            self.state["source_policy_sha256"] = policy["contract_sha256"]
         self.save()
 
     def save(self):
@@ -124,19 +137,63 @@ class Controller:
         if existing:
             if existing["body_sha256"] != expected or existing["port"] != port:
                 raise ValueError("planned task body changed after publication")
+            if (self.source_contract and existing["run_id"] in self.source_contract["allowed_run_ids"]
+                    and existing.get("source_repair_contract_sha256") != self.source_policy["contract_sha256"]):
+                self.verify_execution(existing)
             return existing
         body = {**body, "request_id": "nd12_" + stable_sha({"plan": self.plan_sha, "key": key})[:40]}
+        if self.source_contract and role_allowed(self.source_contract, body):
+            body["execution_source"] = {k: self.source_policy[k] for k in ("contract_path", "contract_sha256")}
         job = self.transport.api(port, "/api/coverage/nondrl/runs", body)
-        if job.get("git_commit") != self.plan["scientific_commit"]:
+        expected_commit = self.source_contract["execution_commit"] if body.get("execution_source") else self.plan["scientific_commit"]
+        if job.get("git_commit") != expected_commit:
             self.attention("new job scientific source differs; no further publication", key=key, run_id=job.get("run_id"))
             return None
         record = {"port": port, "run_id": job["run_id"], "body_sha256": expected, "kind": body["kind"],
                   "role": body.get("dataset_role"), "route": body["config"]["coverage"]["nondrl"]["route"],
                   "method": body["config"]["coverage"]["nondrl"]["method"], "stage": "queued", "retries": 0}
+        record.update(origin_commit=self.plan["scientific_commit"], source_commit=job["git_commit"],
+                      publication_body_sha256=stable_sha(body))
+        if body.get("execution_source"):
+            self.verify_execution(record)
         self.state["jobs"][key] = record
         self.event("published", key=key, **record)
         self.save()
         return record
+
+    def verify_execution(self, record):
+        """Actual API detail and on-host immutable bytes, never a state-only waiver."""
+        detail = self.transport.api(record["port"], f"/api/runs/{record['run_id']}")
+        job = detail["job"]
+        if job.get("git_commit") == self.plan["scientific_commit"]:
+            if self.source_contract and record["run_id"] in self.source_contract["allowed_run_ids"]:
+                raise ValueError("authorized existing repair has not been activated through the API")
+            return None
+        item = job.get("source_repair_contract", {})
+        if (not self.source_contract or job["git_commit"] != self.source_contract["execution_commit"] or
+                item.get("contract_sha256") != self.source_policy["contract_sha256"] or
+                job.get("origin_commit") != self.plan["scientific_commit"]):
+            raise ValueError("actual workbench execution source is outside the pinned policy")
+        code = f'''import json,sys
+from pathlib import Path
+d=Path({(ops.BASE+'/'+str(record['port'])+'/archive/outputs/workbench/jobs/'+record['run_id'])!r})
+j=json.loads((d/'job.json').read_text());sys.path.insert(0,str(Path(j['source_root'])/'src'))
+from satellite_rl.workbench.nondrl_source_repair import validate_job_lineage
+validate_job_lineage(j,d)
+assert j['git_commit']=={job['git_commit']!r}
+assert j['source_repair_contract']['contract_sha256']=={self.source_policy['contract_sha256']!r}
+print(json.dumps({{'run_id':j['run_id'],'execution_commit':j['git_commit'],'contract_sha256':j['source_repair_contract']['contract_sha256'],'passed':True}}))
+'''
+        result = self.transport.remote_python(code, record["port"], timeout=120)
+        if result["exit_code"]:
+            raise ValueError("actual repaired job lineage audit failed: " + result["stderr"][-500:])
+        proof = json.loads(result["stdout"].splitlines()[-1])
+        if (proof.get("passed") is not True or proof.get("run_id") != record["run_id"] or
+                proof.get("contract_sha256") != self.source_policy["contract_sha256"]):
+            raise ValueError("actual repaired source audit receipt differs")
+        record.update(source_commit=job["git_commit"], origin_commit=job["origin_commit"],
+                      source_repair_contract_sha256=item["contract_sha256"], source_audit={**proof, "at": now()})
+        return detail
 
     def refresh(self):
         snapshots = {}
@@ -211,10 +268,17 @@ class Controller:
         output = []
         for record in jobs:
             run_id = record["run_id"]
-            code = f'''import json,gzip,hashlib
+            code = f'''import json,gzip,hashlib,sys
 from pathlib import Path
 d=Path({(ops.BASE+'/'+str(record['port'])+'/archive/outputs/workbench/jobs/'+run_id)!r})
+job=json.loads((d/'job.json').read_text())
+assert job.get('origin_commit',job['git_commit'])=={self.plan['scientific_commit']!r}
+if job['git_commit']!={self.plan['scientific_commit']!r}:
+ sys.path.insert(0,str(Path(job['source_root'])/'src'))
+ from satellite_rl.workbench.nondrl_source_repair import validate_job_lineage
+ validate_job_lineage(job,d)
 m=json.loads((d/'raw_scenes/manifest.json').read_text())
+assert m['provenance']['git_commit'] in (job['git_commit'],job.get('origin_commit',job['git_commit']))
 rows=[]
 for x in m['rows']:
  p=d/'raw_scenes'/x['file']
@@ -222,7 +286,7 @@ for x in m['rows']:
  r=json.loads(gzip.decompress(p.read_bytes()))
  z=r['result']; a=z['metrics_all']; b=z['initial_metrics_all']
  rows.append({{'index':r['dataset_index'],'multiplier':r['demand_multiplier'],'mother_id':r['mother_scene_id'],'cv':a['load_cv_all'],'initial_cv':b['load_cv_all'],'carry':z['physical']['aircraft_service']['demand_weighted_carried_fraction'],'initial_carry':z['initial_physical']['aircraft_service']['demand_weighted_carried_fraction'],'feasible':all(a.get(k) is True for k in ['geometry_feasible','unique_assignment','demand_conserved']),'initial_sha256':z['initial_sha256'],'final_sha256':z['final_sha256']}})
-print(json.dumps({{'run_id':{run_id!r},'port':{record['port']},'manifest_path':str(d/'raw_scenes/manifest.json'),'manifest_sha256':hashlib.sha256((d/'raw_scenes/manifest.json').read_bytes()).hexdigest(),'source_commit':m['provenance']['git_commit'],'config_sha256':m['provenance']['config_sha256'],'rows':rows}}))
+print(json.dumps({{'run_id':{run_id!r},'port':{record['port']},'manifest_path':str(d/'raw_scenes/manifest.json'),'manifest_sha256':hashlib.sha256((d/'raw_scenes/manifest.json').read_bytes()).hexdigest(),'source_commit':job['git_commit'],'origin_commit':job.get('origin_commit',job['git_commit']),'contract_sha256':job.get('source_repair_contract',{{}}).get('contract_sha256'),'config_sha256':m['provenance']['config_sha256'],'rows':rows}}))
 '''
             receipt = self.transport.remote_python(code, record["port"], timeout=120)
             if receipt["exit_code"]:
@@ -238,7 +302,7 @@ print(json.dumps({{'run_id':{run_id!r},'port':{record['port']},'manifest_path':s
         expected_count = self.record(PORTS[0], "development")["count"]
         expected = {(i, m) for i in range(expected_count) for m in (.75, 1., 1.25)}
         if ({(r["index"], r["multiplier"]) for r in rows} != expected or len(rows) != len(expected) or
-                any(s["source_commit"] != self.plan["scientific_commit"] for s in sources)):
+                any(s.get("origin_commit",s["source_commit"]) != self.plan["scientific_commit"] for s in sources)):
             self.attention("development evidence incomplete or source differs", route=route)
             return None
         mothers = []
@@ -383,8 +447,11 @@ print(json.dumps(result,allow_nan=False))
         directory = ops.BASE + f"/{port}/archive/outputs/workbench/jobs/{task['run_id']}"
         code = f'''import json,hashlib,sys
 from pathlib import Path
-d=Path({directory!r}); job=json.loads((d/'job.json').read_text()); assert job['git_commit']=={self.plan['scientific_commit']!r}
+d=Path({directory!r}); job=json.loads((d/'job.json').read_text()); assert job.get('origin_commit',job['git_commit'])=={self.plan['scientific_commit']!r}
 sys.path.insert(0,str(Path(job['source_root'])/'src'))
+if job['git_commit']!={self.plan['scientific_commit']!r}:
+ from satellite_rl.workbench.nondrl_source_repair import validate_job_lineage
+ validate_job_lineage(job,d)
 from satellite_rl.coverage.nondrl.mechanism_audit import audit_teacher_reachability
 from satellite_rl.coverage.variable_dataset import load_variable_dataset
 config=json.loads((d/'config.json').read_text()); data=config['datasets']['development']; p=Path(data['path'])
@@ -392,7 +459,7 @@ assert hashlib.sha256(p.read_bytes()).hexdigest()==data['sha256']
 indices={{s.scene_id:i for i,s in enumerate(load_variable_dataset(p).scenes)}}
 wrapper=d/'teacher_manifest.json'
 result=audit_teacher_reachability(wrapper,hashlib.sha256(wrapper.read_bytes()).hexdigest(),{route!r},mother_indices=indices)
-result['task_source']={{'run_id':job['run_id'],'port':{port},'wrapper_path':str(wrapper),'wrapper_sha256':hashlib.sha256(wrapper.read_bytes()).hexdigest(),'dataset_sha256':data['sha256'],'scientific_commit':job['git_commit']}}
+result['task_source']={{'run_id':job['run_id'],'port':{port},'wrapper_path':str(wrapper),'wrapper_sha256':hashlib.sha256(wrapper.read_bytes()).hexdigest(),'dataset_sha256':data['sha256'],'scientific_commit':job.get('origin_commit',job['git_commit']),'execution_commit':job['git_commit'],'contract_sha256':job.get('source_repair_contract',{{}}).get('contract_sha256')}}
 print(json.dumps(result,allow_nan=False))
 '''
         response = self.transport.remote_python(code, port, timeout=120)

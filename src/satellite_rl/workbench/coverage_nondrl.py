@@ -246,6 +246,11 @@ def submit(application, body):
              "experiment_role": purpose, "dataset_role": role, "execution_target": f"u2024110224@10.160.17.102:{port}",
              "dataset_sha256": {r: d["sha256"] for r, d in datasets.items()},
              "execution_device": "cuda" if kind == "train" or needs_model and kind == "evaluate" else "cpu"}
+    if body.get("execution_source") is not None:
+        reference = body["execution_source"]
+        if not isinstance(reference, dict) or set(reference) != {"contract_path", "contract_sha256"}:
+            raise ValueError("execution source requires an immutable ND12 repair policy reference")
+        extra["execution_source"] = deepcopy(reference)
     if kind == "evaluate" and role == "development" and route == "04" and config["coverage"]["nondrl"]["method"] == "F":
         per_case = 5120 // (datasets[role]["count"] * len(config["evaluation"]["demand_multipliers"]))
         extra["resolved_limits"] = {**config["coverage"]["nondrl"]["limits"],
@@ -274,6 +279,8 @@ def submit(application, body):
             raise ValueError("training requires a passed frozen route development gate")
         extra["reachability_source"] = {"path": str(gate_path), "sha256": gate["sha256"]}
         directory, source_job = _dependency(body, "teacher_source", "prepare", route)
+        from .nondrl_source_repair import validate_dependency_source
+        validate_dependency_source(application.store, body.get("execution_source"), source_job)
         path = directory / "teacher_manifest.json"
         manifest = read_json(path, {})
         if (manifest.get("completed") is not True or
@@ -293,6 +300,8 @@ def submit(application, body):
         extra["initial_source"] = _initial_dependencies(body, "initial_source", datasets[role]["sha256"])
     if kind == "evaluate" and needs_model:
         directory, source_job = _dependency(body, "model_source", "train", route)
+        from .nondrl_source_repair import validate_dependency_source
+        validate_dependency_source(application.store, body.get("execution_source"), source_job)
         model = Path(source_job["model_dir"]) / "final"
         metadata = read_json(model / "model.json", {})
         source_config = read_json(directory / "config.json", {})
@@ -342,6 +351,10 @@ def freeze_sources(extra, destination):
 
 
 def api(application, method, parts, body):
+    if len(parts) == 3 and parts[0] == "runs" and parts[2] == "source-repair" and method == "POST":
+        deployment(application.store)
+        from .nondrl_source_repair import repair_job
+        return repair_job(application.app.scheduler, validate_id(parts[1]), body)
     if parts == ["catalog"] and method == "GET":
         return {"group": GROUP, "routes": list(ROUTES), "learning_routes": list(LEARNED),
                 "defaults": {r: default_nondrl_config(r) for r in ROUTES}, "update_caps": UPDATE_CAPS,
@@ -378,6 +391,9 @@ def resume_job(scheduler, run_id):
     from .runtime import pid_alive
     directory = scheduler.store.job_dir(run_id)
     job, status = read_json(directory / "job.json", {}), read_json(directory / "status.json", {})
+    if job.get("source_repair_contract"):
+        from .nondrl_source_repair import validate_execution_job
+        validate_execution_job(scheduler.store, job)
     launch = read_json(directory / "launch.json", {})
     if status.get("stage") not in ("stopped", "failed", "interrupted") or status.get("scientific_stop") is True:
         raise ValueError("S1-ND12 task cannot resume from this state")

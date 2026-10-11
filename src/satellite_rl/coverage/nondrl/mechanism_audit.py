@@ -163,7 +163,7 @@ def audit_direct_construction(rows, scenes, config=None, sources=None, *, expect
         return _receipt("03", sources, statistics, thresholds, None, str(error))
 
 
-def _teacher_samples(path, expected_sha=None):
+def _teacher_samples(path, expected_sha=None, *, allow_reference_gap=False):
     path = Path(path)
     if not path.is_file() or expected_sha is not None and digest(path) != expected_sha:
         raise EvidenceGap("teacher wrapper/evidence manifest SHA differs")
@@ -176,7 +176,8 @@ def _teacher_samples(path, expected_sha=None):
             raise EvidenceGap("wrapped teacher evidence SHA differs")
         path, record = target, json.loads(target.read_text(encoding="utf-8"))
         sources.append({"path": str(target), "sha256": digest(target)})
-    if record.get("format") != EVIDENCE_FORMAT or record.get("status") != "completed":
+    statuses = ("completed", "attention_required") if allow_reference_gap else ("completed",)
+    if record.get("format") != EVIDENCE_FORMAT or record.get("status") not in statuses:
         raise EvidenceGap("teacher evidence is not a complete audited manifest")
     samples = []
     for shard in record["shards"]:
@@ -377,7 +378,7 @@ def audit_teacher_reachability(manifest_path, expected_sha=None, route=None, *, 
     verified = []
     route = str(route).zfill(2) if route is not None else None
     try:
-        manifest, _, verified = _teacher_samples(manifest_path, expected_sha)
+        manifest, _, verified = _teacher_samples(manifest_path, expected_sha, allow_reference_gap=True)
         route = route or manifest.get("route")
         if route not in ("02", "03") or manifest.get("route") != route:
             raise EvidenceGap("reachability audit needs an actual route02/03 teacher probe")
@@ -399,6 +400,7 @@ def audit_teacher_reachability(manifest_path, expected_sha=None, route=None, *, 
         from ..scenes import CoverageScene
         from ..variable_design import Layout
         rows, identities = [], set()
+        searched, fallback, unknown, complete_searches = 0, 0, 0, 0
         for receipt in receipts:
             path = (evidence_path.parent / receipt["path"]).resolve()
             if not path.is_relative_to(evidence_path.parent.resolve()) or digest(path) != receipt["sha256"]:
@@ -407,8 +409,28 @@ def audit_teacher_reachability(manifest_path, expected_sha=None, route=None, *, 
                 problem = json.load(stream)
             if problem.get("format") != "s1_nondrl_teacher_problem_v1" or problem.get("route") != route:
                 raise EvidenceGap("teacher problem receipt schema/route differs")
-            if problem.get("provenance") != manifest["provenance"]:
-                raise EvidenceGap("teacher problem source/config/dataset provenance differs")
+            origin = manifest["provenance"]
+            actual = problem.get("provenance", {})
+            if actual != origin:
+                marker = problem.get("execution_source", {})
+                segments = [s.get("execution_source") for s in manifest.get("execution_segments", [])]
+                if (marker not in segments or marker.get("git_commit") != actual.get("git_commit") or
+                        marker.get("source_sha256") != actual.get("source_sha256") or
+                        any(actual.get(k) != origin.get(k) for k in set(actual) | set(origin)
+                            if k not in ("git_commit", "source_sha256"))):
+                    raise EvidenceGap("teacher problem source/config/dataset provenance differs")
+            scope = problem.get("search_scope", {})
+            calls = problem.get("calls", {}).get("candidates", 0)
+            is_fallback = scope.get("reference_only") is True
+            is_searched = scope.get("searched", calls > 0) is True
+            is_unknown = scope.get("unknown") is True or is_fallback or (not scope and calls == 0)
+            is_complete = scope.get("complete_search", not is_unknown and "unknown" not in problem.get("completion_reason", "")) is True
+            if is_fallback and (calls or scope.get("trials") or problem.get("teacher_elapsed_seconds") != 0):
+                raise EvidenceGap("I0 reference-only receipt consumed a search budget")
+            searched += is_searched
+            fallback += is_fallback
+            unknown += is_unknown or not is_complete
+            complete_searches += is_searched and is_complete
             name, multiplier = problem["mother_id"], float(problem["demand_multiplier"])
             if name not in mother_indices or multiplier not in multipliers:
                 raise EvidenceGap("teacher probe belongs to an unexpected mother/tier")
@@ -438,7 +460,10 @@ def audit_teacher_reachability(manifest_path, expected_sha=None, route=None, *, 
                          "result": {"metrics_all": last, "initial_metrics_all": first,
                                     "physical": problem["final_physical"], "initial_physical": problem["initial_physical"]},
                          "initial_sha256": problem["initial_sha256"], "receipt_path": str(path),
-                         "receipt_sha256": receipt["sha256"], "teacher_elapsed_seconds": problem["teacher_elapsed_seconds"]})
+                         "receipt_sha256": receipt["sha256"], "teacher_elapsed_seconds": problem["teacher_elapsed_seconds"],
+                         "search_scope": scope, "searched": is_searched, "reference_only": is_fallback,
+                         "unknown_search": is_unknown or not is_complete,
+                         "execution_source": problem.get("execution_source")})
         lookup = _scene_rows(rows, expected_mother_count, multipliers)
         mother_rows = _mother_final(lookup, expected_mother_count, multipliers)
         improved = [row["dataset_index"] for row in mother_rows if row["published_qualified"] and
@@ -447,9 +472,14 @@ def audit_teacher_reachability(manifest_path, expected_sha=None, route=None, *, 
                           legal_reference_mothers=sorted(mother_indices.values()), problem_metrics=rows,
                           true_trials=manifest["trials"], recorded_teacher_seconds=manifest["elapsed_seconds"],
                           budget_overrun_seconds=max(0., manifest["elapsed_seconds"] - cap["seconds"]),
+                          searched_problems=searched, reference_only_problems=fallback,
+                          unknown_search_problems=unknown, complete_search_problems=complete_searches,
                           denominator_policy="mean three demand tiers within mother; 20 independent mothers",
                           no_new_physical_or_teacher_calls=True)
         passed = len(improved) >= 6 and all(row["published_qualified"] for row in mother_rows)
+        if not passed and unknown:
+            return _receipt(route, verified, statistics, thresholds, None,
+                            "offline_teacher_search_evidence_gap: bounded unknown/reference-only problems remain")
         return _receipt(route, verified, statistics, thresholds, passed,
                         None if passed else "measured_offline_teacher_reachability_gate_failed")
     except (EvidenceGap, KeyError, TypeError, ValueError) as error:

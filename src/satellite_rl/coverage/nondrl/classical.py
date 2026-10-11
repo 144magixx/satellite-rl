@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from time import perf_counter
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -126,7 +127,7 @@ def square_breakpoints(count, segments):
 
 
 def solve_pool(problem, centers, *, members=None, count=None, edge_mask=None,
-               visible=None, time_limit=None, source="pool_milp"):
+               visible=None, time_limit=None, source="pool_milp", interruptible=False, native_solver=None):
     """Finite-pool MILP: selected nonempty sites + unique indivisible ownership.
 
     ``visible`` is a whole-scene owner array with -1 masked. Nonnegative entries
@@ -134,7 +135,8 @@ def solve_pool(problem, centers, *, members=None, count=None, edge_mask=None,
     member-by-site shape and can only remove truly legal edges. No warm-start is
     claimed: SciPy's milp API has no incumbent injection.
     """
-    from scipy.optimize import Bounds, LinearConstraint, milp
+    if not interruptible:
+        from scipy.optimize import Bounds, LinearConstraint, milp
     from scipy.sparse import coo_matrix
     problem.guard()
     started = perf_counter()
@@ -203,10 +205,32 @@ def solve_pool(problem, centers, *, members=None, count=None, edge_mask=None,
         raise BudgetStop("online_time_limit")
     problem.calls["solver_calls"] += 1
     solver_start = perf_counter()
-    result = milp(objective, integrality=integrality,
-                  bounds=Bounds(np.zeros(variable_count), bounds_upper),
-                  constraints=LinearConstraint(matrix, np.asarray(lower), np.asarray(upper)),
-                  options={"time_limit": available, "mip_rel_gap": problem.config.mip_relative_gap})
+    native_receipt = None
+    if interruptible:
+        from .native_solver import owned_solver
+        executor = native_solver if native_solver is not None else owned_solver()
+        payload = {"objective": objective, "integrality": integrality,
+                   "bounds_lower": np.zeros(variable_count), "bounds_upper": bounds_upper,
+                   "matrix": matrix, "constraint_lower": np.asarray(lower), "constraint_upper": np.asarray(upper),
+                   "options": {"time_limit": available, "mip_rel_gap": problem.config.mip_relative_gap}}
+        native_receipt = executor.solve(payload, min(problem.deadline, solver_start + available))
+        if not native_receipt["known"]:
+            solver_seconds = perf_counter() - solver_start
+            problem.times["solver_seconds"] += solver_seconds
+            problem.trace.append({"source": source, "status": native_receipt["outcome"],
+                "known": False, "reason": native_receipt["reason"], "infeasible": False,
+                "pool_sha256": pool_sha, "pool_centers": centers.tolist(), "sites": site_count,
+                "binary_edges": edge_count, "variables": variable_count, "time_limit_seconds": available,
+                "solver_seconds": solver_seconds, "construction_and_solver_seconds": perf_counter() - started,
+                "finished_after_deadline": perf_counter() > problem.deadline,
+                "native_process": native_receipt, "publication": "no solution published; current best retained"})
+            return None
+        result = SimpleNamespace(**native_receipt["result"])
+    else:
+        result = milp(objective, integrality=integrality,
+                      bounds=Bounds(np.zeros(variable_count), bounds_upper),
+                      constraints=LinearConstraint(matrix, np.asarray(lower), np.asarray(upper)),
+                      options={"time_limit": available, "mip_rel_gap": problem.config.mip_relative_gap})
     solver_seconds = perf_counter() - solver_start
     problem.times["solver_seconds"] += solver_seconds
     record = {"source": source, "pool_sha256": pool_sha, "pool_centers": centers.tolist(),
@@ -222,6 +246,8 @@ def solve_pool(problem, centers, *, members=None, count=None, edge_mask=None,
               "finished_after_deadline": perf_counter() > problem.deadline,
               "warm_start": False, "certificate_scope": "finite_pool_piecewise_square_surrogate_only"}
     problem.trace.append(record)
+    if native_receipt is not None:
+        record["native_process"] = native_receipt
     if result.x is None:
         record["status"] = "infeasible_pool" if result.status == 2 else "no_incumbent"
         return None
@@ -250,6 +276,13 @@ def solve_pool(problem, centers, *, members=None, count=None, edge_mask=None,
                   exact_square_normalized=float(loads @ loads),
                   square_approximation_error=float(result.fun - loads @ loads),
                   selected_sites=used.tolist(), raw_assignment=assignment.tolist())
+    if native_receipt is not None:
+        record["decoded_before_scene_deadline"] = perf_counter() < problem.deadline
+        if not record["decoded_before_scene_deadline"]:
+            record.update(status="engineering_timeout", known=False, infeasible=False,
+                          reason="native result decoded too late for scene publication",
+                          publication="no solution published; current best retained")
+            return None
     return centers[used].copy(), remap[assignment], record
 
 
@@ -644,6 +677,21 @@ def run_graph(problem, *, method="main"):
 
 def run_pool_mip(problem, *, expand=True):
     """10: whole-scene finite candidate pool, joint selected sites/ownership."""
+    from .native_solver import owned_solver
+    executor = owned_solver()
+    startup = perf_counter()
+    try:
+        bootstrap = executor.start(problem.deadline)
+    except TimeoutError:
+        problem.stop_reason = "engineering_native_startup_timeout"
+        problem.times["solver_startup_seconds"] = perf_counter() - startup
+        problem.trace.append({"source": "10_native_solver_bootstrap", "status": "engineering_timeout", "known": False,
+            "startup_seconds": perf_counter() - startup, "cleanup": executor.last_cleanup,
+            "budget_scope": "startup consumes original online clock; total time includes it"})
+        return
+    problem.times["solver_startup_seconds"] = perf_counter() - startup
+    problem.trace.append({"source": "10_native_solver_bootstrap", **bootstrap,
+                          "budget_scope": "startup consumes original online clock; total time includes it"})
     for expansion in range((problem.config.pool_expansions if expand else 0) + 1):
         problem.guard()
         centers, sources = build_pool(problem, expansion=expansion)
@@ -651,7 +699,7 @@ def run_pool_mip(problem, *, expand=True):
                               "sources": sources, "pool_count": len(centers)})
         result = solve_pool(problem, centers, time_limit=problem.remaining() if not expand else
                             min(problem.remaining(), max(problem.config.mip_seconds, problem.remaining() / 2)),
-                            source="10_joint_site_ownership_milp")
+                            source="10_joint_site_ownership_milp", interruptible=True, native_solver=executor)
         if result is not None:
             centers, assignment, _ = result
             problem.commit(problem.consider(_new_layout(problem, centers, assignment),

@@ -177,6 +177,19 @@ class MechanismAuditTests(unittest.TestCase):
         finally:
             torch.set_num_threads(previous)
 
+    def test_reference_only_budget_unknown_never_scientific_failure(self):
+        for route in ("02", "03"):
+            with self.subTest(route=route), tempfile.TemporaryDirectory() as temporary:
+                record = generate_teacher([fixture()], route, temporary,
+                    limits={"max_trials": 1, "max_steps": 4, "max_seconds": 1e-9})
+                audit = audit_teacher_reachability(record["path"], record["sha256"], route,
+                    mother_indices={"mother": 0}, expected_mother_count=1, multipliers=(1.,))
+                self.assertEqual(audit["status"], "attention_required", audit["reason"])
+                self.assertFalse(audit["scientific_stop"])
+                self.assertEqual(audit["statistics"]["reference_only_problems"], 1)
+                self.assertEqual(audit["statistics"]["searched_problems"], 0)
+                self.assertEqual(record["trials"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

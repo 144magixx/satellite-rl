@@ -84,6 +84,10 @@ class Application:
             if (directory / filename).is_file():
                 artifacts.setdefault(filename, str(directory / filename))
         launch = read_json(directory / "launch.json", {})
+        if job.get("experiment_id") == "S1-ND12" and job.get("source_repair_contract"):
+            contract = directory / "source_lineage/contract.json"
+            if contract.is_file():
+                artifacts["source_lineage/contract.json"] = str(contract)
         status["process_alive"] = pid_alive(status.get("pid") or launch.get("pid"))
         return clean_json({"job": {**job, "read_only": readonly}, "status": status,
                            "config": config, "artifacts": artifacts,
@@ -604,6 +608,14 @@ class Application:
 
     def download(self, identifier, filename):
         directory, _ = self.resolve_run(identifier)
+        if filename == "source_lineage/contract.json":
+            job = read_json(directory / "job.json", {})
+            contract = job.get("source_repair_contract", {})
+            path = inside(directory / filename, directory)
+            if (job.get("experiment_id") != "S1-ND12" or not contract or not path.is_file() or
+                    digest(path) != contract.get("contract_sha256")):
+                raise ValueError("来源修复合同不存在或SHA校验失败")
+            return "application/json; charset=utf-8", "source_repair_contract.json", path.read_bytes()
         allow = {"metrics.jsonl", "updates.jsonl", "episodes.jsonl", "evaluations.jsonl", "traces.jsonl",
                  "updates.csv", "episodes.csv", "evaluations.csv", "events.jsonl", "worker.log", "config.json",
                  "job.json", "manifest.json", "status.json", "results.json", "failure.json", "artifacts.json",

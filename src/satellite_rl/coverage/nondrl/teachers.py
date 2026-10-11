@@ -146,7 +146,7 @@ def rebuild_trial(problem, region, source, **kwargs):
 
 
 class EvidenceWriter:
-    def __init__(self, folder, route, provenance=None, shard_rows=128, resume=False):
+    def __init__(self, folder, route, provenance=None, shard_rows=128, resume=False, repair_contract=None):
         self.folder, self.route = Path(folder), canonical_route(route)
         self.folder.mkdir(parents=True, exist_ok=True)
         if (self.folder / "manifest.json").exists() and not resume:
@@ -158,17 +158,23 @@ class EvidenceWriter:
                          "status": "generating", "trials": 0, "elapsed_seconds": 0.}
         if resume:
             self.manifest = json.loads((self.folder / "manifest.json").read_text(encoding="utf-8"))
-            if (self.manifest["format"] != EVIDENCE_FORMAT or self.manifest["route"] != self.route or
-                    self.manifest["provenance"] != (provenance or {})):
+            if self.manifest["format"] != EVIDENCE_FORMAT or self.manifest["route"] != self.route:
                 raise ValueError("teacher resume provenance/schema differs")
             self.rows = self.manifest["rows"]
             for record in self.manifest["shards"]:
                 if digest(self.folder / record["path"]) != record["sha256"]:
                     raise ValueError("teacher resume shard differs")
+            for record in self.manifest.get("problem_receipts", []):
+                if digest(self.folder / record["path"]) != record["sha256"]:
+                    raise ValueError("teacher resume problem reference differs")
+        from .source_lineage import attach_execution
+        self.execution_source = attach_execution(self.manifest, provenance or {}, repair_contract,
+                                                 self.folder / "manifest.json", resume=resume)
         self.flush()
 
     def append(self, sample):
-        sample = {**sample, "route": self.route, "format": EVIDENCE_FORMAT}
+        sample = {**sample, "route": self.route, "format": EVIDENCE_FORMAT,
+                  "execution_source": self.execution_source}
         self.pending.append(jsonable(sample))
         self.rows += 1
         if len(self.pending) >= self.shard_rows:
@@ -185,7 +191,7 @@ class EvidenceWriter:
                                                  separators=(",", ":")) + "\n").encode())
             temp.replace(path)
             self.manifest["shards"].append({"path": path.name, "sha256": digest(path),
-                                               "rows": len(self.pending)})
+                                               "rows": len(self.pending), "execution_source": self.execution_source})
             self.pending = []
         self.manifest["rows"] = self.rows
         atomic_json(self.folder / "manifest.json", self.manifest)
@@ -236,7 +242,7 @@ def mlm_sample(problem, reference, rng, ratio=.5, frozen=None, region=None, cand
 
 
 def generate_teacher(problems, route, output, limits=None, stop_callback=None,
-                     progress_callback=None, provenance=None, resume=False):
+                     progress_callback=None, provenance=None, resume=False, repair_contract=None):
     """Consume caller-owned Problems with strict local AND aggregate budgets.
 
     Route 01 freezes scene-generated region pools BEFORE solving, route 02 saves
@@ -247,7 +253,7 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
     route, limits = canonical_route(route), limits or {}
     if int(limits.get("workers", 1)) > 1:
         return _parallel_teacher(problems, route, output, limits, stop_callback,
-                                 progress_callback, provenance, resume)
+                                 progress_callback, provenance, resume, repair_contract)
     caps = {"01": (20000, 20000.), "02": (1000000, 50000.),
             "03": (1280000, 40000.), "04": (128000, 12800.), "05": (11520, 7200.)}
     max_trials = int(limits.get("max_trials", caps[route][0]))
@@ -259,7 +265,8 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
     max_steps = min(int(limits.get("max_steps", 4 if route == "03" else 20)), 4 if route == "03" else 20)
     problem_seconds_cap = 1. if route == "01" else 10. if route == "02" else 4.
     per_problem = min(float(limits.get("per_problem_seconds", problem_seconds_cap)), problem_seconds_cap)
-    writer = EvidenceWriter(output, route, provenance, shard_rows=100000000, resume=resume)
+    writer = EvidenceWriter(output, route, provenance, shard_rows=100000000, resume=resume,
+                            repair_contract=repair_contract)
     if resume and writer.manifest.get("limits", limits) != limits:
         raise ValueError("teacher same-ID recovery budget/config differs")
     writer.manifest["limits"] = dict(limits)
@@ -292,9 +299,20 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
     for problem_index, problem in enumerate(problems):
         if problem_index < completed:
             continue
-        if completed >= max_problems or not can_start(time.perf_counter()):
-            stop_reason = "stopped" if stop_callback and stop_callback() else "budget_exhausted"
+        if completed >= max_problems:
+            stop_reason = "problem_limit"
             break
+        if not can_start(time.perf_counter()) and not active:
+            if stop_callback and stop_callback():
+                stop_reason = "stopped"
+                break
+            # An approved input still receives a legal reference. No candidate,
+            # solver, model label or PHY work is started after the search cap.
+            _problem_receipt(writer, completed, problem, 0., "global_budget_exhausted_I0_reference_only")
+            completed += 1
+            writer.manifest["reference_only_problems"] = writer.manifest.get("reference_only_problems",0) + 1
+            persist()
+            continue
         local_start = time.perf_counter()
         if active:
             if active["mother_id"] != str(problem.scene.scene_id) or active["source_hash"] != str(problem.scene.source_hash):
@@ -313,132 +331,143 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
             references = [problem.current.to_record()]
         active = active or {"mother_id": str(problem.scene.scene_id), "source_hash": str(problem.scene.source_hash),
                             "frozen": frozen.to_record(), "references": references, "step": 0,
-                            "local_elapsed": 0., "pending": None}
+                            "local_elapsed": 0., "pending": None, "start_trials": trials}
         problem.deadline = min(problem.deadline, time.perf_counter() + max(0., per_problem - active["local_elapsed"]))
         interrupted = False
-        for step in range(active["step"], max_steps):
-            if route in ("04", "05") and writer.rows >= problem_caps[route]:
-                stop_reason = "state_budget_exhausted"
-                break
-            if not can_start(local_start):
-                interrupted = bool(stop_callback and stop_callback())
-                break
-            before = cv_value(problem)
-            if route == "01":
-                # Each local solve is ONE teacher problem; mask augmentation is free of solves.
-                pending = active.get("pending")
-                regions = pending["regions"] if pending else problem.regions()
-                if not regions:
+        problem_completion_reason = "menu_or_step_finished"
+        try:
+            for step in range(active["step"], max_steps):
+                if route in ("04", "05") and writer.rows >= problem_caps[route]:
+                    stop_reason = "state_budget_exhausted"
                     break
-                for region_index in range(pending.get("region_index", 0) if pending else 0, len(regions)):
-                    region = regions[region_index]
-                    if not can_start(local_start):
-                        interrupted = bool(stop_callback and stop_callback())
-                        active["pending"] = {"regions": regions, "region_index": region_index}
+                if not can_start(local_start):
+                    interrupted = bool(stop_callback and stop_callback())
+                    problem_completion_reason = "user_stop" if interrupted else "search_budget_exhausted_unknown"
+                    break
+                before = cv_value(problem)
+                if route == "01":
+                    # Each local solve is ONE teacher problem; mask augmentation is free of solves.
+                    pending = active.get("pending")
+                    regions = pending["regions"] if pending else problem.regions()
+                    if not regions:
                         break
-                    context = type(problem.current).from_record(problem.current.to_record())
-                    pool = region_pool(problem, region)  # must precede teacher call
-                    members = np.flatnonzero(np.isin(context.assignment, region["beams"]))
-                    legal = problem.legal(centers=pool, positions=problem.scene.positions[members])
-                    persist(problem, {**active, "pending": {"regions": regions, "region_index": region_index,
-                                                            "pool": pool.tolist()}, "local_elapsed": time.perf_counter() - local_start})
+                    for region_index in range(pending.get("region_index", 0) if pending else 0, len(regions)):
+                        region = regions[region_index]
+                        if not can_start(local_start):
+                            interrupted = bool(stop_callback and stop_callback())
+                            problem_completion_reason = "user_stop" if interrupted else "search_budget_exhausted_unknown"
+                            active["pending"] = {"regions": regions, "region_index": region_index}
+                            break
+                        context = type(problem.current).from_record(problem.current.to_record())
+                        pool = region_pool(problem, region)  # must precede teacher call
+                        members = np.flatnonzero(np.isin(context.assignment, region["beams"]))
+                        legal = problem.legal(centers=pool, positions=problem.scene.positions[members])
+                        persist(problem, {**active, "pending": {"regions": regions, "region_index": region_index,
+                                                                "pool": pool.tolist()}, "local_elapsed": time.perf_counter() - local_start})
+                        try:
+                            trial = rebuild_trial(problem, region, "01_teacher", candidate_pool=pool)
+                        except BudgetStop:
+                            candidate, trial = None, {"accepted": False, "reason": "unknown"}
+                            problem_completion_reason = "trial_budget_exhausted_unknown"
+                        trials += 1
+                        reference = trial["layout"] if trial.get("accepted") else context
+                        for ratio in (.25, .5, .75, 1.):
+                            record = mlm_sample(problem, reference, rng, ratio, context, region, pool, legal)
+                            record["teacher_trial"] = jsonable(trial)
+                            writer.append(record)
+                        problem.commit(trial)
+                        active["pending"] = {"regions": regions, "region_index": region_index + 1}
+                        active["local_elapsed"] = time.perf_counter() - local_start
+                        persist(problem, active)
+                    break
+                pending = active.get("pending")
+                objects = pending["objects"] if pending else (problem.regions() if route == "05" else problem.menu())
+                if not objects:
+                    if route == "02":
+                        sample = state_sample(problem, [{"kind": "padding", "features": [0.]}])
+                        sample.update(positive_actions=[], stop_positive=True, stop_reason="verified_empty_menu",
+                                      trajectory_step=step, trials=[])
+                        writer.append(sample)
+                    break
+                objects = objects[:12 if route == "05" else 32 if route in ("01", "02", "03") else 64]
+                sample = pending["sample"] if pending else state_sample(problem, objects)
+                results, labels = [], []
+                if pending:
+                    labels = pending["labels"]
+                    for stored in pending["results"]:
+                        if stored and stored.get("layout") is not None:
+                            stored = {**stored, "layout": type(problem.current).from_record(stored["layout"])}
+                        results.append(stored)
+                for object_index in range(len(labels), len(objects)):
+                    obj = objects[object_index]
+                    if not can_start(local_start):
+                        if stop_callback and stop_callback():
+                            interrupted = True
+                            break
+                        labels.append({"known": False, "utility": 0., "status": "unknown", "reason": "budget"})
+                        results.append(None)
+                        continue
+                    trial_start = time.perf_counter()
                     try:
-                        trial = rebuild_trial(problem, region, "01_teacher", candidate_pool=pool)
+                        if route == "05":
+                            trial = rebuild_trial(problem, obj, "teacher_05")
+                        else:
+                            trial = problem.preview(obj)
                     except BudgetStop:
-                        candidate, trial = None, {"accepted": False, "reason": "unknown"}
+                        trial = {"reason": "unknown"}
+                        problem_completion_reason = "trial_budget_exhausted_unknown"
                     trials += 1
-                    reference = trial["layout"] if trial.get("accepted") else context
-                    for ratio in (.25, .5, .75, 1.):
-                        record = mlm_sample(problem, reference, rng, ratio, context, region, pool, legal)
-                        record["teacher_trial"] = jsonable(trial)
-                        writer.append(record)
-                    problem.commit(trial)
-                    active["pending"] = {"regions": regions, "region_index": region_index + 1}
+                    label = trial_label(problem, trial, before)
+                    label["elapsed_seconds"] = time.perf_counter() - trial_start
+                    labels.append(label)
+                    results.append(trial)
+                    active["pending"] = {"objects": objects, "sample": sample, "labels": labels,
+                                         "results": [jsonable(result) if result else None for result in results]}
                     active["local_elapsed"] = time.perf_counter() - local_start
                     persist(problem, active)
-                break
-            pending = active.get("pending")
-            objects = pending["objects"] if pending else (problem.regions() if route == "05" else problem.menu())
-            if not objects:
+                if interrupted:
+                    break
+                sample["trials"] = [{"object": obj, "label": label, "result": jsonable(trial) if trial else None}
+                                    for obj, label, trial in zip(objects, labels, results)]
+                best = max((i for i, label in enumerate(labels) if label["known"] and label["utility"] > 0),
+                           key=lambda i: labels[i]["utility"], default=None)
                 if route == "02":
-                    sample = state_sample(problem, [{"kind": "padding", "features": [0.]}])
-                    sample.update(positive_actions=[], stop_positive=True, stop_reason="verified_empty_menu",
-                                  trajectory_step=step, trials=[])
+                    # A STOP label requires a COMPLETELY checked menu. Truncation is not optimal STOP.
+                    if best is not None:
+                        positives = [i for i, label in enumerate(labels) if label["known"] and
+                                     abs(label["utility"] - labels[best]["utility"]) <= 1e-6]
+                        sample.update(positive_actions=positives, stop_positive=False, trajectory_step=step)
+                        sample["executed_after"] = results[best]["layout"].to_record()
+                        writer.append(sample)
+                    elif all(label["known"] for label in labels):
+                        sample.update(positive_actions=[], stop_positive=True,
+                                      stop_reason="verified_no_improvement", trajectory_step=step)
+                        writer.append(sample)
+                elif route in ("04", "05"):
+                    sample.update(known=[label["known"] for label in labels],
+                                  utility=[label["utility"] for label in labels], trajectory_step=step)
                     writer.append(sample)
-                break
-            objects = objects[:12 if route == "05" else 32 if route in ("01", "02", "03") else 64]
-            sample = pending["sample"] if pending else state_sample(problem, objects)
-            results, labels = [], []
-            if pending:
-                labels = pending["labels"]
-                for stored in pending["results"]:
-                    if stored and stored.get("layout") is not None:
-                        stored = {**stored, "layout": type(problem.current).from_record(stored["layout"])}
-                    results.append(stored)
-            for object_index in range(len(labels), len(objects)):
-                obj = objects[object_index]
-                if not can_start(local_start):
-                    if stop_callback and stop_callback():
-                        interrupted = True
-                        break
-                    labels.append({"known": False, "utility": 0., "status": "unknown", "reason": "budget"})
-                    results.append(None)
-                    continue
-                trial_start = time.perf_counter()
-                try:
-                    if route == "05":
-                        trial = rebuild_trial(problem, obj, "teacher_05")
-                    else:
-                        trial = problem.preview(obj)
-                except BudgetStop:
-                    trial = {"reason": "unknown"}
-                trials += 1
-                label = trial_label(problem, trial, before)
-                label["elapsed_seconds"] = time.perf_counter() - trial_start
-                labels.append(label)
-                results.append(trial)
-                active["pending"] = {"objects": objects, "sample": sample, "labels": labels,
-                                     "results": [jsonable(result) if result else None for result in results]}
-                active["local_elapsed"] = time.perf_counter() - local_start
+                if best is None:
+                    break
+                if not problem.commit(results[best]):
+                    raise ValueError("teacher best action failed common commit")
+                references.append(problem.current.to_record())
+                active.update(references=references, step=step + 1, pending=None,
+                              local_elapsed=time.perf_counter() - local_start)
                 persist(problem, active)
-            if interrupted:
-                break
-            sample["trials"] = [{"object": obj, "label": label, "result": jsonable(trial) if trial else None}
-                                for obj, label, trial in zip(objects, labels, results)]
-            best = max((i for i, label in enumerate(labels) if label["known"] and label["utility"] > 0),
-                       key=lambda i: labels[i]["utility"], default=None)
-            if route == "02":
-                # A STOP label requires a COMPLETELY checked menu. Truncation is not optimal STOP.
-                if best is not None:
-                    positives = [i for i, label in enumerate(labels) if label["known"] and
-                                 abs(label["utility"] - labels[best]["utility"]) <= 1e-6]
-                    sample.update(positive_actions=positives, stop_positive=False, trajectory_step=step)
-                    sample["executed_after"] = results[best]["layout"].to_record()
-                    writer.append(sample)
-                elif all(label["known"] for label in labels):
-                    sample.update(positive_actions=[], stop_positive=True,
-                                  stop_reason="verified_no_improvement", trajectory_step=step)
-                    writer.append(sample)
-            elif route in ("04", "05"):
-                sample.update(known=[label["known"] for label in labels],
-                              utility=[label["utility"] for label in labels], trajectory_step=step)
-                writer.append(sample)
-            if best is None:
-                break
-            if not problem.commit(results[best]):
-                raise ValueError("teacher best action failed common commit")
-            references.append(problem.current.to_record())
-            active.update(references=references, step=step + 1, pending=None,
-                          local_elapsed=time.perf_counter() - local_start)
+                if route == "05":
+                    break  # State labels are joint regions; caller may supply more rule-generated states.
+        except BudgetStop as error:
+            problem_completion_reason = "local_budget_exhausted_unknown: " + str(error)
+            active["local_elapsed"] = time.perf_counter() - local_start
             persist(problem, active)
-            if route == "05":
-                break  # State labels are joint regions; caller may supply more rule-generated states.
         if interrupted:
             active["local_elapsed"] = time.perf_counter() - local_start
             persist(problem, active)
             stop_reason = "stopped"
             break
-        if route == "03":
+        problem_trials = trials - int(active.get("start_trials", 0 if completed == 0 else trials))
+        if route == "03" and problem_trials > 0:
             # Multi-reference loss selects a whole solution, never per-aircraft mixed labels.
             writer.append({"mother_id": str(problem.scene.scene_id), "source_hash": str(problem.scene.source_hash),
                            "aircraft": scene_features(problem.scene).tolist(), "positions": problem.scene.positions.tolist(),
@@ -446,7 +475,8 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
                            "references": [{"centers": ref["centers"], "assignment": ref["assignment"]}
                                           for ref in references[-4:]], "teacher_trials": trials,
                            "teacher_elapsed_seconds": time.perf_counter() - local_start})
-        _problem_receipt(writer, completed, problem, time.perf_counter() - local_start)
+        _problem_receipt(writer, completed, problem, time.perf_counter() - local_start, problem_completion_reason,
+                         trial_count=problem_trials)
         completed += 1
         active = None
         persist()
@@ -457,19 +487,27 @@ def generate_teacher(problems, route, output, limits=None, stop_callback=None,
                            stop_reason=stop_reason, trials=trials, problems=completed,
                            elapsed_seconds=time.perf_counter() - started)
     if not writer.rows and stop_reason != "stopped":
-        writer.manifest.update(status="scientific_stop", stop_reason="no_valid_supervision")
+        writer.manifest.update(status="attention_required", stop_reason="no_supervision_engineering_unknown")
+    _search_summary(writer.manifest)
     writer.flush()
     return {**writer.manifest, "path": str(writer.folder / "manifest.json"),
             "sha256": digest(writer.folder / "manifest.json")}
 
 
-def _problem_receipt(writer, index, problem, elapsed):
+def _problem_receipt(writer, index, problem, elapsed, completion_reason="menu_or_step_finished", trial_count=None):
     """Complete actual problem facts, stored once for independent audit."""
     folder = writer.folder / "problem_receipts"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"problem_{index:06d}.json.gz"
+    reference_only = "reference_only" in completion_reason
+    trials = int(problem.calls.get("candidates", 0) if trial_count is None else trial_count)
+    unknown = reference_only or "unknown" in completion_reason
+    search_scope = {"searched": trials > 0 and not reference_only,
+                    "reference_only": reference_only, "unknown": unknown, "trials": trials,
+                    "complete_search": not unknown}
     record = {"format": "s1_nondrl_teacher_problem_v1", "route": writer.route,
-              "provenance": writer.manifest["provenance"], "target_n": problem.n,
+              "provenance": writer.manifest["provenance"], "execution_source": writer.execution_source,
+              "search_scope": search_scope, "target_n": problem.n,
               "mother_id": str(problem.scene.scene_id), "source_hash": str(problem.scene.source_hash),
               "demand_multiplier": float(problem.scene.metadata.get("demand_multiplier", 1.)),
               "scene_positions": np.asarray(problem.scene.positions).tolist(),
@@ -479,18 +517,41 @@ def _problem_receipt(writer, index, problem, elapsed):
               "initial_metrics_all": problem.initial_metrics, "final_metrics_all": problem.current_metrics,
               "initial_physical": problem.initial_physical, "final_physical": problem.current_physical,
               "initial_sha256": problem.initial_sha256, "config": problem.config.to_dict(),
+              "initial_provenance": getattr(problem,"initial_provenance",{}),
               "trace": problem.trace, "calls": problem.calls, "timing": problem.times,
-              "teacher_elapsed_seconds": elapsed}
+              "teacher_elapsed_seconds": elapsed, "completion_reason": completion_reason,
+              "reference_scope": "last_complete_certified_layout; unknown search is not a negative label"}
     temp = path.with_suffix(path.suffix + ".tmp")
     with temp.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as packed:
             packed.write(json.dumps(jsonable(record), separators=(",", ":"), allow_nan=False).encode())
     temp.replace(path)
     writer.manifest.setdefault("problem_receipts", []).append({"path": str(path.relative_to(writer.folder)),
-                "sha256": digest(path), "mother_id": record["mother_id"], "demand_multiplier": record["demand_multiplier"]})
+                "sha256": digest(path), "mother_id": record["mother_id"], "demand_multiplier": record["demand_multiplier"],
+                "execution_source": writer.execution_source, "search_scope": search_scope})
 
 
-def _teacher_worker(problem, route, folder, limits, provenance):
+def _reference_only(writer,index,problem,reason):
+    """Finalize identity/valid I0 reference, never extend a search reservation."""
+    started=time.perf_counter()
+    _problem_receipt(writer,index,problem,0.,reason)
+    writer.manifest["reference_only_problems"]=writer.manifest.get("reference_only_problems",0)+1
+    writer.manifest["reference_finalize_seconds"]=writer.manifest.get("reference_finalize_seconds",0.)+time.perf_counter()-started
+
+
+def _search_summary(manifest):
+    """Legacy search counts remain explicit; added references never become trials."""
+    scopes = [r.get("search_scope") for r in manifest.get("problem_receipts", [])]
+    manifest["search_accounting"] = {
+        "reference_only_problems": sum(bool(s and s.get("reference_only")) for s in scopes),
+        "searched_problems_with_explicit_scope": sum(bool(s and s.get("searched")) for s in scopes),
+        "unknown_problems_with_explicit_scope": sum(bool(s and s.get("unknown")) for s in scopes),
+        "legacy_problems_without_explicit_scope": sum(s is None for s in scopes),
+        "complete_references": len(scopes),
+        "all_problems_strongly_searched": bool(scopes) and all(s and s.get("searched") and s.get("complete_search") for s in scopes)}
+
+
+def _teacher_worker(problem, route, folder, limits, provenance, repair_contract=None):
     """CPU-only bounded process; the parent owns deterministic result ordering."""
     torch.set_num_threads(int(limits.pop("worker_threads", 1)))
     target = Path(folder)
@@ -508,9 +569,22 @@ def _teacher_worker(problem, route, folder, limits, provenance):
     existing = target / "manifest.json"
     if existing.exists():
         record = json.loads(existing.read_text(encoding="utf-8"))
-        if record.get("route") != route or record.get("provenance") != (provenance or {}) or record.get("limits") != limits:
+        if record.get("route") != route or record.get("limits") != limits:
             raise ValueError("teacher worker receipt provenance/budget differs")
+        if record.get("provenance") != (provenance or {}):
+            from .source_lineage import validate_repair
+            validate_repair(repair_contract, provenance, verify_artifacts=False)
+            if record.get("provenance") != repair_contract.get("origin_provenance"):
+                raise ValueError("teacher worker origin provenance differs")
         if record.get("status") in ("completed", "scientific_stop"):
+            if record.get("provenance") != (provenance or {}):
+                current_sha = digest(existing)
+                if not any(Path(a["path"]) == existing and a["sha256"] == current_sha
+                           for a in repair_contract["artifacts"]):
+                    raise ValueError("cached origin worker manifest is not repair-bound")
+            for item in record.get("shards", []) + record.get("problem_receipts", []):
+                if digest(target / item["path"]) != item["sha256"]:
+                    raise ValueError("cached worker committed evidence differs")
             return {**record, "path": str(existing), "sha256": digest(existing)}
     atomic_json(owner, {"pid": os.getpid(), "running": True, "started_unix": time.time()})
     # Problem preparation happened before submission and is already accounted by
@@ -519,7 +593,7 @@ def _teacher_worker(problem, route, folder, limits, provenance):
     problem.deadline = problem.online_started + problem.config.online_seconds
     try:
         result = generate_teacher([problem], route, target, limits, provenance=provenance,
-                                  resume=existing.exists())
+                                  resume=existing.exists(), repair_contract=repair_contract)
         atomic_json(owner, {"pid": os.getpid(), "running": False, "finished_unix": time.time()})
         return result
     except Exception:
@@ -527,7 +601,7 @@ def _teacher_worker(problem, route, folder, limits, provenance):
         raise
 
 
-def _parallel_teacher(problems, route, output, limits, stop_callback, progress_callback, provenance, resume):
+def _parallel_teacher(problems, route, output, limits, stop_callback, progress_callback, provenance, resume, repair_contract=None):
     """Reserve worst-case calls/time before dispatch, then refund unused budget.
 
     CPU workers have independent bounded Problems. Finished shards are kept once
@@ -556,7 +630,7 @@ def _parallel_teacher(problems, route, output, limits, stop_callback, progress_c
     problem_seconds_cap = 1. if route == "01" else 10. if route == "02" else 4.
     per_seconds = min(float(limits.get("per_problem_seconds", problem_seconds_cap)), problem_seconds_cap)
     per_calls = 12 if route in ("01", "05") else 32 * max_steps
-    writer = EvidenceWriter(output, route, provenance, resume=resume)
+    writer = EvidenceWriter(output, route, provenance, resume=resume, repair_contract=repair_contract)
     manifest = writer.manifest
     if resume and manifest.get("limits", limits) != limits:
         raise ValueError("parallel teacher same-ID recovery budget/config differs")
@@ -606,6 +680,16 @@ def _parallel_teacher(problems, route, output, limits, stop_callback, progress_c
                     # Waiting jobs may refund unused reservations. Only final
                     # exhaustion ends the iterator; it does not lose scenes.
                     if not active:
+                        # Preserve all remaining approved mother/tier identities
+                        # without running additional teacher trials or native
+                        # solves. Shared I0 physics is cached by the runner.
+                        for problem in iterator:
+                            if index>=max_problems:break
+                            if stop_callback and stop_callback():
+                                stopped=True
+                                break
+                            _reference_only(writer,index,problem,"global_budget_exhausted_I0_reference_only")
+                            index+=1;folded+=1;persist()
                         exhausted = True
                     break
                 try:
@@ -619,13 +703,15 @@ def _parallel_teacher(problems, route, output, limits, stop_callback, progress_c
                 settings = {**limits, **reservation, "workers": 1,
                             "max_problems": 1, "per_problem_seconds": per_seconds}
                 folder = writer.folder / "workers" / f"problem_{index:06d}"
-                active[index] = pool.submit(_teacher_worker, problem, route, str(folder), settings, provenance)
+                active[index] = pool.submit(_teacher_worker, problem, route, str(folder), settings, provenance, repair_contract)
                 index += 1
             if not active:
                 break
             task_index, future = next(iter(active.items()))
             result = future.result()  # bounded per-problem work; stable fold order
             source_manifest = Path(result["path"])
+            if result.get("problems",0)!=1 or len(result.get("problem_receipts",[]))!=1:
+                raise ValueError("teacher worker lacks complete approved problem reference; never fold as completed")
             for shard in result["shards"]:
                 source = source_manifest.parent / shard["path"]
                 writer.manifest["shards"].append({**shard, "path": str(source.relative_to(writer.folder))})
@@ -646,9 +732,11 @@ def _parallel_teacher(problems, route, output, limits, stop_callback, progress_c
             if stop_callback and stop_callback():
                 stopped, exhausted = True, True
     manifest.update(status="stopped" if stopped else "completed",
-                    stop_reason="stopped" if stopped else "input_or_budget_exhausted")
+                    stop_reason="stopped" if stopped else "search_budget_exhausted_references_retained" if manifest.get("reference_only_problems") else "input_or_budget_exhausted",
+                    completion_scope="complete input references; supervision may be limited/unknown")
     if not writer.rows and not stopped:
-        manifest.update(status="scientific_stop", stop_reason="no_valid_supervision")
+        manifest.update(status="attention_required", stop_reason="no_supervision_engineering_unknown")
+    _search_summary(manifest)
     persist()
     return {**manifest, "path": str(writer.folder / "manifest.json"),
             "sha256": digest(writer.folder / "manifest.json")}

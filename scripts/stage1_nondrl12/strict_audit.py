@@ -18,6 +18,7 @@ from satellite_rl.coverage.nondrl import metrics_all
 from satellite_rl.coverage.nondrl.core import layout_sha256
 from satellite_rl.coverage.variable_design import Layout
 from satellite_rl.coverage.variable_dataset import _loaded_arrays, load_variable_dataset
+from scripts.stage1_nondrl12.execution_sources import audit_lineage, manifest_origin, verify_marker
 
 
 def digest_bytes(value):
@@ -42,12 +43,12 @@ def assert_close(actual, expected, name, *, atol=1e-6):
 
 class Evidence:
     """Read a job directory or canonical archive receipt, without extraction."""
-    def __init__(self, location, verified_volume_cache=None):
+    def __init__(self, location, verified_volume_cache=None, *, receipt=None):
         self.location = Path(location)
         self.members = {}
         self.prefix = ""
         if self.location.name == "receipt.json":
-            receipt = json.loads(self.location.read_text(encoding="utf-8"))
+            receipt = receipt or json.loads(self.location.read_text(encoding="utf-8"))
             if receipt.get("experiment_id") != "S1-ND12":
                 raise ValueError("wrong archive experiment")
             self.prefix = f"{receipt['port']}/{receipt['run_id']}/"
@@ -238,8 +239,9 @@ def supervision_sources(evidence, job):
     manifest=json.loads(raw)
     if (manifest.get("format")!="s1_nondrl_teacher_v1" or
             manifest.get("provenance",{}).get("run_id")!=job["run_id"] or
-            manifest.get("provenance",{}).get("git_commit")!=job["git_commit"]):
+            manifest.get("provenance",{}).get("run_id")!=job["run_id"]):
         raise ValueError("supervision source/run provenance differs")
+    manifest_origin(job, manifest)
     verified={"teacher_manifest.json":digest_bytes(wrapper_bytes),"teacher/manifest.json":digest_bytes(raw)}
     for item in manifest.get("shards",[])+manifest.get("problem_receipts",[]):
         relative="teacher/"+item["path"];payload=evidence.read(relative)
@@ -264,11 +266,10 @@ def audit_teacher_probe(evidence, job, config, *, path_map=None):
     if digest_bytes(manifest_bytes) != wrapper.get("sha256"):
         raise ValueError("offline teacher wrapper/evidence manifest SHA differs")
     manifest = json.loads(manifest_bytes)
-    if manifest.get("route") != route or manifest.get("status") not in ("completed", "scientific_stop"):
+    if manifest.get("route") != route or manifest.get("status") not in ("completed", "scientific_stop", "attention_required"):
         raise ValueError("offline teacher manifest route/completion differs")
     provenance = manifest.get("provenance", {})
-    if provenance.get("run_id") != job["run_id"] or provenance.get("git_commit") != job["git_commit"]:
-        raise ValueError("offline teacher frozen source/run provenance differs")
+    manifest_origin(job, manifest)
     if manifest.get("format") != "s1_nondrl_teacher_v1":
         raise ValueError("offline teacher evidence format differs")
     for shard in manifest.get("shards", []):
@@ -303,6 +304,7 @@ def audit_teacher_probe(evidence, job, config, *, path_map=None):
             raise ValueError("offline teacher problem schema/route differs")
         if problem.get("provenance") != provenance or problem.get("target_n") != len(problem["initial_layout"]["centers"]):
             raise ValueError("offline teacher problem provenance/targetN differs")
+        execution = verify_marker(job, problem.get("execution_source")) if job.get("source_repair_contract") else job["git_commit"]
         elapsed = problem.get("teacher_elapsed_seconds",-1)
         calls = problem.get("calls",{}).get("candidates",-1)
         if not np.isfinite(elapsed) or elapsed<0 or type(calls) is not int or calls<0:
@@ -333,7 +335,15 @@ def audit_teacher_probe(evidence, job, config, *, path_map=None):
             audited = audit_row(row,original)
             if label == "final":
                 audited.update(problem_receipt_path="teacher/"+receipt["path"], problem_receipt_sha256=receipt["sha256"],
-                               teacher_elapsed_seconds=problem["teacher_elapsed_seconds"])
+                               teacher_elapsed_seconds=problem["teacher_elapsed_seconds"],
+                               search_scope=problem.get("search_scope", {}), completion_reason=problem.get("completion_reason"),
+                               execution_commit=execution)
+                scope = problem.get("search_scope", {})
+                audited.update(searched=scope.get("searched", calls > 0),
+                               reference_only=scope.get("reference_only", False),
+                               unknown_search=(scope.get("unknown", calls == 0) or scope.get("complete_search") is False))
+                if audited["reference_only"] and (calls or elapsed != 0 or scope.get("trials")):
+                    raise ValueError("I0-only reference improperly consumed search budget")
                 rows.append(audited)
     if candidate_calls > manifest["trials"]:
         raise ValueError("offline teacher true-trial ledger smaller than raw charged candidates")
@@ -342,6 +352,10 @@ def audit_teacher_probe(evidence, job, config, *, path_map=None):
             "complete_problems": len(receipts), "raw_candidate_calls": candidate_calls,
             "teacher_recorded_seconds": manifest["elapsed_seconds"],
             "teacher_overrun_seconds": max(0.,manifest["elapsed_seconds"]-cap[2]),
+            "searched_problems": sum(bool(r["searched"]) for r in rows),
+            "reference_only_problems": sum(bool(r["reference_only"]) for r in rows),
+            "unknown_search_problems": sum(bool(r["unknown_search"]) for r in rows),
+            "execution_segments": manifest.get("execution_segments", []),
             "scope": "actual complete offline teacher references; zero new teacher/PHY calls"}
 
 
@@ -350,13 +364,17 @@ def audit_job(location, *, path_map=None, verified_volume_cache=None):
     job, config, status = (evidence.json(name) for name in ("job.json", "config.json", "status.json"))
     if job.get("experiment_id") != "S1-ND12" or status.get("run_id", job["run_id"]) != job["run_id"]:
         raise ValueError("wrong task identity")
+    lineage = audit_lineage(job, evidence) if job.get("source_repair_contract") else {
+        "origin_commit": job["git_commit"], "execution_commit": job["git_commit"], "repaired": False}
     stage = status.get("stage")
     if job.get("preparation_mode") == "teacher_probe" and stage in ("completed", "stopped"):
         proof = audit_teacher_probe(evidence,job,config,path_map=path_map)
-        return {"run_id": job["run_id"], "state": "completed" if stage=="completed" else "scientific_stop",
+        return {"run_id": job["run_id"], "state": "completed" if stage=="completed" else (
+                    "scientific_stop" if status.get("scientific_stop") is True else "engineering_stopped"),
                 "formal_terminal": True, "kind": "prepare", "preparation_mode": "teacher_probe",
                 "route": config["coverage"]["nondrl"]["route"], "dataset_role": "development",
-                "git_commit": job["git_commit"], "teacher_probe": proof, "rows": proof["rows"]}
+                "git_commit": job["git_commit"], "origin_commit": lineage["origin_commit"],
+                "source_lineage": lineage, "teacher_probe": proof, "rows": proof["rows"]}
     if stage == "failed":
         if "failure.json" not in evidence.names():
             raise ValueError("failed task lacks failure evidence")
@@ -383,14 +401,19 @@ def audit_job(location, *, path_map=None, verified_volume_cache=None):
                 raise ValueError("training scientific stop has no actual passed development source")
         return {"run_id": job["run_id"], "state": "scientific_stop", "formal_terminal": True,
                 "gate_source": gate, "stop_reason": status.get("stop_reason"), "rows": []}
-    if stage != "completed":
+    partial_engineering = stage == "stopped" and lineage["repaired"] and status.get("scientific_stop") is not True
+    if partial_engineering and job.get("kind") != "evaluate":
+        return {"run_id":job["run_id"], "state":"engineering_stopped", "formal_terminal":True,
+                "rows":[], "git_commit":job["git_commit"], "origin_commit":lineage["origin_commit"], "source_lineage":lineage}
+    if stage != "completed" and not partial_engineering:
         return {"run_id": job["run_id"], "state": stage or "unknown", "formal_terminal": False, "rows": []}
     if job["kind"] in ("train", "prepare") and job.get("preparation_mode") != "initial":
         if "results.json" not in evidence.names():
             raise ValueError("completed non-evaluation task lacks results")
         result = evidence.json("results.json")
         record = {"run_id": job["run_id"], "state": "completed", "formal_terminal": True,
-                  "kind": job["kind"], "results": result, "rows": []}
+                  "kind": job["kind"], "results": result, "rows": [], "git_commit": job["git_commit"],
+                  "origin_commit": lineage["origin_commit"], "source_lineage": lineage}
         if job.get("preparation_mode") in ("teacher","ranking_audit"):
             record.update(supervision_sources=supervision_sources(evidence,job),git_commit=job["git_commit"])
         if job["kind"] == "train":
@@ -432,12 +455,13 @@ def audit_job(location, *, path_map=None, verified_volume_cache=None):
     manifest = evidence.json("raw_scenes/manifest.json")
     if manifest.get("format") != "s1nd12_scene_shards_v1" or manifest["provenance"].get("run_id") != job["run_id"]:
         raise ValueError("scene manifest identity differs")
+    manifest_origin(job, manifest)
     role = job["dataset_role"]
     dataset = dataset_for(evidence, config, role, path_map)
     indices = job.get("scene_indices", list(range(len(dataset.scenes))))
     expected = {f"{index}:{multiplier:g}" for index in indices for multiplier in config["evaluation"]["demand_multipliers"]}
     keys = [row["key"] for row in manifest["rows"]]
-    if len(keys) != len(set(keys)) or set(keys) != expected:
+    if len(keys) != len(set(keys)) or (not set(keys).issubset(expected) if partial_engineering else set(keys) != expected):
         raise ValueError("completed task scene matrix missing or duplicated")
     rows = []
     for record in manifest["rows"]:
@@ -447,11 +471,21 @@ def audit_job(location, *, path_map=None, verified_volume_cache=None):
         row = json.loads(gzip.decompress(value))
         if row["key"] != record["key"] or row.get("run_id") != job["run_id"]:
             raise ValueError("scene shard task/key differs")
-        rows.append(audit_row(row, dataset.scenes[row["dataset_index"]]))
-    return {"run_id": job["run_id"], "state": "completed", "formal_terminal": True,
+        audited = audit_row(row, dataset.scenes[row["dataset_index"]])
+        execution = verify_marker(job, row.get("execution_source")) if job.get("source_repair_contract") else job["git_commit"]
+        budget = config["coverage"]["nondrl"].get("limits",row["result"]["config"])["online_seconds"]
+        online = row["result"].get("timing", {}).get("online_seconds")
+        audited.update(execution_commit=execution, online_budget_seconds=budget,
+                       online_overrun_seconds=max(row["result"].get("online_overrun_seconds", 0.),
+                                                  max(0., online-budget) if online is not None else 0.))
+        rows.append(audited)
+    return {"run_id": job["run_id"], "state": "engineering_stopped" if partial_engineering else "completed", "formal_terminal": True,
+            "expected_rows":len(expected), "actual_rows":len(rows), "complete_scene_matrix":not partial_engineering,
             "kind": job["kind"], "route": job.get("route", config["coverage"]["nondrl"]["route"]),
             "method": config["coverage"]["nondrl"]["method"], "dataset_role": role,
-            "git_commit": job["git_commit"], "rows": rows, "raw_manifest_sha256": digest_bytes(evidence.read("raw_scenes/manifest.json")),
+            "git_commit": job["git_commit"], "origin_commit": lineage["origin_commit"], "source_lineage": lineage,
+            "execution_segments": manifest.get("execution_segments", []),
+            "rows": rows, "raw_manifest_sha256": digest_bytes(evidence.read("raw_scenes/manifest.json")),
             "config_sha256": manifest["provenance"]["config_sha256"],
             "execution_environment": {"target": job.get("execution_target"), "device": job.get("execution_device"),
                 "preflight": status.get("preflight"), "concurrency": status.get("concurrency"),

@@ -43,7 +43,7 @@ def canonical_sha(value):
 
 class RowStore:
     """One gzip scene shard per durable commit; manifest is the transaction boundary."""
-    def __init__(self, root, provenance, *, resume=False):
+    def __init__(self, root, provenance, *, resume=False, repair_contract=None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "manifest.json"
@@ -52,8 +52,9 @@ class RowStore:
         if old is not None and not resume:
             raise FileExistsError("existing evidence requires same-ID resume")
         self.manifest = old or {"format": "s1nd12_scene_shards_v1", "provenance": self.provenance, "rows": []}
-        if self.manifest.get("provenance") != self.provenance:
-            raise ValueError("resume evidence provenance differs")
+        from .source_lineage import attach_execution
+        self.execution_source = attach_execution(self.manifest, self.provenance, repair_contract,
+                                                 self.path, resume=resume)
         for row in self.manifest["rows"]:
             path = self.root / row["file"]
             if digest(path) != row["sha256"]:
@@ -67,6 +68,7 @@ class RowStore:
             raise ValueError("refusing duplicate scene evidence")
         name = f"scene_{len(self.manifest['rows']):06d}.json.gz"
         path, temporary = self.root / name, self.root / (name + ".partial")
+        value = {**value, "execution_source": self.execution_source}
         payload = json.dumps(jsonable(value), ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
         with temporary.open("wb") as stream:
             with gzip.GzipFile(fileobj=stream, mode="wb", mtime=0) as compressed:
@@ -74,7 +76,8 @@ class RowStore:
             stream.flush()
             os.fsync(stream.fileno())
         temporary.replace(path)
-        self.manifest["rows"].append({"key": key, "file": name, "sha256": digest(path)})
+        self.manifest["rows"].append({"key": key, "file": name, "sha256": digest(path),
+                                      "execution_source": self.execution_source})
         atomic_json(self.path, self.manifest)
         self.keys.add(key)
 
@@ -89,6 +92,27 @@ def scaled_scene(scene, multiplier):
     value.demands = np.asarray(scene.demands).copy() * multiplier
     value.metadata = {**scene.metadata, "demand_multiplier": multiplier, "mother_scene_id": scene.scene_id}
     return value
+
+
+class FrozenInitialPhysics:
+    """Picklable teacher cache for the exact shared scene/I0, not a PHY proxy."""
+    def __init__(self,scene,initial,physical,max_beams=200):
+        from .core import layout_sha256
+        from ..variable_design import Layout
+        self.scene_sha=canonical_sha({"positions":scene.positions,"demands":scene.demands,
+                                      "aircraft_ids":scene.aircraft_ids})
+        self.initial_sha=layout_sha256(Layout.from_record(initial) if isinstance(initial,dict) else initial)
+        self.physical=physical
+        self.max_beams=max_beams
+
+    def __call__(self,scene,layout):
+        from .core import layout_sha256
+        actual=canonical_sha({"positions":scene.positions,"demands":scene.demands,
+                               "aircraft_ids":scene.aircraft_ids})
+        if actual!=self.scene_sha:raise ValueError("frozen initial PHY scene identity differs")
+        if layout_sha256(layout)==self.initial_sha:return deepcopy(self.physical)
+        from ..variable_downstream import evaluate_layout
+        return evaluate_layout(scene,layout,{"coverage":{"variable":{"max_beams":self.max_beams}}})
 
 
 def _initial_worker_setup():
@@ -328,7 +352,8 @@ def evaluate(directory, job, config, provenance, *, resume, progress, stopped):
     indices = job.get("scene_indices", list(range(len(dataset.scenes))))
     multipliers = config["evaluation"]["demand_multipliers"]
     total = len(indices) * len(multipliers)
-    store = RowStore(directory / "raw_scenes", provenance, resume=resume)
+    store = RowStore(directory / "raw_scenes", provenance, resume=resume,
+                     repair_contract=job.get("source_repair_contract"))
     initials = _initials(job, source["sha256"])
     policy = None
     if job.get("model_path"):
@@ -428,6 +453,10 @@ def _run_nondrl_job(directory, job, config, *, resume=False, preflight=None):
         provenance = {"schema_version": 7, "experiment_id": "S1-ND12", "run_id": job["run_id"],
                       "git_commit": job["git_commit"], "source_sha256": preflight.get("manifest_sha256") if preflight else None,
                       "config_sha256": canonical_sha(config), "dataset_sha256": job.get("dataset_sha256", {})}
+        repair_contract = job.get("source_repair_contract")
+        if repair_contract:
+            from .source_lineage import validate_repair
+            validate_repair(repair_contract, provenance, verify_artifacts=False)
         progress(stage="initializing", pid=os.getpid(), preflight=preflight, execution_device=job.get("execution_device"),
                  budget_env_steps=0, budget_updates=config["training"]["updates"] if job["kind"] == "train" else 0)
         route = config["coverage"]["nondrl"]["route"]
@@ -456,12 +485,24 @@ def _run_nondrl_job(directory, job, config, *, resume=False, preflight=None):
                         initial = initials.get(f"{index}:{multiplier:g}")
                         if initial is None:
                             raise ValueError("teacher shared initial evidence lacks scene")
-                        yield Problem(scaled_scene(scene, multiplier), NondrlConfig.from_dict(limits),
-                                      initial=initial["result"]["initial_layout"])
+                        scaled=scaled_scene(scene,multiplier)
+                        shared=initial["result"]
+                        cache=FrozenInitialPhysics(scaled,shared["initial_layout"],shared["initial_physical"],limits["max_beams"])
+                        problem=Problem(scaled, NondrlConfig.from_dict(limits),
+                                        initial=shared["initial_layout"],physical_evaluator=cache)
+                        # Only the exact shared I0 uses the frozen reference.
+                        # All candidate layouts must re-enter the normal core
+                        # geometry audit and its original call budget charges.
+                        problem._physical_evaluator = None
+                        problem.initial_provenance["physical_reference_scope"]="shared frozen I0 PHY reused; no new initial PHY computation"
+                        problem.calls["cached_initial_physical_reuses"]=1
+                        for key in ("allocation_decisions","independent_physics_checks","aircraft_link_checks"):
+                            problem.calls[key]-=int(shared["initial_physical"].get("calls",{}).get(key,0))
+                        yield problem
             teacher_progress = lambda values: progress(**{**values, "stage": "preparing"})
             result = generate_teacher(problems(), route, directory / "teacher", job.get("teacher_limits", config["teacher"]),
                                       stop_callback=stopped, progress_callback=teacher_progress, provenance=provenance,
-                                      resume=resume)
+                                      resume=resume, repair_contract=repair_contract)
             atomic_json(directory / "teacher_manifest.json", {**jsonable(result),
                         "completed": result.get("status") == "completed", "dataset_sha256": source["sha256"],
                         "evidence_path": result["path"]})

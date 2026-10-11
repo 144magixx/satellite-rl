@@ -20,6 +20,9 @@ from scripts.stage1_nondrl12 import controller as original_controller
 from scripts.stage1_nondrl12.controller import stable_sha, validate_plan
 from scripts.stage1_nondrl12 import controller_pipeline
 from scripts.stage1_nondrl12 import placement_transport
+from scripts.stage1_nondrl12 import execution_sources
+from satellite_rl.workbench import nondrl_source_repair
+from satellite_rl.coverage.nondrl import source_lineage
 from satellite_rl.coverage.nondrl.runner import worker_lock
 from satellite_rl.training.run_monitor import atomic_json
 from satellite_rl.workbench.runtime import process_start_time
@@ -79,7 +82,18 @@ def main(argv=None):
         for key, payload in raw.items():
             (history / (key + ".before.json")).write_bytes(payload)
         modules = [Path(__file__), Path(controller_pipeline.__file__), Path(original_controller.__file__),
-                   Path(placement_transport.__file__), Path(ops.__file__)]
+                   Path(placement_transport.__file__), Path(ops.__file__),Path(execution_sources.__file__),
+                   Path(nondrl_source_repair.__file__),Path(source_lineage.__file__)]
+        policy_path=directory/"source_policy.json"
+        if policy_path.is_file():
+            policy=json.loads(policy_path.read_bytes())
+            contract_path=Path(policy["local_contract_path"])
+            contract=execution_sources.contract_bytes(contract_path.read_bytes(),policy["contract_sha256"])
+            modules.extend((policy_path,contract_path))
+            for receipt in contract["validation_receipts"]:
+                path=Path(policy.get("validation_path_map",{}).get(receipt["path"],receipt.get("local_path",receipt["path"])))
+                if sha_bytes(path.read_bytes())!=receipt["sha256"]:raise ValueError("repair validation byte SHA differs")
+                modules.append(path)
         guards = {str(path): sha_bytes(path.read_bytes()) for path in modules}
         atomic_json(history / "transition.json", {"from_launcher_pid": values["launcher"].get("pid"),
                     "previous_byte_sha256": hashes, "new_module_sha256": guards,

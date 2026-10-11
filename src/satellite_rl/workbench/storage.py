@@ -177,7 +177,11 @@ class Store:
                         if job.get("request_hash") != request_hash:
                             raise ValueError("同一请求编号已用于不同的配置")
                         return job
-            snapshot, commit = self.freeze_source()
+            if config.get("schema_version") == 7 and config.get("algorithm") == "nondrl":
+                from .nondrl_source_repair import select_source
+                snapshot, commit = select_source(self, extra or {}, kind)
+            else:
+                snapshot, commit = self.freeze_source()
             run_id = new_id(kind + "_" + config["algorithm"])
             directory = self.job_dir(run_id)
             directory.mkdir()
@@ -282,6 +286,9 @@ class Store:
                    "algorithm": config["algorithm"], "network": config["network"]["kind"],
                    **frozen_extra}
             atomic_json(directory / "config.json", config)
+            if config.get("schema_version") == 7 and config.get("algorithm") == "nondrl":
+                from .nondrl_source_repair import bind_new_job
+                bind_new_job(self, job, directory)
             atomic_json(directory / "status.json", {
                 "run_id": run_id, "stage": "queued_resources" if frozen_extra.get("resource_hold") else "queued", "created_at": now(),
                 "env_step": 0, "update_step": 0, "episode": 0,
