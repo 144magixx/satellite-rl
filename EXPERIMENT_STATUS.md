@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-12 MLM用于第一阶段的概念调研（仅候选方向，未实施）。** 本轮按用户问题核对[报告09](docs/第一阶段/实验报告/09_R04引导的DRL覆盖A阶段对照.md)、[方案12](docs/第一阶段/方案/12_R04引导的DRL波束覆盖优化方案.md)、[BERT原论文入口](https://aclanthology.org/N19-1423/)及[MaskCO的ICLR 2026官方摘要](https://proceedings.iclr.cc/paper_files/paper/2026/hash/d85816bf41e54d9b0847e02249f4fcc6-Abstract-Conference.html)。MLM的遮盖后重构目标与合法动作掩码不同；可研究保留飞机位置/需求、遮盖部分布局决策的结构化重构预训练或局部重建，并单独检验DRL追加贡献。纯重构学习不属于DRL，组合优化文献结果不能直接外推为本项目收益。报告09的PPO未胜BC/强基线也不能证明瓶颈就是表示不足；教师质量、目标对齐、布局无序性、连续指向/宽度与全覆盖约束仍须处理。
+
+建议在同场景、同操作空间与在线几何预算下区分规则重建、仅掩码重构、仅RL及重构预训练后RL，并另记教师/预训练成本；最终看全覆盖、唯一归属、N≤200、负载CV、逐机承载与分段/总耗时，不能以重构准确率代替优化效果。此处仅记录讨论判断，未形成新的冻结实验计划、任务、训练/评价预算或定时跟进；效果待验证，指向/宽度与动态业务尚未完成的边界保持。本轮仅检查文档事实、来源与链接，无科学代码或前端操作变化。
+
 **2026-10-10 18:56 S1-D12A已完整交付。** 本轮真实四端API再次核37/37任务completed、科学源dfe一致且worker均不存活；两PPO、1800考核、全部原始ZIP/共享源、三模型和全量严格审计均完成。[正式报告09](docs/第一阶段/实验报告/09_R04引导的DRL覆盖A阶段对照.md)与七图/18行分档/100母配对和计时已经发布。最终小包`c0672af34aebfbeed454`共108成员、17,649,228字节，ZIP SHA`e4137153a3c387a5435779f632574d58738c1c58b2494d9aff4cd55b2c892edc`；四端读同一共享副本逐ZIP/成员SHA通过，根再次复核本地全成员与正式报告SHA一致。[最终双端回执](outputs/experiments/first_stage_s1_d12a_20261010/delivery/final_delivery_receipt.json) · [完成记录](outputs/experiments/first_stage_s1_d12a_20261010/delivery/s1_d12a_completion.json)。首次上传仅本机DQN缺paramiko、尚未连接远端，已用原传输环境接续同一不可变包，未重打包或改科学环境。
 
 结论：全部受测几何覆盖、实际40–111束；P0/P1相对H1平均CV退步2.35%/6.47%，均未过事前门槛，P1在BC之后继续PPO未增加总体收益。已证明PPO有布局选择作用，未证明超越BC/强基线，更未完成宽度/动态与完整三阶段效果。run_manifest整体标delivered，原冻结state/任务/预算/失败记录保持。交付跟进已完成并删除`s1-d12a-drl`，实际TOML已不存在；删除前精确配置与工具回执保留于[跟进终止核验](outputs/experiments/first_stage_s1_d12a_20261010/followup/automation_completion_readback.json)。不恢复已完成训练、controller或旧S1-V10；后续B/新预算仅建议。
