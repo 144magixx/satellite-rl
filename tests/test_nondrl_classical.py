@@ -5,7 +5,7 @@ from satellite_rl.coverage.nondrl import Problem, solve
 from satellite_rl.coverage.nondrl.core import ray_to_location
 from satellite_rl.coverage.nondrl.classical import (dominates, nondominated_sort, find_center,
     soft_quota_transport, integral_transport_assignment, solve_pool, square_breakpoints,
-    graph_adjacency, canonical_sha)
+    graph_adjacency, canonical_sha, CLASSICAL_METHODS, direct_rule_layout, build_pool)
 from satellite_rl.coverage.geometry import satellite_rays_numpy, ray_angle_numpy
 from satellite_rl.coverage.scenes import CoverageScene
 from satellite_rl.coverage.variable_design import Layout
@@ -93,6 +93,34 @@ class NondrlClassicalTests(unittest.TestCase):
                                  result["initial_metrics_all"]["load_cv_all"] + 1e-10)
             signatures.add(tuple(row["source"] for row in result["trace"]))
         self.assertEqual(len(signatures), 7)
+
+    def test_declared_ablations_are_executable(self):
+        scene, initial = small_scene()
+        for route, methods in CLASSICAL_METHODS.items():
+            for method in methods:
+                if method == "main":
+                    continue
+                result = solve(scene, route, {"online_seconds": 2., "mip_seconds": .1,
+                    "max_rounds": 2, "population": 4, "generations": 2}, initial,
+                    method=method, physical_evaluator=constant_physical)
+                self.assertEqual(result["method"], method)
+                self.assertTrue(result["metrics_all"]["coverage_100"])
+
+    def test_direct_rule_does_not_copy_I0_centers_and_keeps_N(self):
+        scene, initial = small_scene()
+        initial.centers[:] = [45.025, 13.025]
+        problem = Problem(scene, {"online_seconds": 2.}, initial, constant_physical)
+        proposal = direct_rule_layout(problem)
+        self.assertEqual(len(proposal.centers), 2)
+        self.assertFalse(np.array_equal(proposal.centers, initial.centers))
+        self.assertEqual(set(proposal.assignment), {0, 1})
+
+    def test_pool_keeps_original_sites_and_caps_total(self):
+        scene, initial = small_scene()
+        problem = Problem(scene, {"online_seconds": 2., "max_pool": 3}, initial, constant_physical)
+        pool, sources = build_pool(problem, expansion=1)
+        np.testing.assert_array_equal(pool[:2], initial.centers)
+        self.assertLessEqual(len(pool), 3)
 
 
 if __name__ == "__main__":

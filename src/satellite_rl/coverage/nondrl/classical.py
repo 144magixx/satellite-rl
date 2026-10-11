@@ -87,6 +87,9 @@ def build_pool(problem, beams=None, expansion=0):
     pool = [problem.current.centers[b].copy() for b in beams]
     sources = [{"kind": "original", "beam": b} for b in beams]
     seen = {tuple(np.round(center, 11)) for center in pool}
+    maximum = min(problem.config.max_pool, len(beams) * problem.config.centers_per_beam)
+    if len(pool) > maximum:
+        raise ValueError("pool bound excludes required original sites")
     for b in beams:
         problem.guard()
         members = np.flatnonzero(problem.current.assignment == b)
@@ -95,17 +98,18 @@ def build_pool(problem, beams=None, expansion=0):
             nearby = np.argsort(np.sum((problem.positions - problem.current.centers[b]) ** 2, axis=1),
                                 kind="stable")[:problem.config.centers_per_beam]
             sites.extend(problem.positions[nearby])
+        added_for_beam = 0
         for center in sites:
+            if len(pool) >= maximum or added_for_beam >= problem.config.centers_per_beam - 1:
+                break
             key = tuple(np.round(center, 11))
             if key in seen:
                 continue
             seen.add(key)
             pool.append(np.asarray(center).copy())
+            added_for_beam += 1
             sources.append({"kind": "member_ray_centroid_or_boundary", "beam": b,
                             "expansion": expansion})
-            if len(pool) >= min(problem.config.max_pool,
-                                len(beams) * problem.config.centers_per_beam):
-                break
     return np.asarray(pool).reshape(-1, 2), sources
 
 
@@ -293,7 +297,52 @@ def repair_layout(problem, layout):
     return _new_layout(problem, centers, assignment)
 
 
-def run_bh(problem):
+def direct_rule_layout(problem):
+    """Aircraft-only farthest-ray construction for 03 H/HR, independent of I0.
+
+    Select N real aircraft seed directions by farthest-first demand weighting;
+    preserve one anchor per site and greedily allocate remaining whole aircraft
+    on legal edges. Uncovered proposals retain -1 and are never silently hidden.
+    The common repair_layout is applied separately by HR/DR.
+    """
+    problem.guard()
+    if not len(problem.demands):
+        return Layout.empty(0)
+    demand = problem.demands
+    positive_mean = max(float(demand.mean()), 1.0)
+    first = int(np.argmax(demand))
+    selected = [first]
+    distance = np.sum((problem.rays - problem.rays[first]) ** 2, axis=1)
+    while len(selected) < problem.n:
+        problem.guard()
+        weights = 1 + demand / positive_mean
+        score = distance * weights
+        score[selected] = -np.inf
+        following = int(np.argmax(score))
+        selected.append(following)
+        distance = np.minimum(distance, np.sum((problem.rays - problem.rays[following]) ** 2, axis=1))
+    centers = problem.positions[selected].copy()
+    legal = problem.legal(centers)
+    assignment = np.full(len(demand), -1, dtype=int)
+    assignment[selected] = np.arange(problem.n)
+    loads = demand[selected].copy()
+    br = problem.rays[selected]
+    costs = ((problem.rays[:, None] - br[None]) ** 2).sum(axis=2)
+    for user in np.lexsort((np.arange(len(demand)), -demand)):
+        if assignment[user] >= 0:
+            continue
+        choices = np.flatnonzero(legal[user])
+        if not len(choices):
+            continue
+        score = (loads[choices] + demand[user]) ** 2 - loads[choices] ** 2
+        chosen = min(choices, key=lambda b: (float(score[np.flatnonzero(choices == b)[0]]),
+                                            float(costs[user, b]), int(b)))
+        assignment[user] = chosen
+        loads[chosen] += demand[user]
+    return _new_layout(problem, centers, assignment)
+
+
+def run_bh(problem, *, centers=True):
     """Deterministic transfer/swap/center-replacement greedy from identical I0."""
     for round_index in range(problem.config.max_rounds):
         improved = False
@@ -302,7 +351,7 @@ def run_bh(problem):
             if problem.commit(problem.preview(action)):
                 improved = True
                 break
-        if not improved:
+        if not improved and centers:
             # A feasible center replacement alone cannot improve CV. Jointly
             # inspect its newly enabled best transfer under the same real gate.
             for b in range(problem.n):
@@ -330,28 +379,42 @@ def run_bh(problem):
             break
 
 
-def run_demand_clustering(problem):
+def run_demand_clustering(problem, *, move_centers=True):
     """06: binary demand assignment, ray-centroid center update, alternating."""
     stale = 0
     for iteration in range(problem.config.max_rounds):
         problem.guard()
-        proposal = clone(problem.current)
-        for b in range(problem.n):
-            members = np.flatnonzero(proposal.assignment == b)
-            center = find_center(problem, members, proposal.centers[b])
-            if center is not None:
-                proposal.centers[b] = center
-        # Jointly optimize demand ownership after centers are moved. Center-only
-        # states are internal and never incorrectly subjected to strict CV gate.
-        result = solve_pool(problem, proposal.centers, count=problem.n,
-                            source="06_demand_binary_assignment")
-        if result is None:
-            stale += 1
-        else:
+        regions = problem.regions() if problem.n >= 2 else []
+        improved = False
+        for region in regions[:16]:
+            problem.guard()
+            beams = tuple(region["beams"])
+            members = np.flatnonzero(np.isin(problem.current.assignment, beams))
+            if len(members) > 64:
+                problem.trace.append({"source": "06_local_assignment", "reason": "local_aircraft_limit",
+                                      "aircraft": len(members), "beams": list(beams)})
+                continue
+            proposal = clone(problem.current)
+            if move_centers:
+                for b in beams:
+                    group = np.flatnonzero(proposal.assignment == b)
+                    center = find_center(problem, group, proposal.centers[b])
+                    if center is not None:
+                        proposal.centers[b] = center
+            # Fixed count local demand model, outside squared loads are constant.
+            result = solve_pool(problem, proposal.centers[list(beams)], members=members,
+                                count=len(beams), source="06_demand_binary_assignment")
+            if result is None:
+                continue
             centers, assignment, _ = result
-            candidate = _new_layout(problem, centers, assignment)
-            changed = problem.commit(problem.consider(candidate, "06_alternating_centroid_assignment"))
-            stale = 0 if changed else stale + 1
+            proposal.centers[list(beams)] = centers
+            proposal.assignment[members] = np.asarray(beams)[assignment]
+            changed = problem.commit(problem.consider(proposal, "06_alternating_centroid_assignment"
+                                     if move_centers else "06_fixed_centers_assignment_only"))
+            improved |= changed
+            if changed:
+                break
+        stale = 0 if improved else stale + 1
         if stale >= 2:
             break
 
@@ -474,15 +537,31 @@ def integral_transport_assignment(demands, q, legal, original):
     return assignment
 
 
-def run_ot(problem):
+def run_ot(problem, *, method="main"):
     """08: soft quota mass partition -> indivisible rounding -> geometry repair."""
     for iteration in range(min(problem.config.max_rounds, 4)):
         problem.guard()
         legal = problem.legal()
         br = satellite_rays_numpy(problem.current.centers, problem.config.profile)
         costs = ((problem.rays[:, None] - br[None]) ** 2).sum(axis=2) / squared_ray_limit(0.25)
-        q, record = soft_quota_transport(problem.demands, costs, legal,
-                                         problem.config.ot_iterations, guard=problem.guard)
+        if method == "main":
+            q, record = soft_quota_transport(problem.demands, costs, legal,
+                                             problem.config.ot_iterations, guard=problem.guard)
+        elif method == "voronoi":
+            nearest = np.argmin(np.where(legal, costs, np.inf), axis=1)
+            q = np.zeros_like(costs)
+            q[np.arange(len(problem.demands)), nearest] = problem.demands
+            record = {"model": "demand_weighted_nearest_voronoi", "iterations": 0}
+        elif method == "integer":
+            result = solve_pool(problem, problem.current.centers, source="08_integer_only")
+            if result is None:
+                break
+            _, assignment, _ = result
+            q = np.zeros_like(costs)
+            q[np.arange(len(problem.demands)), assignment] = problem.demands
+            record = {"model": "integer_assignment_without_transport", "iterations": 0}
+        else:
+            raise ValueError("unknown OT method")
         problem.trace.append({"source": "08_transport", **record})
         assignment = integral_transport_assignment(problem.demands, q, legal, problem.current.assignment)
         centers = problem.current.centers.copy()
@@ -514,7 +593,7 @@ def graph_adjacency(problem, neighbours=12):
     return edges, distance
 
 
-def run_graph(problem):
+def run_graph(problem, *, method="main"):
     """09: graph-guided connected group growth; true common center hard gate."""
     problem.guard()
     adjacency, distance = graph_adjacency(problem)
@@ -532,17 +611,26 @@ def run_graph(problem):
                     continue
                 demand = problem.demands[aircraft]
                 delta = 2 * demand * (loads[target] - loads[source] + demand)
-                rows.append((delta, float(distance[u, v]), int(aircraft), source, target))
+                # Frozen three-level attribution: edge distance, demand-aware
+                # order, and exact common-footprint pruning before evaluation.
+                priority = float(distance[u, v]) if method == "distance" else delta
+                rows.append((priority, delta, float(distance[u, v]), int(aircraft), source, target))
         rows.sort()
         improved = False
-        for delta, _, u, a, b in rows[:min(60, problem.config.max_menu)]:
+        for priority, delta, _, u, a, b in rows[:min(60, problem.config.max_menu)]:
             problem.guard()
             if delta >= -1e-6:
                 continue
             candidate = clone(problem.current)
             candidate.assignment[u] = b
             new_members = np.flatnonzero(candidate.assignment == b)
-            center = find_center(problem, new_members, candidate.centers[b])
+            if method in ("distance", "demand"):
+                center = ray_center(problem.positions[new_members], problem.demands[new_members],
+                                    problem.config.profile)
+                # External full-scene gate rejects footprint failures. These
+                # ablations omit geometry pruning, never the publication gate.
+            else:
+                center = find_center(problem, new_members, candidate.centers[b])
             if center is None:
                 problem.consider(None, "09_graph_group_no_common_footprint_found")
                 continue
@@ -554,15 +642,15 @@ def run_graph(problem):
             break
 
 
-def run_pool_mip(problem):
+def run_pool_mip(problem, *, expand=True):
     """10: whole-scene finite candidate pool, joint selected sites/ownership."""
-    for expansion in range(problem.config.pool_expansions + 1):
+    for expansion in range((problem.config.pool_expansions if expand else 0) + 1):
         problem.guard()
         centers, sources = build_pool(problem, expansion=expansion)
         problem.trace.append({"source": "10_pool_generation", "expansion": expansion,
                               "sources": sources, "pool_count": len(centers)})
-        result = solve_pool(problem, centers, time_limit=min(problem.remaining(),
-                            max(problem.config.mip_seconds, problem.remaining() / 2)),
+        result = solve_pool(problem, centers, time_limit=problem.remaining() if not expand else
+                            min(problem.remaining(), max(problem.config.mip_seconds, problem.remaining() / 2)),
                             source="10_joint_site_ownership_milp")
         if result is not None:
             centers, assignment, _ = result
@@ -570,15 +658,23 @@ def run_pool_mip(problem):
                                            "10_externally_checked_incumbent"))
 
 
-def run_lns(problem):
+def run_lns(problem, *, selector="rule"):
     """11: rule region choice; exactly the same rebuilding kernel used by 05."""
     failures, tried = 0, set()
+    rng = np.random.default_rng(problem.config.seed)
     while problem.available() and problem.calls["rebuilds"] < problem.config.max_rebuilds:
         regions = [row for row in problem.regions() if row["id"] not in tried]
         if not regions:
             break
-        regions.sort(key=lambda row: (-row["features"][3], -row["features"][7], row["id"]))
-        region = regions[0]
+        if selector == "random":
+            region = regions[int(rng.integers(len(regions)))]
+        else:
+            if selector == "single":
+                regions = [row for row in regions if len(row["beams"]) == 2]
+                if not regions:
+                    break
+            regions.sort(key=lambda row: (-row["features"][3], -row["features"][7], row["id"]))
+            region = regions[0]
         tried.add(region["id"])
         candidate = problem.rebuild(region)
         if problem.commit(problem.consider(candidate, "11_rule_region_rebuild:" + region["id"])):
@@ -648,15 +744,17 @@ def canonical_sha(layout):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def run_evolution(problem):
+def run_evolution(problem, *, single_objective=False):
     """12: NSGA-II nondomination/crowding with closed-beam crossover/mutations."""
     rng = np.random.default_rng(problem.config.seed)
     base = {"layout": clone(problem.current), "metrics_all": problem.current_metrics,
             "physical": problem.current_physical, "accepted": True}
     population, seen = [base], {canonical_sha(base["layout"])}
+    problem._evolution_population = population
     proposed = 0
     def objectives(row):
-        return [row["metrics_all"]["load_cv_all"], -problem.carry(row["physical"])]
+        return [row["metrics_all"]["load_cv_all"]] if single_objective else [
+            row["metrics_all"]["load_cv_all"], -problem.carry(row["physical"])]
     if base["metrics_all"]["load_cv_all"] is None:
         return
     saved = clone(problem.current)
@@ -706,6 +804,7 @@ def run_evolution(problem):
             trial = problem.consider(child, "12_generation", allow_nonimproving=True)
             if trial["accepted"]:
                 offspring.append(trial)
+                problem._evolution_population = population + offspring
         combined = population + offspring
         scores = [objectives(row) for row in combined]
         new_population = []
@@ -716,24 +815,55 @@ def run_evolution(problem):
             if len(new_population) >= problem.config.population:
                 break
         population = new_population
+        problem._evolution_population = population
         problem.trace.append({"source": "12_NSGA_II_generation", "generation": generation,
                               "proposals_total": proposed, "population": len(population),
                               "new_feasible_discoveries": len(offspring), "objectives": scores})
         if proposed >= problem.config.evolution_proposals or not problem.available():
             break
+    publish_evolution(problem, population)
+
+
+def publish_evolution(problem, population):
+    """Publish fully validated known incumbents even if a later call hits budget."""
+    if not population or population[0]["metrics_all"]["load_cv_all"] is None:
+        return
     # Single fixed publish rule: lowest exact CV, then carry, then canonical SHA.
     selected = min(population, key=lambda row: (row["metrics_all"]["load_cv_all"],
                    -problem.carry(row["physical"]), canonical_sha(row["layout"])))
     if selected["metrics_all"]["load_cv_all"] <= problem.current_metrics["load_cv_all"] + 1e-10:
         problem.commit(selected)
-    scores = [objectives(row) for row in population]
+    scores = [[row["metrics_all"]["load_cv_all"], -problem.carry(row["physical"])] for row in population]
     first = nondominated_sort(scores)[0]
     problem.pareto = [{"layout": population[i]["layout"].to_record(), "objectives": scores[i],
                        "N": problem.n, "scope": "finite_seen_candidates_fixed_N"} for i in first]
 
 
-def run_classical(problem, route):
-    methods = {"BH": run_bh, "06": run_demand_clustering, "07": run_footprint_projection,
-               "08": run_ot, "09": run_graph, "10": run_pool_mip, "11": run_lns,
-               "12": run_evolution}
-    methods[route](problem)
+CLASSICAL_METHODS = {"BH": ("main",), "06": ("main", "assign_only"),
+    "07": ("main", "assign_only"), "08": ("main", "voronoi", "integer"),
+    "09": ("main", "distance", "demand", "geometric"), "10": ("main", "initial_pool"),
+    "11": ("main", "random", "single"), "12": ("main", "single_objective")}
+
+
+def run_classical(problem, route, method="main"):
+    if method not in CLASSICAL_METHODS.get(route, ()):
+        raise ValueError(f"unsupported non-DRL method {route}/{method}")
+    if route == "BH":
+        run_bh(problem)
+    elif route == "06":
+        run_demand_clustering(problem, move_centers=method != "assign_only")
+    elif route == "07":
+        run_bh(problem, centers=False) if method == "assign_only" else run_footprint_projection(problem)
+    elif route == "08":
+        run_ot(problem, method=method)
+    elif route == "09":
+        run_graph(problem, method=method)
+    elif route == "10":
+        run_pool_mip(problem, expand=method != "initial_pool")
+    elif route == "11":
+        run_lns(problem, selector="rule" if method == "main" else method)
+    elif route == "12":
+        try:
+            run_evolution(problem, single_objective=method == "single_objective")
+        finally:
+            publish_evolution(problem, getattr(problem, "_evolution_population", []))

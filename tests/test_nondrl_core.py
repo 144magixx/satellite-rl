@@ -91,6 +91,28 @@ class NondrlCoreTests(unittest.TestCase):
         self.assertEqual(result["metrics_all"]["total_demand_bps"], 120.)
         self.assertGreater(result["timing"]["total_seconds"], result["timing"]["online_seconds"])
 
+    def test_indivisible_physical_overrun_is_recorded(self):
+        from time import sleep
+        scene, initial = small_scene()
+        problem = Problem(scene, {"online_seconds": .005}, initial, constant_physical)
+        def delayed(scene, layout):
+            sleep(.015)
+            return constant_physical(scene, layout)
+        problem._physical_evaluator = delayed
+        trial = problem.preview({"kind": "transfer", "aircraft": 1, "target": 1})
+        self.assertTrue(trial["accepted"])
+        self.assertTrue(trial["finished_after_deadline"])
+        self.assertTrue(problem.commit(trial))
+        result = problem.result("BH")
+        self.assertGreater(result["online_overrun_seconds"], 0)
+        self.assertEqual(problem.calls["physical_calls"], 1)
+
+    def test_unknown_method_fails_closed(self):
+        scene, initial = small_scene()
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            solve(scene, "06", {"online_seconds": 2.}, initial, method="made_up",
+                  physical_evaluator=constant_physical)
+
 
 if __name__ == "__main__":
     unittest.main()

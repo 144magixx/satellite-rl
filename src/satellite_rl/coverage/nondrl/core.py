@@ -120,7 +120,10 @@ class Problem:
         self.trace = []
         self.calls = {"candidates": 0, "physical_calls": 0, "geometry_calls": 0,
                       "ray_pair_checks": 0, "solver_calls": 0, "rebuilds": 0,
-                      "initial_trials": 0, "initial_geometry_calls": 0}
+                      "initial_trials": 0, "initial_geometry_calls": 0,
+                      "physical_cache_hits": 0, "allocation_decisions": 0,
+                      "independent_physics_checks": 0, "aircraft_link_checks": 0,
+                      "uncharged_geometry_calls": 0, "uncharged_ray_pair_checks": 0}
         self.times = {"initial_seconds": 0.0, "initial_physical_seconds": 0.0,
                       "proposal_seconds": 0.0, "physical_seconds": 0.0,
                       "solver_seconds": 0.0, "geometry_seconds": 0.0,
@@ -198,6 +201,9 @@ class Problem:
                     self.calls["geometry_calls"] += audit["matrix_calls"]
                     self.calls["ray_pair_checks"] += audit["ray_pair_checks"]
                     self.times["geometry_seconds"] += perf_counter() - start
+                else:
+                    self.calls["uncharged_geometry_calls"] += audit["matrix_calls"]
+                    self.calls["uncharged_ray_pair_checks"] += audit["ray_pair_checks"]
         return result
 
     def legal(self, centers=None, positions=None):
@@ -212,10 +218,15 @@ class Problem:
     def _physical(self, layout, charge=True, force=False):
         sha = layout_sha256(layout)
         if not force and sha in self._physical_cache:
+            if charge:
+                self.calls["physical_cache_hits"] += 1
             return self._physical_cache[sha]
         if charge:
-            if perf_counter() >= self.deadline or self.calls["physical_calls"] >= self.config.max_physical_calls:
-                self.stop_reason = "online_time_limit" if perf_counter() >= self.deadline else "physical_call_limit"
+            if (perf_counter() >= self.deadline or self.calls["physical_calls"] >= self.config.max_physical_calls
+                    or self.calls["geometry_calls"] >= self.config.max_geometry_calls):
+                self.stop_reason = ("online_time_limit" if perf_counter() >= self.deadline else
+                    "physical_call_limit" if self.calls["physical_calls"] >= self.config.max_physical_calls
+                    else "geometry_call_limit")
                 raise BudgetStop(self.stop_reason)
             self.calls["physical_calls"] += 1
         start = perf_counter()
@@ -229,9 +240,14 @@ class Problem:
             if charge:
                 self.calls["geometry_calls"] += audit["matrix_calls"]
                 self.calls["ray_pair_checks"] += audit["ray_pair_checks"]
+            else:
+                self.calls["uncharged_geometry_calls"] += audit["matrix_calls"]
+                self.calls["uncharged_ray_pair_checks"] += audit["ray_pair_checks"]
         elapsed = perf_counter() - start
         if charge:
             self.times["physical_seconds"] += elapsed
+        for key in ("allocation_decisions", "independent_physics_checks", "aircraft_link_checks"):
+            self.calls[key] += int(result.get("calls", {}).get(key, 0))
         self._physical_cache[sha] = result
         return result
 
@@ -298,9 +314,20 @@ class Problem:
     def commit(self, trial):
         if not trial.get("accepted"):
             return False
+        before = layout_sha256(self.current)
+        old_cv = self.current_metrics["load_cv_all"]
+        new_cv = trial["metrics_all"]["load_cv_all"]
+        if old_cv is not None and (new_cv is None or new_cv > old_cv + self.config.cv_tolerance):
+            self.trace.append({"source": "atomic_commit", "committed": False,
+                               "reason": "stale_trial_would_worsen_current", "before_sha256": before})
+            return False
         self.current = clone(trial["layout"])
         self.current_metrics = trial["metrics_all"]
         self.current_physical = trial["physical"]
+        self.trace.append({"source": "atomic_commit", "committed": True,
+                           "before_sha256": before, "after_sha256": layout_sha256(self.current),
+                           "load_cv_before": old_cv, "load_cv_after": new_cv,
+                           "carry_after": self.carry(self.current_physical)})
         return True
 
     def observe(self):
@@ -334,6 +361,17 @@ class Problem:
                 "feature_version": "nondrl_features_v1"}
 
     def menu(self):
+        started = perf_counter()
+        try:
+            return self._menu_impl()
+        except BudgetStop:
+            self.trace.append({"source": "common_menu_generation", "seconds": perf_counter() - started,
+                               "truncated": True, "reason": self.stop_reason,
+                               "returned_actions": 0, "unfinished_menu_not_exposed_to_policy": True})
+            raise
+
+    def _menu_impl(self):
+        started = perf_counter()
         legal = self.legal()
         layout = self.current
         loads = np.bincount(layout.assignment, weights=self.demands, minlength=self.n)
@@ -341,40 +379,58 @@ class Problem:
         mu = max(float(self.demands.sum()) / max(self.n, 1), 1.0)
         br = satellite_rays_numpy(layout.centers, self.config.profile)
         rows = []
-        for u in np.lexsort((np.arange(len(self.demands)), -self.demands)):
-            a = int(layout.assignment[u])
-            if counts[a] <= 1:
+        users, beams = np.nonzero(legal)
+        owners = layout.assignment[users]
+        cross = np.zeros((self.n, self.n), dtype=bool)
+        cross[owners, beams] = True
+        keep = (owners != beams) & (counts[owners] > 1)
+        users, beams, owners = users[keep], beams[keep], owners[keep]
+        demand = self.demands[users]
+        delta = 2 * demand * (loads[beams] - loads[owners] + demand)
+        indices = np.lexsort((beams, users, delta))[:max(1, self.config.max_menu // 2)]
+        for index in indices:
+            self.guard()
+            u, a, b = int(users[index]), int(owners[index]), int(beams[index])
+            features = [loads[a] / mu, loads[b] / mu, self.demands[u] / mu,
+                        float(((self.rays[u] - br[b]) ** 2).sum()) / squared_ray_limit(0.25),
+                        delta[index] / (max(self.n, 1) * mu ** 2), 1.0,
+                        self.positions[u, 0] / 90, self.positions[u, 1] / 180]
+            rows.append({"kind": "transfer", "aircraft": u, "source": a,
+                         "target": b, "features": features})
+        # Cross-beam candidate pairs are bounded before selecting aircraft. This
+        # avoids the previous Python U^2 enumeration while retaining real swaps.
+        pairs = list(zip(*np.nonzero(np.triu(cross & cross.T, 1))))
+        pairs.sort(key=lambda pair: (-abs(loads[pair[0]] - loads[pair[1]]), pair))
+        for a, b in pairs[:16]:
+            self.guard()
+            ua = np.flatnonzero((layout.assignment == a) & legal[:, b])
+            vb = np.flatnonzero((layout.assignment == b) & legal[:, a])
+            if not len(ua) or not len(vb):
                 continue
-            for b in np.flatnonzero(legal[u]):
-                if b == a:
-                    continue
-                demand = self.demands[u]
-                delta = 2 * demand * (loads[b] - loads[a] + demand)
-                features = [loads[a] / mu, loads[b] / mu, demand / mu,
-                            float(((self.rays[u] - br[b]) ** 2).sum()) / squared_ray_limit(0.25),
-                            delta / (max(self.n, 1) * mu ** 2), 1.0,
-                            self.positions[u, 0] / 90, self.positions[u, 1] / 180]
-                rows.append({"kind": "transfer", "aircraft": int(u), "source": a,
-                             "target": int(b), "features": features})
-        rows.sort(key=lambda row: (row["features"][4], row["aircraft"], row["target"]))
-        # Reserve half the bounded menu for swaps, allowing escape from transfers.
-        rows = rows[:max(1, self.config.max_menu // 2)]
-        for u in range(len(self.demands)):
-            a = int(layout.assignment[u])
-            for v in range(u + 1, len(self.demands)):
-                b = int(layout.assignment[v])
-                if a == b or not legal[u, b] or not legal[v, a]:
-                    continue
-                demand = self.demands[u] - self.demands[v]
-                delta = 2 * demand * (loads[b] - loads[a] + demand)
-                features = [loads[a] / mu, loads[b] / mu, demand / mu, 0,
-                            delta / (max(self.n, 1) * mu ** 2), 2,
-                            self.positions[u, 0] / 90, self.positions[u, 1] / 180]
-                rows.append({"kind": "swap", "aircraft": u, "other": v, "source": a,
-                             "target": b, "features": features})
+            ua = ua[np.lexsort((ua, -self.demands[ua]))[:8]]
+            vb = vb[np.lexsort((vb, self.demands[vb]))]
+            target_difference = (loads[a] - loads[b]) / 2
+            positions = np.searchsorted(self.demands[vb], self.demands[ua] - target_difference)
+            for u, pos in zip(ua, positions):
+                self.guard()
+                for v_index in sorted({max(0, min(int(pos), len(vb) - 1)),
+                                       max(0, min(int(pos) - 1, len(vb) - 1))}):
+                    v = int(vb[v_index])
+                    difference = self.demands[u] - self.demands[v]
+                    change = 2 * difference * (loads[b] - loads[a] + difference)
+                    features = [loads[a] / mu, loads[b] / mu, difference / mu, 0,
+                                change / (max(self.n, 1) * mu ** 2), 2,
+                                self.positions[u, 0] / 90, self.positions[u, 1] / 180]
+                    rows.append({"kind": "swap", "aircraft": int(u), "other": v,
+                                 "source": int(a), "target": int(b), "features": features})
         rows.sort(key=lambda row: (row["features"][4], row["kind"], row["aircraft"], row["target"]))
         for index, row in enumerate(rows[:self.config.max_menu]):
             row["id"] = index
+        self.trace.append({"source": "common_menu_generation", "seconds": perf_counter() - started,
+                           "legal_transfer_edges": len(users), "cross_beam_pairs": len(pairs),
+                           "inspected_swap_pairs": min(16, len(pairs)), "max_swap_users_per_pair": 8,
+                           "returned_actions": min(len(rows), self.config.max_menu),
+                           "finished_after_deadline": perf_counter() > self.deadline})
         return rows[:self.config.max_menu]
 
     def propose(self, action, layout=None):
@@ -442,6 +498,8 @@ class Problem:
         self.calls["final_physical_calls"] = 1
         self.calls["initial_physical_calls"] = 1
         self.times["online_seconds"] = online_seconds
+        self.times["proposal_seconds"] = max(0.0, online_seconds - self.times["geometry_seconds"]
+                                             - self.times["physical_seconds"] - self.times["solver_seconds"])
         self.times["total_seconds"] = perf_counter() - self.started
         return {"route": route, "layout": clone(self.current), "initial_layout": clone(self.initial),
                 "raw_layout": self.last_raw, "repaired_layout": self.last_repaired,
@@ -454,10 +512,13 @@ class Problem:
                 "stop_reason": self.stop_reason or "method_finished",
                 "online_overrun_seconds": max(0.0, online_seconds - self.config.online_seconds),
                 "RF_scope": "frozen variable_downstream model; no independent RF reimplementation",
+                "timing_scope": {"proposal_seconds": "online remainder after separately timed geometry, solver and full physical calls",
+                    "initial_seconds": "construction and validation if generated; supplied Layout copy and validation otherwise",
+                    "initial_provenance": "shared construction time must be joined from I0 source by runner"},
                 "pareto": getattr(self, "pareto", [])}
 
 
-def solve(scene, route, config=None, initial=None, policy=None, *, physical_evaluator=None):
+def solve(scene, route, config=None, initial=None, policy=None, *, method="main", physical_evaluator=None):
     route = str(route).upper().removeprefix("ND").removeprefix("R")
     if route.isdigit():
         route = f"{int(route):02d}"
@@ -469,10 +530,12 @@ def solve(scene, route, config=None, initial=None, policy=None, *, physical_eval
             pass
         elif route in ("01", "02", "03", "04", "05"):
             from .learning import run_learning
-            run_learning(problem, route, policy)
+            run_learning(problem, route, policy, method=method)
         else:
             from .classical import run_classical
-            run_classical(problem, route)
+            run_classical(problem, route, method=method)
     except BudgetStop:
         pass
-    return problem.result(route)
+    result = problem.result(route)
+    result["method"] = method
+    return result
