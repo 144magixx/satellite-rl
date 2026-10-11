@@ -37,7 +37,7 @@ def sha(path):
 
 def upload_one(path, destination, port=20418):
     expected=sha(path)
-    probe=ops.remote_python(f"import pathlib,hashlib,json;p=pathlib.Path({destination!r});print(json.dumps({{'sha256':hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None}}))",port)
+    probe=ops.remote_python(f"import pathlib,hashlib,json;p=pathlib.Path({destination!r});p.parent.mkdir(parents=True,exist_ok=True);print(json.dumps({{'sha256':hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None}}))",port)
     if probe['exit_code']:
         raise RuntimeError(probe['stderr'][-500:])
     old=json.loads(probe['stdout'].splitlines()[-1])['sha256']
