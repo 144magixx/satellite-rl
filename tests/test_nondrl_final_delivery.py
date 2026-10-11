@@ -77,6 +77,7 @@ class FinalDeliveryTests(unittest.TestCase):
             snapshot_files[name]={"path":str(path),"sha256":delivery.sha(path),"bytes":path.stat().st_size}
         delivery.save(self.root/"analysis/final_input/snapshot.json",{"scientific_commit":self.commit,"files":snapshot_files})
         delivery.save(self.root/"analysis/final_input/archive_plan.json",archive.plan(state,prepared))
+        delivery.save(self.root/"analysis/final_input/path_map.json",{})
         delivery.save(self.root/"analysis/final_input/archive_closure.json",{"complete":True,"tasks":[{"run_id":"eval_06","closed":True}]})
         self.report={"experiment_id":"S1-ND12","scientific_commit":self.commit,"formal_ready":True,"issues":[],
             "routes":{f"{i:02d}":{"status":"budget_limited_inconclusive" if i in (2,3) else "science_stopped","methods":{}} for i in range(1,13)},
@@ -107,6 +108,8 @@ class FinalDeliveryTests(unittest.TestCase):
         names={r["member"] for r in manifest["members"]}
         self.assertIn("report/report10.md",names)
         self.assertIn("indexes/source_refs.json",names)
+        self.assertIn("receipts/canonical_receipt_20418_shared_sources.json",names)
+        self.assertIn("receipts/canonical_receipt_20473_eval_06.json",names)
         self.assertFalse(any(n.endswith((".zip",".tar",".npz",".jsonl")) for n in names))
         self.assertNotIn("receipts/strict_report.json",names)
         self.assertEqual(delivery.load_package(package["local_receipt_path"])[0]["zip_sha256"],package["zip_sha256"])
@@ -187,6 +190,85 @@ class FinalDeliveryTests(unittest.TestCase):
         delivery.save(self.root/"controller/execution_placement.json",value)
         self.assertFalse(self.gate()["ready"])
         self.assertIn("only physical",self.gate()["errors"][0])
+
+    def mixed_gate(self):
+        gate=self.gate();report=gate["report"]
+        producer="train_nondrl_20261012_055310_890a4cba";consumer="evaluate_mlm_composite"
+        marker={"extension_id":"nd12_01_compact_evidence_v1","base_execution_commit":"a21d50ae49f55f1ac2210ba6aaf0778e33f25f8d",
+                "base_manifest_sha256":"0"*64,"provider_sha256":"1"*64,"bridge_sha256":"2"*64,
+                "cache_manifest_sha256":"3"*64,"contract_sha256":"4"*64}
+        report["runtime_extensions"]={producer:{"marker":marker,"activation_update":4144,"base_contract_preserved":True},
+            consumer:{"marker":marker,"execution_role":"model_only_consumer","model_source_run_id":producer,"provider_execution_authorized":False}}
+        report["tasks"]={producer:{"curve_losses":[{"update":10000}],"training_datafeed_segments":[
+            {"first_update":1,"last_update":4144,"datafeed":"base_gzip_json_reader"},
+            {"first_update":4145,"last_update":10000,"datafeed":"equivalent_compact_reader"}]}}
+        report["frozen_source_references"]={"source_contract":{"sha256":"c"*64,"bytes":100}}
+        for run_id,port in ((producer,20418),(consumer,20473)):
+            prefix=f"{port}/{run_id}/"
+            def reference(relative,hashvalue,byte_count=100):
+                return {"member":prefix+relative,"sha256":hashvalue,"bytes":byte_count,"zip_sha256":"f"*64,
+                        "zip_bytes":100000000,"canonical_zip":"E:/canonical.zip","remote_zip":"/group/canonical.zip","physical_port":port}
+            index={"run_id":run_id,"source_commit":marker["base_execution_commit"],"runtime_extension":marker,
+                "scientific_sources":[reference("source/source_manifest.json",marker["base_manifest_sha256"])],
+                "runtime_members":[],"raw_curves":[]}
+            if run_id==producer:
+                ext="runtime_extensions/nd12_01_compact_evidence_v1/"
+                for name,hashvalue in (("contract.json","4"*64),("provider.py","1"*64),("bootstrap.py","2"*64),
+                                      ("cache/manifest.json","3"*64),("cache/index.sqlite","5"*64),("cache/data.bin","6"*64)):
+                    index["runtime_members"].append(reference(ext+name,hashvalue,82000000 if name.endswith("data.bin") else 100))
+                index["raw_curves"]=[reference("models/losses.jsonl","7"*64,24000000),reference("models/validation.json","8"*64)]
+            gate["source_refs"].append(index)
+        return gate
+
+    def test_mixed_a21_weights_preserve_runtime_segments_and_exact_raw_member_refs(self):
+        gate=self.mixed_gate();manifest,files,generated=delivery._inputs(self.root,gate)
+        summary=json.loads(generated["summary/summary.json"])
+        producer="train_nondrl_20261012_055310_890a4cba"
+        self.assertEqual(summary["runtime_extensions"][producer]["activation_update"],4144)
+        self.assertEqual(summary["training_datafeed_segments"][producer][1]["first_update"],4145)
+        self.assertEqual(summary["frozen_source_references"],gate["report"]["frozen_source_references"])
+        indices=json.loads(generated["indexes/source_refs.json"])["archives"]
+        self.assertEqual(len([r for owner in indices for r in owner.get("runtime_members",[]) if r["member"].endswith("/cache/data.bin")]),1)
+        self.assertTrue(all("cache/data.bin" not in row["member"] and not row["member"].endswith(".jsonl") for row in manifest["members"]))
+        self.assertIn("reproduce/scripts/stage1_nondrl12/datafeed_evidence.py",files)
+        self.assertIn("reproduce/README.md",generated)
+        modules=json.loads(generated["indexes/code_modules.json"])["modules"]
+        for item in modules:
+            expected=hashlib.sha256(generated[item["member"]]).hexdigest() if item.get("generated") else delivery.sha(files[item["member"]])
+            self.assertEqual(item["sha256"],expected)
+
+    def test_missing_curve_runtime_or_source_member_reference_fails_closed(self):
+        for group in ("raw_curves","runtime_members","scientific_sources"):
+            gate=self.mixed_gate();gate["source_refs"][-2][group]=[]
+            with self.subTest(group=group),self.assertRaises(ValueError):
+                delivery._inputs(self.root,gate)
+        gate=self.mixed_gate();gate["source_refs"][-1]["runtime_members"]=gate["source_refs"][-2]["runtime_members"]
+        with self.assertRaisesRegex(ValueError,"must not copy"):
+            delivery._inputs(self.root,gate)
+        gate=self.mixed_gate();gate["report"]["runtime_extensions"]["evaluate_mlm_composite"]["marker"]=dict(gate["source_refs"][-1]["runtime_extension"],provider_sha256="9"*64)
+        with self.assertRaisesRegex(ValueError,"runtime marker"):
+            delivery._inputs(self.root,gate)
+
+    def test_raw_curve_index_binds_actual_zip_member_bytes_and_logical74_route(self):
+        prefix="20474/train_example/"
+        files={prefix+"models/losses.jsonl":b'{"update":1}\n',prefix+"models/validation.json":b'[]',
+               prefix+"source/source_manifest.json":b'{"git_commit":"a21"}',
+               prefix+"runtime_extensions/nd12_01_compact_evidence_v1/cache/data.bin":b'cache preserved only in archive'}
+        volume=make_volume(self.root,"index_fixture.zip",files)
+        receipt={"run_id":"train_example","port":20474,"volumes":[volume]}
+        index=delivery.indexed_members(receipt,self.root)
+        self.assertEqual(len(index["raw_curves"]),2);self.assertEqual(len(index["runtime_members"]),1)
+        for group in index.values():
+            for item in group:
+                self.assertEqual(item["physical_port"],20473)
+                self.assertEqual(item["zip_sha256"],delivery.sha(self.root/"index_fixture.zip"))
+                self.assertEqual(item["sha256"],hashlib.sha256(files[item["member"]]).hexdigest())
+
+    def test_oversized_canonical_receipt_is_explicitly_not_ready(self):
+        path=self.job_dir/"receipt.json"
+        with path.open("ab") as source:source.write(b" "*(delivery.MAX_FILE+1))
+        gate=self.gate()
+        self.assertFalse(gate["ready"]);self.assertIn("oversized",gate["errors"][0])
 
     def test_upload_uses_one_shared_package_and_reads_only_three_physical_hosts(self):
         package=self.package();data=Path(package["zip_path"]).read_bytes()

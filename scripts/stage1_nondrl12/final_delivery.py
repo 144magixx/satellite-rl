@@ -29,6 +29,28 @@ SMALL_SUFFIXES = {".md", ".json", ".csv", ".png", ".svg", ".pdf", ".py", ".txt",
 SCHEMA = "s1_nd12_final_delivery_v1"
 
 
+def indexed_members(receipt,directory):
+    """Small member-level entry points; cache and raw curves stay in their one ZIP."""
+    from . import archive
+    prefix=f"{receipt.get('port',20418)}/{receipt['run_id']}/"
+    groups={"raw_curves":[],"runtime_members":[],"scientific_sources":[]}
+    for volume in receipt["volumes"]:
+        remote=volume.get("remote_path",ops.BASE+"/"+str(receipt.get("port",20418))+
+                          "/ops/archive_nd12/"+receipt["run_id"]+"/"+volume["file"])
+        for name,row in volume["members"].items():
+            relative=name[len(prefix):] if name.startswith(prefix) else name
+            group=("raw_curves" if relative in ("models/losses.jsonl","models/validation.json") else
+                   "runtime_members" if relative.startswith("runtime_extensions/") else
+                   "scientific_sources" if name.endswith(".bundle") or relative in (
+                       "source/source_manifest.json","source_lineage/contract.json") else None)
+            if group:
+                groups[group].append({"member":name,"sha256":row["sha256"],"bytes":row["bytes"],
+                    "zip_sha256":volume["sha256"],"zip_bytes":volume["bytes"],
+                    "canonical_zip":str(archive.volume_path(directory,volume).resolve()),"remote_zip":remote,
+                    "physical_port":20473 if receipt.get("port")==20474 else receipt.get("port",20418)})
+    return groups
+
+
 def sha(path):
     with Path(path).open("rb") as source:
         return stream_sha(source)
@@ -111,6 +133,9 @@ def _archives(root, planned):
         refs.append({"run_id": receipt["run_id"], "port": receipt.get("port", 20418),
                      "receipt_path": str(path.resolve()), "receipt_sha256": sha(path),
                      "source_commit": receipt["source_commit"], "status": receipt.get("status"),
+                     "origin_commit":receipt.get("origin_commit",receipt["source_commit"]),
+                     "runtime_extension":receipt.get("runtime_extension"),
+                     **indexed_members(receipt,path.parent),
                      "source_refs": receipt.get("source_refs", []),
                      "volumes": [{"canonical_path": str(archive.volume_path(path.parent, volume).resolve()),
                         "remote_path": volume.get("remote_path", ops.BASE + "/" + str(receipt.get("port",20418)) +
@@ -122,6 +147,46 @@ def _archives(root, planned):
                                                   if name.endswith(".bundle")]}
                         for volume in receipt["volumes"]]})
     return refs, receipts
+
+
+def validate_delivery_refs(report,refs):
+    """Fail closed if a strict mixed-source result cannot be reached by exact members."""
+    by_run={r["run_id"]:r for r in refs}
+    if len(by_run)!=len(refs):raise ValueError("duplicate delivery source owner")
+    for run_id,task in report.get("tasks",{}).items():
+        if task.get("curve_losses"):
+            owner=by_run.get(run_id,{})
+            names={r["member"].split("/",2)[-1] for r in owner.get("raw_curves",[])}
+            if names!={"models/losses.jsonl","models/validation.json"}:
+                raise ValueError("training raw JSONL/validation member references are missing")
+    for run_id,extension in report.get("runtime_extensions",{}).items():
+        owner=by_run.get(run_id)
+        if owner is None or owner.get("runtime_extension")!=extension.get("marker"):
+            raise ValueError("strict runtime marker differs from canonical delivery owner")
+        scientific=[r for r in owner.get("scientific_sources",[]) if r["member"].endswith("/source/source_manifest.json")]
+        if not scientific or owner["source_commit"]!=extension["marker"]["base_execution_commit"]:
+            raise ValueError("composite result lacks an exact scientific source manifest reference")
+        if extension.get("execution_role")=="model_only_consumer":
+            if owner.get("runtime_members"):
+                raise ValueError("model consumer must not copy runtime/cache evidence")
+            producer=report["runtime_extensions"].get(extension["model_source_run_id"],{})
+            if producer.get("marker")!=extension["marker"]:
+                raise ValueError("a21 model consumer does not close to the composite producer")
+        else:
+            if not any(r["sha256"]==extension["marker"]["base_manifest_sha256"] for r in scientific):
+                raise ValueError("producer base source manifest SHA differs from its runtime marker")
+            required={"contract.json","provider.py","bootstrap.py","cache/manifest.json","cache/index.sqlite","cache/data.bin"}
+            names={r["member"].split("/runtime_extensions/",1)[-1].split("/",1)[-1]
+                   for r in owner.get("runtime_members",[])}
+            if not required.issubset(names):raise ValueError("single canonical runtime/cache references are incomplete")
+            for name,key in (("provider.py","provider_sha256"),("bootstrap.py","bridge_sha256"),
+                             ("cache/manifest.json","cache_manifest_sha256"),("contract.json","contract_sha256")):
+                row=next(r for r in owner["runtime_members"] if r["member"].endswith("/"+name))
+                if row["sha256"]!=extension["marker"][key]:raise ValueError("runtime code/data member SHA differs")
+    for model in report.get("endpoints",[]):
+        extension=model.get("runtime_extension")
+        if extension and report.get("runtime_extensions",{}).get(model["run_id"],{}).get("marker")!=extension["marker"]:
+            raise ValueError("small model runtime export differs from strict producer")
 
 
 def gate_state(root=ops.LOCAL, report_path=None, placement_file=None):
@@ -138,6 +203,7 @@ def gate_state(root=ops.LOCAL, report_path=None, placement_file=None):
                  "strict_report": root / "analysis/final_report/report.json",
                  "snapshot": root / "analysis/final_input/snapshot.json",
                  "archive_plan": root / "analysis/final_input/archive_plan.json",
+                 "path_map": root / "analysis/final_input/path_map.json",
                  "closure": root / "analysis/final_input/archive_closure.json", "finalizer": status_path}
         for key, path in paths.items():
             pin(path); pins[key] = {"path": str(path), "sha256": sha(path)}
@@ -184,6 +250,10 @@ def gate_state(root=ops.LOCAL, report_path=None, placement_file=None):
             raise ValueError("published report10 is absent, a placeholder or unrelated")
         pins["report10"] = {"path": str(report_path.resolve()), "sha256": sha(report_path)}
         source_refs, receipts = _archives(root, planned)
+        validate_delivery_refs(report,source_refs)
+        for ref in source_refs:
+            receipt_file=pin(ref["receipt_path"],ref["receipt_sha256"],small=True)
+            pins[f"canonical_receipt/{ref['port']}/{ref['run_id']}"]={"path":str(receipt_file),"sha256":ref["receipt_sha256"]}
         endpoint_ids = {r["run_id"] for r in receipts if r.get("status") == "completed" and
                         any(t["run_id"] == r["run_id"] and t.get("kind") == "train" for t in planned["tasks"].values())}
         endpoints = report.get("endpoints", [])
@@ -227,12 +297,21 @@ def _inputs(root, gate, assets_manifest=None):
             add("report/report10.md" if key == "report10" else "receipts/" + key.replace("/","_") + ".json",
                 path, item["sha256"])
     report = gate["report"]
+    validate_delivery_refs(report,gate["source_refs"])
     summary = {"experiment_id": "S1-ND12", "formal_ready": True, "issues": [],
                "scientific_commit": report["scientific_commit"], "routes": {
                    route: {"status": record["status"], "methods": {
                        method: {"summary": data.get("summary"), "run_ids": data.get("run_ids", [])}
                        for method,data in record.get("methods",{}).items()}}
                    for route,record in report["routes"].items()}}
+    summary["runtime_extensions"]={run_id:{key:value for key,value in runtime.items() if key in (
+        "marker","activation_update","preserved_loss_rows","original_validation_nodes","base_contract_preserved",
+        "original_active_seconds","complete_active_seconds","cache_canonical_owner","cache_manifest_sha256",
+        "execution_role","model_source_run_id","provider_execution_authorized","equivalence_proofs")}
+        for run_id,runtime in report.get("runtime_extensions",{}).items()}
+    summary["training_datafeed_segments"]={run_id:task["training_datafeed_segments"] for run_id,task in report.get("tasks",{}).items()
+                                           if task.get("training_datafeed_segments")}
+    summary["frozen_source_references"]=report.get("frozen_source_references",{})
     generated["summary/summary.json"] = encoded(summary)
     csv_out=io.StringIO(newline="");writer=csv.writer(csv_out)
     writer.writerow(("route","status","method","metric","value_json"))
@@ -250,8 +329,44 @@ def _inputs(root, gate, assets_manifest=None):
     for model in report.get("endpoints", []):
         for name, expected in (("policy.pt",model["sha256"]), ("model.json",model["model_json_sha256"])):
             add("models/"+model["run_id"]+"/"+name, Path(model["path"]).parent/name, expected)
-    for name in ("final_delivery.py", "report.py", "strict_audit.py", "execution_sources.py", "placement_transport.py"):
-        add("reproduce/"+name, Path(__file__).parent/name)
+    code_index=[]
+    scripts=("__init__.py","final_delivery.py","report.py","strict_audit.py","execution_sources.py",
+             "placement_transport.py","datafeed_evidence.py","archive.py","ops.py","finalizer.py")
+    paths=[Path("scripts/__init__.py")]+[Path("scripts/stage1_nondrl12")/name for name in scripts]
+    # Metadata/audit overlay absent from the old a21 science snapshot. Scientific
+    # core/models are restored from the exact archived source manifest/bundle.
+    paths += [Path("src/satellite_rl/workbench")/name for name in (
+        "nondrl_source_repair.py","nondrl_datafeed.py","nondrl_datafeed_bootstrap.py")]
+    paths += [Path("scripts")/group/"ops.py" for group in ("s2p19",)]
+    paths += [Path("scripts/variable_beams/ops18.py"),Path("scripts/s2p19/__init__.py"),Path("scripts/variable_beams/__init__.py")]
+    for path in paths:
+        member="reproduce/"+path.as_posix()
+        if path.name=="__init__.py" and not (REPO/path).exists():
+            generated[member]=b"# Delivery package initializer for the original namespace package.\n"
+            record={"member":member,"sha256":hashlib.sha256(generated[member]).hexdigest(),"generated":True}
+        else:
+            add(member,REPO/path)
+            record={"member":member,"sha256":sha(REPO/path),"source_path":str((REPO/path).resolve())}
+        code_index.append({**record,"role":"postprocessing_and_metadata_overlay"})
+    generated["indexes/code_modules.json"]=encoded({"modules":code_index,"scientific_code_from_exact_archive_source":True})
+    generated["reproduce/README.md"]=(
+        "# S1-ND12 复现与原始曲线回读\n\n"
+        "本包保存报告、小模型及逐模块SHA。不能把当前main提交当作全部科学来源。\n\n"
+        "1. 按indexes/source_refs.json的scientific_sources回读精确ZIP/bundle及source/source_manifest.json；"
+        "逐文件核SHA后恢复对应105或a21科学源码；本小包不是独立完整科学实现，仍须原冻结源码、共享依赖与归档输入。"
+        "原始大卷只读复用，不复制Jan/Feb源或训练缓存。\n"
+        "2. 将reproduce/scripts与reproduce/src的审计/元数据overlay合入隔离复现目录，"
+        "按indexes/code_modules.json核每个模块SHA。需要DQN的torch2.3.1+cu121、NumPy、Matplotlib及SSH时的paramiko。\n"
+        "3. 在该目录设置PYTHONPATH=src，运行python -m scripts.stage1_nondrl12.report --help；"
+        "用冻结输入和receipts/path_map.json的path-map离线复算；按indexes/source_refs.json更新搬迁后的本地canonical卷入口。"
+        "下载回读不启动科学任务，勿运行正式runner或finalizer执行入口。\n"
+        "4. 原始loss JSONL和validation JSON在每个train的raw_curves索引内：按remote_zip/canonical_zip、"
+        "zip_sha256、member与成员SHA逐项核验；receipts/canonical_receipt_*保存完整成员表与每卷SHA，"
+        "可离线重验全部canonical卷。图仅是原始记录的派生展示，不替代原曲线。\n"
+        "5. 组合训练的base a21与provider/bridge/contract各自SHA见runtime_extensions；"
+        "training_datafeed_segments分开旧gzip和compact供给活动时间。消费者评价执行源码仍a21，"
+        "权重保留producer runtime marker，不获provider执行资格。cache仅在train canonical ZIP的runtime_members中一份。\n"
+    ).encode("utf-8")
     if assets_manifest is not None:
         specification = read(pin(assets_manifest, small=True))
         if specification.get("experiment_id") != "S1-ND12":
