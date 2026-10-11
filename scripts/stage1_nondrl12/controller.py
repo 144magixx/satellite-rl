@@ -515,6 +515,8 @@ def main(argv=None):
     parser.add_argument("--registry", type=Path, required=True)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
+    if (args.directory / "execution_placement.json").exists():
+        raise RuntimeError("executor placement is active; use launcher_pipeline or PipelineController instead of the legacy CLI")
     args.directory.mkdir(parents=True, exist_ok=True)
     with worker_lock(args.directory):
         controller = Controller(args.directory, read_json(args.plan), read_json(args.registry))

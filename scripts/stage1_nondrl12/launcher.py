@@ -115,6 +115,8 @@ def run(plan_path, commit, preparation_hours=12):
 
 
 def main():
+    if (ops.LOCAL / 'controller' / 'execution_placement.json').exists():
+        raise RuntimeError('executor placement is active; use scripts.stage1_nondrl12.launcher_pipeline; legacy prepare/register is disabled')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', type=Path, required=True)
     parser.add_argument('--commit', required=True)
