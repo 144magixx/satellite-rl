@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-12 11:39 S2-F20第三验证节点闭合，SAC已继续至约339000步。** 300000节点144条direct、144条完整A+B及144个journal完整，结果/state一致，288引用SHA逐项一致；返回点资源及相对初解SI/SGM/基本服务保护违规0，60景严格回退Direct并保留原候选、求解/计时账，无额外优化器。[第三节点核验](outputs/experiments/s2_fair20_20261012/preflight/checkpoint300000_verified_20261012.json)。11:39真实API为338900/400000、累计437204/1396608（31.31%），独立现场339000/83727更新，worker56539/DQN/fbf执行源与2fc科学、strict预算未知0匹配，无当前错误。[实时快照](outputs/experiments/s2_fair20_20261012/preflight/heartbeat_20261012_113907.json)。整体仍5/12，三短完成、SAC正式未到400000，其余三短与PPO/DQN正式待执行；节点验证不算新增模型成果。
+
+同轮35040协调器、27108计时观察器均真实活跃/出生一致，ND12固定映射继续排除物理20474；[守卫核查](outputs/experiments/s2_fair20_20261012/preflight/local_daemons_handoff_20261012_1139.json)。本组仅20474/8953，完整矩阵/报告/双端归档和释放归还尚待。已派有界GPT-6.1 Sol准备本组outputs/analysis后处理代码及合成检查，不执行生产统计、不新增训练/评价/求解；须待三400000终点与6600矩阵案例闭合后使用，时间主张仍受原始NVML/CPU隔离证据门控。冻结科学与run_plan未改，小时跟进保持。
+
 **2026-10-12 S1-ND12正式[报告10](docs/第一阶段/实验报告/10_非DRL十二路线覆盖与负载均衡对照.md)已发布，最终交付包核验进行中。** MLM固定10000更新、10×60验证和19方法5700条共同考核全部完成，223任务原始ZIP/来源依赖及全量strict统计通过；根复核两次后处理修复没有改变逐景或汇总数值，5张中文图和全量CSV已目视/核数。预设成功分支均未达到：09邻接图CV相对BH降低3.2232%、承载下降0.0193个百分点，未到5%门槛；MLM M/H仅改善0.1783%，MO相对HO/O未显示明确AI额外收益。02/03预算内证据不足，04/05/08/10前筛或机制停止；这些都不是算法家族不可行的证明。
 
 100母中32为空输入；CV/承载有效68母，N和时间保留100母。非空记录N36–105，N200未实证，全部受测非空发布布局通过冻结覆盖/归属/守恒检查。低中高是0.75/1/1.25倍率，同一母的不同需求档初解N可能不同；不声称算法自主选N或角宽/动态已完成。[数值核验](outputs/experiments/first_stage_nondrl12_20261012/preflight/final_numeric_root_acceptance.json) · [图表核验](outputs/experiments/first_stage_nondrl12_20261012/preflight/publication_visual_root_acceptance.json) · [空输入口径](outputs/experiments/first_stage_nondrl12_20261012/preflight/test_zero_demand_audit.json)。最终报告/图/CSV/小模型/校验收据包尚须完成远端回读，跟进暂不暂停；原科学进程与收尾27872均已结束，不重启旧任务。
