@@ -75,9 +75,9 @@ def create_job(application, body):
     if kind not in ("prepare", "evaluate", "train"):
         raise ValueError("unknown G16 kind")
     mode = body.get("mode", "evaluate" if kind == "evaluate" else "initial")
-    if mode not in ("initial", "teacher", "evaluate", "train", "dataset", "reference", "variable"):
+    if mode not in ("initial", "teacher", "teacher_merge", "evaluate", "train", "dataset", "reference", "variable"):
         raise ValueError("unknown G16 worker mode")
-    if (kind, mode) not in (("prepare", "initial"), ("prepare", "teacher"), ("prepare", "dataset"),
+    if (kind, mode) not in (("prepare", "initial"), ("prepare", "teacher"), ("prepare", "teacher_merge"), ("prepare", "dataset"),
                             ("evaluate", "evaluate"), ("evaluate", "reference"), ("evaluate", "variable"), ("train", "train")):
         raise ValueError("kind/mode differs")
     role = body.get("dataset_role")
@@ -122,11 +122,11 @@ def create_job(application, body):
         else:
             pin(spec.get("parser"))
             for ref in spec.get("metadata_pins",{}).values():pin(ref)
-    if mode in ("teacher","train"):
+    if mode in ("teacher","teacher_merge","train"):
         gate=read_json(pin(body.get("gate")),{})
         if gate.get("group")!=GROUP or gate.get("passed") is not True:
             raise ValueError("teacher/MLM requires passed frozen development reference gate")
-    if mode == "teacher" and role != "train":
+    if mode in ("teacher","teacher_merge") and role != "train":
         raise ValueError("teacher labels are training only")
     if mode == "teacher" and methods != ["JOINT"]:
         raise ValueError("teacher requires frozen JOINT trajectory")
@@ -135,6 +135,14 @@ def create_job(application, body):
     if mode == "variable" and (role != "test" or methods != ["VARIABLE"]):
         raise ValueError("variable-N fixed 40-mother test trajectory only")
     if "MLM" in methods: pin(body.get("model"))
+    if mode=='teacher_merge':
+        teacher_sources=body.get('teacher_sources')
+        if not isinstance(teacher_sources,list) or len(teacher_sources)!=2:
+            raise ValueError('two canonical teacher lanes required')
+        for ref in teacher_sources:
+            teacher=read_json(pin(ref),{})
+            if teacher.get('group')!=GROUP or teacher.get('status')!='completed':
+                raise ValueError('terminal teacher lane evidence required')
     if kind == "train":
         if set(config["datasets"]) != {"train","validation"}:
             raise ValueError("MLM requires fixed train and validation partitions")
@@ -180,6 +188,7 @@ def create_job(application, body):
                "dataset_role": role, "mode": mode, "methods": methods, "references": refs,
                "execution_device": "cuda" if kind == "train" else "cpu", "ssh_port": port}
         if mode=="dataset":job["dataset_spec"]=spec
+        if mode=='teacher_merge':job['teacher_sources']=deepcopy(teacher_sources)
         indices=body.get("mother_indices")
         if indices is not None:
             cap=partition['roles'][role].get('mother_count',partition['roles'][role]['count']//4)
@@ -229,6 +238,16 @@ def api(application, method, parts, body):
     if method == "GET" and parts == ["jobs"]:
         return [{"job": j, "status": s} for j, s in application.store.jobs() if j.get("experiment_id") == GROUP]
     if method == "POST" and parts == ["jobs"]: return create_job(application, body)
+    if len(parts)==3 and parts[0]=='runs' and parts[2]=='results' and method=='GET':
+        directory=application.store.job_dir(validate_id(parts[1]))
+        if read_json(directory/'job.json',{}).get('experiment_id')!=GROUP:raise ValueError('wrong result group')
+        rows=[]
+        for item in read_json(directory/'case_index.json',{}).items():
+            key,ref=item;path=directory/'cases'/(key+'.json')
+            if digest(path)!=ref['sha256']:raise ValueError('result SHA differs')
+            raw=read_json(path,{})
+            rows.append({k:raw.get(k) for k in ('case_id','mother_id','demand_profile','method','outcome','metrics','online_seconds','initialization_seconds')})
+        return {'group':GROUP,'rows':rows}
     if len(parts) == 3 and parts[0] == "runs" and parts[2] == "resume" and method == "POST":
         return application.scheduler.resume(validate_id(parts[1]))
     raise FileNotFoundError("unknown G16 API")

@@ -8,13 +8,18 @@ from satellite_rl.training.run_monitor import atomic_json
 from satellite_rl.workbench.storage import now
 from .controller import validate_plan
 
-def launch(plan_path,state_path,python=None):
+def launch(plan_path,state_path,python=None,pipeline=False):
     plan_path=Path(plan_path).resolve();state_path=Path(state_path).resolve()
-    validate_plan(json.loads(plan_path.read_text(encoding='utf-8-sig')))
+    plan=json.loads(plan_path.read_text(encoding='utf-8-sig'))
+    if pipeline:
+        if plan.get('group')!='S1-G16' or plan.get('authorized') is not True or not plan.get('preparations'):
+            raise ValueError('signed preparation-to-delivery plan required')
+    else:validate_plan(plan)
     state_path.parent.mkdir(parents=True,exist_ok=True)
     source=Path(__file__).resolve().parents[2]
     env=dict(os.environ);env['PYTHONPATH']=str(source/'src')+os.pathsep+str(source)
     command=[python or sys.executable,'-u','-m','scripts.stage1_geoload.controller','--plan',str(plan_path),'--state',str(state_path)]
+    if pipeline:command.append('--pipeline')
     flags=subprocess.CREATE_NO_WINDOW|subprocess.CREATE_NEW_PROCESS_GROUP if os.name=='nt' else 0
     with state_path.with_suffix('.log').open('ab',buffering=0) as log:
         child=subprocess.Popen(command,cwd=source,env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,

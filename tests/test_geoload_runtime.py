@@ -41,5 +41,32 @@ class GeometryRuntimeTests(unittest.TestCase):
                     with exclusive_lock(Path(d)/'lock'):pass
     def test_keys_do_not_alias(self):
         self.assertNotEqual(result_key('a','BC'),result_key('aB','C'))
+    def test_dispatch_rejects_cycle_and_other_lane(self):
+        from scripts.stage1_geoload.controller import validate_plan
+        p={'group':'S1-G16','authorized':True,'tasks':{'a':{'port':20424,'body':{'request_id':'a'},'depends':['a']}}}
+        with self.assertRaises(ValueError):validate_plan(p)
+        p['tasks']['a']['depends']=[];p['tasks']['a']['port']=20418
+        with self.assertRaises(ValueError):validate_plan(p)
+    def test_reference_gate_uses30s_and_both_halves(self):
+        from scripts.stage1_geoload.pipeline import make_gate
+        state={'tasks':{}}
+        for port in (20424,20473):
+            for mode in ('dev','reference'):state['tasks'][mode+'_'+str(port)]={'port':port,'mode':mode}
+        def read(task):
+            rows=[];parity=0 if task['port']==20424 else 1
+            for m in range(parity,20,2):
+                for profile in range(4):
+                    key=f'{m:02}_{profile}';mother=f'{m:02}'
+                    a={'P':2.,'T':1.8,'evidence':{'valid':True}}
+                    b={**a,'P':1.9 if m%10<2 else 2.}
+                    row={'case_id':key,'mother_id':mother,'method':'09-LEX','metrics':a}
+                    if task['mode']=='reference':
+                        row['method']='JOINT';row['reference_nodes']=[{'seconds_limit':10,'metrics':a},{'seconds_limit':30,'metrics':b}]
+                    rows.append(row)
+            return {'rows':rows,'index_sha256':'0'*64}
+        with tempfile.TemporaryDirectory() as d,patch('scripts.stage1_geoload.pipeline.raw_rows',side_effect=read):
+            gate,_=make_gate(state,d)
+            self.assertTrue(gate['passed']);self.assertEqual(gate['reference_seconds'],30)
+            self.assertEqual(gate['half_fractions'],[.2,.2])
 
 if __name__=='__main__':unittest.main()

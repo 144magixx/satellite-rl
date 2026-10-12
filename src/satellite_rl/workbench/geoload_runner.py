@@ -217,6 +217,33 @@ def run_job(directory, *, resume=False):
             update(stage="training" if job["kind"] == "train" else "running", error=None, started_at=status.get("started_at", now()))
             if job["kind"] == "train":
                 return _train(directory,job,config,update,resume)
+            if job['mode']=='teacher_merge':
+                import shutil
+                target=directory/'merged_teacher';target.mkdir(exist_ok=True)
+                cases=[];samples=[]
+                for source_index,reference in enumerate(job['teacher_sources']):
+                    source=pin(reference);manifest=read_json(source,{})
+                    if manifest.get('dataset_sha256')!=config['datasets']['train']['sha256']:
+                        raise ValueError('teacher input provenance differs')
+                    cases.extend(manifest['cases'])
+                    for sample in manifest['samples']:
+                        original=(source.parent/sample['path']).resolve()
+                        if not original.is_relative_to(source.parent.resolve()):raise ValueError('teacher shard escape')
+                        pin({'path':str(original),'sha256':sample['sha256']})
+                        relative=Path('shards')/str(source_index)/sample['path']
+                        copied=target/relative;copied.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,copied)
+                        samples.append({**sample,'path':relative.as_posix()})
+                if len(cases)!=config['datasets']['train']['count'] or len({c['case_id'] for c in cases})!=len(cases):
+                    raise ValueError('canonical teacher cases incomplete or duplicated')
+                samples.sort(key=lambda s:(s['mother_id'],s['profile'],s['path'].split('/')[-1]))
+                cases.sort(key=lambda s:s['case_id'])
+                merged=target/'teacher_manifest.json'
+                atomic_json(merged,{'group':GROUP,'status':'completed','samples':samples,'cases':cases,
+                    'count':len(cases),'scientific_commit':job['scientific_commit'],
+                    'dataset_sha256':config['datasets']['train']['sha256'],'sources':job['teacher_sources']})
+                atomic_json(directory/'artifacts.json',{'group':GROUP,'completed':True,
+                    'teacher':{'path':str(merged),'sha256':digest(merged)},'count':len(cases)})
+                update(stage='completed',completed_at=now());return
             if job["mode"] == "dataset":
                 from satellite_rl.coverage.geoload.dataset import prepare_dataset
                 record=prepare_dataset(job["dataset_spec"],directory/"prepared_dataset",job["source_root"],

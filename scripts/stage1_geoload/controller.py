@@ -68,6 +68,11 @@ def run(plan_path,state_path):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--plan',required=True);parser.add_argument('--state',required=True)
-    args=parser.parse_args();run(args.plan,args.state)
+    parser.add_argument('--pipeline',action='store_true')
+    args=parser.parse_args()
+    if args.pipeline:
+        from .pipeline import run as run_pipeline
+        run_pipeline(args.plan,args.state)
+    else:run(args.plan,args.state)
 
 if __name__=='__main__':main()
