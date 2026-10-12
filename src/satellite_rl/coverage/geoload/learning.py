@@ -116,7 +116,7 @@ def train(dataset_manifest,output,protocol,device='cuda',resume=False,validation
         with history.open('a') as f:f.write(json.dumps(committed)+'\n')
         if progress:progress(cursor,total)
         validate_pending()
-    atomic_save(root/'final.pt',dict(format=MODEL_FORMAT,model=model.state_dict(),network=protocol.get('network'),update=10000,protocol_sha256=sha,dataset_sha256=dataset.sha256,from_scratch=True,seed=51001))
+    atomic_save(root/'final.pt',dict(format=MODEL_FORMAT,model=model.state_dict(),network=protocol.get('network'),update=10000,protocol_sha256=sha,dataset_sha256=dataset.sha256,from_scratch=True,seed=51001,ledger=ledger))
     return dict(update=cursor,nodes=nodes,checkpoint=str(cp),ledger=ledger)
 
 def orderer(method,model=None,seed=51001,journal=None,device='cpu'):
@@ -137,6 +137,9 @@ def orderer(method,model=None,seed=51001,journal=None,device='cpu'):
             model.eval()
             if time.perf_counter()>=deadline[0]:return list(pool)
             with torch.inference_mode():logp=model(batch)['logits'][0].log_softmax(-1).cpu().numpy()
+            if time.perf_counter()>=deadline[0]:
+                if journal is not None:journal.append(dict(method=method,stop_reason='inference_deadline',pool_size=len(pool)))
+                return list(pool)
             scores=[float(logp[np.arange(len(scene.demands)),mapping(entry[1])].mean()) for entry in pool]
             indices=sorted(range(len(pool)),key=lambda i:(-scores[i],i))
         else:raise ValueError(method)
