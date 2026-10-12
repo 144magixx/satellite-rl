@@ -281,6 +281,7 @@ def _merge_packed(spec, output, progress, stopped):
 def prepare_dataset(spec, output_dir, source_root, progress=lambda **kw: None, stopped=lambda:False):
     output = Path(output_dir); output.mkdir(parents=True, exist_ok=True)
     if spec.get('role') not in ('train','development','dev','validation','test'): raise ValueError('dataset role required')
+    if spec.get('seed',51001) != 51001: raise ValueError('G16 demand seed is frozen at 51001 for every role')
     count = int(spec.get('count', spec.get('expected_mothers', 0)))
     if count <= 0: raise ValueError('positive mother count required')
     if spec['kind'] == 'merge_existing': return _merge_packed(spec,output,progress,stopped)
@@ -301,9 +302,14 @@ def prepare_dataset(spec, output_dir, source_root, progress=lambda **kw: None, s
                 mother = str(scene.metadata.get('selected_time_utc') or scene.scene_id)
                 meta = {key:value for key,value in scene.metadata.items() if not any(
                     term in key.lower() for term in ('capacity','initial','beam','center','carry','qos','satisfaction'))}
-                mothers.append((scene.positions.copy(), scene.demands.copy(), scene.aircraft_ids,
+                original_ids=list(map(str,scene.aircraft_ids))
+                order=np.argsort(np.asarray(original_ids,dtype=str),kind='stable')
+                canonical_ids=[original_ids[i] for i in order]
+                mothers.append((scene.positions[order].copy(), scene.demands[order].copy(), canonical_ids,
                     f"{spec['role']}:{mother}", {**meta, 'import_path':item['path'], 'import_sha256':item['sha256'],
                         'source_hash':scene.source_hash, 'source_partition_role':source_role,
+                        'aircraft_order':'stable_lexical_aircraft_ID', 'source_aircraft_ids':original_ids,
+                        'canonical_to_source_index':order.tolist(),
                         'legacy_layout_and_capacity_discarded':True}))
         if len(mothers) != count: raise ValueError('import mother count differs from frozen expected count')
         provenance = {'status':'prepared', 'import_sources':sources}

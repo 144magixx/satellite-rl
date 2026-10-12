@@ -37,6 +37,23 @@ class G16DatasetTests(unittest.TestCase):
         source=self.source('one','2024-02-14T00:02:00Z');source['sha256']='0'*64
         with self.assertRaisesRegex(ValueError,'SHA'):
             prepare_dataset({'kind':'import_existing','role':'test','count':1,'sources':[source]},self.root/'out',self.root)
+    def test_import_stable_id_sort_records_original_permutation(self):
+        path=self.root/'unsorted'/'inputs.npz'
+        positions=np.array([[45.,30.],[45.,5.],[45.,5.1]])
+        demands=np.array([5.,10.,0.]);ids=['cc','aa','bb']
+        save_variable_dataset(CoverageDataset([CoverageScene('raw',positions,demands,np.empty((0,2)),ids,
+            {'selected_time_utc':'2024-02-14T00:02:00Z'})],{}),path)
+        before=path.read_bytes()
+        record=prepare_dataset({'kind':'import_existing','role':'test','count':1,
+            'sources':[{'path':str(path),'sha256':digest(path)}]},self.root/'sorted',self.root)
+        with np.load(record['path'],allow_pickle=False) as values:
+            np.testing.assert_array_equal(values['positions'][:3],positions[[1,2,0]])
+            np.testing.assert_array_equal(values['demands'][:3],demands[[1,2,0]])
+            self.assertEqual(values['aircraft_ids'][:3].tolist(),['aa','bb','cc'])
+            meta=json.loads(str(values['metadata_json']))['mothers'][0]
+            self.assertEqual(meta['canonical_to_source_index'],[1,2,0])
+            self.assertEqual(meta['source_aircraft_ids'],ids)
+        self.assertEqual(path.read_bytes(),before)
     def test_merge_keeps_values_and_source(self):
         refs=[]
         for i in range(2):
@@ -55,6 +72,26 @@ class G16DatasetTests(unittest.TestCase):
         rows=[('bb','2024-02-14T00:02:00Z',45.,5.1,10000.),('aa','2024-02-14T00:02:00Z',45.,5.,10000.)]
         a=_requests(rows,'2024-02-14T00:02:00.000Z');b=_requests(rows[::-1],'2024-02-14T00:02:00Z')
         np.testing.assert_array_equal(a[1],b[1]);self.assertEqual(a[2],['aa','bb'])
+    def test_requests_match_existing_real_adapter_across_timestamp_formats_and_roles(self):
+        # This invokes the existing adapter, rather than reproducing its RNG
+        # formula in the assertion. Its geometric result is discarded.
+        from satellite_rl.workbench.variable_preparation import _scene_from_rows
+        stamps=('2024-01-12T12:02:00Z','2024-02-13T00:02:00.000Z','2024-02-13T00:07:05.250Z')
+        for index,stamp in enumerate(stamps):
+            rows=[(identifier,stamp,45.,5.+i*.01,10000.)
+                  for i,identifier in enumerate(('ee','aa','dd','bb','cc'))]
+            expected=_requests(rows,stamp)
+            for role in ('train','development','test'):
+                work=self.root/f'paired_{index}_{role}';work.mkdir()
+                actual=_scene_from_rows(work,0,stamp,rows,role,'0'*64)
+                self.assertEqual(actual.aircraft_ids,expected[2])
+                np.testing.assert_array_equal(actual.positions,expected[0])
+                np.testing.assert_array_equal(actual.demands,expected[1])
+    def test_demand_seed_override_is_rejected(self):
+        source=self.source('seed','2024-02-14T00:02:00Z')
+        with self.assertRaisesRegex(ValueError,'51001'):
+            prepare_dataset({'kind':'import_existing','role':'test','count':1,'seed':51002,
+                             'sources':[source]},self.root/'seed_out',self.root)
     def test_empty_and_allzero_profiles(self):
         for values in demand_profiles([[45,5],[45,30]],[0,0],['a','b']).values():
             np.testing.assert_array_equal(values,[0,0])
