@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import gzip
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 
 from satellite_rl.workbench.nondrl_source_repair import (
@@ -168,6 +168,58 @@ def receipt_member(item):
     return "source_lineage/validation_receipts/" + item["sha256"] + "/" + Path(item["path"]).name
 
 
+def deferred_origin_fold(job, evidence, manifest_name, before, field, entry, pins):
+    """Prove a pre-repair worker artifact was only folded into its parent later.
+
+    Parallel teachers reserve workers before dispatch. A failed coordinator can
+    leave immutable child shards/receipts committed but not folded. An entry
+    added to the repaired parent is therefore not necessarily newly executed.
+    This exception requires BOTH signed original artifact bytes and their exact
+    reference in a signed original child manifest, under the original pending
+    reservation. It never permits unmarked new rows or merely matching layouts.
+    """
+    if (before.get("format") != "s1_nondrl_teacher_v1" or field not in ("shards", "problem_receipts")
+            or job.get("preparation_mode") != "teacher" or job.get("variant") != "01"):
+        raise ValueError("new evidence was relabelled as an origin shard")
+    path = entry.get("path", "")
+    if (not isinstance(path, str) or path.startswith("/") or "\\" in path or
+            any(part in ("", ".", "..") for part in path.split("/"))):
+        raise ValueError("deferred origin fold has an unsafe artifact path")
+    parts = PurePosixPath(path).parts
+    if len(parts) < 3 or parts[0] != "workers" or not re.fullmatch(r"problem_[0-9]{6}", parts[1]):
+        raise ValueError("deferred origin fold is not a reserved teacher worker")
+    worker_index = int(parts[1][8:])
+    if (str(worker_index) not in before.get("reservations", {}) or
+            worker_index < before.get("problems", 0)):
+        raise ValueError("deferred origin fold has no original pending reservation")
+    base = PurePosixPath(manifest_name).parent
+    target = str(base / path)
+    child_name = str(base / parts[0] / parts[1] / "manifest.json")
+    if target not in pins or child_name not in pins or entry.get("sha256") != pins[target]["sha256"]:
+        raise ValueError("deferred origin fold lacks signed original artifact/manifest pins")
+    baseline = evidence.read("source_lineage/origin/artifacts/" + target)
+    current = evidence.read(target)
+    if (hashlib.sha256(baseline).hexdigest() != pins[target]["sha256"] or current != baseline):
+        raise ValueError("deferred origin scientific artifact bytes changed")
+    child_bytes = evidence.read("source_lineage/origin/artifacts/" + child_name)
+    if hashlib.sha256(child_bytes).hexdigest() != pins[child_name]["sha256"]:
+        raise ValueError("deferred origin worker manifest SHA differs")
+    child = json.loads(child_bytes)
+    if (child.get("format") != "s1_nondrl_teacher_v1" or child.get("route") != job["variant"] or
+            child.get("provenance") != job["source_repair_contract"]["origin_provenance"]):
+        raise ValueError("deferred origin worker provenance differs")
+    relative_child = str(PurePosixPath(*parts[2:]))
+    matches = [r for r in child.get(field, []) if r.get("path") == relative_child]
+    if len(matches) != 1 or {**matches[0], "path": path} != entry:
+        raise ValueError("deferred origin entry differs from its original worker reference")
+    if verify_marker(job, matches[0].get("execution_source")) != ORIGIN_COMMIT:
+        raise ValueError("deferred artifact did not have original execution provenance")
+    return {"manifest": manifest_name, "field": field, "path": target,
+            "sha256": pins[target]["sha256"], "original_worker_manifest_sha256": pins[child_name]["sha256"],
+            "original_worker_index": worker_index, "execution_commit": ORIGIN_COMMIT,
+            "scope": "pre_repair_immutable_worker_artifact_folded_after_repair"}
+
+
 def audit_lineage(job, evidence):
     """Verify archived original bytes and every actual execution source member."""
     if job.get("git_commit") == ORIGIN_COMMIT and not job.get("source_repair_contract"):
@@ -201,7 +253,9 @@ def audit_lineage(job, evidence):
                if original["files"].get(name) != source["files"].get(name)}
     if changed != set(differences) or any(original["files"].get(n) != p.get("origin_sha256") for n,p in differences.items()):
         raise ValueError("exact original/execution file diff differs from signed contract")
+    deferred_folds = []
     if item.get("comparison_scope") != "new_execution_task":
+        origin_pins = {a["relative_path"]: a for a in item["artifacts"]}
         for artifact in item["artifacts"]:
             relative=artifact["relative_path"]
             baseline=evidence.read("source_lineage/origin/artifacts/"+relative)
@@ -221,7 +275,8 @@ def audit_lineage(job, evidence):
                     if isinstance(prefix,list):
                         for new_item in current.get(key,[])[len(prefix):]:
                             if verify_marker(job,new_item.get("execution_source"))!=job["git_commit"]:
-                                raise ValueError("new evidence was relabelled as an origin shard")
+                                deferred_folds.append(deferred_origin_fold(job, evidence, relative, before,
+                                                                          key, new_item, origin_pins))
                 for key in ("rows","problems","trials","elapsed_seconds","teacher_compute_seconds"):
                     value=before.get(key,0)
                     if not isinstance(value,list) and current.get(key,0)<value:
@@ -239,6 +294,7 @@ def audit_lineage(job, evidence):
     return {"origin_commit": ORIGIN_COMMIT, "execution_commit": job["git_commit"],
             "repaired": True, "contract_sha256": item["contract_sha256"],
             "comparison_scope": item["comparison_scope"], "source_history": job["source_history"],
+            "deferred_original_worker_folds": deferred_folds,
             "original_terminal_status": {k:history_status.get(k) for k in ("stage","scientific_stop","stop_reason","error","ended_at")}
                 if history_status is not None else None}
 
