@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-12 S1-ND12正式[报告10](docs/第一阶段/实验报告/10_非DRL十二路线覆盖与负载均衡对照.md)已发布，最终交付包核验进行中。** MLM固定10000更新、10×60验证和19方法5700条共同考核全部完成，223任务原始ZIP/来源依赖及全量strict统计通过；根复核两次后处理修复没有改变逐景或汇总数值，5张中文图和全量CSV已目视/核数。预设成功分支均未达到：09邻接图CV相对BH降低3.2232%、承载下降0.0193个百分点，未到5%门槛；MLM M/H仅改善0.1783%，MO相对HO/O未显示明确AI额外收益。02/03预算内证据不足，04/05/08/10前筛或机制停止；这些都不是算法家族不可行的证明。
+
+100母中32为空输入；CV/承载有效68母，N和时间保留100母。非空记录N36–105，N200未实证，全部受测非空发布布局通过冻结覆盖/归属/守恒检查。低中高是0.75/1/1.25倍率，同一母的不同需求档初解N可能不同；不声称算法自主选N或角宽/动态已完成。[数值核验](outputs/experiments/first_stage_nondrl12_20261012/preflight/final_numeric_root_acceptance.json) · [图表核验](outputs/experiments/first_stage_nondrl12_20261012/preflight/publication_visual_root_acceptance.json) · [空输入口径](outputs/experiments/first_stage_nondrl12_20261012/preflight/test_zero_demand_audit.json)。最终报告/图/CSV/小模型/校验收据包尚须完成远端回读，跟进暂不暂停；原科学进程与收尾27872均已结束，不重启旧任务。
+
 **2026-10-12 10:40 S2-F20第二验证节点完成，SAC持续训练，无新增科学失败。** 200000节点144条direct、144条完整A+B及144个optimizer journal已闭合，结果/state一致、288条引用SHA逐项一致；返回点相对初解的SI/SGM/基本服务保护和资源违规0，66景按严格验收回退已核Direct，原候选、求解次数及耗时全留，未追加优化器。不是保证每景全部束达到基本服务，也不是正式终点或算法优势结论。[第二节点核验](outputs/experiments/s2_fair20_20261012/preflight/checkpoint200000_verified_20261012.json)。10:40 API为267500/400000、累计365804/1396608（26.19%），独立10:40:48现场至268200，worker56539出生与DQN/fbf实际包、原2fc科学及严格预算未知0匹配；PPO A短已完成、其余3短/正式PPO/DQN仍待，整体5/12。见[真实API/资源](outputs/experiments/s2_fair20_20261012/preflight/heartbeat_20261012_104021.json)。
 
 同轮协调器35040和计时观察器27108均出生匹配且正常，ND12固定映射仍排除物理20474；仅使用20474/8953，资源尚未归还。独立单秒窗CPU约15.32核/RSS4.276GiB、GPU68%/2576MiB，Torch预检线程1不能当作原生库/driver单核或CPU无争用的证明；这是瞬时记录而非平均。[进程/隔离/空间核查](outputs/experiments/s2_fair20_20261012/preflight/local_daemons_handoff_20261012_1040.json)。冻结训练源码/配置不热改，最终严格耗时结论须结合独立原始进程记录及实际CPU条件，相关限制保留。普通心跳继续由运行清单及最新API快照承载，完整400000终点、共同矩阵、报告和双端归档/释放通知仍待。
