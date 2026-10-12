@@ -79,6 +79,23 @@ def paired(rows, metric, baseline='JOINT'):
     return result
 
 
+def variable_requested_units(row):
+    """Invert stored P/T normalization only; never evaluates a layout or fills failures."""
+    result={**row,'maxload':'','top10_mean':'','original_unit_derivation':''}
+    if row.get('outcome')!='completed':return result
+    n,total=number(row,'N'),number(row,'total_demand')
+    if n is None or n<=0 or n!=int(n) or total is None or total<0:
+        raise ValueError('completed variable row requires legal N and total_demand')
+    p,t=number(row,'P'),number(row,'T')
+    if p is None or t is None:
+        if total!=0:raise ValueError('nonzero demand variable P/T absent')
+        return result  # Zero-demand normalization is undefined, never imputed.
+    if p<0 or t<0:raise ValueError('negative normalized requested load')
+    result.update(maxload=p*total/n,top10_mean=t*total/n,
+        original_unit_derivation='stored P/T multiplied by stored total_demand/N; original request unit')
+    return result
+
+
 def build(source, output, *, synthetic=False):
     summary, tables = load(source, output, synthetic)
     # Imports occur only after authorization/closure checks; no worker dependency.
@@ -139,7 +156,7 @@ def build(source, output, *, synthetic=False):
             axes[i, 1].set(xticks=range(len(methods)), xticklabels=[LABELS.get(m,m) for m in methods], ylabel=metric+' − JOINT (同景同N；负值较低)')
             axes[i, 1].axhline(0, color='gray', linewidth=.8)
             axes[i, 1].tick_params(axis='x', rotation=55)
-        if methods: axes[0,0].legend(fontsize=7, ncol=2)
+        if methods: axes[0,0].legend(fontsize=7,ncol=3,loc='lower left',bbox_to_anchor=(0,1.02),borderaxespad=0)
         save(fig, '01_same_N', test+pair_rows, '同N负载与配对差；P/T越低越好，CV仅诊断')
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 5), layout='constrained')
@@ -162,19 +179,21 @@ def build(source, output, *, synthetic=False):
         missing.append('input spatial distribution not available in compact schema')
         save(fig, '02_input_profiles', counts+date_rows, '输入profile与实际母分母/日期分层；计划test40母')
 
-        variable=[r for r in tables['per_case'] if r.get('method')=='VARIABLE']
+        variable=[variable_requested_units(r) for r in tables['per_case'] if r.get('method')=='VARIABLE']
         fig, axes=plt.subplots(1, 3, figsize=(13, 5), layout='constrained')
         for i, metric in enumerate(('maxload', 'top10_mean', 'CV')):
             for j, profile in enumerate(PROFILES):
                 rows=[r for r in variable if r.get('demand_profile')==profile and r.get('outcome')=='completed' and number(r,'N') is not None and number(r,metric) is not None]
                 axes[i].scatter([number(r,'N') for r in rows], [number(r,metric) for r in rows], marker=markers[j], color=palette[j], s=16, alpha=.7, label=profile)
-            axes[i].set(xlabel='实际非空束数N', ylabel=metric+(' (原请求单位)' if metric!='CV' else ' (无量纲)'))
+            labels={'maxload':'原请求峰值','top10_mean':'原请求重载上尾','CV':'CV'}
+            axes[i].set(xlabel='实际非空束数N', ylabel=labels[metric]+(' (原请求单位)' if metric!='CV' else ' (无量纲)'))
+            if i<2 and not any(number(r,metric) is not None for r in variable):empty(axes[i],'无可用原单位指标；不补零')
         failed=sum(r.get('outcome')!='completed' for r in variable)
         variable_mothers=len({r['mother_id'] for r in variable})
         variable_cases=len({r['case_id'] for r in variable})
         if variable: axes[0].legend(fontsize=7)
         else: empty(axes[0], '变量N表无记录；不补0')
-        save(fig, '03_variable_N', variable, f'变量N：{variable_mothers}母/{variable_cases}景；未完成{failed}/{len(variable)}条；不跨N排名')
+        save(fig, '03_variable_N', variable, f'变量N：{variable_mothers}母/{variable_cases}景；未完成{failed}/{len(variable)}条；原单位=P/T×D/N；不跨N排名')
 
         fig, axes=plt.subplots(2, 2, figsize=(12, 8), layout='constrained')
         axes=axes.flatten()
@@ -206,7 +225,8 @@ def build(source, output, *, synthetic=False):
             denom=sum(r['method']==method for r in test)
             success=sum(r['method']==method and r.get('outcome')=='completed' for r in test)
             axes[0,1].bar(j, success/denom if denom else np.nan, color=palette[j % len(palette)])
-            axes[0,1].text(j, .04, f'{success}/{denom}', ha='center', fontsize=7, rotation=90)
+            axes[0,1].text(j,.04,f'{success}/{denom}',ha='center',fontsize=7,rotation=90,
+                bbox=dict(facecolor='white',edgecolor='none',alpha=.95,pad=1))
             for key, marker in [('known_completed_candidates','o'),('accepted','s'),('completed_late','^')]:
                 values=[number(r,key) for r in candidates if r['method']==method]; values=[v for v in values if v is not None]
                 axes[1,0].scatter([j]*len(values), values, marker=marker, color=palette[j % len(palette)], s=15, alpha=.7, label=key if j==0 else None)
@@ -214,7 +234,9 @@ def build(source, output, *, synthetic=False):
             ax.set(xticks=range(len(methods)), xticklabels=[LABELS.get(m,m) for m in methods]);ax.tick_params(axis='x',rotation=55)
         axes[0,0].set(ylabel='分段实际秒');axes[0,1].set(ylabel='完整可行发布率（全部预定记录）',ylim=(0,1.05))
         axes[1,0].set(ylabel='真实完成候选数/接受/late')
-        if methods: axes[0,0].legend(fontsize=7); axes[1,0].legend(fontsize=7)
+        if methods:
+            axes[0,0].legend(fontsize=7,loc='lower left',bbox_to_anchor=(0,1.02),borderaxespad=0)
+            axes[1,0].legend(fontsize=7,loc='lower left',bbox_to_anchor=(0,1.02),borderaxespad=0)
         if not times:empty(axes[0,0], '无common test分段时间数据；不补零')
         if not candidates:empty(axes[1,0], '无common test候选账；不补零')
         empty(axes[1,1], '退步轨迹未在compact表导出；不造零退步。\n记录候选几何来自worker；独立复算限最终/参考布局。\n未知中断开销不置零；观测时间不证明速度优势。')
@@ -235,6 +257,7 @@ def build(source, output, *, synthetic=False):
     manifest['method_interpretation']='rule identity order matches JOINT base order; wrapper timing can differ; MLM ranks full candidates, does not generate layouts or choose N'
     manifest['direction']='P/T lower better lexicographically; Q third; CV diagnostic only; paired method-minus-JOINT negative is lower'
     manifest['uncertainty']='no uncertainty recomputed here; report learning comparisons use date-stratified mother bootstrap; four profiles are dependent'
+    manifest['transformations'].append('completed VARIABLE original request peak=P*total_demand/N and tail=T*total_demand/N; legal positive integerN only; failures/undefined zero-demand remain blank')
     if (Path(source)/'validation_cases.csv').exists():
         manifest['sources']['validation_cases.csv']=sha(Path(source)/'validation_cases.csv')
     (output/'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2),encoding='utf-8')

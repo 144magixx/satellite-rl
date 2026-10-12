@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.stage1_geoload.publication import TABLES, build, load, number, paired
+from scripts.stage1_geoload.publication import TABLES, build, load, number, paired, variable_requested_units
 
 
 def fixture(root):
@@ -23,7 +23,7 @@ def fixture(root):
             method='VARIABLE',stage='constructor',target_N=1,outcome='not_found'))
         cases.append(dict(task='variable_20424',role='test',case_id='fixture_'+p,
             mother_id='fixture_2024-02-14',date='2024-02-14',demand_profile=p,
-            method='VARIABLE',stage='quota',target_N=3,outcome='completed',N=3,maxload=90,top10_mean=90,CV=.6))
+            method='VARIABLE',stage='quota',target_N=3,outcome='completed',N=3,total_demand=180,P=1.5,T=1.5,CV=.6))
     rows={'per_case':cases,'per_mother':[], 'timing':[], 'candidate':[], 'learningcurve':[]}
     for name in TABLES:
         values=rows[name];keys=list(dict.fromkeys(k for r in values for k in r))
@@ -49,6 +49,17 @@ class PublicationTests(unittest.TestCase):
     def test_missing_is_not_zero_and_nonfinite_rejected(self):
         self.assertIsNone(number({'P':''},'P'))
         with self.assertRaises(ValueError):number({'P':'nan'},'P')
+
+    def test_variable_original_unit_algebra_and_failures(self):
+        row=dict(outcome='completed',N='4',total_demand='800',P='3',T='2')
+        result=variable_requested_units(row)
+        self.assertEqual(result['maxload'],600);self.assertEqual(result['top10_mean'],400)
+        self.assertNotIn('maxload',row)
+        for failure in ('not_found','not_run_constructor_not_found'):
+            self.assertEqual(variable_requested_units({**row,'outcome':failure})['maxload'],'')
+        for n in ('0','-1','2.5',''):
+            with self.assertRaises(ValueError):variable_requested_units({**row,'N':n})
+        self.assertEqual(variable_requested_units({**row,'total_demand':'0','P':'','T':''})['maxload'],'')
 
     def test_optional_real_node_schema(self):
         with tempfile.TemporaryDirectory() as temp:
