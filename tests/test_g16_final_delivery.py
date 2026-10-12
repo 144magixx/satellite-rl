@@ -1,5 +1,10 @@
 """Small synthetic package and fake shared transport only; never contacts hosts."""
 import json
+import base64
+import contextlib
+import hashlib
+import io
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -60,7 +65,8 @@ class FakeTransport:
         if 'expected=json.loads' not in code:
             value=dict(exists=self.data is not None,sha256=__import__('hashlib').sha256(self.data).hexdigest() if self.data else None)
         else:
-            value=dict(verified=True,zip_sha256=__import__('hashlib').sha256(self.data).hexdigest(),members=26)
+            pin=re.search(r"'manifest_sha256':\s*'([0-9a-f]{64})'",code).group(1)
+            value=dict(verified=True,zip_sha256=__import__('hashlib').sha256(self.data).hexdigest(),manifest_sha256=pin,members=26)
         return dict(exit_code=0,stdout=json.dumps(value),stderr='')
 
 
@@ -121,6 +127,37 @@ class DeliveryTests(unittest.TestCase):
             row=data['files'][0];path=Path(temp)/'input'/'fake.tar';path.write_bytes(b'raw')
             row['path']=str(path);row['sha256']=delivery.sha(path);spec.write_bytes(delivery.encoded(data))
             self.assertEqual(delivery.plan(spec)['status'],'not_ready')
+
+    def test_remote_command_is_bounded_independent_of_large_dependency_index(self):
+        small={'members':{},'canonical_dependencies':[]}
+        large={'members':{},'canonical_dependencies':[{'id':'source_'+str(i),'path':'/canonical/'+'x'*250,'sha256':'a'*64} for i in range(10000)]}
+        def code(value):return delivery.remote_verify_code('/canonical/delivery.zip','b'*64,123,hashlib.sha256(delivery.encoded(value)).hexdigest(),0)
+        a,b=code(small),code(large)
+        self.assertEqual(len(a),len(b));self.assertLess(len(base64.b64encode(b.encode())),16*1024)
+        self.assertNotIn('canonical_dependencies',b);compile(b,'remote_verify','exec')
+
+    def test_real_remote_code_rejects_volume_manifest_member_and_inventory_tamper(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);path=root/'delivery.zip';payload=b'correct member'
+            expected={'schema':'g16_small_delivery_v1','members':{'safe.txt':{'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest()}},'canonical_dependencies':[{'id':'external'}]}
+            manifest=delivery.encoded(expected);pin=hashlib.sha256(manifest).hexdigest()
+            def write(member=payload,manifest_bytes=manifest,extra=False):
+                with zipfile.ZipFile(path,'w') as z:
+                    z.writestr('safe.txt',member);z.writestr('delivery_manifest.json',manifest_bytes)
+                    if extra:z.writestr('unlisted.txt',b'unknown')
+            def run(zip_sha=None,manifest_sha=pin):
+                code=delivery.remote_verify_code(str(path),zip_sha or delivery.sha(path),path.stat().st_size,manifest_sha,1)
+                out=io.StringIO()
+                with contextlib.redirect_stdout(out):exec(compile(code,'remote_verify','exec'),{})
+                return json.loads(out.getvalue())
+            write();self.assertTrue(run()['verified'])
+            with self.assertRaisesRegex(ValueError,'ZIP differs'):run(zip_sha='0'*64)
+            write(manifest_bytes=manifest+b' ')
+            with self.assertRaisesRegex(ValueError,'manifest differs'):run()
+            write(member=b'tampered bytes')
+            with self.assertRaisesRegex(ValueError,'member SHA'):run()
+            write(extra=True)
+            with self.assertRaisesRegex(ValueError,'member set'):run()
 
 
 if __name__=='__main__':unittest.main()

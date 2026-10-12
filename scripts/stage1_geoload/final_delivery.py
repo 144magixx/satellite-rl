@@ -209,6 +209,29 @@ def save_receipt(path,receipt):
     temporary.write_bytes(encoded(receipt));temporary.replace(path)
 
 
+def remote_verify_code(remote,zip_sha,zip_bytes,manifest_sha,member_count):
+    """Bounded command; manifest bytes become trusted only after two root pins."""
+    return f'''import pathlib,hashlib,json,zipfile
+p=pathlib.Path({remote!r});h=hashlib.sha256();count=0
+with p.open('rb') as f:
+ for block in iter(lambda:f.read(1048576),b''):h.update(block);count+=len(block)
+if count!={zip_bytes} or h.hexdigest()!={zip_sha!r}:raise ValueError('remote ZIP differs')
+with zipfile.ZipFile(p) as z:
+ raw=z.read('delivery_manifest.json')
+ if hashlib.sha256(raw).hexdigest()!={manifest_sha!r}:raise ValueError('remote manifest differs')
+ expected=json.loads(raw)
+ if len(expected['members'])!={member_count}:raise ValueError('remote manifest member count differs')
+ names=z.namelist()
+ if len(names)!=len(set(names)) or set(names)!=set(expected['members'])|{{'delivery_manifest.json'}}:raise ValueError('remote member set differs')
+ for name,row in expected['members'].items():
+  mh=hashlib.sha256();size=0
+  with z.open(name) as f:
+   for block in iter(lambda:f.read(1048576),b''):mh.update(block);size+=len(block)
+  if size!=row['bytes'] or mh.hexdigest()!=row['sha256']:raise ValueError('remote member SHA differs')
+print(json.dumps({{'verified':True,'path':str(p),'zip_sha256':h.hexdigest(),'manifest_sha256':{manifest_sha!r},'members':len(expected['members'])}}))
+'''
+
+
 def resume_upload(receipt_path, *, transport=None):
     """Upload identical existing bytes, then read through both authorized endpoints."""
     if transport is None:
@@ -228,24 +251,13 @@ def resume_upload(receipt_path, *, transport=None):
     if existing['exists'] and existing['sha256']!=receipt['zip_sha256']:raise ValueError('remote immutable delivery differs; refusing overwrite')
     if not existing['exists']:transport.upload(path,remote,20424)
     expected=receipt['manifest']
-    code=f'''import pathlib,hashlib,json,zipfile
-p=pathlib.Path({remote!r}); expected=json.loads({encoded(expected).decode()!r})
-data=p.read_bytes()
-if len(data)!={receipt['zip_bytes']} or hashlib.sha256(data).hexdigest()!={receipt['zip_sha256']!r}:raise ValueError('remote ZIP differs')
-with zipfile.ZipFile(p) as z:
- names=z.namelist()
- if len(names)!=len(set(names)) or set(names)!=set(expected['members'])|{{'delivery_manifest.json'}}:raise ValueError('remote member set differs')
- if json.loads(z.read('delivery_manifest.json'))!=expected:raise ValueError('remote manifest differs')
- for name,row in expected['members'].items():
-  b=z.read(name)
-  if len(b)!=row['bytes'] or hashlib.sha256(b).hexdigest()!=row['sha256']:raise ValueError('remote member SHA differs')
-print(json.dumps({{'verified':True,'path':str(p),'zip_sha256':hashlib.sha256(data).hexdigest(),'members':len(expected['members'])}}))
-'''
+    manifest_sha=hashlib.sha256(encoded(expected)).hexdigest()
+    code=remote_verify_code(remote,receipt['zip_sha256'],receipt['zip_bytes'],manifest_sha,len(expected['members']))
     for port in (20424,20473):
         result=transport.remote_python(code,port,timeout=60)
         if result['exit_code']:raise RuntimeError(str(port)+' delivery readback failed: '+result['stderr'][-300:])
         value=json.loads(result['stdout'].splitlines()[-1])
-        if value.get('verified') is not True or value.get('zip_sha256')!=receipt['zip_sha256'] or value.get('members')!=len(expected['members']):raise ValueError('remote readback receipt differs')
+        if value.get('verified') is not True or value.get('zip_sha256')!=receipt['zip_sha256'] or value.get('manifest_sha256')!=manifest_sha or value.get('members')!=len(expected['members']):raise ValueError('remote readback receipt differs')
         receipt['remote_verified'][str(port)]=value
         receipt['remote_path']=remote
         save_receipt(receipt_path,receipt)
