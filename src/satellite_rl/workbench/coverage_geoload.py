@@ -75,15 +75,15 @@ def create_job(application, body):
     if kind not in ("prepare", "evaluate", "train"):
         raise ValueError("unknown G16 kind")
     mode = body.get("mode", "evaluate" if kind == "evaluate" else "initial")
-    if mode not in ("initial", "teacher", "evaluate", "train", "dataset", "reference"):
+    if mode not in ("initial", "teacher", "evaluate", "train", "dataset", "reference", "variable"):
         raise ValueError("unknown G16 worker mode")
     if (kind, mode) not in (("prepare", "initial"), ("prepare", "teacher"), ("prepare", "dataset"),
-                            ("evaluate", "evaluate"), ("evaluate", "reference"), ("train", "train")):
+                            ("evaluate", "evaluate"), ("evaluate", "reference"), ("evaluate", "variable"), ("train", "train")):
         raise ValueError("kind/mode differs")
     role = body.get("dataset_role")
     if role not in ROLES or (mode != "dataset" and role not in config["datasets"]):
         raise ValueError("declared partition required")
-    if role == "test" and (mode not in ("evaluate","dataset","initial") or config["search"]["seconds"] != 2.):
+    if role == "test" and (mode not in ("evaluate","dataset","initial","variable") or config["search"]["seconds"] != 2.):
         raise ValueError("test is only common frozen 2s evaluation")
     if config["search"]["seconds"] != 2. and role != "development":
         raise ValueError("10/30s references are development only")
@@ -112,21 +112,28 @@ def create_job(application, body):
             raise ValueError("dataset role/count differs from partition")
     if mode == "dataset":
         spec=deepcopy(body.get("dataset_spec",{}))
-        if spec.get("role") != role or spec.get("kind") not in ("import_existing","official_day"):
+        if spec.get("role") != role or spec.get("kind") not in ("import_existing","official_day","merge_existing"):
             raise ValueError("frozen official/import dataset specification required")
-        if spec.get("count",spec.get("expected_mothers")) != partition["roles"][role].get("mother_count",partition["roles"][role]["count"]//4):
+        mothers=spec.get("count",spec.get("expected_mothers"))
+        if type(mothers) is not int or not 0<mothers<=partition["roles"][role].get("mother_count",partition["roles"][role]["count"]//4):
             raise ValueError("dataset mother budget differs from partition")
-        if spec["kind"]=="import_existing":
+        if spec["kind"] in ("import_existing","merge_existing"):
             for ref in spec.get("sources",[spec]): pin(ref)
         else:
             pin(spec.get("parser"))
             for ref in spec.get("metadata_pins",{}).values():pin(ref)
+    if mode in ("teacher","train"):
+        gate=read_json(pin(body.get("gate")),{})
+        if gate.get("group")!=GROUP or gate.get("passed") is not True:
+            raise ValueError("teacher/MLM requires passed frozen development reference gate")
     if mode == "teacher" and role != "train":
         raise ValueError("teacher labels are training only")
     if mode == "teacher" and methods != ["JOINT"]:
         raise ValueError("teacher requires frozen JOINT trajectory")
     if mode == "reference" and (role != "development" or methods != ["JOINT"]):
         raise ValueError("nested reference is development JOINT only")
+    if mode == "variable" and (role != "test" or methods != ["VARIABLE"]):
+        raise ValueError("variable-N fixed 40-mother test trajectory only")
     if "MLM" in methods: pin(body.get("model"))
     if kind == "train":
         if set(config["datasets"]) != {"train","validation"}:
@@ -173,6 +180,16 @@ def create_job(application, body):
                "dataset_role": role, "mode": mode, "methods": methods, "references": refs,
                "execution_device": "cuda" if kind == "train" else "cpu", "ssh_port": port}
         if mode=="dataset":job["dataset_spec"]=spec
+        indices=body.get("mother_indices")
+        if indices is not None:
+            cap=partition['roles'][role].get('mother_count',partition['roles'][role]['count']//4)
+            if not isinstance(indices,list) or not indices or len(set(indices))!=len(indices) or any(type(i)is not int or i<0 or i>=cap for i in indices):
+                raise ValueError("invalid mother shard indices")
+            if mode in ('teacher','variable') or role=='test':
+                parity=0 if port=='20424' else 1
+                if indices != list(range(parity,cap,2)):
+                    raise ValueError("G16 common mother shards must follow fixed index modulo2")
+            job['mother_indices']=indices
         atomic_json(directory / "config.json", config)
         atomic_json(directory / "status.json", {"run_id": run_id, "stage": "queued", "pid": None,
                     "env_step": 0, "update_step": 0, "completed_cases": 0, "heartbeat_at": now()})

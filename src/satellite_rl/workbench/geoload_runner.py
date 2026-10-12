@@ -82,7 +82,27 @@ def _run_mother(cases, methods, search, mode, teacher_root=None, model_ref=None,
                 atomic_json(started,{"case_id":case["case_id"],"method":method,"started_at":now(),
                     "pid":os.getpid(),"search_limit":search,"status":"started"})
             began = time.perf_counter()
-            if mode == "teacher":
+            if mode == "variable":
+                from satellite_rl.coverage.geoload.classical import run_classical
+                from satellite_rl.coverage.geoload.config import SearchConfig
+                n0=len(initial.centers); cap=min(200,len(scene.demands));entries=[]
+                quota0=run_classical(scene,initial,"QUOTA",SearchConfig(**search)).to_record()
+                entries.append({"stage":"same_N_quota","target_N":n0,"outcome":"completed",**quota0})
+                targets=sorted({min(cap,max(1,int(np.ceil(scale*n0)))) for scale in (.8,1.2)}-{n0})
+                for target_n in targets:
+                    constructed=run_classical(scene,initial,"VARIABLE",SearchConfig(**search,allow_variable_n=True,target_n=target_n)).to_record()
+                    reached=len(constructed['layout']['centers'])==target_n
+                    entries.append({"stage":"construct","target_N":target_n,"outcome":"completed" if reached else "not_found",
+                                    "certified_infeasible":False,**constructed})
+                    if reached:
+                        from satellite_rl.coverage.geoload.core import Layout
+                        quota=run_classical(scene,Layout.from_record(constructed['layout']),"QUOTA",SearchConfig(**search)).to_record()
+                        entries.append({"stage":"target_quota","target_N":target_n,"outcome":"completed",**quota})
+                    else:
+                        entries.append({"stage":"target_quota","target_N":target_n,"outcome":"not_run_constructor_not_found",
+                                        "budgets":{"attempted":0,"seconds":0}})
+                result={"entries":entries,"N0":n0,"metrics":metrics(scene,initial),"layout":initial.to_record()}
+            elif mode == "teacher":
                 from satellite_rl.coverage.geoload.teacher import teacher_case
                 target = Path(teacher_root) / result_key(case["case_id"], method)
                 result = teacher_case({**case,"initial":initial.to_record()},target,search)
@@ -204,10 +224,14 @@ def run_job(directory, *, resume=False):
                 atomic_json(directory/"artifacts.json",record)
                 if record.get("status") == "data_unavailable":
                     update(stage="failed",error="official data unavailable; retained source evidence",scientific_failure=False)
+                elif record.get("status") == "stopped":
+                    update(stage="stopped",stopped_at=now())
                 else:
                     update(stage="completed",completed_at=now())
                 return
             groups = load_cases(config["datasets"][job["dataset_role"]])
+            if job.get("mother_indices") is not None:
+                groups=[groups[i] for i in job['mother_indices']]
             methods = job["methods"]
             output = directory / "cases"; output.mkdir(exist_ok=True)
             existing = {}
@@ -280,6 +304,10 @@ def run_job(directory, *, resume=False):
                 "case_index": str(directory / "case_index.json"), "case_index_sha256": digest(directory / "case_index.json"),
                 "completed": True, "count": total, "scientific_commit": job["scientific_commit"],
                 "dataset_sha256": config["datasets"][job["dataset_role"]]["sha256"]})
+            if job['mode']=='teacher':
+                artifacts=read_json(directory/'artifacts.json',{})
+                artifacts['teacher']={'path':str(teacher_root/'teacher_manifest.json'),'sha256':digest(teacher_root/'teacher_manifest.json')}
+                atomic_json(directory/'artifacts.json',artifacts)
             update(stage="completed", completed_at=now())
     except InterruptedError:
         update(stage="stopped", stopped_at=now())
