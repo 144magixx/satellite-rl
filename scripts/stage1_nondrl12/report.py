@@ -98,10 +98,13 @@ def paired_comparison(method, baseline):
             "worse_carry_mothers": sum(x["aircraft_carry"] < y["aircraft_carry"]-1e-10 for x,y in pairs if x["aircraft_carry"] is not None)}
 
 
-def verify_gate(gate, threshold, audits_by_run, path_map=None):
+def verify_gate(gate, threshold, audits_by_run, path_map=None, *, state_gate=None):
     """Recompute the scientific gate from audited exact scene evidence."""
     if gate.get("experiment_id") != "S1-ND12" or gate.get("threshold") != threshold:
         raise ValueError("development gate group/threshold differs")
+    if state_gate is not None and any(gate.get(k) != state_gate.get(k) for k in
+            ("route", "passed", "status", "improved_mothers", "geometry_pass", "threshold")):
+        raise ValueError("frozen gate/state scientific outcome differs")
     if gate.get("authority")=="bounded_teacher_disposition":
         return verify_bounded_teacher_disposition(gate,audits_by_run,path_map)
     if gate.get("authority") == "actual_strong_teacher_probe":
@@ -154,6 +157,16 @@ def verify_gate(gate, threshold, audits_by_run, path_map=None):
         raise ValueError("quality-failed gate cannot be marked passed by a mechanism")
     if not required and gate["passed"] != passed:
         raise ValueError("gate outcome differs from measured threshold")
+    # The frozen controller calls the successor mechanism only if this
+    # measured quality pre-screen passed. Audit all source rows above first;
+    # a false flag alone never excuses missing mechanism evidence.
+    if required and not passed:
+        if gate["passed"] is not False or gate.get("status") != "science_stopped":
+            raise ValueError("audited preliminary failure is inconsistent with the terminal gate")
+        if gate.get("mechanism") is not None:
+            raise ValueError("quality-failed gate unexpectedly claims a successor mechanism")
+        return {"passed_quality": False, "actual_passed": False, "improved_mothers": len(improved),
+                "mechanism_stage": "not_reached_after_audited_preliminary_failure"}
     if threshold.get("required_mechanism") and passed:
         mechanism_record=verify_dynamic_mechanism(gate,audits_by_run,path_map)
         if gate["passed"]!=(passed and mechanism_record["passed"] is True):
@@ -179,7 +192,7 @@ def verify_gate(gate, threshold, audits_by_run, path_map=None):
 
 
 def verify_dynamic_mechanism(gate,audits,path_map=None):
-    receipt=gate.get("mechanism",{})
+    receipt=gate.get("mechanism") or {}
     source=receipt.get("receipt_source",{})
     location=source.get("path","")
     for old,new in (path_map or {}).items():
@@ -436,7 +449,8 @@ def build(plan, state, root, *, path_map=None, gate_directory=None, verified_vol
                 raw = gate_path.read_bytes()
                 if digest_bytes(raw) != status["gate_source"]["sha256"]:
                     raise ValueError("gate SHA differs")
-                result["gate"] = verify_gate(json.loads(raw), plan["gate_thresholds"][route], audits, path_map)
+                result["gate"] = verify_gate(json.loads(raw), plan["gate_thresholds"][route], audits, path_map,
+                                             state_gate=status)
             except (KeyError, ValueError, FileNotFoundError) as error:
                 issues.append(route + ": " + str(error))
         if status.get("passed"):
