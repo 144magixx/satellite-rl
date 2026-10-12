@@ -191,6 +191,7 @@ def run(plan_path,state_path):
     sha=digest(plan_path)
     state=json.loads(state_path.read_text(encoding='utf-8-sig')) if state_path.exists() else {'group':'S1-G16','plan_sha256':sha,'tasks':{}}
     if state['plan_sha256']!=sha:raise ValueError('persistent pipeline plan changed')
+    state.update(scientific_commit=plan['scientific_commit'],execution_ports=list(ops.SSH_PORTS))
     with exclusive_lock(state_path.with_suffix('.lock')):
         while not state.get('compute_and_archives_complete'):
             try:

@@ -13,6 +13,21 @@ from satellite_rl.training.run_monitor import atomic_json
 from .storage import digest, read_json, now
 from .coverage_geoload import GROUP, pin, validate_config
 
+_MODEL_CACHE = {}
+
+def cached_model(reference):
+    """One immutable model load per pool worker, outside online search budget."""
+    import torch
+    from satellite_rl.coverage.geoload.models import make_model, MODEL_FORMAT
+    path=Path(reference['path']).resolve();key=(str(path),reference['sha256'])
+    if key not in _MODEL_CACHE:
+        state=torch.load(pin(reference),map_location='cpu',weights_only=False)
+        if state.get('format')!=MODEL_FORMAT or state.get('update')!=10000 or state.get('from_scratch') is not True:
+            raise ValueError('evaluation requires new fixed10000 endpoint')
+        model=make_model(state.get('network'));model.load_state_dict(state['model']);model.eval()
+        _MODEL_CACHE.clear();_MODEL_CACHE[key]=model
+    return _MODEL_CACHE[key]
+
 @contextmanager
 def exclusive_lock(path, *, shared=False, blocking=False):
     """Kernel lock outlives no process; a stale PID cannot confer ownership."""
@@ -118,12 +133,7 @@ def _run_mother(cases, methods, search, mode, teacher_root=None, model_ref=None,
                 from satellite_rl.coverage.geoload.learning import orderer
                 model = None
                 if method == "MLM":
-                    import torch
-                    from satellite_rl.coverage.geoload.models import make_model, MODEL_FORMAT
-                    state = torch.load(pin(model_ref),map_location="cpu",weights_only=False)
-                    if state.get("format") != MODEL_FORMAT or state.get("update") != 10000 or state.get("from_scratch") is not True:
-                        raise ValueError("evaluation requires new fixed10000 endpoint")
-                    model = make_model(state.get("network")); model.load_state_dict(state["model"])
+                    model=cached_model(model_ref)
                 rank_journal=[]
                 result = run_classical(scene,initial,"JOINT",SearchConfig(**search),
                      candidate_order=orderer(method,model=model,seed=51001,journal=rank_journal)).to_record()
