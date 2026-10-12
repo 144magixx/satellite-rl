@@ -1,5 +1,21 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 05:25 S1-AI17-R2先导独立审计与G0/G1/G2已通过，剩余56案例已准入、尚未启动；G3未过，仍不训练模型。** 独立重放24/24案例、48方法记录与585来源pin，未解决问题0；根复核15项读取/审计检查并独立重计目标命中。[根门槛验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/pilot/root_gate_acceptance.json)绑定audit `3d2c87c0…`、gate `f223c3e8…`和结果前G3解释`1ba91289…`。D1完整池24/24、新可行24/24、目标9/24且覆盖5/6母；D0完整池12/24、目标8/24且覆盖4/6母，不能将D0质量分母缩为12。D1相对D0最终峰值5例更低、6更高、13相同，均值优势不等于全面胜出。
+
+D1离线oracle相对规则的射线对成本中位仅节省5.3517%，低于预定20%；固定首项A区重分已覆盖同样9个目标案例，主成本相对oracle超额中位5.6543%，因此未建立八任务排序学习的必要性。该首项的9个首次命中全部不改N/真实宽度、全部改变归属；最终发布布局同时改变N和真实宽度则为D1 17/24、D0 14/24，两层机制不可混写。此结论仅为6母开发证据，不否定其它AI路线，也未完成用户要求的最终联合可变方案。
+
+按方案18原额度继续剩余14母56案例、112方法记录/896新任务槽，原24字节和任务直接复用、不重求解。三端18/24/73正准备独立操作层扩展与安全服务升级，核心保持f02 Git blob一致、B5科学合同不变；新操作层执行提交将在冻结后单列，尚未发布新任务。74无本组准入。[报告13](docs/第一阶段/实验报告/13_共同强初解与峰值对齐重构先导对照.md)与五图已完成，根核18链接、37图表成员SHA及实际数字/机制、目视图表；59成员/2,140,841B中间报告小包已本地E与远端18整包及逐成员核同，SHA`a89e7a25…`。[报告验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/pilot/report13_root_acceptance.json) · [双端位置](outputs/experiments/first_stage_ai_search_20261013/delivery/r2_pilot_report_location.json)。小包不是完整原始数据/模型交付。后续AI方向重点是强布局构造/可行修复的真实质量或完整成本收益；科学学习更新及新val/test算法评价仍0。既有报告12与原失败保留，当前研究继续。
+
+**2026-10-13 04:35 S1-AI17-R2首批24景的D0/D1计算已完成，正在采集并独立审计。** 实际三任务`evaluate_ai_search_r2_20261013_043505_d2286666`、`043506_71831b20`、`043507_89287e52`各16/16，合计48方法记录、384任务结果；原worker26497/64392/67374均退出，唯一控制器28532也completed并退出。每景两法的共同parent/pool SHA、奇偶轮换顺序及三端224冻结源码成员已实际闭合，源f02、计划f55与B5合同不变。[终态交接](outputs/experiments/first_stage_ai_search_20261013/round2/preflight/closed_pool_terminal_handoff.json) · [原结果引用](outputs/experiments/first_stage_ai_search_20261013/round2/result_manifest_refs.json)。计算很短，未取得运行中CPU/GPU峰值采样；不能补造利用率或据阶段完成宣称算法优胜。
+
+独立后处理14项工程检查已由根在Git规范源环境复跑通过，G3解释仍为结果前1ba9版本。只读采集将保每个原始文件、各端原source manifest与来源，复用原R1 canonical数据及Git原字节q源，不重复旧3GB数据；随后逐候选重算几何、负载、任务/前缀成本及G0–G3。[后处理交接](outputs/experiments/first_stage_ai_search_20261013/round2/engineering/postprocessor/handoff.json)。目前没有正式效果或扩展准入结论，剩余56、AI训练及新val/test算法调用仍0；不把采集或合成检查当正式新成果。
+
+**2026-10-13 04:30 S1-AI17-R2三端共同初解24/24已完成，首批评价计划已根核，正在发布。** 正式科学源`f02c0dcbf76561c325b5a70a1a5b9bf98882b35d`、合同B5保持；本地主目录集成`869d685`。根在Git规范字节副本独立跑110项检查，并核10个真实已审布局与590束包络逐值一致；签名合同以专门Git属性保原字节，Windows行尾不再改变B5。[源与资格验收](outputs/experiments/first_stage_ai_search_20261013/round2/engineering/root_source_freeze_acceptance.json)。三端8980–8982已实际部署，DQN/CUDA/新repo与224冻结源码成员逐端核过，未使用74。
+
+原prepare任务18=`042703_08b34dda`、24=`042708_f2d42830`、73=`042713_095e4b7a`各8/8 completed，原worker均退出；控制器17820也正常completed并退出，不恢复。[根04:28真实API](outputs/experiments/first_stage_ai_search_20261013/round2/preflight/root_prepare_actual_0428.json) · [24份共同输入与来源闭合](outputs/experiments/first_stage_ai_search_20261013/round2/preflight/prepare_common_terminal_handoff.json)。准备只读R1五法已签终态，新增求解/训练/新val/test仍0。下一份[评价计划](outputs/experiments/first_stage_ai_search_20261013/round2/run_plan_closed_pool.json)SHA`f55ba009…`已根核固定24案例、48方法行、384任务槽，原共同SHA/预算/源码保持；发布中的实际评价ID与进度以[本轮运行清单](outputs/experiments/first_stage_ai_search_20261013/round2/run_manifest.json)随后回执为准，不能提前称已完成求解。
+
+G3的逐案例几何调用保护与固定槽反证已在评价开始前由Astra明确并保存[解释记录](outputs/experiments/first_stage_ai_search_20261013/design/round2_G3_pre_result_interpretation.json)SHA`1ba91289…`，没有看新结果后选口径。源码冻结前的可视性/包络计量、准备中断留账、硬错误停止后继任务和API开发范围漏洞均已修复、回归通过；失败和审查记录保留。首批跑完先独立审核与报告，不自动扩剩56或训练。
+
 **2026-10-13 S1-AI17-R2方案18已完成并通过根设计复核，正在独立实现，尚未发起本轮正式任务。** [方案18](docs/第一阶段/方案/18_共同强初解与峰值对齐小池重构开发方案.md)与[机器合同v2](outputs/experiments/first_stage_ai_search_20261013/design/round2_design.json)SHA`b5c0ddb5…`规定先24开发案例×8任务×D0/D1=384解码任务；实际共同强初解从R1五个已审计终态抽取，不重跑基线。两法共用等价逐机归属核验与局部资格矩阵，D1仅64活动飞机、其余全保留并核几何。严格工作量上限与名义3秒护栏分开，全部合法N≤200候选保留，共同N₀/Ω₀切片只用于质量门槛。G0/G1/G2通过才扩剩余56，不自动训练或访问新val/test。[根设计验收v2](outputs/experiments/first_stage_ai_search_20261013/design/round2_root_design_acceptance_v2.json)。
 
 启动前v2将最多261个有限候选点的非支配档案完整保留，取消原64点裁剪，并明确准备阶段截断的已知成本与未知中断禁止自动重算；原输入、预算与门槛不变。[原9ccd合同](outputs/experiments/first_stage_ai_search_20261013/design/round2_design_v1_before_archive_clarification.json)及[Astra修订审核](outputs/experiments/first_stage_ai_search_20261013/design/round2_contract_revision_review_v2.json)保留。23项核心工程检查已过，工作台与独立后处理仍在集成，未把工程小例当作开发效果。
