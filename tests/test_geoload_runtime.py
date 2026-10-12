@@ -1,0 +1,160 @@
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+import numpy as np
+from satellite_rl.workbench.coverage_geoload import default_config, validate_config, pin
+from satellite_rl.workbench.geoload_runner import load_cases, _run_mother, exclusive_lock, result_key
+from satellite_rl.workbench.storage import digest
+
+class GeometryRuntimeTests(unittest.TestCase):
+    def test_frozen_budget_rejects_extra_fields(self):
+        c=default_config();c['search']['physical_calls']=12
+        with self.assertRaises(ValueError):validate_config(c)
+    def test_seed_immutable(self):
+        c=default_config();c['training']['seed']=51002
+        with self.assertRaises(ValueError):validate_config(c)
+    def test_unknown_metric_config_rejected(self):
+        c=default_config();c['coverage']['capacity']=600
+        with self.assertRaises(ValueError):validate_config(c)
+    def test_sha_pin(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/'a';p.write_text('first');r={'path':str(p),'sha256':digest(p)}
+            self.assertEqual(pin(r),p.resolve());p.write_text('second')
+            with self.assertRaises(ValueError):pin(r)
+    def test_packed_dataset_groups_mothers(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/'inputs.npz'
+            np.savez(p,positions=np.array([[45.,5.],[45.1,5.],[45.,5.],[45.1,5.]]),
+                demands=np.array([1.,2.,2.,1.]),offsets=np.array([0,2,4]),
+                case_ids=np.array(['a_base','a_hot']),mother_ids=np.array(['a','a']),demand_profiles=np.array(['base','one_hotspot']))
+            groups=load_cases({'path':str(p),'sha256':digest(p),'count':2})
+            self.assertEqual(len(groups),1);self.assertEqual(len(groups[0]),2)
+            rows=_run_mother(groups[0],['BH'],{'seconds':0.,'max_attempts':0},'evaluate')
+            self.assertTrue(all(x['metrics']['evidence']['valid'] for x in rows))
+            self.assertEqual(rows[0]['initial_sha256'],rows[1]['initial_sha256'])
+    def test_kernel_exclusive_lock(self):
+        with tempfile.TemporaryDirectory() as d:
+            with exclusive_lock(Path(d)/'lock'):
+                with self.assertRaises(OSError):
+                    with exclusive_lock(Path(d)/'lock'):pass
+    def test_keys_do_not_alias(self):
+        self.assertNotEqual(result_key('a','BC'),result_key('aB','C'))
+    def test_dispatch_rejects_cycle_and_other_lane(self):
+        from scripts.stage1_geoload.controller import validate_plan
+        p={'group':'S1-G16','authorized':True,'tasks':{'a':{'port':20424,'body':{'request_id':'a'},'depends':['a']}}}
+        with self.assertRaises(ValueError):validate_plan(p)
+        p['tasks']['a']['depends']=[];p['tasks']['a']['port']=20418
+        with self.assertRaises(ValueError):validate_plan(p)
+    def test_reference_gate_uses30s_and_both_halves(self):
+        from scripts.stage1_geoload.pipeline import make_gate
+        state={'tasks':{}}
+        for port in (20424,20473):
+            for mode in ('dev','reference'):state['tasks'][mode+'_'+str(port)]={'port':port,'mode':mode}
+        def read(task):
+            rows=[];parity=0 if task['port']==20424 else 1
+            for m in range(parity,20,2):
+                for profile in range(4):
+                    key=f'{m:02}_{profile}';mother=f'{m:02}'
+                    a={'P':2.,'T':1.8,'evidence':{'valid':True}}
+                    b={**a,'P':1.9 if m%10<2 else 2.}
+                    row={'case_id':key,'mother_id':mother,'method':'09-LEX','metrics':a}
+                    if task['mode']=='reference':
+                        row['method']='JOINT';row['reference_nodes']=[{'seconds_limit':10,'metrics':a},{'seconds_limit':30,'metrics':b}]
+                    rows.append(row)
+            return {'rows':rows,'index_sha256':'0'*64}
+        with tempfile.TemporaryDirectory() as d,patch('scripts.stage1_geoload.pipeline.raw_rows',side_effect=read):
+            gate,_=make_gate(state,d)
+            self.assertTrue(gate['passed']);self.assertEqual(gate['reference_seconds'],30)
+            self.assertEqual(gate['half_fractions'],[.2,.2])
+    def test_create_job_idempotency_and_source_pin(self):
+        from types import SimpleNamespace
+        from satellite_rl.workbench.storage import Store
+        from satellite_rl.workbench.coverage_geoload import create_job
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);store=Store(root/'archive',source_root=root);commit='a'*40
+            plan=root/'plan.json';plan.write_text(json.dumps({'group':'S1-G16','authorized':True,'scientific_commit':commit}))
+            partition=root/'partition.json';partition.write_text(json.dumps({'group':'S1-G16','roles':{
+                r:{'dates':[r],'count':80,'mother_count':20} for r in ('train','development','validation','test')}}))
+            dataset=root/'inputs.npz';dataset.write_bytes(b'bounded test source')
+            c=default_config();c['datasets']={'development':{'path':str(dataset),'sha256':digest(dataset),'role':'development','count':80}}
+            b={'request_id':'unique','kind':'evaluate','mode':'evaluate','dataset_role':'development','config':c,'methods':['BH'],
+                'plan':{'path':str(plan),'sha256':digest(plan)},'partition':{'path':str(partition),'sha256':digest(partition)}}
+            with patch('satellite_rl.workbench.coverage_geoload.deployment',return_value='20424'),patch.object(store,'freeze_source',return_value=(root,commit)):
+                job=create_job(SimpleNamespace(store=store),b)
+                self.assertEqual(create_job(SimpleNamespace(store=store),b)['run_id'],job['run_id'])
+                b['methods']=['07']
+                with self.assertRaises(ValueError):create_job(SimpleNamespace(store=store),b)
+    def test_mlm_ownership_is_global_and_incomplete_creation_blocks(self):
+        from satellite_rl.workbench.storage import Store
+        from satellite_rl.workbench.coverage_geoload import check_mlm_owner,mlm_ownership_path
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'s1_g16'
+            a=Store(root/'20424/archive');b=Store(root/'20473/archive')
+            path=a.job_dir('original')/'job.json';path.parent.mkdir()
+            owner={'request_id':'original','request_hash':'hash','archive_root':str(a.archive_root),
+                   'job_path':str(path),'run_id':'original','status':'reserved'}
+            mlm_ownership_path(a).write_text(json.dumps(owner))
+            with self.assertRaises(ValueError):check_mlm_owner(a,'original','hash')
+            path.write_text(json.dumps({'run_id':'original','request_hash':'hash','resume':True}))
+            check_mlm_owner(a,'original','hash')
+            with self.assertRaises(ValueError):check_mlm_owner(a,'new_request','hash')
+            with self.assertRaises(ValueError):check_mlm_owner(b,'original','hash')
+    def test_cuda_inference_contract_is_immutable(self):
+        c=default_config();self.assertEqual(c['inference']['device'],'cuda')
+        c['inference']['device']='cpu'
+        with self.assertRaises(ValueError):validate_config(c)
+    def test_gate_transport_projects_trace_and_layout_on_remote(self):
+        import contextlib,io,hashlib
+        from scripts.stage1_geoload.pipeline import raw_rows
+        with tempfile.TemporaryDirectory() as d:
+            archive=Path(d)/'archive';job=archive/'outputs/workbench/jobs/sample';(job/'cases').mkdir(parents=True)
+            value={'case_id':'a','mother_id':'m','method':'JOINT','metrics':{'P':2.,'T':1.5,'Q':2.1,
+                'beam_loads':[4.]*200,'evidence':{'valid':True,'loads':[4.]*200}},
+                'journal':[{'full_trace':'must_never_cross_SSH'*10000}],
+                'reference_nodes':[{'seconds_limit':30,'layout':{'assignment':[0]*10000},
+                                    'metrics':{'P':1.8,'T':1.4,'evidence':{'valid':True}}}]}
+            path=job/'cases/a.json';path.write_text(json.dumps(value));case_sha=digest(path)
+            index=job/'case_index.json';index.write_text(json.dumps({'a':{'sha256':case_sha}}))
+            def remote(code,port,timeout):
+                out=io.StringIO()
+                with contextlib.redirect_stdout(out):exec(code,{})
+                self.assertLess(len(out.getvalue()),3000)
+                self.assertNotIn('must_never_cross_SSH',out.getvalue())
+                return {'exit_code':0,'stdout':out.getvalue(),'stderr':''}
+            with patch('scripts.stage1_geoload.pipeline.ops.instance',return_value={'archive':str(archive)}),patch('scripts.stage1_geoload.pipeline.ops.remote_python',side_effect=remote):
+                row=raw_rows({'port':20424,'run_id':'sample'})['rows'][0]
+                self.assertEqual(row['source_case_sha256'],case_sha)
+                self.assertNotIn('layout',row['reference_nodes'][0]);self.assertNotIn('beam_loads',row['metrics'])
+    def test_archive_manifest_is_remote_not_ssh_argument(self):
+        from scripts.stage1_geoload.archive import export_job
+        def remote(code,port,timeout):
+            self.assertLess(len(code),5000)
+            self.assertIn('members={}',code)
+            self.assertIn("z.open(name,'w',force_zip64=True)",code)
+            return {'exit_code':1,'stderr':'synthetic stop before IO'}
+        with patch('scripts.stage1_geoload.archive.ops.remote_python',side_effect=remote):
+            with self.assertRaises(RuntimeError):export_job(20424,'sample','E:/unused.zip')
+    def test_pipeline_large_prepared_source_stays_remote(self):
+        from scripts.stage1_geoload.pipeline import dataset,observe,body
+        source={'source_aircraft_ids':['unchanged-source-evidence']*100000}
+        artifact={'status':'prepared','path':'/remote/inputs.npz','sha256':'a'*64,'role':'train','count':2304,
+                  'mother_count':576,'source':source}
+        state={'tasks':{'prepare_train':{'port':20424,'run_id':'original','stage':'running'}}}
+        with patch('scripts.stage1_geoload.pipeline.ops.api',return_value={'status':{'stage':'completed'},'artifacts':artifact}):
+            observe(state)
+        retained=state['tasks']['prepare_train']['artifacts']
+        self.assertNotIn('source',retained)
+        self.assertTrue(retained['source_retained_in_remote_artifacts'])
+        self.assertTrue(retained['canonical_artifacts_path'].endswith('/original/artifacts.json'))
+        ref=dataset(state['tasks']['prepare_train'],'train')
+        self.assertEqual(set(ref),{'path','sha256','role','count'})
+        plan={'scientific_commit':'b'*40,'science_plan_refs':{'20424':{'path':'/p','sha256':'c'*64}},
+              'partition_refs':{'20424':{'path':'/part','sha256':'d'*64}}}
+        request=body(plan,'teacher',20424,'prepare','teacher','train',{'train':ref},['JOINT'])
+        self.assertLess(len(json.dumps(request).encode()),8192)
+        self.assertIs(artifact['source'],source)
+        self.assertEqual(len(source['source_aircraft_ids']),100000)
+
+if __name__=='__main__':unittest.main()

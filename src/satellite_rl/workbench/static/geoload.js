@@ -1,0 +1,8 @@
+"use strict";
+const el=id=>document.getElementById(id);
+async function api(path,body){const r=await fetch('/api/geoload/'+path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});const data=await r.json();if(!r.ok)throw Error(data.error||JSON.stringify(data));return data;}
+async function refresh(){try{const jobs=await api('jobs');el('jobs').replaceChildren();for(const row of jobs){const section=document.createElement('section');const title=document.createElement('h3');title.textContent=row.job.name+' · '+row.job.run_id;section.append(title);const info=document.createElement('pre');info.textContent=JSON.stringify({kind:row.job.kind,mode:row.job.mode,partition:row.job.dataset_role,methods:row.job.methods,source:row.job.scientific_commit,status:row.status,model_directory:row.job.model_dir},null,2);section.append(info);const link=document.createElement('a');link.href='/api/runs/'+encodeURIComponent(row.job.run_id);link.textContent='日志、原始指标与结果详情';section.append(link);el('jobs').append(section);}}catch(e){el('message').textContent=e.message;}}
+el('refresh').onclick=refresh;
+el('submit').onclick=async()=>{try{const job=await api('jobs',JSON.parse(el('request').value));el('message').textContent='工作台已创建 '+job.run_id;await refresh();}catch(e){el('message').textContent=e.message;}};
+api('schema').then(s=>{el('schema').textContent=JSON.stringify(s,null,2);el('request').value=JSON.stringify({request_id:'g16_unique_request',kind:'evaluate',mode:'evaluate',dataset_role:'development',methods:['BH'],config:s.config,plan:{path:'',sha256:''},partition:{path:'',sha256:''}},null,2);});
+refresh();

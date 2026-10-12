@@ -75,7 +75,10 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict):
                         raise ValueError("请求须为JSON对象")
-                if parts[1:2] == ["fair20"]:
+                if parts[1:2] == ["geoload"]:
+                    from .coverage_geoload import api as geoload_api
+                    self._json(geoload_api(self.server.application, method, parts[2:], body))
+                elif parts[1:2] == ["fair20"]:
                     from .fair20_service import Fair20Application
                     self._json(Fair20Application(self.server.application).api(method, parts[2:], body))
                 elif len(parts) == 4 and parts[1] == "runs" and parts[3] == "download" and method == "GET":
