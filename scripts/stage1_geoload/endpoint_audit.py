@@ -214,10 +214,12 @@ def execute(plan_path,state_path,base):
     train=check_readiness(plan,state)
     receipts=base/'preflight';receipts.mkdir(exist_ok=True)
     with exclusive_lock(receipts/'endpoint_audit.lock'):
+        api_terminal=[]
         for task in state['tasks'].values():
             actual=ops.api(task['port'],'/api/runs/'+task['run_id'])
-            if actual['status'].get('stage')!='completed' or actual['status'].get('process_alive') is not False:
+            if actual['job'].get('experiment_id')!='S1-G16' or actual['job'].get('scientific_commit')!=SCIENCE or actual['job'].get('run_id')!=task['run_id'] or actual['status'].get('stage')!='completed' or actual['status'].get('process_alive') is not False:
                 raise ValueError('real API task nonterminal/worker alive')
+            api_terminal.append({'run_id':task['run_id'],'port':task['port'],'stage':'completed','process_alive':False})
         existing_audit=receipts/'final_learning_audit.json';existing_export=receipts/'model_export_receipt.json'
         if existing_audit.exists() or existing_export.exists():
             if not existing_audit.exists() or not existing_export.exists():raise ValueError('incomplete prior receipts require explicit recovery')
@@ -240,7 +242,8 @@ print(json.dumps(m.remote_audit(%r,%r,%r)))
 '''%(job['source_root']+'/src',target,jobroot,manifest,job['run_id'])
             actual=ops.remote_python(code,20473,timeout=300)
             if actual['exit_code']:raise RuntimeError(actual['stderr'][-2000:])
-            audit=json.loads(actual['stdout'].splitlines()[-1]);audit.update(train_zip_sha256=state['archives']['train_mlm']['sha256'],train_zip_path=state['archives']['train_mlm']['local_path'])
+            audit=json.loads(actual['stdout'].splitlines()[-1]);audit.update(train_zip_sha256=state['archives']['train_mlm']['sha256'],train_zip_path=state['archives']['train_mlm']['local_path'],
+                all_tasks_api_terminal_verified=True,actual_api_terminal_tasks=api_terminal)
             destination=Path('D:/paper/models/runs/first_stage_geometry_load_20261012')/job['run_id']/'final';destination.mkdir(parents=True,exist_ok=True)
             if shutil.disk_usage(destination).free<8*(1<<30)+archive.manifest['members']['model/final.pt']['bytes']:
                 raise RuntimeError('final export lacks8GiB reserve')
@@ -254,11 +257,11 @@ print(json.dumps(m.remote_audit(%r,%r,%r)))
                     shutil.copyfileobj(source,out,1048576)
                 if digest(temp)!=expected:raise ValueError('exported final SHA differs')
                 temp.replace(target_final)
-            metadata={'group':'S1-G16','run_id':job['run_id'],'format':'s1_g16_geometry_mlm_v1','file':'final.pt','sha256':expected,
+            metadata={'group':'S1-G16','run_id':job['run_id'],'port':20473,'format':'s1_g16_geometry_mlm_v1','file':'final.pt','sha256':expected,'final_sha256':expected,
                 'scientific_commit':SCIENCE,'seed':51001,'update':10000,'from_scratch':True,'protocol_sha256':audit['protocol_sha256'],
                 'teacher_source_sha256':audit['teacher_source_sha256'],'validation_input_sha256':audit['validation_input_sha256'],
                 'generated_export_metadata':True,'native_model_json_existed':False,'checkpoint_source':'original_train_task_ZIP',
-                'checkpoint_sha256':audit['checkpoint_sha256']}
+                'checkpoint_sha256':audit['checkpoint_sha256'],'canonical_final_member':'train_mlm:model/final.pt'}
             metadata_path=destination/'model.json';metadata_path.write_text(json.dumps(metadata,indent=2)+'\n',encoding='utf-8')
             export={'group':'S1-G16','run_id':job['run_id'],'verified':True,'status':'passed','scientific_commit':SCIENCE,
                 'model_path':str(target_final),'model_sha256':expected,'metadata_path':str(metadata_path),'metadata_sha256':digest(metadata_path),
