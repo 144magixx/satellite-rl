@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -6,7 +7,8 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 import zipfile
-from scripts.stage1_geoload.archive_acceptance import audit, pinned_refs, safe_member
+from scripts.stage1_geoload.archive_acceptance import (audit,pinned_refs,safe_member,stream_pinned_refs,
+    HashingReader,JSON_LIMIT,absolute_reference,parser_metadata)
 
 
 class ArchiveAcceptanceTests(unittest.TestCase):
@@ -88,6 +90,107 @@ class ArchiveAcceptanceTests(unittest.TestCase):
                          'members':{'raw/a.tar':{'sha256':'0'*64,'bytes':11}}}]}
             result=audit(plan,state,registry)
             self.assertTrue(any(i['code']=='external_invalid' for i in result['issues']))
+
+    def test_stream_matches_reference_with_arbitrary_key_order_nested_arrays_unicode(self):
+        obj={'nested':[0,False,None,['numeric',3],{'sha256':'a'*64,'path':'/one','source_path':'/original'}],
+             'unicode':{'artifact_sha256':'b'*64,'artifact':'/位置/é','ignored':[1,2,3]},'other':{'archive_sha256':'c'*64,'archive_path':'/raw/a.tar'}}
+        raw=json.dumps(obj,ensure_ascii=False).encode()
+        self.assertCountEqual(list(stream_pinned_refs(io.BytesIO(raw))),list(pinned_refs(obj)))
+        self.assertEqual(parser_metadata()['version'],'3.3.0')
+
+    def test_hash_and_pin_parser_consume_same_stream_including_bom(self):
+        raw=b'\xef\xbb\xbf'+json.dumps({'sha256':'a'*64,'path':'/pin','matrix':[[1,2],[3,4]]}).encode()
+        reader=HashingReader(io.BytesIO(raw));pins=list(stream_pinned_refs(reader))
+        self.assertEqual(pins,[('$','/pin','a'*64)])
+        self.assertEqual(reader.count,len(raw));self.assertEqual(reader.hash.hexdigest(),hashlib.sha256(raw).hexdigest())
+        with self.assertRaisesRegex(ValueError,'unbounded'):reader.read()
+
+    def test_teacher_relative_path_and_source_manifest_safety(self):
+        obj={'samples':[{'sha256':'a'*64,'path':'shards/one.npz'}]}
+        pins=list(stream_pinned_refs(io.BytesIO(json.dumps(obj).encode()),'/job/teacher/manifest.json'))
+        self.assertIn(('$.samples','/job/teacher/shards/one.npz','a'*64),pins)
+        obj['samples'][0]['path']='../escape.npz'
+        with self.assertRaisesRegex(ValueError,'unsafe_teacher_sample'):list(stream_pinned_refs(io.BytesIO(json.dumps(obj).encode()),'/job/teacher/manifest.json'))
+        summary={};source={'git_commit':'a'*40,'files':{'src/a.py':'b'*64}}
+        refs=list(stream_pinned_refs(io.BytesIO(json.dumps(source).encode()),'/source/source_manifest.json',summary))
+        self.assertIn(('$.files.src/a.py','/source/src/a.py','b'*64),refs);self.assertEqual(summary['source_files_count'],1)
+
+    def test_duplicate_keys_and_truncated_json_rejected(self):
+        with self.assertRaisesRegex(ValueError,'duplicate JSON key'):list(stream_pinned_refs(io.BytesIO(b'{"path":"/first","path":"/second","sha256":"x"}')))
+        with self.assertRaisesRegex(ValueError,'invalid streaming JSON'):list(stream_pinned_refs(io.BytesIO(b'{"path":')))
+
+    def test_large_json_pins_past_old_limit_without_unbounded_read(self):
+        class GeneratedStream:
+            def __init__(self):
+                self.head=b'{"numbers":[';self.remaining=JSON_LIMIT+1024;self.tail=b'0],"ref":{"sha256":"'+b'a'*64+b'","path":"/tail/source"}}';self.max_read=0
+            def read(self,size):
+                if size<0:raise AssertionError('full read forbidden')
+                self.max_read=max(self.max_read,size);result=b''
+                if self.head:
+                    result=self.head[:size];self.head=self.head[len(result):];size-=len(result)
+                if size and self.remaining:
+                    count=min(size,self.remaining);count-=count%2
+                    result+=b'0,'*(count//2);self.remaining-=count;size-=count
+                if size and not self.remaining:result+=self.tail[:size];self.tail=self.tail[size:]
+                return result
+        source=GeneratedStream();reader=HashingReader(source)
+        pins=list(stream_pinned_refs(reader))
+        self.assertEqual(pins,[('$.ref','/tail/source','a'*64)])
+        self.assertGreater(reader.count,JSON_LIMIT);self.assertLessEqual(source.max_read,64*1024)
+
+    def test_urls_and_windows_are_exact_absolute_sources(self):
+        self.assertTrue(absolute_reference('https://api.github.com/releases/tag'))
+        self.assertTrue(absolute_reference('D:\\paper\\source.json'))
+        self.assertFalse(absolute_reference('shards/sample.npz'))
+
+    def test_case_member_never_uses_zip_read_and_missing_tail_pin_is_audited(self):
+        with tempfile.TemporaryDirectory() as temp:
+            def extra(members,manifest):
+                data=json.dumps({'journal':[{'candidate':[1,2,3]}]*200,'ref':{'path':'/missing/tail','sha256':'d'*64}}).encode()
+                members['job/cases/example.json']=data
+                manifest['members']['job/cases/example.json']={'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+            plan,state=self.fixture(Path(temp),extra);original=zipfile.ZipFile.read
+            def bounded(z,name,*args,**kwargs):
+                if '/cases/' in name:raise AssertionError('case must be streamed')
+                return original(z,name,*args,**kwargs)
+            with patch.object(zipfile.ZipFile,'read',bounded):result=audit(plan,state)
+            self.assertTrue(any(i['code']=='dependency_missing' and i['source_path']=='/missing/tail' for i in result['issues']))
+            self.assertTrue(any(n['member']=='job/cases/example.json' for n in result['nodes'] if 'member' in n))
+
+    def test_invalid_case_json_still_gets_complete_member_hash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            def extra(members,manifest):
+                data=b'{"bad":'+b'x'*200000
+                members['job/cases/invalid.json']=data
+                manifest['members']['job/cases/invalid.json']={'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+            plan,state=self.fixture(Path(temp),extra);result=audit(plan,state)
+            self.assertTrue(any(i['code']=='invalid_json' for i in result['issues']))
+            node=next(n for n in result['nodes'] if n.get('member')=='job/cases/invalid.json')
+            self.assertEqual(node['bytes'],200007)
+
+    def test_progress_is_compact_and_default_interface_stays_compatible(self):
+        with tempfile.TemporaryDirectory() as temp:
+            plan,state=self.fixture(Path(temp));events=[]
+            result=audit(plan,state,progress=events.append)
+            self.assertEqual(events[0]['phase'],'starting');self.assertEqual(events[-1]['phase'],'complete')
+            self.assertGreater(events[-1]['bytes_read'],0);self.assertEqual(events[-1]['json_documents_scanned'],3)
+            self.assertTrue(all(set(e)<=set(events[-1]) for e in events))
+            self.assertEqual(result['status'],'not_ready')
+
+    def test_exact_url_alias_resolves_and_tampered_source_remains_missing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            url='https://api.github.com/repos/example/releases/tag'
+            def extra(members,manifest):
+                data=json.dumps({'release_api_sha256':hashlib.sha256(b'{}').hexdigest(),'release_api':url}).encode()
+                members['job/preflight.json']=data
+                manifest['members']['job/preflight.json']={'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+            root=Path(temp);plan,state=self.fixture(root,extra);p=root/'release.json';p.write_bytes(b'{}')
+            registry={'resources':[{'id':'release','path':str(p),'sha256':hashlib.sha256(b'{}').hexdigest(),'source_paths':[url]}]}
+            result=audit(plan,state,registry)
+            self.assertTrue(any(e['source_path']==url and e['sourceRef']=='release' for e in result['edges']))
+            registry['resources'][0]['source_paths']=[url+'/wrong']
+            result=audit(plan,state,registry)
+            self.assertTrue(any(i['code']=='dependency_missing' and i['source_path']==url for i in result['issues']))
 
 
 if __name__=='__main__': unittest.main()

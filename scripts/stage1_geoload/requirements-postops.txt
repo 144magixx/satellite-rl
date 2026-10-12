@@ -1,0 +1,2 @@
+# Local G16 stream audit/report only; remote scientific DQN is unchanged.
+ijson==3.3.0
