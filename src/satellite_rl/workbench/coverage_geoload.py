@@ -1,6 +1,7 @@
 """Independent S1-G16 workbench contract; no downstream service metrics."""
 from __future__ import annotations
 from copy import deepcopy
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -24,7 +25,35 @@ def default_config():
                          "batch": 32, "microbatch": 4, "learning_rate": 3e-4, "network": {}},
             "search": {"seconds": 2., "max_attempts": 4096, "max_geometry_calls": 20000,
                        "objective_tolerance": 1e-9},
+            "inference": {"device":"cuda","validation_test_variable_workers":1,
+                          "cold_model_load":"separate_and_end_to_end"},
             "workers": 4, "datasets": {}}
+
+def mlm_ownership_path(store):
+    return store.archive_root.parent.parent / 'mlm_ownership.json'
+
+def mlm_guard(store,kind,request,payload_sha):
+    from .geoload_runner import exclusive_lock
+    if kind!='train':return nullcontext()
+    return exclusive_lock(store.archive_root.parent.parent/'mlm_submission.lock',blocking=True)
+
+def check_mlm_owner(store,request,payload_sha):
+    path=mlm_ownership_path(store);owner=read_json(path)
+    if owner:
+        if (owner.get('request_id')!=request or owner.get('request_hash')!=payload_sha or
+            owner.get('archive_root')!=str(store.archive_root)):
+            raise ValueError('S1-G16 single MLM already reserved by its original workbench/request')
+        job_path=Path(owner['job_path'])
+        job=read_json(job_path)
+        if not job or job.get('run_id')!=owner.get('run_id') or job.get('request_hash')!=payload_sha:
+            raise ValueError('incomplete MLM reservation retained; audit original creation before same-ID recovery')
+    else:
+        for port in PORTS:
+            jobs=store.archive_root.parent.parent/port/'archive/outputs/workbench/jobs'
+            for existing in jobs.glob('*/job.json'):
+                job=read_json(existing,{})
+                if job.get('experiment_id')==GROUP and job.get('kind')=='train':
+                    raise ValueError('existing MLM lacks ownership marker; audit required, no new model allowed')
 
 def deployment(store):
     root = store.archive_root.resolve()
@@ -49,7 +78,7 @@ def validate_config(value):
     default = default_config()
     if set(value) != set(default):
         raise ValueError("unknown/missing G16 configuration field")
-    for key in ("schema_version", "research_stage", "algorithm", "network", "coverage", "training"):
+    for key in ("schema_version", "research_stage", "algorithm", "network", "coverage", "training","inference"):
         if value[key] != default[key]:
             raise ValueError("frozen G16 geometry/learning configuration differs: " + key)
     if type(value["workers"]) is not int or value["workers"] not in (1, 2, 4, 8):
@@ -151,7 +180,8 @@ def create_job(application, body):
             raise ValueError("training requires independently passed teacher gate")
         pin(body.get("teacher"))
     payload_sha = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    with store.lock:
+    with store.lock,mlm_guard(store,kind,request,payload_sha):
+        if kind=='train':check_mlm_owner(store,request,payload_sha)
         for existing, _ in store.jobs():
             if existing.get("request_id") == request:
                 if existing.get("request_hash") != payload_sha:
@@ -163,6 +193,11 @@ def create_job(application, body):
         run_id = new_id(kind + "_geoload")
         directory = store.job_dir(run_id); directory.mkdir()
         model_dir = store.models_root / run_id; model_dir.mkdir()
+        if kind=='train':
+            atomic_json(mlm_ownership_path(store),{'group':GROUP,'status':'reserved','run_id':run_id,
+                'request_id':request,'request_hash':payload_sha,'archive_root':str(store.archive_root),
+                'job_path':str(directory/'job.json'),'scientific_commit':commit,'reserved_at':now(),
+                'creator_pid':os.getpid(),'updates':10000,'seed':51001})
         refs = {}
         for key in ("plan", "partition", "gate", "teacher", "model"):
             if body.get(key):
@@ -186,7 +221,7 @@ def create_job(application, body):
                "runtime_commit": commit, "algorithm": "geoload", "network": "geoload",
                "model_dir": str(model_dir), "experiment_id": GROUP, "research_stage": "coverage",
                "dataset_role": role, "mode": mode, "methods": methods, "references": refs,
-               "execution_device": "cuda" if kind == "train" else "cpu", "ssh_port": port}
+               "execution_device": "cuda" if kind == "train" or 'MLM' in methods else "cpu", "ssh_port": port}
         if mode=="dataset":job["dataset_spec"]=spec
         if mode=='teacher_merge':job['teacher_sources']=deepcopy(teacher_sources)
         indices=body.get("mother_indices")
@@ -203,6 +238,10 @@ def create_job(application, body):
         atomic_json(directory / "status.json", {"run_id": run_id, "stage": "queued", "pid": None,
                     "env_step": 0, "update_step": 0, "completed_cases": 0, "heartbeat_at": now()})
         atomic_json(directory / "job.json", job)
+        if kind=='train':
+            owner=read_json(mlm_ownership_path(store),{})
+            owner.update(status='bound',job_sha256=digest(directory/'job.json'),config_sha256=digest(directory/'config.json'),bound_at=now())
+            atomic_json(mlm_ownership_path(store),owner)
         return job
 
 def resume_job(scheduler, run_id):

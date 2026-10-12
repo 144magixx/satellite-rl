@@ -19,14 +19,18 @@ def cached_model(reference):
     """One immutable model load per pool worker, outside online search budget."""
     import torch
     from satellite_rl.coverage.geoload.models import make_model, MODEL_FORMAT
-    path=Path(reference['path']).resolve();key=(str(path),reference['sha256'])
+    path=Path(reference['path']).resolve();key=(str(path),reference['sha256'],'cuda')
+    load_seconds=0.
     if key not in _MODEL_CACHE:
+        started=time.perf_counter()
+        if not torch.cuda.is_available():raise RuntimeError('formal MLM inference requires CUDA; no CPU fallback')
         state=torch.load(pin(reference),map_location='cpu',weights_only=False)
         if state.get('format')!=MODEL_FORMAT or state.get('update')!=10000 or state.get('from_scratch') is not True:
             raise ValueError('evaluation requires new fixed10000 endpoint')
-        model=make_model(state.get('network'));model.load_state_dict(state['model']);model.eval()
+        model=make_model(state.get('network'));model.load_state_dict(state['model']);model.to('cuda');model.eval()
+        torch.cuda.synchronize();load_seconds=time.perf_counter()-started
         _MODEL_CACHE.clear();_MODEL_CACHE[key]=model
-    return _MODEL_CACHE[key]
+    return _MODEL_CACHE[key],load_seconds
 
 @contextmanager
 def exclusive_lock(path, *, shared=False, blocking=False):
@@ -97,6 +101,7 @@ def _run_mother(cases, methods, search, mode, teacher_root=None, model_ref=None,
                 atomic_json(started,{"case_id":case["case_id"],"method":method,"started_at":now(),
                     "pid":os.getpid(),"search_limit":search,"status":"started"})
             began = time.perf_counter()
+            model_load_seconds=0.
             if mode == "variable":
                 from satellite_rl.coverage.geoload.classical import run_classical
                 from satellite_rl.coverage.geoload.config import SearchConfig
@@ -133,16 +138,20 @@ def _run_mother(cases, methods, search, mode, teacher_root=None, model_ref=None,
                 from satellite_rl.coverage.geoload.learning import orderer
                 model = None
                 if method == "MLM":
-                    model=cached_model(model_ref)
+                    model,model_load_seconds=cached_model(model_ref)
                 rank_journal=[]
                 result = run_classical(scene,initial,"JOINT",SearchConfig(**search),
-                     candidate_order=orderer(method,model=model,seed=51001,journal=rank_journal)).to_record()
+                     candidate_order=orderer(method,model=model,seed=51001,journal=rank_journal,
+                                             device='cuda' if method=='MLM' else 'cpu')).to_record()
                 result["ranking_journal"] = rank_journal
+                result['inference_device']='cuda' if method=='MLM' else 'cpu'
             else:
                 result = evaluate_case({**case, "initial": initial.to_record()}, method, search)
             row={"case_id": case["case_id"], "mother_id": case["mother_id"],
                 "demand_profile": case["demand_profile"], "method": method, "outcome": "completed",
-                "initialization_seconds": initial_seconds, "online_seconds": time.perf_counter()-began,
+                "initialization_seconds": initial_seconds, "online_seconds": time.perf_counter()-began-model_load_seconds,
+                "model_cold_load_seconds":model_load_seconds,"model_cache_hit":method=='MLM' and model_load_seconds==0.,
+                "end_to_end_seconds":initial_seconds+time.perf_counter()-began,
                 **result}
             if output_root:
                 atomic_json(Path(output_root)/(case_key+".json"),row)
@@ -310,8 +319,11 @@ def run_job(directory, *, resume=False):
             # keys. Test uses one worker to retain strict interleaving/timing.
             if not existing:
                 pending = [(group,methods) for group in groups]
-            workers = 1 if job["dataset_role"] == "test" else config["workers"]
-            with ProcessPoolExecutor(max_workers=workers) as pool:
+            workers = 1 if job["dataset_role"] in ("test","validation") or job['mode']=='variable' else config["workers"]
+            update(case_workers=workers,inference_device='cuda' if 'MLM' in methods else 'cpu',
+                   worker_start_method='spawn',cold_model_load_account='separate_and_end_to_end')
+            import multiprocessing
+            with ProcessPoolExecutor(max_workers=workers,mp_context=multiprocessing.get_context('spawn')) as pool:
                 teacher_root=directory/"teacher";teacher_root.mkdir(exist_ok=True)
                 futures = {pool.submit(_run_mother,g,m,search,job["mode"],str(teacher_root),job["references"].get("model"),str(output)): (g,m) for g,m in pending}
                 for future in as_completed(futures):

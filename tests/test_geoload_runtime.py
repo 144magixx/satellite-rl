@@ -86,5 +86,24 @@ class GeometryRuntimeTests(unittest.TestCase):
                 self.assertEqual(create_job(SimpleNamespace(store=store),b)['run_id'],job['run_id'])
                 b['methods']=['07']
                 with self.assertRaises(ValueError):create_job(SimpleNamespace(store=store),b)
+    def test_mlm_ownership_is_global_and_incomplete_creation_blocks(self):
+        from satellite_rl.workbench.storage import Store
+        from satellite_rl.workbench.coverage_geoload import check_mlm_owner,mlm_ownership_path
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'s1_g16'
+            a=Store(root/'20424/archive');b=Store(root/'20473/archive')
+            path=a.job_dir('original')/'job.json';path.parent.mkdir()
+            owner={'request_id':'original','request_hash':'hash','archive_root':str(a.archive_root),
+                   'job_path':str(path),'run_id':'original','status':'reserved'}
+            mlm_ownership_path(a).write_text(json.dumps(owner))
+            with self.assertRaises(ValueError):check_mlm_owner(a,'original','hash')
+            path.write_text(json.dumps({'run_id':'original','request_hash':'hash','resume':True}))
+            check_mlm_owner(a,'original','hash')
+            with self.assertRaises(ValueError):check_mlm_owner(a,'new_request','hash')
+            with self.assertRaises(ValueError):check_mlm_owner(b,'original','hash')
+    def test_cuda_inference_contract_is_immutable(self):
+        c=default_config();self.assertEqual(c['inference']['device'],'cuda')
+        c['inference']['device']='cpu'
+        with self.assertRaises(ValueError):validate_config(c)
 
 if __name__=='__main__':unittest.main()

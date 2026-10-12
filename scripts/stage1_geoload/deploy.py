@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
 import subprocess
+import shutil
 
 from scripts.stage1_geoload import ops
 
@@ -100,8 +101,10 @@ def deploy(commit):
     for port, state in observed["lanes"].items():
         if state["api_port_busy"] or state["repo_dirty"] or state["repo_head"] not in (None, commit):
             raise RuntimeError(f"{port}: active port or different checkout requires ownership audit")
-    bundle = ops.LOCAL / "deployment" / f"s1g16_{commit}.bundle"
+    bundle = Path("E:/paper_archives/outputs/experiments/first_stage_geometry_load_20261012/deployment") / f"s1g16_{commit}.bundle"
     bundle.parent.mkdir(parents=True, exist_ok=True)
+    if shutil.disk_usage(bundle.parent).free < 8*(1<<30):
+        raise RuntimeError("canonical source bundle volume lacks 8GiB reserve")
     if not bundle.exists():
         subprocess.run(["git", "-C", str(SOURCE), "bundle", "create", str(bundle), "HEAD"], check=True)
     subprocess.run(["git", "-C", str(SOURCE), "bundle", "verify", str(bundle)],

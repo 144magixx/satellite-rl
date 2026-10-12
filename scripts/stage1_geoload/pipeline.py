@@ -35,7 +35,14 @@ def body(plan,key,port,kind,mode,role,datasets=None,methods=None,shard=False,**e
 def submit(plan,state,key,port,payload):
     tasks=state.setdefault('tasks',{})
     if key in tasks:return tasks[key]
-    job=ops.api(port,'/api/geoload/jobs',payload)
+    import hashlib
+    expected=hashlib.sha256(json.dumps(payload,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+    matches=[row['job'] for row in ops.api(port,'/api/geoload/jobs') if row['job'].get('request_id')==payload['request_id']]
+    if matches:
+        if len(matches)!=1 or matches[0].get('request_hash')!=expected:
+            raise ValueError('original request ownership/configuration differs')
+        job=matches[0]
+    else:job=ops.api(port,'/api/geoload/jobs',payload)
     tasks[key]={'port':port,'run_id':job['run_id'],'request_id':payload['request_id'],'stage':'queued',
                 'kind':payload['kind'],'mode':payload['mode'],'submitted_at':now()}
     return tasks[key]
@@ -75,10 +82,22 @@ print(json.dumps({{'rows':rows,'index_sha256':hashlib.sha256((root/'case_index.j
     return json.loads(result['stdout'].splitlines()[-1])
 
 def make_gate(state,local):
+    existing=Path(local)/'development_gate.json'
+    if existing.is_file():
+        retained=json.loads(existing.read_text(encoding='utf-8-sig'))
+        if retained.get('group')!='S1-G16' or retained.get('reference_seconds')!=30:
+            raise ValueError('existing gate belongs to different protocol')
+        for source in retained.get('sources',[]):
+            port=source['port']
+            if source.get('dev_run_id')!=state['tasks']['dev_'+str(port)].get('run_id') or source.get('reference_run_id')!=state['tasks']['reference_'+str(port)].get('run_id'):
+                raise ValueError('existing gate belongs to different workbench inputs')
+        return retained,existing
     baselines={};refs={};sources=[]
     for port in ops.SSH_PORTS:
         dev=raw_rows(state['tasks']['dev_'+str(port)]);reference_rows=raw_rows(state['tasks']['reference_'+str(port)])
-        sources.append({'port':port,'dev_index_sha256':dev['index_sha256'],'reference_index_sha256':reference_rows['index_sha256']})
+        sources.append({'port':port,'dev_index_sha256':dev['index_sha256'],'reference_index_sha256':reference_rows['index_sha256'],
+            'dev_run_id':state['tasks']['dev_'+str(port)].get('run_id'),
+            'reference_run_id':state['tasks']['reference_'+str(port)].get('run_id')})
         baselines.update({r['case_id']:r for r in dev['rows'] if r['method']=='09-LEX'})
         for row in reference_rows['rows']:
             nodes=row.get('reference_nodes') or []
@@ -179,7 +198,8 @@ def tick(plan,state,local):
     archives=state.setdefault('archives',{})
     for key,task in tasks.items():
         if key not in archives:
-            archives[key]=export_job(task['port'],task['run_id'],Path(local)/'job_archives'/(task['run_id']+'.zip'))
+            archive_root=Path(plan.get('canonical_archive_root','E:/paper_archives/outputs/experiments/first_stage_geometry_load_20261012/job_archives'))
+            archives[key]=export_job(task['port'],task['run_id'],archive_root/(task['run_id']+'.zip'))
             return
     state.update(compute_and_archives_complete=True,delivery_requires_root_review=True,
                  completed_at=now(),report_status='raw evidence archived; production statistics and human report pending')

@@ -2,6 +2,7 @@
 from pathlib import Path
 import hashlib
 import json
+import shutil
 from . import ops
 from satellite_rl.workbench.storage import validate_id
 
@@ -33,6 +34,8 @@ print(json.dumps({{'path':str(target),'sha256':h.hexdigest(),'bytes':target.stat
     if result['exit_code']:raise RuntimeError(result['stderr'][-1500:])
     receipt=json.loads(result['stdout'].splitlines()[-1])
     destination=Path(destination);destination.parent.mkdir(parents=True,exist_ok=True)
+    if shutil.disk_usage(destination.parent).free < receipt['bytes'] + 8*(1<<30):
+        raise RuntimeError('canonical archive volume lacks 8GiB reserve; remote ZIP retained')
     temp=destination.with_suffix(destination.suffix+'.part');client=ops.connect(port)
     try:
         sftp=client.open_sftp();h=hashlib.sha256();count=0
