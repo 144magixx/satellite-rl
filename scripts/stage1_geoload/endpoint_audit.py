@@ -27,6 +27,18 @@ def digest(path):
 def read(path): return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 
 
+def interpreter_proof(planned,actual):
+    """Bind the exact frozen requested interpreter to the executing binary."""
+    import os
+    if not isinstance(planned,str) or not planned:raise ValueError('frozen planned interpreter absent')
+    planned_real=str(Path(planned).resolve(strict=True));actual_real=str(Path(actual).resolve(strict=True))
+    same=os.path.samefile(planned,actual)
+    if not same or planned_real!=actual_real:raise ValueError('executing interpreter differs from frozen requested interpreter')
+    return {'planned_interpreter':planned,'requested_interpreter':planned,
+            'planned_interpreter_realpath':planned_real,'requested_interpreter_realpath':planned_real,
+            'interpreter':actual_real,'interpreter_samefile':True}
+
+
 def check_readiness(plan,state):
     if plan.get('group')!='S1-G16' or state.get('group')!='S1-G16' or plan.get('scientific_commit')!=SCIENCE or state.get('all_computation_completed') is not True:
         raise ValueError('all scientific computation must finish before endpoint audit')
@@ -111,18 +123,19 @@ def validate_states(cp,final,protocol,teacher_sha,validation_sha,loss_rows,attem
             'model_tensor_count':len(cp['model']),'adam_state_count':len(states),'rng_sampler_verified':True}
 
 
-def remote_code(source_root,module_path,jobroot,manifest_path,manifest_sha,run_id):
+def remote_code(source_root,module_path,jobroot,manifest_path,manifest_sha,run_id,planned_interpreter):
     """Bounded command: the potentially large member inventory is a pinned file."""
     return '''import importlib.util,json,sys
 sys.path.insert(0,%r)
 spec=importlib.util.spec_from_file_location('g16_endpoint_postops',%r);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-print(json.dumps(m.remote_audit(%r,%r,%r,%r)))
-'''%(source_root+'/src',module_path,jobroot,manifest_path,run_id,manifest_sha)
+print(json.dumps(m.remote_audit(%r,%r,%r,%r,%r)))
+'''%(source_root+'/src',module_path,jobroot,manifest_path,run_id,manifest_sha,planned_interpreter)
 
 
-def remote_audit(jobroot,manifest_path,expected_run_id,manifest_sha):
+def remote_audit(jobroot,manifest_path,expected_run_id,manifest_sha,planned_interpreter):
     """Called only in remote73 DQN with frozen scientific src on PYTHONPATH."""
     import os,fcntl,subprocess
+    interpreter=interpreter_proof(planned_interpreter,sys.executable)
     import numpy as np
     import torch
     from satellite_rl.coverage.geoload.models import make_model
@@ -217,6 +230,7 @@ def remote_audit(jobroot,manifest_path,expected_run_id,manifest_sha):
             worker_exited=True,torch_version=torch.__version__,cuda_build=torch.version.cuda,gpu=torch.cuda.get_device_name(0),
             interpreter=str(Path(sys.executable).resolve()),actual_package=str(package),engineering_forward_only=True,
             parameter_updates_performed=0,new_evaluations_performed=0,endpoint_audit_module_sha256=digest(__file__))
+        result.update(interpreter)
         return result
 
 
@@ -225,6 +239,8 @@ def execute(plan_path,state_path,base):
     from .strict_audit import JobZip
     from satellite_rl.workbench.geoload_runner import exclusive_lock
     base=Path(base);plan=read(plan_path);state=read(state_path)
+    if digest(plan_path)!=state.get('plan_sha256'):raise ValueError('frozen original dispatch plan SHA differs')
+    if not isinstance(plan.get('worker_interpreter'),str):raise ValueError('frozen original planned interpreter absent')
     train=check_readiness(plan,state)
     receipts=base/'preflight';receipts.mkdir(exist_ok=True)
     with exclusive_lock(receipts/'endpoint_audit.lock'):
@@ -259,7 +275,7 @@ def execute(plan_path,state_path,base):
             manifest_transport=ops.upload(pinned_manifest,remote_manifest,20473)
             if manifest_transport['remote']!=manifest_sha:raise ValueError('endpoint inventory upload SHA differs')
             # Launch only DQN; immutable science package is first on sys.path.
-            code=remote_code(job['source_root'],target,jobroot,remote_manifest,manifest_sha,job['run_id'])
+            code=remote_code(job['source_root'],target,jobroot,remote_manifest,manifest_sha,job['run_id'],plan['worker_interpreter'])
             actual=ops.remote_python(code,20473,timeout=300)
             if actual['exit_code']:raise RuntimeError(actual['stderr'][-2000:])
             audit=json.loads(actual['stdout'].splitlines()[-1]);audit.update(train_zip_sha256=state['archives']['train_mlm']['sha256'],train_zip_path=state['archives']['train_mlm']['local_path'],

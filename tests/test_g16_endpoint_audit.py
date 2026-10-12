@@ -3,9 +3,11 @@ import hashlib
 import json
 import random
 import unittest
+import tempfile
+from pathlib import Path
 import numpy as np
 import torch
-from scripts.stage1_geoload.endpoint_audit import SCIENCE,check_readiness,validate_states,remote_code
+from scripts.stage1_geoload.endpoint_audit import SCIENCE,check_readiness,validate_states,remote_code,interpreter_proof
 
 
 class EndpointAuditTests(unittest.TestCase):
@@ -76,11 +78,21 @@ class EndpointAuditTests(unittest.TestCase):
 
     def test_remote_command_contains_pinned_path_not_member_inventory(self):
         import base64
-        code=remote_code('/frozen/source','/postops/audit.py','/jobs/train','/postops/manifest_'+('a'*64)+'.json','a'*64,'train')
+        code=remote_code('/frozen/source','/postops/audit.py','/jobs/train','/postops/manifest_'+('a'*64)+'.json','a'*64,'train','/envs/DQN/bin/python')
         self.assertLess(len(base64.b64encode(code.encode())),4096)
         self.assertNotIn('members',code)
         self.assertIn('/postops/manifest_',code)
         compile(code,'remote_command','exec')
+
+    def test_exact_requested_interpreter_proof_and_tamper(self):
+        with tempfile.TemporaryDirectory() as temp:
+            good=Path(temp)/'python3.11';good.write_bytes(b'fixture binary')
+            proof=interpreter_proof(str(good),str(good))
+            self.assertTrue(proof['interpreter_samefile']);self.assertEqual(proof['requested_interpreter'],str(good))
+            self.assertEqual(proof['interpreter'],proof['requested_interpreter_realpath'])
+            wrong=Path(temp)/'other_python';wrong.write_bytes(b'fixture binary')
+            with self.assertRaisesRegex(ValueError,'executing interpreter differs'):interpreter_proof(str(good),str(wrong))
+            with self.assertRaisesRegex(ValueError,'planned interpreter absent'):interpreter_proof('',str(good))
 
 
 if __name__=='__main__':unittest.main()
