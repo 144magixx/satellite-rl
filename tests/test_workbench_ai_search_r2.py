@@ -11,7 +11,7 @@ from satellite_rl.coverage.ai_search_r2.config import TaskConfig
 from satellite_rl.training.run_monitor import atomic_json
 from satellite_rl.workbench.storage import Store,digest
 from satellite_rl.workbench import coverage_ai_search_r2 as policy,frozen_round_tasks
-from satellite_rl.workbench import ai_search_r2_runner as runner
+from satellite_rl.workbench import ai_search_r2_runner as runner,ai_search_r2_extension as extension
 from satellite_rl.coverage.ai_search.core import Scene
 from scripts.stage1_ai_search_r2 import plan_builder
 from scripts.stage1_ai_search_r2 import controller,deploy,ops
@@ -21,9 +21,9 @@ class RoundContract(unittest.TestCase):
     def setUp(self):
         self.tmp=TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)
         self.store=Store(self.root/'20418/archive',source_root=self.root)
-        self.source=self.store.root/'source_snapshots'/('a'*40);self.source.mkdir()
-        atomic_json(self.source/'source_manifest.json',{'git_commit':'a'*40,'files':{'fixture':'not_science'}})
-        self.store.freeze_source=lambda:(self.source,'a'*40)
+        self.source=self.store.root/'source_snapshots'/(extension.PILOT_COMMIT);self.source.mkdir()
+        atomic_json(self.source/'source_manifest.json',{'git_commit':extension.PILOT_COMMIT,'files':{'fixture':'not_science'}})
+        self.store.freeze_source=lambda:(self.source,extension.PILOT_COMMIT)
         data=self.root/'input.npz';data.write_bytes(b'raw input fixture signature')
         common=self.root/'common.json';atomic_json(common,{'fixture':'no solver'})
         design=Path(__file__).resolve().parents[1]/'scripts/stage1_ai_search_r2/round2_design.json'
@@ -35,18 +35,18 @@ class RoundContract(unittest.TestCase):
         self.contract={'config':config,'mode':'evaluate_closed_pool','dataset_role':'development',
             'case_indices':[0,1,2,3,44,45,46,47],'executor_port':20418,'variants':['D0','D1'],'source_refs':{},
             'common_ref':{'path':str(common),'sha256':digest(common)}}
-        self.plan_path=self.root/'plan.json';self.plan={'group':policy.GROUP,'authorized':True,'scientific_commit':'a'*40,
+        self.plan_path=self.root/'plan.json';self.plan={'group':policy.GROUP,'authorized':True,'scientific_commit':extension.PILOT_COMMIT,
             'training_allowed':False,'test_allowed':False,'design':{'path':str(design),'sha256':digest(design)},'tasks':{'probe':self.contract},
             'phase':'pilot','mother_order':[f'm{i}' for i in range(20)],'selected_mothers':['m0','m4','m8','m11','m15','m19'],
             'selected_case_indices':[0,1,2,3,16,17,18,19,32,33,34,35,44,45,46,47,60,61,62,63,76,77,78,79]}
         for port,indices in [(20424,[16,17,18,19,60,61,62,63]),(20473,[32,33,34,35,76,77,78,79])]:
             task=deepcopy(self.contract);task.update(executor_port=port,case_indices=indices);self.plan['tasks']['probe_'+str(port)]=task
-        qualification=self.root/'qualification.json';atomic_json(qualification,{'passed':True,'scientific_commit':'a'*40,
+        qualification=self.root/'qualification.json';atomic_json(qualification,{'passed':True,'scientific_commit':extension.PILOT_COMMIT,
             'design_sha256':digest(design),'core_git_blob_sha256':{'fixture':'b'*64}})
         self.plan['qualification_refs']={k:{'path':str(qualification),'sha256':digest(qualification)}
             for k in ('validator_equivalence','charge_before_budget')}
         atomic_json(self.plan_path,self.plan)
-        review=self.root/'root_review.json';atomic_json(review,{'group':policy.GROUP,'passed':True,'scientific_commit':'a'*40,
+        review=self.root/'root_review.json';atomic_json(review,{'group':policy.GROUP,'passed':True,'scientific_commit':extension.PILOT_COMMIT,
             'plan_sha256':digest(self.plan_path),'design_sha256':digest(design)})
         self.body={**self.contract,'task_key':'probe','request_id':'one-pilot-probe','plan':{'path':str(self.plan_path),'sha256':digest(self.plan_path)},
             'root_review':{'path':str(review),'sha256':digest(review)}}
@@ -85,6 +85,13 @@ class RoundContract(unittest.TestCase):
         Path(job['references']['common_manifest']['path']).write_bytes(b'changed')
         with self.assertRaisesRegex(ValueError,'source SHA differs'):frozen_round_tasks.verify(self.store,job,policy)
 
+    def test_completed_original_pilot_stays_verifiable_and_cannot_resume(self):
+        job=frozen_round_tasks.create(self.app,self.body,policy)
+        frozen_round_tasks.verify(self.store,job,policy)
+        directory=self.store.job_dir(job['run_id']);atomic_json(directory/'status.json',{'stage':'completed','pid':None})
+        with self.assertRaisesRegex(ValueError,'completed tasks cannot resume'):
+            frozen_round_tasks.resume(SimpleNamespace(store=self.store),job['run_id'],policy)
+
     def test_direct_api_scope_and_admission_cannot_bypass_publisher(self):
         changed=deepcopy(self.plan);changed['phase']='extension_without_gate'
         with self.assertRaisesRegex(ValueError,'pilot'):policy.validate_task(self.contract,changed,'20418')
@@ -112,7 +119,8 @@ class PairedDurability(unittest.TestCase):
         common_path=self.root/'common.json';atomic_json(common_path,{'engineering_fixture':True})
         self.manifest=self.root/'common_manifest.json'
         atomic_json(self.manifest,{'cases':{'0':{'case_id':self.case['case_id'],'common':{'path':str(common_path),'sha256':digest(common_path)}}}})
-        self.job={'references':{'common_manifest':{'path':str(self.manifest),'sha256':digest(self.manifest)}},
+        plan=self.root/'plan.json';atomic_json(plan,{'phase':'pilot'})
+        self.job={'scientific_commit':extension.PILOT_COMMIT,'references':{'plan':{'path':str(plan),'sha256':digest(plan)},'common_manifest':{'path':str(self.manifest),'sha256':digest(self.manifest)}},
             'variants':['D0','D1'],'mode':'evaluate_closed_pool'}
         self.config={'task':asdict(TaskConfig()),'resources':{'minimum_free_bytes':1,'max_rss_bytes':4<<30}}
         self.prepared={'status':'prepared','pool_sha':'p'*64,'input_sha':scene.input_sha256,

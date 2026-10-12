@@ -35,8 +35,10 @@ print(json.dumps({{'run_id':job['run_id'],'worker_exit_verified':True,'case_coun
         actual=ops.remote_python(code,port,timeout=50)
         if actual['exit_code']:raise ValueError(actual['stderr'][-1000:])
         receipt=json.loads(actual['stdout'].splitlines()[-1]);refs[str(port)]=reference;receipts[str(port)]=receipt
-    if set(refs)!={str(p) for p in ops.SSH_PORTS} or sum(r['case_count'] for r in receipts.values())!=24:
-        raise ValueError('three-lane24 common closure differs')
+    spec=json.loads(Path(state_path).with_name('spec.json').read_text(encoding='utf-8'))
+    expected=sum(len(task['body']['case_indices']) for task in spec['tasks'])
+    if set(refs)!={str(p) for p in ops.SSH_PORTS} or sum(r['case_count'] for r in receipts.values())!=expected:
+        raise ValueError('three-lane exact plan common closure differs')
     atomic_json(output,refs);atomic_json(str(output)+'.receipt.json',{'group':ops.GROUP,'original_IDs_only':True,'science_calls':0,'lanes':receipts})
     return refs
 
