@@ -34,6 +34,69 @@ class G16LearningTest(unittest.TestCase):
         actual=update(recovered,ropt,rrng);self.assertTrue(torch.equal(expected,actual))
         for key,value in recovered.state_dict().items():self.assertTrue(torch.equal(value,weights[key]))
 
+    def test_real_train_resume_and_nonfinite_guard(self):
+        import tempfile,json
+        from pathlib import Path
+        from unittest.mock import patch
+        from satellite_rl.coverage.geoload.learning import train
+        from satellite_rl.coverage.geoload.evidence import write_sample
+        _,_,_,sample=self.fixture();sample.pop('centers',None)
+        class Stop(Exception):pass
+        def stop_at(n):
+            def progress(update,value):
+                if update==n:raise Stop()
+            return progress
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);record=write_sample(root/'sample.npz',sample);record['mother_id']='m'
+            manifest=root/'manifest.json';manifest.write_text(json.dumps(dict(status='completed',samples=[record])))
+            protocol=dict(network=dict(hidden=16,layers=1,heads=4),updates=10000,batch=32,microbatch=4)
+            with self.assertRaises(Stop):train(manifest,root/'baseline',protocol,device='cpu',progress=stop_at(3))
+            with self.assertRaises(Stop):train(manifest,root/'resume',protocol,device='cpu',progress=stop_at(2))
+            with self.assertRaises(Stop):train(manifest,root/'resume',protocol,device='cpu',resume=True,progress=stop_at(3))
+            baseline=torch.load(root/'baseline/checkpoint.pt',weights_only=False);recovered=torch.load(root/'resume/checkpoint.pt',weights_only=False)
+            self.assertEqual(recovered['update'],3);self.assertEqual(recovered['ledger']['unknown_attempts'],0)
+            for key,value in baseline['model'].items():self.assertTrue(torch.equal(value,recovered['model'][key]))
+            with patch('satellite_rl.coverage.geoload.learning.loss',return_value=torch.tensor(float('nan'),requires_grad=True)):
+                with self.assertRaises(FloatingPointError):train(manifest,root/'bad',protocol,device='cpu')
+            good=torch.load(root/'bad/checkpoint.pt',weights_only=False);self.assertEqual(good['update'],0)
+            self.assertEqual(json.loads((root/'bad/update_wal.json').read_text())['status'],'failed')
+            original_step=torch.optim.Adam.step
+            def bad_step(optimizer,*args,**kwargs):
+                original_step(optimizer,*args,**kwargs)
+                optimizer.param_groups[0]['params'][0].data.fill_(float('nan'))
+            with patch.object(torch.optim.Adam,'step',bad_step):
+                with self.assertRaises(FloatingPointError):train(manifest,root/'bad_parameter',protocol,device='cpu')
+            self.assertEqual(torch.load(root/'bad_parameter/checkpoint.pt',weights_only=False)['update'],0)
+            def bad_gradient_model(network):
+                m=make_model(network);next(m.parameters()).register_hook(lambda g:torch.full_like(g,float('inf')));return m
+            with patch('satellite_rl.coverage.geoload.learning.make_model',side_effect=bad_gradient_model):
+                with self.assertRaises(FloatingPointError):train(manifest,root/'bad_gradient',protocol,device='cpu')
+            self.assertEqual(torch.load(root/'bad_gradient/checkpoint.pt',weights_only=False)['update'],0)
+            # Simulate uncertain crash before checkpoint commit; preserve truthful extra-attempt accounting.
+            wal=root/'resume/update_wal.json';wal.write_text(json.dumps(dict(status='pending',update=4,attempt_id=1)))
+            with self.assertRaises(Stop):train(manifest,root/'resume',protocol,device='cpu',resume=True,progress=stop_at(4))
+            accounted=torch.load(root/'resume/checkpoint.pt',weights_only=False)
+            self.assertEqual(accounted['ledger']['unknown_attempts'],1);self.assertEqual(accounted['ledger']['replayed_attempts'],1)
+
+    def test_teacher_late_trial_has_replayable_evidence_and_no_commit(self):
+        import tempfile
+        from unittest.mock import patch
+        from satellite_rl.coverage.geoload.teacher import teacher_case
+        from satellite_rl.coverage.geoload.core import validate_layout,layout_sha256
+        scene,initial,pool,_=self.fixture();clock=[0.];calls=[0]
+        def validate(*args,**kwargs):
+            result=validate_layout(*args,**kwargs);calls[0]+=1
+            if calls[0]>1:clock[0]=.02
+            return result
+        case=dict(positions=scene.positions.tolist(),demands=scene.demands.tolist(),initial=initial.to_record(),mother_id='m')
+        with tempfile.TemporaryDirectory() as root,patch('satellite_rl.coverage.geoload.teacher.perf_counter',side_effect=lambda:clock[0]),patch('satellite_rl.coverage.geoload.teacher.validate_layout',side_effect=validate),patch('satellite_rl.coverage.geoload.teacher.candidates',return_value=iter(pool)):
+            result=teacher_case(case,root,dict(seconds=.01,max_attempts=1))
+        self.assertEqual(result['budget']['late_completed_candidates'],1)
+        trial=result['journal'][0];self.assertTrue(trial['late']);self.assertFalse(trial['pool_committed'])
+        self.assertEqual(layout_sha256(Layout.from_record(result['layout'])),layout_sha256(initial))
+        rebuilt=Layout(initial.centers,initial.assignment.copy());a=rebuilt.assignment.copy();delta=trial['delta'];a[delta['users']]=delta['owners'];centers=rebuilt.centers.copy();centers[delta['beams']]=np.asarray(delta['centers']).reshape(-1,2)
+        self.assertEqual(layout_sha256(Layout(centers,a)),trial['candidate_sha256'])
+
     def test_common_pool_permutation(self):
         scene,initial,pool,s=self.fixture()
         for method in ('rule','random','MLM'):
