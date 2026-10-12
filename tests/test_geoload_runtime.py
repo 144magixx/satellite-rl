@@ -68,5 +68,23 @@ class GeometryRuntimeTests(unittest.TestCase):
             gate,_=make_gate(state,d)
             self.assertTrue(gate['passed']);self.assertEqual(gate['reference_seconds'],30)
             self.assertEqual(gate['half_fractions'],[.2,.2])
+    def test_create_job_idempotency_and_source_pin(self):
+        from types import SimpleNamespace
+        from satellite_rl.workbench.storage import Store
+        from satellite_rl.workbench.coverage_geoload import create_job
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);store=Store(root/'archive',source_root=root);commit='a'*40
+            plan=root/'plan.json';plan.write_text(json.dumps({'group':'S1-G16','authorized':True,'scientific_commit':commit}))
+            partition=root/'partition.json';partition.write_text(json.dumps({'group':'S1-G16','roles':{
+                r:{'dates':[r],'count':80,'mother_count':20} for r in ('train','development','validation','test')}}))
+            dataset=root/'inputs.npz';dataset.write_bytes(b'bounded test source')
+            c=default_config();c['datasets']={'development':{'path':str(dataset),'sha256':digest(dataset),'role':'development','count':80}}
+            b={'request_id':'unique','kind':'evaluate','mode':'evaluate','dataset_role':'development','config':c,'methods':['BH'],
+                'plan':{'path':str(plan),'sha256':digest(plan)},'partition':{'path':str(partition),'sha256':digest(partition)}}
+            with patch('satellite_rl.workbench.coverage_geoload.deployment',return_value='20424'),patch.object(store,'freeze_source',return_value=(root,commit)):
+                job=create_job(SimpleNamespace(store=store),b)
+                self.assertEqual(create_job(SimpleNamespace(store=store),b)['run_id'],job['run_id'])
+                b['methods']=['07']
+                with self.assertRaises(ValueError):create_job(SimpleNamespace(store=store),b)
 
 if __name__=='__main__':unittest.main()
