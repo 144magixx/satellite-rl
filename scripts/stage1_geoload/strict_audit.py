@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import time
 from pathlib import Path
 import zipfile
 import numpy as np
@@ -14,6 +15,50 @@ import numpy as np
 
 class AuditError(ValueError):
     pass
+
+
+def _ijson():
+    try:import ijson
+    except ImportError as error:raise AuditError('streaming audit requires pinned local ijson==3.3.0') from error
+    if ijson.__version__!='3.3.0':raise AuditError('streaming audit requires pinned ijson==3.3.0')
+    return ijson
+
+
+class _Journal:
+    def __init__(self,archive,name,path):self.archive=archive;self.name=name;self.path=path
+    def __iter__(self):
+        parser=_ijson()
+        with self.archive.zip.open(self.name) as raw:
+            if self.path==('journal',):
+                yield from parser.items(raw,'journal.item',use_float=True)
+                return
+            target='entries.item.journal.item';entry=-1;builder=None;depth=0
+            for prefix,event,value in parser.parse(raw,use_float=True):
+                if prefix=='entries.item' and event=='start_map':entry+=1
+                if entry!=self.path[1]:continue
+                if prefix==target and event=='start_map':builder=parser.ObjectBuilder();depth=0
+                if builder is not None:
+                    builder.event(event,value)
+                    if event in ('start_map','start_array'):depth+=1
+                    elif event in ('end_map','end_array'):depth-=1
+                    if depth==0:yield builder.value;builder=None
+
+
+def _read_case(archive,name):
+    parser=_ijson();builder=parser.ObjectBuilder();skip=None
+    with archive.zip.open(name) as raw:
+        for prefix,event,value in parser.parse(raw,use_float=True):
+            if skip is not None:
+                if prefix==skip and event=='end_array':skip=None
+                continue
+            if event=='start_array' and prefix.rsplit('.',1)[-1] in ('journal','ranking_journal','pools','samples'):
+                builder.event('start_array',None);builder.event('end_array',None);skip=prefix
+            else:builder.event(event,value)
+    record=builder.value
+    if 'journal' in record:record['journal']=_Journal(archive,name,('journal',))
+    for i,entry in enumerate(record.get('entries',[])):
+        if 'journal' in entry:entry['journal']=_Journal(archive,name,('entries',i,'journal'))
+    return record
 
 
 def digest(path):
@@ -61,6 +106,10 @@ class JobZip:
     def read(self, name):
         with self.zip.open(name) as f:
             return json.load(f)
+
+    def read_case(self,name):
+        """Only small fields remain resident; every journal event is replayed."""
+        return _read_case(self,name)
 
     def ref(self, name):
         return dict(zip=str(self.path), member=name, **self.manifest['members'][name])
@@ -147,18 +196,38 @@ def better(after, before, method='JOINT', tolerance=1e-9):
     return False
 
 
-def audit_search(case, row):
+def layout_digest(record):
+    """Independent producer-compatible Layout.to_record + canonical JSON bytes."""
+    normalized=dict(centers=np.asarray(record['centers'],dtype=float).reshape(-1,2).tolist(),
+                    assignment=np.asarray(record['assignment'],dtype=np.int64).tolist())
+    return hashlib.sha256(json.dumps(normalized,sort_keys=True,allow_nan=False).encode()).hexdigest()
+
+
+def audit_search(case, row, *, compact=False,progress=None):
     result = audit_layout(case,row['layout'],row['metrics'])
     budget = row.get('budgets', row.get('budget', {}))
     journal = row.get('journal', [])
     current = row.get('initial_metrics')
     teacher_layout = row.get('input',{}).get('initial')
+    teacher_stage=None;pending_teacher_layout=None;teacher_stage_commits=0
     if teacher_layout is not None:
         current = audit_layout(case,teacher_layout)
     limit = budget.get('seconds_limit',budget.get('limit_seconds'))
     previous = 0.; accepted = late = 0
-    out = []
+    out = [];checkpoint_values={};seen=0
+    started_audit=time.monotonic();last_progress=started_audit
     for i, event in enumerate(journal,1):
+        seen=i
+        if progress is not None and time.monotonic()-last_progress>=5:
+            last_progress=time.monotonic();progress(dict(journal_count=seen,audit_elapsed_seconds=last_progress-started_audit))
+        if teacher_layout is not None:
+            stage=event.get('stage')
+            if not isinstance(stage,int) or isinstance(stage,bool) or stage<0 or (teacher_stage is not None and stage<teacher_stage):
+                raise AuditError('teacher stage must be a monotone nonnegative integer')
+            if stage!=teacher_stage:teacher_stage_commits=0
+            if teacher_stage is not None and stage!=teacher_stage and pending_teacher_layout is not None:
+                teacher_layout=pending_teacher_layout;pending_teacher_layout=None
+            teacher_stage=stage
         seconds = event.get('elapsed_seconds',event.get('ended'))
         if seconds is None or not math.isfinite(seconds) or seconds < previous:
             raise AuditError('candidate chronology incomplete')
@@ -175,6 +244,10 @@ def audit_search(case, row):
                 if delta['beams']: centers[delta['beams']]=delta['centers']
                 candidate=dict(centers=centers.tolist(),assignment=assignment.tolist())
             audit_layout(case,candidate,values)
+            if event.get('candidate_sha256') is not None and layout_digest(candidate)!=event['candidate_sha256']:
+                raise AuditError('teacher candidate layout SHA differs')
+            if event.get('prior_sha256') is not None and layout_digest(teacher_layout)!=event['prior_sha256']:
+                raise AuditError('teacher pre-pool layout SHA differs')
         if values is not None:
             compare_metrics(load_metrics(evidence['loads']),values)
             if evidence.get('valid') is not True: raise AuditError('metrics on invalid candidate')
@@ -184,40 +257,51 @@ def audit_search(case, row):
             late += 1
             if commit or event.get('temporary_best'): raise AuditError('late candidate published')
         if commit:
+            if teacher_layout is not None:
+                teacher_stage_commits+=1
+                if teacher_stage_commits>1:raise AuditError('teacher pool has more than one committed trial')
             if values is None: raise AuditError('accepted missing metrics')
             if current is not None and row.get('method') != 'VARIABLE':
                 if values['N'] != current['N'] or not better(values,current,row['method']):
                     raise AuditError('acceptance objective/N differs')
-            current = values; accepted += 1
-            if teacher_layout is not None: teacher_layout=candidate
-        out.append(dict(attempt=i, seconds=seconds, accepted=commit, late=islate,
+            current={key:values[key] for key in ('N','total_demand','P','T','Q','CV')};accepted += 1
+            # Retain only the latest eligible state of each frozen reference node,
+            # not all accepted metrics/evidence arrays across the full trajectory.
+            for node_index,node in enumerate(row.get('reference_nodes',[])):
+                sl=node.get('seconds_limit',node.get('limit') if node['kind']=='seconds' else None)
+                cl=node.get('candidate_limit',node.get('limit') if node['kind']=='attempts' else None)
+                if (sl is None or seconds<=sl) and (cl is None or event.get('attempt',i)<=cl):
+                    checkpoint_values[node_index]=current
+            # All trial deltas in a pool are relative to the pre-pool layout.
+            # A best trial may occur before later rejected trials in that pool.
+            if teacher_layout is not None: pending_teacher_layout=candidate
+        if limit is not None:
+            started=event.get('started_seconds',event.get('started'))
+            if started is None or started>=limit:raise AuditError('candidate started beyond deadline or unknown start')
+        if not compact:out.append(dict(attempt=i, seconds=seconds, accepted=commit, late=islate,
                         geometry_scope='per_aircraft' if event.get('candidate_layout') else 'worker_evidence_load_algebra'))
         if event.get('candidate_layout') and evidence.get('valid'):
             audit_layout(case,event['candidate_layout'],values if evidence.get('valid') else None)
     count = budget.get('attempts',budget.get('attempted'))
-    if count is not None and count != len(journal): raise AuditError('candidate count differs')
+    if count is not None and count != seen: raise AuditError('candidate count differs')
     if count is not None and budget.get('candidate_limit') is not None and count > budget['candidate_limit']:
         raise AuditError('completed candidate cap exceeded')
-    if limit is not None:
-        for event in journal:
-            started=event.get('started_seconds',event.get('started'))
-            if started is None or started >= limit:raise AuditError('candidate started beyond deadline or unknown start')
     if budget.get('late_candidates',budget.get('late_completed_candidates',late)) != late:
         raise AuditError('late candidate ledger differs')
     if budget.get('accepted',accepted) != accepted: raise AuditError('accepted count differs')
     if current is not None: compare_metrics(result,current)
-    for node in row.get('reference_nodes',[]):
+    if teacher_layout is not None and layout_digest(pending_teacher_layout or teacher_layout)!=layout_digest(row['layout']):
+        raise AuditError('teacher final committed layout differs from published layout')
+    for node_index,node in enumerate(row.get('reference_nodes',[])):
         audit_layout(case,node['layout'],node['metrics'])
         sl = node.get('seconds_limit', node.get('limit') if node['kind']=='seconds' else None)
         cl = node.get('candidate_limit', node.get('limit') if node['kind']=='attempts' else None)
         if sl is not None and node['state_seconds'] > sl: raise AuditError('future reference state')
         if cl is not None and node['state_attempts'] > cl: raise AuditError('future reference candidate')
-        eligible = [e for e in journal if e.get('reason')=='accepted'
-                    and (sl is None or e['elapsed_seconds']<=sl)
-                    and (cl is None or e['attempt']<=cl)]
-        if eligible: compare_metrics(node['metrics'],eligible[-1]['candidate_metrics'])
+        eligible=checkpoint_values.get(node_index)
+        if eligible is not None: compare_metrics(node['metrics'],eligible)
         elif row.get('initial_metrics'): compare_metrics(node['metrics'],row['initial_metrics'])
-    return result, out
+    return result, dict(known_completed_candidates=seen,accepted=accepted,completed_late=late) if compact else out
 
 
 def paired_bootstrap(rows, method, baseline, metric='P', draws=5000, seed=51001):
