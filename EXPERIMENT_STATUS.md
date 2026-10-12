@@ -1,5 +1,11 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-12 12:42 S2-F20首个正式SAC400000终点完成并核验，后续队列已接续。** 原正式任务`prepare_sac_20261012_063042_9b6b5c4e`于12:32:03实际completed，400000交互、98977更新、3301回合；完整断点step=agent.interactions=400000、四个node_done齐全，from_scratch/seed51001及strictretained400000、未知0通过。final policy35个Tensor与完整断点policy逐一相等，权重/模型/断点SHA及原科学2fc、执行fbf来源匹配，原56539已退出。四节点各144条direct/B/journal、共1152引用SHA闭合，返回保护/资源违规0；回退数依次37/66/60/17，原候选和求解开销全保，无额外优化器。[首终点审计](outputs/experiments/s2_fair20_20261012/preflight/endpoint_sac400000_verified_20261012.json)。这是单seed正式训练完成，不是最终三算法优势结论，1320景共同考核仍待。
+
+PPO A/B两短均32768/32768及144景直接验证完成，当前DQN B短在原2fc无B源上实际训练，12:42:25为4800/32768、135391出生837395730，DQN A与正式PPO/DQN仍待。12:41共同API为DQN B2500步、学习累计533572/1396608（38.20%），整体7/12，正式模型1/3；[实时快照](outputs/experiments/s2_fair20_20261012/preflight/heartbeat_20261012_124108.json)。任务顺序以工作台资源准入的实际队列为准，范围/ID/预算不变。协调器35040与计时观察器27108均出生核实、固定映射仍排物理74；[守卫核查](outputs/experiments/s2_fair20_20261012/preflight/local_daemons_handoff_20261012_1241.json)。20474仍借用，本组全部计算/计时/报告/双端归档与归还通知未完成。
+
+后处理代码已完成合成检查，位于本组outputs/analysis/postprocess.py，生产入口拒不完整6600矩阵/三400000模型及不一致SHA，母级20000配对bootstrap/12校正族和日期/时间块敏感性按方案20；原始候选与回退另列。当前仅合成数据、小draw，0生产bootstrap/0评价/0学习/0求解，根正在独立复核，尚不能称正式统计完成。[合成检查](outputs/experiments/s2_fair20_20261012/analysis/synthetic_check_receipt.json)。严格速度结论需要独立GPU/PID/CPU和完整计时段证据，现2秒采样及CPU不可隔离等限制保留，不信原case布尔字段、不捏造补齐，也不追加计时case。
+
 **2026-10-12 11:39 S2-F20第三验证节点闭合，SAC已继续至约339000步。** 300000节点144条direct、144条完整A+B及144个journal完整，结果/state一致，288引用SHA逐项一致；返回点资源及相对初解SI/SGM/基本服务保护违规0，60景严格回退Direct并保留原候选、求解/计时账，无额外优化器。[第三节点核验](outputs/experiments/s2_fair20_20261012/preflight/checkpoint300000_verified_20261012.json)。11:39真实API为338900/400000、累计437204/1396608（31.31%），独立现场339000/83727更新，worker56539/DQN/fbf执行源与2fc科学、strict预算未知0匹配，无当前错误。[实时快照](outputs/experiments/s2_fair20_20261012/preflight/heartbeat_20261012_113907.json)。整体仍5/12，三短完成、SAC正式未到400000，其余三短与PPO/DQN正式待执行；节点验证不算新增模型成果。
 
 同轮35040协调器、27108计时观察器均真实活跃/出生一致，ND12固定映射继续排除物理20474；[守卫核查](outputs/experiments/s2_fair20_20261012/preflight/local_daemons_handoff_20261012_1139.json)。本组仅20474/8953，完整矩阵/报告/双端归档和释放归还尚待。已派有界GPT-6.1 Sol准备本组outputs/analysis后处理代码及合成检查，不执行生产统计、不新增训练/评价/求解；须待三400000终点与6600矩阵案例闭合后使用，时间主张仍受原始NVML/CPU隔离证据门控。冻结科学与run_plan未改，小时跟进保持。
