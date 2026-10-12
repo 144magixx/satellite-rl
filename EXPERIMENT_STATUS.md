@@ -1,5 +1,11 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 S1-AI17-R2方案18已完成并通过根设计复核，正在独立实现，尚未发起本轮正式任务。** [方案18](docs/第一阶段/方案/18_共同强初解与峰值对齐小池重构开发方案.md)与[机器合同](outputs/experiments/first_stage_ai_search_20261013/design/round2_design.json)SHA`9ccd449b…`规定先24开发案例×8任务×D0/D1=384解码任务；实际共同强初解从R1五个已审计终态抽取，不重跑基线。两法共用等价逐机归属核验与局部资格矩阵，D1仅64活动飞机、其余全保留并核几何。严格工作量上限与名义3秒护栏分开，全部合法N≤200候选保留，共同N₀/Ω₀切片只用于质量门槛。G0/G1/G2通过才扩剩余56，不自动训练或访问新val/test。[根设计验收](outputs/experiments/first_stage_ai_search_20261013/design/round2_root_design_acceptance.json)。
+
+新实现树`C:/Users/Admin/.codex/worktrees/stage1-ai18/paper`、分支`codex/stage1-ai18`，远端拟`s1_ai18/{20418,20424,20473}`/8980–8982，仍需源冻结与现场准入；R1 fbd树完全不改。Astra设计已完成，三个Sol分别实现科学内核、独立工作台/执行、后处理与闸门。若强解后没有足够增量质量空间，后续转学习构造/修复的同质量效率路线；这不是停止整体探索或自动增加旧预算。根补核INIT与RULE实际同初始档案71例中71例仍有新折中点，保留这部分有效R1证据，不把18例三法任一差异扩大成全部取舍无效。[子集核对](outputs/experiments/first_stage_ai_search_20261013/analysis/root_actual_same_initial_novelty.json)。
+
+R1[报告12](docs/第一阶段/实验报告/12_可变束数与束宽联合搜索首轮开发对照.md)已补齐480原case的实际最终束宽与真实父布局变化见证；478有终态、2缺失保未知，RULE最终混宽19/80，W_ONLY80/80，N_ONLY真实变宽0。根核43产物SHA与16链接、图4及五图联系表通过；75成员/2,622,652字节中间报告小包已本地E与远端18整包及逐成员核同。[图文验收](outputs/experiments/first_stage_ai_search_20261013/preflight/report12_final_root_acceptance.json) · [中间报告双端位置](outputs/experiments/first_stage_ai_search_20261013/delivery/r1_report_location.json)。小包不包含全部原始科学数据或教师标签审计，完整本地/远端原始归档仍需在后续交付闭合；不称整个研究完成。
+
 **2026-10-13 03:19 S1-AI17原768条诊断教师已计算完成，第二版进入设计。** 03:15:37根通过三端实际API核得原`030635_cbe5f74c`、`030636_fb227969`、`030638_96526daf`各256/256 completed、原worker均退出且error为空；随后教师控制器30844也completed并退出。[根终态API](outputs/experiments/first_stage_ai_search_20261013/preflight/root_teacher_actual_api_0318.json)以内部真实时间为准。教师标签完整性/可用性与归档须另核，不等于模型已训练；科学学习仍0、独立test算法评价0。停止该轮自动接模型，持续下一轮研究。
 
 [只读机制诊断](outputs/experiments/first_stage_ai_search_20261013/analysis/initial_comparability_diagnosis/diagnosis.md)已绑定560审计及560原case全部SHA。18例实际初始档案差异来自缺档，同宽度已完成布局一致；独立2秒按0.3→0.5→1.0初始化的截止/late处理是原因，具体CPU争用比例不可归因。reference122池仅23完整可判（N偏好20、角域3）；原oracle质量最佳6项成本中位是规则前6的9.65倍，全部不满足原双成本门槛，不能写成没有排序信号，也不能当成已证明峰值排序收益。N_ONLY6292个及时候选全0.5°，4121“宽度重构”旧计数由变N数组长度误触发。Astra据此设计方案18，先建立实际共同强初解与目标对齐的有界开发门槛；不追溯修改R1科学源、结果或旧计数。
