@@ -15,6 +15,8 @@ from satellite_rl.training.run_monitor import atomic_json
 from .storage import digest, inside, now, read_json, validate_id
 
 ORIGIN_COMMIT = "2fc16884078ad64b97333013737fef5cd9294626"
+FORMAL_EXECUTION_COMMIT = "fbf79047ea859b91d8c7ee1decddd53a1436c359"
+PARALLEL_PORTS = {20418, 20474}
 FORMAT = "fair20_execution_source_v1"
 REPAIR_ID = "fair20_strict_B_acceptance_direct_fallback_v1"
 PROOF_FORMAT = "fair20_validation_only_resume_v1"
@@ -47,6 +49,29 @@ def _git(repo,*args):
     return subprocess.run(["git",*args],cwd=repo,capture_output=True,check=True).stdout
 
 
+def readonly_source_path(lane, path, revision):
+    """Own-lane sources or pinned unchanged peer science only, never24/73.
+
+    The caller pins the entire source contract SHA and subsequently verifies
+    revision/tree byte hashes. Peer repositories are read only: no checkout,
+    reset, install or write occurs. Derived snapshots stay in the local store.
+    """
+    lane, path = Path(lane).resolve(), Path(path).resolve()
+    if lane.name.isdigit() and int(lane.name) not in PARALLEL_PORTS:
+        raise ValueError("F20 source owner lane must be20418/20474")
+    if lane.parent.name == "s2_f20" and revision not in (ORIGIN_COMMIT, FORMAL_EXECUTION_COMMIT):
+        raise ValueError("R3 control code is not an authorized scientific worker source")
+    if path.is_relative_to(lane):
+        return path
+    if (lane.parent.name != "s2_f20" or lane.name not in {str(p) for p in PARALLEL_PORTS}
+            or revision not in (ORIGIN_COMMIT, FORMAL_EXECUTION_COMMIT)):
+        raise ValueError("Unregistered read-only peer source")
+    peers = [lane.parent/str(port) for port in PARALLEL_PORTS if str(port) != lane.name]
+    if not any(path.is_relative_to(peer.resolve()) for peer in peers):
+        raise ValueError("Peer source escapes this experiment's20418/20474 roots")
+    return path
+
+
 def validate_contract(store,path,sha256):
     path=_pin(path,sha256);contract=read_json(path,{})
     if (contract.get("format")!=FORMAT or contract.get("repair_id")!=REPAIR_ID or
@@ -56,8 +81,8 @@ def validate_contract(store,path,sha256):
     if contract.get("supersedes_contract_sha256") is not None:_hash(contract["supersedes_contract_sha256"])
     if execution==ORIGIN_COMMIT:raise ValueError("execution repair must have an honest distinct commit")
     lane=store.archive_root.parent
-    repository=inside(contract.get("execution_source_repo",""),lane)
-    scientific=inside(contract.get("scientific_source_repo",""),lane)
+    repository=readonly_source_path(lane,contract.get("execution_source_repo",""),execution)
+    scientific=readonly_source_path(lane,contract.get("scientific_source_repo",""),ORIGIN_COMMIT)
     for repo,revision in ((repository,execution),(scientific,ORIGIN_COMMIT)):
         if (not repo.is_dir() or _git(repo,"rev-parse","HEAD").decode().strip()!=revision or
                 _git(repo,"status","--porcelain","--","src","data","pyproject.toml").strip()):
@@ -205,6 +230,10 @@ def validate_execution_job(job,directory):
             contract.get("repair_id")!=REPAIR_ID or contract.get("format")!=FORMAT):
         raise ValueError("F20 execution source contract identity differs")
     _pin(Path(directory)/"config.json",reference["config_sha256"])
+    if job.get("archive_root"):
+        lane = Path(job["archive_root"]).resolve().parent
+        readonly_source_path(lane,job["source_root"],ORIGIN_COMMIT)
+        readonly_source_path(lane,reference["snapshot_path"],reference["execution_commit"])
     verify_snapshot(job["source_root"],ORIGIN_COMMIT)
     verify_snapshot(reference["snapshot_path"],reference["execution_commit"],reference["manifest_sha256"])
     entries=job.get("source_history",[])

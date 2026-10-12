@@ -186,7 +186,7 @@ class Scheduler:
             for job, status in jobs:
                 stage = status.get("stage")
                 if (stage in TERMINAL or stage in ("queued", "queued_resources") or
-                        (job.get("experiment_id") == "S2-F20" and stage == "attention_required")):
+                        (job.get("experiment_id") == "S2-F20" and stage in ("attention_required","migrated"))):
                     old_child = self.children.get(job["run_id"])
                     if old_child is not None and old_child.poll() is not None:
                         self.children.pop(job["run_id"], None)
@@ -250,6 +250,17 @@ class Scheduler:
                 self._launch(job, status)
 
     def _launch(self, job, status):
+        if job.get("experiment_id")=="S2-F20":
+            from .fair20_migration import launch_ownership,rejected_stage
+            try:
+                with launch_ownership(self.store,job):return self._launch_owned(job,status)
+            except ValueError as error:
+                self._status(self.store.job_dir(job["run_id"]),status,stage=rejected_stage(self.store,job),
+                             queue_reason="共享唯一归属阻止本端创建worker："+str(error))
+                return
+        return self._launch_owned(job,status)
+
+    def _launch_owned(self, job, status):
         directory = self.store.job_dir(job["run_id"])
         if job.get("experiment_id") == "S2-F20" and job.get("resource_hold"):
             from .storage import digest
@@ -264,11 +275,12 @@ class Scheduler:
             try:
                 from .fair20_service import validate_admission_proof
                 validate_admission_proof(proof, job)
-                from .fair20_guard import local_observation, admission_reasons
-                observation=local_observation(job["archive_root"])
+                from .fair20_guard import local_observation, admission_reasons,executor_port
+                actual_port=executor_port(job["archive_root"],job.get("executor_port"))
+                observation=local_observation(job["archive_root"],executor_port=actual_port)
                 atomic_json(directory / "resource_before_launch.json", observation)
                 reasons=admission_reasons(observation, proof["release"], job["git_commit"],
-                                          read_json(proof["release_receipt_path"], {}))
+                                          read_json(proof["release_receipt_path"], {}),executor_port=actual_port)
                 if reasons:
                     raise ValueError("创建worker前实时资源核验拒绝：" + "; ".join(reasons))
             except (ValueError, TypeError, OSError, subprocess.SubprocessError) as error:

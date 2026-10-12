@@ -136,23 +136,24 @@ def freeze_fair20_sources(extra, destination):
 
 def validate_admission_proof(proof, job):
     """Bind a fresh lane observation to the root's old-group release receipt."""
+    from .fair20_guard import executor_port,admission_reasons
+    expected_port=executor_port(job.get("archive_root"),job.get("executor_port"))
     if proof.get("admitted") is not True or proof.get("run_id") != job["run_id"]:
         raise ValueError("资源放行证明不是本任务")
     receipt_path = Path(proof.get("release_receipt_path", "")).resolve(strict=True)
     if not receipt_path.is_file() or digest(receipt_path) != proof.get("release_receipt_sha256"):
-        raise ValueError("缺少已核SHA的旧组20474交还证明")
+        raise ValueError("缺少已核SHA的实际执行端资源交还证明")
     observation = proof.get("resource_observation", {})
     try:
         checked = datetime.fromisoformat(observation["checked_at_utc"].replace("Z", "+00:00"))
         age = (datetime.now(timezone.utc)-checked).total_seconds()
     except (KeyError, TypeError, ValueError):
         raise ValueError("资源观察时间无效") from None
-    if (not 0 <= age <= 60 or observation.get("port") != 20474 or
+    if (not 0 <= age <= 60 or observation.get("port") != expected_port or
             observation.get("scientific_commit") != job["git_commit"] or
             observation.get("worker_free") is not True or observation.get("gpu_free") is not True):
-        raise ValueError("20474最新资源观察或冻结提交不符，禁止调度")
-    from .fair20_guard import admission_reasons
-    reasons=admission_reasons(observation, proof.get("release", {}), job["git_commit"], read_json(receipt_path, {}))
+        raise ValueError("实际执行端最新资源观察或冻结提交不符，禁止调度")
+    reasons=admission_reasons(observation, proof.get("release", {}), job["git_commit"], read_json(receipt_path, {}),executor_port=expected_port)
     if reasons:
         raise ValueError("资源放行证据矛盾：" + "; ".join(reasons))
     return proof
@@ -177,6 +178,11 @@ class Fair20Application:
         directory = self.store.job_dir(validate_id(run_id))
         job = read_json(directory / "job.json", {})
         status = read_json(directory / "status.json", {})
+        if not job or status.get("stage")=="migrated":
+            from .fair20_migration import resolve_peer
+            peer=resolve_peer(self.store,run_id)
+            if peer is not None:
+                directory=peer;job=read_json(directory/"job.json",{});status=read_json(directory/"status.json",{})
         if job.get("experiment_id") != EXPERIMENT:
             raise ValueError("来源不是S2-F20任务")
         if completed and status.get("stage") != "completed":
@@ -318,6 +324,8 @@ class Fair20Application:
         extra["candidate"] = config["candidate"]
         with self.app.scheduler.lock,self.store.lock:
             from .fair20_source_repair import bind_future_job
+            from .fair20_migration import port
+            extra["executor_port"]=port(self.store)
             existed=any(record.get("request_id")==body.get("request_id") for record,_ in self.store.jobs())
             job=self.store.create_job(config, kind="prepare", extra=extra, request_id=body.get("request_id"))
             # An idempotent retry must not reinterpret an original failed or
@@ -327,6 +335,7 @@ class Fair20Application:
     def resume(self, run_id):
         with self.app.scheduler.lock, self.store.lock:
             directory, job, status = self.task(run_id)
+            if directory.resolve()!=self.store.job_dir(run_id).resolve():raise ValueError("peer dependencies are read-only; resume on their owner lane")
             if status.get("stage") not in ("failed", "stopped", "interrupted"):
                 raise ValueError("仅异常或停止任务支持同ID恢复")
             failure=read_json(directory/"failure.json",{})
@@ -370,15 +379,23 @@ class Fair20Application:
                     "validation_nodes": list(NODES), "warmup_included": True, "configurations": configurations}
         if method == "GET" and parts == ["tasks"]:
             summary_keys=("run_id","kind","name","mode","algorithm","candidate","git_commit","prepare_run_id","created_at","model_dir","experiment_id","execution_source")
-            return {"tasks": [{"job": {key:job.get(key) for key in summary_keys}, "status": self.app.observed_status(status)}
-                              for job, status in self.store.jobs() if job.get("experiment_id") == EXPERIMENT]}
+            rows={job["run_id"]:{"job":{key:job.get(key) for key in (*summary_keys,"executor_port","migration")},
+                  "status":self.app.observed_status(status),"read_only":False} for job,status in self.store.jobs() if job.get("experiment_id")==EXPERIMENT}
+            from .fair20_migration import peer_records
+            for peer in peer_records(self.store):
+                identifier=peer["job"]["run_id"]
+                if identifier not in rows or rows[identifier]["status"].get("stage")=="migrated":
+                    rows[identifier]={**peer,"job":{key:peer["job"].get(key) for key in (*summary_keys,"executor_port","migration")}}
+            return {"tasks":list(rows.values())}
         if len(parts) >= 2 and parts[0] == "tasks":
             self.task(parts[1])
             if method == "GET" and len(parts) == 2:
-                detail = self.app.run_detail(parts[1])
-                detail["result"] = read_json(self.store.job_dir(parts[1]) / "results.json", {})
+                directory,job,status=self.task(parts[1])
+                local=directory.resolve()==self.store.job_dir(parts[1]).resolve()
+                detail = self.app.run_detail(parts[1]) if local else {"job":job,"status":status,"config":read_json(directory/"config.json"),"read_only":True,"path":str(directory)}
+                detail["result"] = read_json(directory / "results.json", {})
                 from .monitoring import log_tail
-                detail["log"] = log_tail(self.store.job_dir(parts[1]))
+                detail["log"] = log_tail(directory)
                 return detail
             if method == "POST" and parts[2:] == ["resume"]:
                 return self.resume(parts[1])
@@ -387,11 +404,24 @@ class Fair20Application:
                 return repair_job(self.app.scheduler,parts[1],body)
             if method == "POST" and parts[2:] == ["stop"]:
                 directory, job, status = self.task(parts[1])
+                if directory.resolve()!=self.store.job_dir(parts[1]).resolve():raise ValueError("peer dependencies are read-only")
                 if status.get("stage") == "queued_resources":
                     status.update(stage="cancelled", queue_reason="用户取消资源排队", heartbeat_at=now())
                     atomic_json(directory / "status.json", status)
                     return status
                 return self.app.scheduler.request_stop(parts[1])
+        if method=="POST" and parts==["migration","export"]:
+            from .fair20_migration import export_job
+            return export_job(self.app.scheduler,body)
+        if method=="POST" and parts==["migration","adopt"]:
+            from .fair20_migration import adopt_job
+            return adopt_job(self.app.scheduler,body)
+        if method=="POST" and parts==["peers","import"]:
+            from .fair20_migration import import_peer
+            return import_peer(self.store,body)
+        if method=="GET" and parts==["peers"]:
+            from .fair20_migration import peer_records
+            return {"peers":peer_records(self.store)}
         if method == "GET" and parts == ["execution-source"]:
             from .fair20_source_repair import registered_source
             return {"execution_source":registered_source(self.store)}
