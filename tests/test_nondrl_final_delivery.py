@@ -1,5 +1,6 @@
 import hashlib
 import io
+from contextlib import redirect_stdout
 import json
 from pathlib import Path
 import tempfile
@@ -295,6 +296,56 @@ class FinalDeliveryTests(unittest.TestCase):
         self.assertEqual(result["transfer"]["resumed_bytes"],17)
         self.assertTrue(result["all_three_physical_readback_verified"])
         self.assertEqual(set(result["physical_access"]),{"20418","20424","20473"})
+
+    def test_large_remote_member_manifest_uses_sftp_and_bounded_code_with_full_validation(self):
+        remote_base=self.root/"remote";directory=remote_base/"delivery/final_fixture";directory.mkdir(parents=True)
+        files={f"receipts/{i:04d}_"+"x"*80+".json":str(i).encode() for i in range(3000)}
+        volume=make_volume(directory,"large.zip",files)
+        receipt={"zip_sha256":volume["sha256"],"zip_bytes":volume["bytes"],"members":[
+            {"member":name,**item} for name,item in volume["members"].items()]}
+        original=delivery.sha(directory/"large.zip")
+        uploads=[];commands=[]
+        def upload(local,path,port):
+            value=Path(local).read_bytes();Path(path).write_bytes(value);uploads.append((port,len(value),path))
+            digest=hashlib.sha256(value).hexdigest()
+            return {"exit_code":0,"local_sha256":digest,"remote":digest}
+        def execute(code,port,timeout):
+            commands.append(code);self.assertLess(len(code.encode()),8192)
+            result=io.StringIO()
+            try:
+                with redirect_stdout(result):exec(code,{})
+                return {"exit_code":0,"stdout":result.getvalue(),"stderr":""}
+            except Exception as error:return {"exit_code":1,"stdout":"","stderr":str(error)}
+        transport=SimpleNamespace(upload=upload,remote_python=execute)
+        with patch.object(delivery.ops,"BASE",remote_base.as_posix()):
+            checked=delivery._remote_verify(transport,20418,(directory/"large.zip").as_posix(),receipt)
+        self.assertEqual(checked["member_count"],3000);self.assertTrue(checked["all_member_shas_verified"])
+        self.assertGreater(uploads[0][1],128*1024);self.assertEqual(uploads[0][0],20418)
+        self.assertEqual(delivery.sha(directory/"large.zip"),original)
+        self.assertNotIn(next(iter(files)),commands[0])
+        # Same original ZIP; changing an expected member's byte SHA must fail.
+        receipt["members"][0]["sha256"]="0"*64
+        with patch.object(delivery.ops,"BASE",remote_base.as_posix()),self.assertRaisesRegex(RuntimeError,"member SHA"):
+            delivery._remote_verify(transport,20424,(directory/"large.zip").as_posix(),receipt)
+
+    def test_remote_validation_rejects_tampered_manifest_and_never_contacts74(self):
+        remote_base=self.root/"remote";directory=remote_base/"delivery/final_fixture";directory.mkdir(parents=True)
+        volume=make_volume(directory,"small.zip",{"report.md":b"frozen report"})
+        receipt={"zip_sha256":volume["sha256"],"zip_bytes":volume["bytes"],"members":[
+            {"member":name,**item} for name,item in volume["members"].items()]}
+        def upload(local,path,port):
+            value=Path(local).read_bytes();Path(path).write_bytes(value);digest=hashlib.sha256(value).hexdigest()
+            return {"exit_code":0,"local_sha256":digest,"remote":digest}
+        def execute(code,port,timeout):
+            sidecar=next(directory.glob("validation_*.json"));payload=bytearray(sidecar.read_bytes());payload[-2]^=1;sidecar.write_bytes(payload)
+            try:exec(code,{})
+            except Exception as error:return {"exit_code":1,"stdout":"","stderr":str(error)}
+            raise AssertionError("tampered manifest was accepted")
+        transport=SimpleNamespace(upload=upload,remote_python=execute)
+        with patch.object(delivery.ops,"BASE",remote_base.as_posix()),self.assertRaisesRegex(RuntimeError,"manifest SHA"):
+            delivery._remote_verify(transport,20473,(directory/"small.zip").as_posix(),receipt)
+        with self.assertRaisesRegex(ValueError,"exclude physical20474"):
+            delivery._remote_verify(SimpleNamespace(),20474,"/unused",receipt)
 
 
 if __name__=="__main__":
