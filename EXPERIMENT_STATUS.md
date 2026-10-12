@@ -1,6 +1,8 @@
 # 实验状态与新窗口接手说明
 
-**2026-10-13 S1-AI17-R2方案18已完成并通过根设计复核，正在独立实现，尚未发起本轮正式任务。** [方案18](docs/第一阶段/方案/18_共同强初解与峰值对齐小池重构开发方案.md)与[机器合同](outputs/experiments/first_stage_ai_search_20261013/design/round2_design.json)SHA`9ccd449b…`规定先24开发案例×8任务×D0/D1=384解码任务；实际共同强初解从R1五个已审计终态抽取，不重跑基线。两法共用等价逐机归属核验与局部资格矩阵，D1仅64活动飞机、其余全保留并核几何。严格工作量上限与名义3秒护栏分开，全部合法N≤200候选保留，共同N₀/Ω₀切片只用于质量门槛。G0/G1/G2通过才扩剩余56，不自动训练或访问新val/test。[根设计验收](outputs/experiments/first_stage_ai_search_20261013/design/round2_root_design_acceptance.json)。
+**2026-10-13 S1-AI17-R2方案18已完成并通过根设计复核，正在独立实现，尚未发起本轮正式任务。** [方案18](docs/第一阶段/方案/18_共同强初解与峰值对齐小池重构开发方案.md)与[机器合同v2](outputs/experiments/first_stage_ai_search_20261013/design/round2_design.json)SHA`b5c0ddb5…`规定先24开发案例×8任务×D0/D1=384解码任务；实际共同强初解从R1五个已审计终态抽取，不重跑基线。两法共用等价逐机归属核验与局部资格矩阵，D1仅64活动飞机、其余全保留并核几何。严格工作量上限与名义3秒护栏分开，全部合法N≤200候选保留，共同N₀/Ω₀切片只用于质量门槛。G0/G1/G2通过才扩剩余56，不自动训练或访问新val/test。[根设计验收v2](outputs/experiments/first_stage_ai_search_20261013/design/round2_root_design_acceptance_v2.json)。
+
+启动前v2将最多261个有限候选点的非支配档案完整保留，取消原64点裁剪，并明确准备阶段截断的已知成本与未知中断禁止自动重算；原输入、预算与门槛不变。[原9ccd合同](outputs/experiments/first_stage_ai_search_20261013/design/round2_design_v1_before_archive_clarification.json)及[Astra修订审核](outputs/experiments/first_stage_ai_search_20261013/design/round2_contract_revision_review_v2.json)保留。23项核心工程检查已过，工作台与独立后处理仍在集成，未把工程小例当作开发效果。
 
 新实现树`C:/Users/Admin/.codex/worktrees/stage1-ai18/paper`、分支`codex/stage1-ai18`，远端拟`s1_ai18/{20418,20424,20473}`/8980–8982，仍需源冻结与现场准入；R1 fbd树完全不改。Astra设计已完成，三个Sol分别实现科学内核、独立工作台/执行、后处理与闸门。若强解后没有足够增量质量空间，后续转学习构造/修复的同质量效率路线；这不是停止整体探索或自动增加旧预算。根补核INIT与RULE实际同初始档案71例中71例仍有新折中点，保留这部分有效R1证据，不把18例三法任一差异扩大成全部取舍无效。[子集核对](outputs/experiments/first_stage_ai_search_20261013/analysis/root_actual_same_initial_novelty.json)。
 
