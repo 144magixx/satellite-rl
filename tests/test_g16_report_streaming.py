@@ -82,6 +82,16 @@ class StreamingTests(unittest.TestCase):
             journal=[first,second],budget=dict(attempts=2,limit_seconds=10,late_completed_candidates=0))
         _,counts=audit_search(scene,row,compact=True)
         self.assertEqual(counts['accepted'],1)
+        second['pool_committed']=True
+        with self.assertRaisesRegex(ValueError,'more than one'):audit_search(scene,row,compact=True)
+        second['pool_committed']=False
+        second['stage']=-1
+        with self.assertRaisesRegex(ValueError,'monotone'):audit_search(scene,row,compact=True)
+        second['stage']=False
+        with self.assertRaisesRegex(ValueError,'integer'):audit_search(scene,row,compact=True)
+        second['stage']=0
+        row['layout']=dict(centers=best['centers'],assignment=[1,0,0,1])
+        with self.assertRaisesRegex(ValueError,'final committed layout'):audit_search(scene,row,compact=True)
 
     def test_all_three_reference_nodes_survive_streaming(self):
         row=self.row(25)

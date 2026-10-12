@@ -196,13 +196,20 @@ def better(after, before, method='JOINT', tolerance=1e-9):
     return False
 
 
+def layout_digest(record):
+    """Independent producer-compatible Layout.to_record + canonical JSON bytes."""
+    normalized=dict(centers=np.asarray(record['centers'],dtype=float).reshape(-1,2).tolist(),
+                    assignment=np.asarray(record['assignment'],dtype=np.int64).tolist())
+    return hashlib.sha256(json.dumps(normalized,sort_keys=True,allow_nan=False).encode()).hexdigest()
+
+
 def audit_search(case, row, *, compact=False,progress=None):
     result = audit_layout(case,row['layout'],row['metrics'])
     budget = row.get('budgets', row.get('budget', {}))
     journal = row.get('journal', [])
     current = row.get('initial_metrics')
     teacher_layout = row.get('input',{}).get('initial')
-    teacher_stage=None;pending_teacher_layout=None
+    teacher_stage=None;pending_teacher_layout=None;teacher_stage_commits=0
     if teacher_layout is not None:
         current = audit_layout(case,teacher_layout)
     limit = budget.get('seconds_limit',budget.get('limit_seconds'))
@@ -215,6 +222,9 @@ def audit_search(case, row, *, compact=False,progress=None):
             last_progress=time.monotonic();progress(dict(journal_count=seen,audit_elapsed_seconds=last_progress-started_audit))
         if teacher_layout is not None:
             stage=event.get('stage')
+            if not isinstance(stage,int) or isinstance(stage,bool) or stage<0 or (teacher_stage is not None and stage<teacher_stage):
+                raise AuditError('teacher stage must be a monotone nonnegative integer')
+            if stage!=teacher_stage:teacher_stage_commits=0
             if teacher_stage is not None and stage!=teacher_stage and pending_teacher_layout is not None:
                 teacher_layout=pending_teacher_layout;pending_teacher_layout=None
             teacher_stage=stage
@@ -234,6 +244,10 @@ def audit_search(case, row, *, compact=False,progress=None):
                 if delta['beams']: centers[delta['beams']]=delta['centers']
                 candidate=dict(centers=centers.tolist(),assignment=assignment.tolist())
             audit_layout(case,candidate,values)
+            if event.get('candidate_sha256') is not None and layout_digest(candidate)!=event['candidate_sha256']:
+                raise AuditError('teacher candidate layout SHA differs')
+            if event.get('prior_sha256') is not None and layout_digest(teacher_layout)!=event['prior_sha256']:
+                raise AuditError('teacher pre-pool layout SHA differs')
         if values is not None:
             compare_metrics(load_metrics(evidence['loads']),values)
             if evidence.get('valid') is not True: raise AuditError('metrics on invalid candidate')
@@ -243,6 +257,9 @@ def audit_search(case, row, *, compact=False,progress=None):
             late += 1
             if commit or event.get('temporary_best'): raise AuditError('late candidate published')
         if commit:
+            if teacher_layout is not None:
+                teacher_stage_commits+=1
+                if teacher_stage_commits>1:raise AuditError('teacher pool has more than one committed trial')
             if values is None: raise AuditError('accepted missing metrics')
             if current is not None and row.get('method') != 'VARIABLE':
                 if values['N'] != current['N'] or not better(values,current,row['method']):
@@ -273,6 +290,8 @@ def audit_search(case, row, *, compact=False,progress=None):
         raise AuditError('late candidate ledger differs')
     if budget.get('accepted',accepted) != accepted: raise AuditError('accepted count differs')
     if current is not None: compare_metrics(result,current)
+    if teacher_layout is not None and layout_digest(pending_teacher_layout or teacher_layout)!=layout_digest(row['layout']):
+        raise AuditError('teacher final committed layout differs from published layout')
     for node_index,node in enumerate(row.get('reference_nodes',[])):
         audit_layout(case,node['layout'],node['metrics'])
         sl = node.get('seconds_limit', node.get('limit') if node['kind']=='seconds' else None)
