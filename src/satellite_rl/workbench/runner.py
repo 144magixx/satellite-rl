@@ -1777,6 +1777,9 @@ def run_job(job_dir, *, resume=False):
         from satellite_rl.power_refinement.runner import run_refinement_job
         return run_refinement_job(directory, resume=resume)
     if research_stage == "coverage":
+        if _read_json(directory / "config.json", {}).get("schema_version") == 9:
+            from .ai_search_runner import run_job as run_ai_search_job
+            return run_ai_search_job(directory, resume=resume)
         if _read_json(directory / "config.json", {}).get("schema_version") == 8:
             from .geoload_runner import run_job as run_geoload_job
             return run_geoload_job(directory, resume=resume)

@@ -236,7 +236,7 @@ class Scheduler:
             elif len(external) >= 3 or (len(external) >= 2 and gpu.get("utilization_percent", 0) >= 95):
                 reason = "现有GPU作业繁忙，等待资源，不中断其他实验"
             if reason:
-                cpu_jobs = [(j, s) for j, s in queued if j.get("experiment_id") in ("S1-ND12", "S1-G16") and
+                cpu_jobs = [(j, s) for j, s in queued if j.get("experiment_id") in ("S1-ND12", "S1-G16", "S1-AI17") and
                             j.get("execution_device") == "cpu"]
                 for job, status in queued:
                     if (job, status) in cpu_jobs:
@@ -251,6 +251,16 @@ class Scheduler:
 
     def _launch(self, job, status):
         directory = self.store.job_dir(job["run_id"])
+        if job.get("experiment_id") == "S1-AI17":
+            try:
+                from .coverage_ai_search import verify_job
+                verify_job(self.store, job)
+                from .ai_search_resources import admission
+                observation = admission(self.store, job)
+                atomic_json(directory / "resource_before_launch.json", observation)
+            except Exception as error:
+                self._status(directory, status, stage="queued", queue_reason=str(error))
+                return
         if job.get("experiment_id") == "S2-F20" and job.get("resource_hold"):
             from .storage import digest
             proof_path = directory / "resource_admission.json"
@@ -349,6 +359,12 @@ class Scheduler:
                expected_repair_commit=None):
         with self.lock:
             candidate = read_json(self.store.job_dir(run_id) / "job.json", {})
+            if candidate.get("experiment_id") == "S1-AI17":
+                if any(v is not None for v in (source_repair, repair_validation_path,
+                                              repair_validation_sha256, expected_origin_commit, expected_repair_commit)):
+                    raise ValueError("S1-AI17 resumes the original frozen task only")
+                from .coverage_ai_search import resume_job
+                return resume_job(self, run_id)
             if candidate.get("experiment_id") == "S1-G16":
                 if any(v is not None for v in (source_repair, repair_validation_path,
                                               repair_validation_sha256, expected_origin_commit, expected_repair_commit)):
