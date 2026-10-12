@@ -1,5 +1,11 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 06:05 S1-AI17原768条诊断教师的本地原始归档已完成，仍不准入训练。** 原三端teacher目录4023文件、782,237,430B已完整保留到E；根对6240逻辑引用/5815唯一当地文件逐SHA复核，并与远端逐成员清单闭合。实际192母×4案例、22824任务行的结构检查保留6644完成、4977池内未找到、11203截断，截断标签不填零；这只是身份/文件/结构验收，未做独立几何标签科学审计。[原始位置](outputs/experiments/first_stage_ai_search_20261013/analysis/diagnostic_teacher_location.json) · [根归档验收](outputs/experiments/first_stage_ai_search_20261013/analysis/diagnostic_teacher/root_archive_acceptance.json)。37.8MB训练NPZ只存一个E canonical blob，原fbd源码复用；运输首attempt的本地catalog键错误、失败日志、旧锁与最小修复来源全部保留，没有重算/新标签/训练。最终collector37872已completed并退出，R2大IO等待解除。
+
+**2026-10-13 06:02 S1-AI17-R2剩余56景的操作源与正式准备计划已根核，正在进行现场服务交接和准备任务发布。** 新执行提交`455efd70f6c570c9e0b4eb6a72397b0fcd11c4a4`，主目录集成`7d933a3`；算法核心仍f02，B5/结果前1ba9及原两几何资格不变。根从规范Git字节副本跑64项相关检查，并以真实签定证据作无mock准入；219项实际科学依赖与三端原worker清单一致，原Git科学内容也未改变。[新源验收](outputs/experiments/first_stage_ai_search_20261013/round2/extension/root_source_freeze_acceptance.json) · [独立复核](outputs/experiments/first_stage_ai_search_20261013/round2/extension/independent_cross_review.json)。审查中的依赖子集漏洞和分端升级未知回执恢复已修复；一度把Windows导出CRLF误当远端源差异的判断已撤回，原三端实际字节无异常，纠正依据保留。
+
+[正式prepare计划](outputs/experiments/first_stage_ai_search_20261013/round2/extension/run_plan_prepare.json)SHA`f95ecd93…`已根核56精确补集、14整母、三端20/20/16景及280份原R1五法审计引用，原24不重复；准备只抽取共同来源，不新解码。[计划验收](outputs/experiments/first_stage_ai_search_20261013/round2/extension/prepare_plan_root_review.json)。现场须先核原6任务/worker/controller终态与服务出生，再仅交接18/24/73的8980–8982至独立source_epochs，保旧repo/archive；实际新任务ID以随后清单为准，不提前记为已运行。R1诊断教师收集进程37872已completed且根核PID不存在，大IO等待已解除，正式归档回执另验；这不等于教师几何标签审核或模型训练。独立56审计＋原24索引聚合的23项后处理检查已过，新56求解、新AI训练和新val/test算法评价此时仍0。
+
 **2026-10-13 05:25 S1-AI17-R2先导独立审计与G0/G1/G2已通过，剩余56案例已准入、尚未启动；G3未过，仍不训练模型。** 独立重放24/24案例、48方法记录与585来源pin，未解决问题0；根复核15项读取/审计检查并独立重计目标命中。[根门槛验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/pilot/root_gate_acceptance.json)绑定audit `3d2c87c0…`、gate `f223c3e8…`和结果前G3解释`1ba91289…`。D1完整池24/24、新可行24/24、目标9/24且覆盖5/6母；D0完整池12/24、目标8/24且覆盖4/6母，不能将D0质量分母缩为12。D1相对D0最终峰值5例更低、6更高、13相同，均值优势不等于全面胜出。
 
 D1离线oracle相对规则的射线对成本中位仅节省5.3517%，低于预定20%；固定首项A区重分已覆盖同样9个目标案例，主成本相对oracle超额中位5.6543%，因此未建立八任务排序学习的必要性。该首项的9个首次命中全部不改N/真实宽度、全部改变归属；最终发布布局同时改变N和真实宽度则为D1 17/24、D0 14/24，两层机制不可混写。此结论仅为6母开发证据，不否定其它AI路线，也未完成用户要求的最终联合可变方案。
