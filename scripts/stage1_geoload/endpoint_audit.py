@@ -111,12 +111,25 @@ def validate_states(cp,final,protocol,teacher_sha,validation_sha,loss_rows,attem
             'model_tensor_count':len(cp['model']),'adam_state_count':len(states),'rng_sampler_verified':True}
 
 
-def remote_audit(jobroot,manifest,expected_run_id):
+def remote_code(source_root,module_path,jobroot,manifest_path,manifest_sha,run_id):
+    """Bounded command: the potentially large member inventory is a pinned file."""
+    return '''import importlib.util,json,sys
+sys.path.insert(0,%r)
+spec=importlib.util.spec_from_file_location('g16_endpoint_postops',%r);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+print(json.dumps(m.remote_audit(%r,%r,%r,%r)))
+'''%(source_root+'/src',module_path,jobroot,manifest_path,run_id,manifest_sha)
+
+
+def remote_audit(jobroot,manifest_path,expected_run_id,manifest_sha):
     """Called only in remote73 DQN with frozen scientific src on PYTHONPATH."""
     import os,fcntl,subprocess
     import numpy as np
     import torch
     from satellite_rl.coverage.geoload.models import make_model
+    if digest(manifest_path)!=manifest_sha:raise ValueError('endpoint member inventory transport SHA differs')
+    manifest=read(manifest_path)
+    if manifest.get('group')!='S1-G16' or manifest.get('run_id')!=expected_run_id or manifest.get('scientific_commit')!=SCIENCE:
+        raise ValueError('endpoint member inventory identity differs')
     root=Path(jobroot);job=read(root/'job.json');status=read(root/'status.json');config=read(root/'config.json')
     if job.get('run_id')!=expected_run_id or job.get('scientific_commit')!=SCIENCE or job.get('ssh_port') not in ('20473',20473):
         raise ValueError('actual training owner/source differs')
@@ -196,6 +209,7 @@ def remote_audit(jobroot,manifest,expected_run_id):
         if not torch.isfinite(right).all() or not torch.equal(left,right):raise ValueError('engineering forward nonfinite/different')
         torch.cuda.synchronize()
         result.update(group='S1-G16',run_id=job['run_id'],scientific_commit=SCIENCE,verified=True,status='passed',
+            port=20473,device='cuda',update=10000,strict_state_dict=True,parameters_match_checkpoint=True,
             gpu_available=True,cuda_available=True,strict=True,strict_load=True,strict_model_load=True,
             final_sha256=digest(models/'final.pt'),checkpoint_sha256=digest(models/'checkpoint.pt'),
             model_sha256=digest(models/'final.pt'),teacher_source_sha256=teacher['sha256'],validation_input_sha256=validation['sha256'],
@@ -234,16 +248,23 @@ def execute(plan_path,state_path,base):
             receipt=ops.upload(module,target,20473)
             if receipt['remote']!=digest(module):raise ValueError('audit module transport SHA differs')
             jobroot=job['archive_root']+'/outputs/workbench/jobs/'+job['run_id']
+            manifest_bytes=archive.zip.read('archive_manifest.json');manifest_sha=hashlib.sha256(manifest_bytes).hexdigest()
+            inputs=receipts/'postops_inputs';inputs.mkdir(exist_ok=True)
+            pinned_manifest=inputs/('endpoint_manifest_'+manifest_sha+'.json')
+            if pinned_manifest.exists() and digest(pinned_manifest)!=manifest_sha:raise ValueError('retained endpoint inventory differs')
+            if not pinned_manifest.exists():
+                if shutil.disk_usage(inputs).free<8*(1<<30)+len(manifest_bytes):raise RuntimeError('endpoint inventory lacks8GiB reserve')
+                pinned_manifest.write_bytes(manifest_bytes)
+            remote_manifest=ops.BASE+'/source_closure/postops/'+pinned_manifest.name
+            manifest_transport=ops.upload(pinned_manifest,remote_manifest,20473)
+            if manifest_transport['remote']!=manifest_sha:raise ValueError('endpoint inventory upload SHA differs')
             # Launch only DQN; immutable science package is first on sys.path.
-            code='''import importlib.util,json,sys
-sys.path.insert(0,%r)
-spec=importlib.util.spec_from_file_location('g16_endpoint_postops',%r);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-print(json.dumps(m.remote_audit(%r,%r,%r)))
-'''%(job['source_root']+'/src',target,jobroot,manifest,job['run_id'])
+            code=remote_code(job['source_root'],target,jobroot,remote_manifest,manifest_sha,job['run_id'])
             actual=ops.remote_python(code,20473,timeout=300)
             if actual['exit_code']:raise RuntimeError(actual['stderr'][-2000:])
             audit=json.loads(actual['stdout'].splitlines()[-1]);audit.update(train_zip_sha256=state['archives']['train_mlm']['sha256'],train_zip_path=state['archives']['train_mlm']['local_path'],
-                all_tasks_api_terminal_verified=True,actual_api_terminal_tasks=api_terminal)
+                all_tasks_api_terminal_verified=True,actual_api_terminal_tasks=api_terminal,
+                archive_manifest_sha256=manifest_sha,archive_manifest_local_path=str(pinned_manifest))
             destination=Path('D:/paper/models/runs/first_stage_geometry_load_20261012')/job['run_id']/'final';destination.mkdir(parents=True,exist_ok=True)
             if shutil.disk_usage(destination).free<8*(1<<30)+archive.manifest['members']['model/final.pt']['bytes']:
                 raise RuntimeError('final export lacks8GiB reserve')

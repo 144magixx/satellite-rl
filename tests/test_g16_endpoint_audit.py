@@ -5,7 +5,7 @@ import random
 import unittest
 import numpy as np
 import torch
-from scripts.stage1_geoload.endpoint_audit import SCIENCE,check_readiness,validate_states
+from scripts.stage1_geoload.endpoint_audit import SCIENCE,check_readiness,validate_states,remote_code
 
 
 class EndpointAuditTests(unittest.TestCase):
@@ -73,6 +73,14 @@ class EndpointAuditTests(unittest.TestCase):
         state['tasks']['common_test']['stage']='completed';self.assertEqual(check_readiness(plan,state)['port'],20473)
         state['archives']={}
         with self.assertRaisesRegex(ValueError,'checkpoint task ZIP'):check_readiness(plan,state)
+
+    def test_remote_command_contains_pinned_path_not_member_inventory(self):
+        import base64
+        code=remote_code('/frozen/source','/postops/audit.py','/jobs/train','/postops/manifest_'+('a'*64)+'.json','a'*64,'train')
+        self.assertLess(len(base64.b64encode(code.encode())),4096)
+        self.assertNotIn('members',code)
+        self.assertIn('/postops/manifest_',code)
+        compile(code,'remote_command','exec')
 
 
 if __name__=='__main__':unittest.main()
