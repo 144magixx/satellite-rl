@@ -12,13 +12,16 @@ def digest(path):
     return h.hexdigest()
 
 def pool_features(scene, current, pool):
-    centers = []
+    centers = []; center_ids = {}
     for layout in [current] + [entry[1] for entry in pool]:
         for center in layout.centers:
-            if not any(np.array_equal(center, prior) for prior in centers): centers.append(center.copy())
+            if not np.isfinite(center).all(): raise ValueError('candidate center must be finite')
+            key = (float(center[0]), float(center[1]))
+            if key not in center_ids:
+                center_ids[key] = len(centers); centers.append(center.copy())
     centers = np.asarray(centers)
     def mapping(layout):
-        ids = [next(i for i,c in enumerate(centers) if np.array_equal(c,x)) for x in layout.centers]
+        ids = [center_ids[(float(x[0]), float(x[1]))] for x in layout.centers]
         return np.asarray(ids, dtype=np.int64)[layout.assignment]
     initial = mapping(current)
     legal = legal_matrix(scene, centers)

@@ -97,6 +97,42 @@ class G16LearningTest(unittest.TestCase):
         rebuilt=Layout(initial.centers,initial.assignment.copy());a=rebuilt.assignment.copy();delta=trial['delta'];a[delta['users']]=delta['owners'];centers=rebuilt.centers.copy();centers[delta['beams']]=np.asarray(delta['centers']).reshape(-1,2)
         self.assertEqual(layout_sha256(Layout(centers,a)),trial['candidate_sha256'])
 
+    def test_pool_index_first_seen_exact_equivalence(self):
+        from unittest.mock import patch
+        import time
+        from satellite_rl.coverage.geoload import evidence
+        timings=[]
+        for n in (50,100):
+            centers=np.column_stack((np.linspace(50,51,n),np.linspace(10,11,n)))
+            centers[0,1]=-0.0
+            scene=Scene(centers,np.arange(1,n+1,dtype=float));current=Layout(centers,np.arange(n))
+            pool=[]
+            for i in range(64):
+                repeated=centers.copy();repeated[0,1]=0.0
+                if i%8==0:repeated[-1,0]+=1e-6*i
+                pool.append(('test',Layout(repeated,np.roll(np.arange(n),i)),{}))
+            # Execute original list-scan implementation independently, preserving feature precision.
+            import inspect
+            source=inspect.getsource(evidence.pool_features)
+            begin=source.index('    centers = [];');end=source.index('    initial = mapping(current)',begin)
+            original=source[:begin]+"""    centers = []
+    for layout in [current] + [entry[1] for entry in pool]:
+        for center in layout.centers:
+            if not any(np.array_equal(center, prior) for prior in centers): centers.append(center.copy())
+    centers = np.asarray(centers)
+    def mapping(layout):
+        ids = [next(i for i,c in enumerate(centers) if np.array_equal(c,x)) for x in layout.centers]
+        return np.asarray(ids, dtype=np.int64)[layout.assignment]
+"""+source[end:]
+            namespace=dict(np=np,legal_matrix=evidence.legal_matrix);exec(original,namespace)
+            started=time.perf_counter();old,oldmap=namespace['pool_features'](scene,current,pool);oldseconds=time.perf_counter()-started
+            started=time.perf_counter();new,newmap=pool_features(scene,current,pool);newseconds=time.perf_counter()-started
+            for key in old:
+                self.assertEqual(old[key].dtype,new[key].dtype);self.assertEqual(old[key].tobytes(),new[key].tobytes())
+            for entry in pool:self.assertEqual(oldmap(entry[1]).tobytes(),newmap(entry[1]).tobytes())
+            timings.append(dict(N=n,pool=64,old_seconds=oldseconds,new_seconds=newseconds))
+        print('engineering_feature_preparation_only',timings)
+
     def test_common_pool_permutation(self):
         scene,initial,pool,s=self.fixture()
         for method in ('rule','random','MLM'):
