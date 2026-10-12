@@ -66,6 +66,10 @@ class PublicationTests(unittest.TestCase):
               dict(case_id='c',mother_id='m',demand_profile='base',method='MLM',N='2',P='2')]
         self.assertEqual(paired(rows,'P')[0]['difference'],-1)
         rows[1]['N']='3'; self.assertEqual(paired(rows,'P'),[])
+        rows[0]['N']='';rows[1]['N']='';self.assertEqual(paired(rows,'P'),[])
+        rows[1]['mother_id']='other'
+        with self.assertRaisesRegex(ValueError,'identity'):paired(rows,'P')
+        rows[1]['mother_id']='m'
         with self.assertRaises(ValueError):paired(rows+[rows[0]],'P')
 
     def test_synthetic_exports_and_preserves_failure(self):

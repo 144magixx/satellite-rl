@@ -66,12 +66,16 @@ def paired(rows, metric, baseline='JOINT'):
         other = selected.get((row['case_id'], baseline))
         if row['method'] == baseline or other is None:
             continue
+        if any(row.get(key) != other.get(key) for key in ('mother_id','demand_profile','date')):
+            raise ValueError('same case identity has different mother/profile/date')
         a, b = number(row, metric), number(other, metric)
-        if a is None or b is None or number(row, 'N') != number(other, 'N'):
+        n, reference_n = number(row, 'N'), number(other, 'N')
+        if a is None or b is None or n is None or reference_n is None or n != reference_n:
             continue
         result.append(dict(method=row['method'], case_id=row['case_id'],
                            mother_id=row['mother_id'], demand_profile=row['demand_profile'],
-                           metric=metric, difference=a-b, baseline=baseline))
+                           date=row.get('date'), N=n, metric=metric,
+                           difference=a-b, baseline=baseline))
     return result
 
 
@@ -132,11 +136,11 @@ def build(source, output, *, synthetic=False):
                 vals=[r['difference'] for r in pairs if r['method']==method]
                 axes[i, 1].scatter([j]*len(vals), vals, color=palette[j % len(palette)], marker=markers[j % len(markers)], s=15, alpha=.7)
             axes[i, 0].set(xticks=range(4), xticklabels=PROFILES, ylabel=metric+' (无量纲)')
-            axes[i, 1].set(xticks=range(len(methods)), xticklabels=[LABELS.get(m,m) for m in methods], ylabel=metric+' − JOINT (同景同N)')
+            axes[i, 1].set(xticks=range(len(methods)), xticklabels=[LABELS.get(m,m) for m in methods], ylabel=metric+' − JOINT (同景同N；负值较低)')
             axes[i, 1].axhline(0, color='gray', linewidth=.8)
             axes[i, 1].tick_params(axis='x', rotation=55)
         if methods: axes[0,0].legend(fontsize=7, ncol=2)
-        save(fig, '01_same_N', completed+pair_rows, '同N负载与配对差；点为景，母为独立单位')
+        save(fig, '01_same_N', test+pair_rows, '同N负载与配对差；P/T越低越好，CV仅诊断')
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 5), layout='constrained')
         counts=[]
@@ -166,9 +170,11 @@ def build(source, output, *, synthetic=False):
                 axes[i].scatter([number(r,'N') for r in rows], [number(r,metric) for r in rows], marker=markers[j], color=palette[j], s=16, alpha=.7, label=profile)
             axes[i].set(xlabel='实际非空束数N', ylabel=metric+(' (原请求单位)' if metric!='CV' else ' (无量纲)'))
         failed=sum(r.get('outcome')!='completed' for r in variable)
+        variable_mothers=len({r['mother_id'] for r in variable})
+        variable_cases=len({r['case_id'] for r in variable})
         if variable: axes[0].legend(fontsize=7)
         else: empty(axes[0], '变量N表无记录；不补0')
-        save(fig, '03_variable_N', variable, f'变量N原单位；{failed}/{len(variable)}记录未完成或本预算未找到；不跨N排名')
+        save(fig, '03_variable_N', variable, f'变量N：{variable_mothers}母/{variable_cases}景；未完成{failed}/{len(variable)}条；不跨N排名')
 
         fig, axes=plt.subplots(2, 2, figsize=(12, 8), layout='constrained')
         axes=axes.flatten()
@@ -188,7 +194,7 @@ def build(source, output, *, synthetic=False):
                 empty(axes[i], '未训练，无验证节点' if summary.get('gate_passed') is False else 'compact CSV无真实节点数据；不补曲线')
         if validation: axes[1].legend(fontsize=7)
         else: missing.append('validation node metrics unavailable; no invented curve')
-        save(fig, '04_learning', learning+validation, 'MLM完整候选排序模型；不生成布局或自主选N')
+        save(fig, '04_learning', learning+validation, 'MLM候选掩码似然排序；中间权重未保留，节点仅训练诊断')
 
         fig, axes=plt.subplots(2, 2, figsize=(12, 9), layout='constrained')
         times=[r for r in tables['timing'] if r.get('task','').startswith('common_test_')]
@@ -226,6 +232,9 @@ def build(source, output, *, synthetic=False):
         reference='budget-limited feasible reference, not global optimum',
         journal_requirements='not specified; provisional general export',
         candidate_geometry_limitation=summary.get('candidate_geometry_limitation'), single_training_seed=51001)
+    manifest['method_interpretation']='rule identity order matches JOINT base order; wrapper timing can differ; MLM ranks full candidates, does not generate layouts or choose N'
+    manifest['direction']='P/T lower better lexicographically; Q third; CV diagnostic only; paired method-minus-JOINT negative is lower'
+    manifest['uncertainty']='no uncertainty recomputed here; report learning comparisons use date-stratified mother bootstrap; four profiles are dependent'
     if (Path(source)/'validation_cases.csv').exists():
         manifest['sources']['validation_cases.csv']=sha(Path(source)/'validation_cases.csv')
     (output/'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2),encoding='utf-8')
