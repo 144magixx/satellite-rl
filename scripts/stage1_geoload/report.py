@@ -9,6 +9,7 @@ import csv
 import hashlib
 import json
 import re
+import time
 from collections import defaultdict
 from pathlib import Path
 import numpy as np
@@ -30,8 +31,9 @@ class Dataset:
     def __init__(self, archive, member, expected_count):
         # NPZ is read from the original ZIP; never creates another raw-data copy.
         with archive.zip.open(member) as f, np.load(f,allow_pickle=False) as data:
-            self.positions=data['positions'].copy(); self.demands=data['demands'].copy()
-            self.offsets=data['offsets'].copy(); self.ids=data['case_ids'].astype(str)
+            # np.load already returns owned arrays; copying doubles peak buffers.
+            self.positions=data['positions']; self.demands=data['demands']
+            self.offsets=data['offsets']; self.ids=data['case_ids'].astype(str)
             self.mothers=data['mother_ids'].astype(str); self.profiles=data['demand_profiles'].astype(str)
         n=len(self.ids)
         if n != expected_count or len(set(self.ids)) != n or self.offsets.shape!=(n+1,) or self.offsets[0]!=0 or self.offsets[-1]!=len(self.demands) or (np.diff(self.offsets)<0).any():
@@ -110,10 +112,10 @@ def validation_tables(archive, dataset, initials, metadata_reader=_model_metadat
                 member=prefix+hashlib.sha256((item['case_id']+'\0MLM').encode()).hexdigest()+'.json'
                 ref=archive.manifest['members'][member]
                 if ref['sha256']!=item['sha256']:raise AuditError('node case SHA differs')
-                raw=archive.read(member);scene=dataset.get(item['case_id'])
+                raw=archive.read_case(member) if hasattr(archive,'read_case') else archive.read(member);scene=dataset.get(item['case_id'])
                 if raw.get('case_id')!=item['case_id'] or raw.get('mother_id')!=scene['mother_id'] or raw.get('demand_profile')!=scene['demand_profile']:
                     raise AuditError('node case/mother/profile identity differs')
-                metric,events=audit_search(scene,{**raw,'method':'MLM','initial_metrics':initials[item['case_id']]})
+                metric,events=audit_search(scene,{**raw,'method':'MLM','initial_metrics':initials[item['case_id']]},compact=True)
                 budget=raw.get('budgets',{})
                 required=('seconds','attempts','geometry_calls','late_candidates')
                 if any(k not in budget for k in required):raise AuditError('validation actual budget unknown')
@@ -121,7 +123,7 @@ def validation_tables(archive, dataset, initials, metadata_reader=_model_metadat
                 node_cases.append(dict(node=node,case_id=item['case_id'],mother_id=scene['mother_id'],date=_date(scene['mother_id']),
                     demand_profile=scene['demand_profile'],**metric,coverage_100=True,unique_assignment=True,demand_conserved=True,
                     search_seconds=budget['seconds'],attempts=budget['attempts'],geometry_calls=budget['geometry_calls'],
-                    late_candidates=budget['late_candidates'],accepted=sum(e['accepted'] for e in events),
+                    late_candidates=budget['late_candidates'],accepted=events['accepted'],
                     source_zip=str(archive.path),source_member=member,source_sha256=ref['sha256'],
                     node_done_sha256=archive.manifest['members'][done_member]['sha256'],checkpoint_sha256=cp_sha,
                     endpoint_sha256=final_sha,validation_input_sha256=dataset.ref['sha256'],protocol_sha256=protocol_sha,
@@ -158,11 +160,17 @@ def _expected_keys(plan, gate):
     return keys
 
 
-def build(plan_path,state_path,destination,closure=None):
+def build(plan_path,state_path,destination,closure=None,*,progress=None):
     plan=read_json(plan_path);state=read_json(state_path);out=Path(destination)
     out.mkdir(parents=True,exist_ok=True)
     issues=[]; archives={};datasets={};case_rows=[];timing=[];candidate_rows=[];learning=[];initials={};validation_cases=[];validation_curves=[]
     tasks=state.get('tasks',{});science=plan['scientific_commit']
+    began=time.monotonic();last_progress=0.
+    def notify(event):
+        nonlocal last_progress
+        current=time.monotonic()
+        if progress is not None and current-last_progress>=5:
+            last_progress=current;progress(dict(elapsed_seconds=current-began,**event))
     if state.get('plan_sha256')!=digest(plan_path):issues.append('controller snapshot plan SHA differs')
     if plan.get('group')!='S1-G16' or state.get('group')!='S1-G16':raise AuditError('wrong experiment')
     gate=state.get('gate',{}).get('passed')
@@ -173,6 +181,7 @@ def build(plan_path,state_path,destination,closure=None):
     if len(set(owners))!=len(owners):issues.append('duplicate task owner')
     try:
         for key,task in tasks.items():
+            notify(dict(phase='ZIP_integrity',task=key))
             try:
                 if task.get('stage')!='completed':raise AuditError('task not completed')
                 receipt=state.get('archives',{}).get(key)
@@ -205,10 +214,11 @@ def build(plan_path,state_path,destination,closure=None):
             if 'job/case_index.json' not in a.manifest['members']:continue
             index=a.read('job/case_index.json')
             for stem,ref in index.items():
+                notify(dict(phase='case_audit',task=key,case=stem,completed_compact_rows=len(case_rows)))
                 member='job/cases/'+stem+'.json'
                 try:
                     if a.manifest['members'][member]['sha256']!=ref['sha256']:raise AuditError('case index SHA differs')
-                    raw=a.read(member)
+                    raw=a.read_case(member)
                     if data is None:raise AuditError('canonical dataset unresolved')
                     scene=data.get(raw['case_id'])
                     if raw['mother_id']!=scene['mother_id'] or raw['demand_profile']!=scene['demand_profile']:
@@ -225,7 +235,8 @@ def build(plan_path,state_path,destination,closure=None):
                             audited={**entry,'method':raw['method']}
                             if raw['method']!='VARIABLE' and 'initial_metrics' not in audited and raw['case_id'] in initials:
                                 audited['initial_metrics']=initials[raw['case_id']]
-                            metric,events=audit_search(scene,audited)
+                            metric,events=audit_search(scene,audited,compact=True,
+                                progress=lambda event:notify(dict(phase='journal_replay',task=key,case=raw['case_id'],**event)))
                             if key.startswith('initial_'):initials[raw['case_id']]=metric
                             small.update(metric)
                             if entry.get('certified_infeasible'):raise AuditError('bounded not_found labeled infeasible')
@@ -241,8 +252,7 @@ def build(plan_path,state_path,destination,closure=None):
                                 **{k:budget.get(k) for k in ('seconds','attempts','accepted','geometry_calls','late_candidates','deadline_overrun_seconds')},
                                 'cost_scope':'known_completed; crash_unknown_costs_separate'})
                             candidate_rows.append(dict(task=key,case_id=raw['case_id'],method=raw['method'],stage=small.get('stage','online'),
-                                known_completed_candidates=len(events),accepted=sum(e['accepted'] for e in events),
-                                completed_late=sum(e['late'] for e in events),source_zip=str(a.path),source_member=member,
+                                **events,source_zip=str(a.path),source_member=member,
                                 source_sha256=ref['sha256'],raw_journal_retained=True))
                         elif entry.get('outcome') not in ('not_found','not_run_constructor_not_found'):
                             raise AuditError('completed case layout absent')
@@ -306,7 +316,7 @@ def build(plan_path,state_path,destination,closure=None):
         for key,a in archives.items():
             if not key.startswith('reference_'):continue
             for stem in a.read('job/case_index.json'):
-                raw=a.read('job/cases/'+stem+'.json')
+                raw=a.read_case('job/cases/'+stem+'.json')
                 nodes=[n for n in raw.get('reference_nodes',[]) if n.get('kind')=='paired' and n.get('seconds_limit')==30 and n.get('candidate_limit')==61440]
                 if len(nodes)!=1:issues.append('reference paired 30s node absent '+raw['case_id']);continue
                 reference[raw['case_id']]=nodes[0]['metrics']
@@ -346,6 +356,8 @@ def build(plan_path,state_path,destination,closure=None):
             candidate_geometry_limitation='final/reference layouts independently audited; ordinary candidate geometry retained as worker evidence with independent load algebra',
             unknown_replay_budget='must be closed by archive acceptance recovery/attempt ledger; unknown is never zero',
             broad_multiple_comparison_success_claim_allowed=False)
+        summary['memory_strategy']='ijson3.3.0 case metadata + one journal event; compact accepted histories and scalar CSV rows; four canonical numeric/index NPZ arrays only'
+        summary['stream_parser']=dict(package='ijson',version='3.3.0',journal_reopens='one full event traversal per search; metadata traversal separately; variable entry selection may traverse preceding entries; no sampling')
         grouped_summary=defaultdict(list)
         for r in mother_rows:grouped_summary[(r['role'],r['method'])].append(r)
         descriptive=[]
@@ -363,8 +375,13 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan',required=True);parser.add_argument('--state',required=True)
     parser.add_argument('--output',required=True);parser.add_argument('--closure')
+    parser.add_argument('--progress',help='optional compact progress JSON, throttled at five seconds')
     args=parser.parse_args()
-    result=build(args.plan,args.state,args.output,read_json(args.closure) if args.closure else None)
+    def persist_progress(event):
+        path=Path(args.progress);temporary=path.with_suffix(path.suffix+'.tmp')
+        temporary.write_text(json.dumps(event,ensure_ascii=False),encoding='utf-8');temporary.replace(path)
+    result=build(args.plan,args.state,args.output,read_json(args.closure) if args.closure else None,
+        progress=persist_progress if args.progress else None)
     print(json.dumps({'status':result['status'],'issues':result['issues']}))
     return 0 if result['formal_ready'] else 2
 
