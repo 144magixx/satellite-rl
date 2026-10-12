@@ -12,8 +12,9 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
+import tempfile
 import zipfile
 
 from . import ops, placement_transport
@@ -513,7 +514,27 @@ def resume_stream(local_path, remote, remote_path, byte_count):
 
 
 def _remote_verify(transport,port,remote_path,receipt):
+    if port not in (20418,20424,20473):
+        raise ValueError("delivery readback must exclude physical20474")
     rows={r["member"]:{"bytes":r["bytes"],"sha256":r["sha256"]} for r in receipt["members"]}
+    if len(rows)!=len(receipt["members"]):raise ValueError("duplicate delivery validation member")
+    for name in rows:safe_member(name)
+    # The receipt's complete member map used to be interpolated into Python
+    # code and then base64 into one SSH shell argument. Linux's per-argument
+    # limit is independent of the allowed ZIP/member size. Send unchanged
+    # expected values as a SHA-pinned SFTP sidecar instead; shell code stays
+    # bounded even when the immutable package has thousands of members.
+    payload=encoded({"schema":"s1_nd12_remote_member_validation_v1","members":rows})
+    manifest_sha=hashlib.sha256(payload).hexdigest()
+    target=PurePosixPath(remote_path)
+    if not target.is_relative_to(PurePosixPath(ops.BASE)/"delivery") or ".." in target.parts:
+        raise ValueError("remote validation path escaped the delivery root")
+    remote_manifest=str(target.parent/("validation_"+manifest_sha+".json"))
+    with tempfile.TemporaryDirectory(prefix="nd12_delivery_validation_") as temporary:
+        local_manifest=Path(temporary)/"validation.json";local_manifest.write_bytes(payload)
+        sent=transport.upload(local_manifest,remote_manifest,port)
+        if (sent.get("exit_code")!=0 or sent.get("local_sha256")!=manifest_sha or sent.get("remote")!=manifest_sha):
+            raise ValueError("remote complete-member validation manifest transfer SHA differs")
     code=f'''import hashlib,json,pathlib,zipfile
 p=pathlib.Path({remote_path!r});root=pathlib.Path({ops.BASE!r})/'delivery'
 if p.is_symlink() or not p.resolve().is_relative_to(root.resolve()):raise ValueError('delivery path escaped group')
@@ -523,7 +544,15 @@ def sha(s):
  return h.hexdigest()
 with p.open('rb') as s:digest=sha(s)
 if digest!={receipt['zip_sha256']!r} or p.stat().st_size!={receipt['zip_bytes']}:raise ValueError('whole package differs')
-rows={rows!r}
+manifest=pathlib.Path({remote_manifest!r})
+if manifest.is_symlink() or not manifest.resolve().is_relative_to(root.resolve()):raise ValueError('member manifest escaped group')
+if manifest.stat().st_size!={len(payload)}:raise ValueError('member manifest size differs')
+with manifest.open('rb') as s:
+ if sha(s)!={manifest_sha!r}:raise ValueError('member manifest SHA differs')
+expected=json.loads(manifest.read_text(encoding='utf-8'))
+if expected.get('schema')!='s1_nd12_remote_member_validation_v1':raise ValueError('member manifest schema differs')
+rows=expected['members']
+if len(rows)!={len(rows)}:raise ValueError('member manifest count differs')
 with zipfile.ZipFile(p) as z:
  if len(z.namelist())!=len(rows) or set(z.namelist())!=set(rows):raise ValueError('member set differs')
  for name,row in rows.items():
