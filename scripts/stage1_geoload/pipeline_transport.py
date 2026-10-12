@@ -46,7 +46,16 @@ def guard(plan_path,state_path,lease_path,*,directory=None,old_alive=None):
     if state.get('group')!='S1-G16' or state.get('plan_sha256')!=PLAN_SHA or state.get('scientific_commit')!=SCIENCE:raise ValueError('state frozen plan/source differs')
     if state.get('archives') or state.get('all_computation_completed') or state.get('compute_and_archives_complete'):raise ValueError('handoff must precede archival phase')
     active=[row for row in state.get('tasks',{}).values() if row.get('stage')!='completed']
-    if not active or any(row.get('stage')!='running' for row in active):raise ValueError('all active scientific workers must still be running at handoff')
+    if not active:raise ValueError('active scientific worker required at handoff')
+    for row in active:
+        status=row.get('status',{})
+        if row.get('stage') not in ('running','training') or status.get('stage')!=row.get('stage'):
+            raise ValueError('active scientific stage must be running/training; queued/failed/unknown refused')
+        if row.get('port') not in (20424,20473) or row.get('kind') not in ('prepare','evaluate','train') or not row.get('run_id') or not row.get('request_id'):
+            raise ValueError('active scientific job identity absent')
+        if status.get('run_id')!=row['run_id'] or type(status.get('pid')) is not int or status['pid']<=0:
+            raise ValueError('active scientific job/PID evidence absent')
+        if row['stage']=='training' and row['kind']!='train':raise ValueError('training stage requires actual train job')
     if lease.get('schema')!='g16_transport_handoff_v1' or lease.get('status')!='handoff_verified' or lease.get('group')!='S1-G16':raise ValueError('root verified lease required')
     if lease.get('old_controller_pid')!=24220 or abs(lease.get('old_controller_birth',0)-1791790345.992857)>.01:raise ValueError('old client exact identity differs')
     if lease.get('old_controller_exit_verified') is not True or lease.get('state_lock_release_verified') is not True or lease.get('legacy_export_excluded') is not True:raise ValueError('client exit/OS lock/export exclusion not verified')

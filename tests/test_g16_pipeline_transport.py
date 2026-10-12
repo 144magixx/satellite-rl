@@ -71,7 +71,10 @@ class BridgeTests(unittest.TestCase):
             plan=root/'plan.json';bridge.save(plan,dict(group='S1-G16',authorized=True,scientific_commit=bridge.SCIENCE,
                 science_plan_refs={str(p):dict(sha256=science_sha) for p in (20424,20473)}))
             state=root/'state.json';bridge.save(state,dict(group='S1-G16',scientific_commit=bridge.SCIENCE,
-                plan_sha256=bridge.sha(plan),tasks={'teacher':{'stage':'running'}}))
+                plan_sha256=bridge.sha(plan),tasks={'train_mlm':{'stage':'training','kind':'train',
+                    'port':20473,'run_id':'train_geoload_fixture','request_id':'g16_fixture_train_mlm',
+                    'status':{'stage':'training','run_id':'train_geoload_fixture','pid':12345,
+                        'update_step':2500,'budget_updates':10000}}}))
             lease=root/'lease.json';bridge.save(lease,dict(schema='g16_transport_handoff_v1',status='handoff_verified',group='S1-G16',
                 old_controller_pid=24220,old_controller_birth=1791790345.992857,old_controller_exit_verified=True,
                 state_lock_release_verified=True,legacy_export_excluded=True,controller_commit=bridge.CONTROLLER,
@@ -81,6 +84,14 @@ class BridgeTests(unittest.TestCase):
                 value=bridge.guard(plan,state,lease,directory=root,old_alive=lambda *a:False)
                 self.assertEqual(value['only_replacement'],'pipeline.export_job')
                 with self.assertRaisesRegex(ValueError,'still alive'):bridge.guard(plan,state,lease,directory=root,old_alive=lambda *a:True)
+                good=bridge.read(state)
+                for bad_stage in ('queued','failed','starting','unknown'):
+                    bad=json.loads(json.dumps(good));bad['tasks']['train_mlm']['stage']=bad_stage
+                    bad['tasks']['train_mlm']['status']['stage']=bad_stage;bridge.save(state,bad)
+                    with self.assertRaisesRegex(ValueError,'stage must'):bridge.guard(plan,state,lease,directory=root,old_alive=lambda *a:False)
+                bad=json.loads(json.dumps(good));bad['tasks']['train_mlm']['status'].pop('pid');bridge.save(state,bad)
+                with self.assertRaisesRegex(ValueError,'PID evidence'):bridge.guard(plan,state,lease,directory=root,old_alive=lambda *a:False)
+                bridge.save(state,good)
                 data=bridge.read(state);data['archives']={'done':{}};bridge.save(state,data)
                 with self.assertRaisesRegex(ValueError,'archival phase'):bridge.guard(plan,state,lease,directory=root,old_alive=lambda *a:False)
 
