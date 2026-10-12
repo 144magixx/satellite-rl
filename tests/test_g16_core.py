@@ -44,6 +44,20 @@ class G16CoreTests(unittest.TestCase):
         self.assertLess(result.metrics['P'], metrics(self.scene, self.initial)['P'])
         self.assertTrue(validate_layout(self.scene, result.layout)['valid'])
 
+    def test_whole_region_escapes_single_transfer_and_keeps_all_users(self):
+        positions = [[45, 5 + i * .01] for i in range(6)]
+        scene = Scene(positions, [8, 7, 6, 5, 0, 0])
+        initial = Layout([[45, 5.01], [45, 5.04]], [0, 0, 1, 1, 0, 1])
+        single = run_classical(scene, initial, '09-LEX', SearchConfig(seconds=1))
+        joint = run_classical(scene, initial, 'JOINT', SearchConfig(seconds=1))
+        self.assertEqual(single.metrics['P'], metrics(scene, initial)['P'])
+        self.assertLess(joint.metrics['P'], single.metrics['P'])
+        accepted = [row for row in joint.journal if row['reason'] == 'accepted' and row['kind'].startswith('whole_region')]
+        self.assertTrue(accepted)
+        self.assertEqual(accepted[0]['details']['adjustable_users'], 6)
+        self.assertEqual(len(joint.layout.assignment), 6)
+        self.assertTrue(validate_layout(scene, joint.layout)['valid'])
+
     def test_geometric_counterexample_and_n_cap(self):
         s = Scene([[45, 5], [45, 40]], [1, 1])
         self.assertFalse(validate_layout(s, Layout([[45, 5]], [0, 0]))['valid'])
@@ -67,6 +81,9 @@ class G16CoreTests(unittest.TestCase):
         for node in result.to_record()['reference_nodes']:
             self.assertTrue(validate_layout(self.scene, Layout.from_record(node['layout']))['valid'])
             if node['kind'] == 'attempts': self.assertLessEqual(node['state_attempts'], node['limit'])
+            if node['kind'] == 'paired':
+                self.assertLessEqual(node['state_attempts'], node['candidate_limit'])
+                self.assertLessEqual(node['state_seconds'], node['seconds_limit'])
         with self.assertRaises(ValueError):
             run_classical(self.scene, self.initial, 'JOINT', cfg, candidate_order=lambda s, l, pool: pool[:-1])
 
