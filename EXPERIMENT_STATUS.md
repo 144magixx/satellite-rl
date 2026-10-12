@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-12 10:04 S1-ND12原始归档已核验，正式统计正在全量复核。** 延迟汇入父清单的35条原教师记录已按合同原字节、原子清单引用及预约身份严格闭合；修复只改后处理校验器，36项回归通过，main5316b93保留原数据与105来源。[修复验收](outputs/experiments/first_stage_nondrl12_20261012/preflight/archive_closure_repair_20261012/root_patch_acceptance.json)。新唯一收尾进程37252/出生1791770271.1619155保原截止，从已有卷接续；223任务、227任务ZIP共3.32GB和6个Feb共享卷共3.80GB逐卷/成员/依赖闭合，Jan4.68GB唯一卷另引用。[原始归档验收](outputs/experiments/first_stage_nondrl12_20261012/preflight/final_archive_closure_root_acceptance.json)。当前building_strict_report，CPU持续增长、内存约448MB，无报错；这尚不等于正式报告完成。
+
+图表门控35452/出生1791770452.4430215等待唯一strict成功后自动生成5张中文图及8张全量CSV，最多等待2小时；源脚本和10节点真实验证承载的SHA已钉住，不得双起扫描。[出图门控](outputs/experiments/first_stage_nondrl12_20261012/analysis/publication/controller/launch.json)。随后仍须人工核数核图、发布报告10及完成最终双端小包；当前不恢复任何科学任务，小时跟进保持ACTIVE并已[精确回读](outputs/experiments/first_stage_nondrl12_20261012/followup/strict_and_publication_readback.json)。
+
 **2026-10-12 09:34 S1-ND12科学计算全部完成，完整归档验收仍在收尾。** 根实际四逻辑工作台核223/223任务completed：MLM固定10000更新、seed51001、10×60验证，19个方法配置的76项共同考核各75条、共5700条完成；223是准备、开发、教师、训练和评价分片任务数，不是模型数。固定终点1144704参数已在DQN/CUDA严格加载，checkpoint/最终权重逐Tensor一致，Adam/RNG/10000条损失与来源链通过；原worker及协调器31192已正常退出。[实际完成核验](outputs/experiments/first_stage_nondrl12_20261012/preflight/scientific_completion_20261012_0933.json) · [固定终点审计](outputs/experiments/first_stage_nondrl12_20261012/preflight/final_learning_audit.json)。
 
 09:39收尾进程1740生成全部223任务ZIP后，在来源依赖校验处退出：校验器误将修复前已预发、后来折入父清单的35条教师记录判为新执行。原合同直接钉住全部35条，当前SHA与原始文件相同；正在补严格的原始子清单/字节/来源三重校验，未修改原始结果或重复训练。[失败原现场](outputs/experiments/first_stage_nondrl12_20261012/preflight/archive_closure_repair_20261012/failure_preservation.json) · [逐条拒绝诊断](outputs/experiments/first_stage_nondrl12_20261012/preflight/lineage_origin_fold_rejection.json)。冻结final_input保持；其中manifest保留历史进度，终态依据完整state与任务收据。原48小时收尾截止不变，后续从已有ZIP接续；报告10、全量strict、最终图和双端交付尚未完成，自动跟进保持ACTIVE。02/03仍为预算内证据不足，04/05/08/10开发停止，不借计算完成改写成全部路线有效。
