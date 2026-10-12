@@ -6,7 +6,7 @@ from . import ops,plan_builder
 from .deploy import git
 
 
-def publish(plan_path,inventory_path,review_path,state_root,qualification_path=None):
+def publish(plan_path,inventory_path,review_path,state_root,qualification_path=None,extension_evidence_path=None):
     plan_path=Path(plan_path).resolve();inventory=json.loads(Path(inventory_path).read_text(encoding='utf-8'))
     plan=json.loads(plan_path.read_text(encoding='utf-8'));review_path=Path(review_path).resolve()
     review=json.loads(review_path.read_text(encoding='utf-8'));sha=plan_builder.digest(plan_path);commit=plan['scientific_commit']
@@ -17,8 +17,20 @@ def publish(plan_path,inventory_path,review_path,state_root,qualification_path=N
     if git('rev-parse','HEAD')!=commit or git('status','--porcelain','--','src','scripts','tests','pyproject.toml'):
         raise ValueError('publish requires clean frozen R2 scientific source')
     expanded=plan_builder.audit(plan,inventory)
-    if plan.get('phase')!='pilot' or plan.get('mother_order')!=inventory['mother_order'] or len(plan['mother_order'])!=20:
-        raise ValueError('exact full20-mother UTC order and pilot phase required')
+    if plan.get('phase') not in ('pilot','extension') or plan.get('mother_order')!=inventory['mother_order'] or len(plan['mother_order'])!=20:
+        raise ValueError('exact full20-mother UTC order and finite phase required')
+    metadata=[]
+    if plan['phase']=='extension':
+        bundle=plan['extension_admission'];available=json.loads(Path(extension_evidence_path).read_text(encoding='utf-8')) if extension_evidence_path else {}
+        for key in ('root_gate','audit','gate','source_freeze','interpretation'):
+            reference=bundle[key];entry=available[reference['path']]
+            if entry['sha256']!=reference['sha256']:raise ValueError('extension evidence original SHA changed')
+            metadata.append({'remote':reference['path'],'local':entry['local_path'],'sha256':reference['sha256']})
+        import hashlib,subprocess
+        from .deploy import SOURCE
+        actual={rel:hashlib.sha256(subprocess.run(['git','-C',str(SOURCE),'show',commit+':'+rel],capture_output=True,check=True).stdout).hexdigest()
+            for rel in plan['scientific_dependency_sha256']}
+        if actual!=plan['scientific_dependency_sha256']:raise ValueError('published extension scientific dependency Git bytes differ from original f02')
     if any(t['mode']=='evaluate_closed_pool' for t in plan['tasks'].values()) and set(plan.get('qualification_refs',{}))!={'validator_equivalence','charge_before_budget'}:
         raise ValueError('closed-pool publication requires both source-bound engineering qualification refs')
     design=Path(__file__).with_name('round2_design.json')
@@ -31,14 +43,17 @@ def publish(plan_path,inventory_path,review_path,state_root,qualification_path=N
             local=Path(available[key]['local_path'])
             if {k:available[key][k] for k in ('path','sha256')}!=reference or plan_builder.digest(local)!=reference['sha256']:
                 raise ValueError('actual engineering qualification bytes/path differ')
-            receipts.append(ops.upload(local,reference['path'],20418))
+            metadata.append({'remote':reference['path'],'local':str(local),'sha256':reference['sha256']})
     if {t['mode'] for t in plan['tasks'].values()}=={'prepare_common'}:
         required={(r['audit_path'],r['audit_sha256']) for t in plan['tasks'].values() for refs in t['source_refs'].values() for r in refs}
         available={(r['audit_path'],r['audit_sha256']):r['audit_local_canonical'] for refs in inventory['source_refs'].values() for r in refs}
         for key in sorted(required):
             local=Path(available[key])
             if plan_builder.digest(local)!=key[1]:raise ValueError('original accepted case audit bytes changed')
-            receipts.append(ops.upload(local,key[0],20418))
+            metadata.append({'remote':key[0],'local':str(local),'sha256':key[1]})
+    if metadata:
+        from .batch_metadata import upload
+        receipts.append(upload(metadata,ops.LOCAL/'publication_metadata',20418))
     target=ops.BASE+'/source/plans/'+commit+'_'+sha+'.json'
     receipts.append(ops.upload(plan_path,target,20418))
     review_target=ops.BASE+'/source/admissions/'+plan_builder.digest(review_path)+'.json'
@@ -63,4 +78,5 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ('plan','inventory','review','state-root'):parser.add_argument('--'+name,required=True)
     parser.add_argument('--qualification-refs')
-    args=parser.parse_args();print(json.dumps(publish(args.plan,args.inventory,args.review,args.state_root,args.qualification_refs)))
+    parser.add_argument('--extension-evidence')
+    args=parser.parse_args();print(json.dumps(publish(args.plan,args.inventory,args.review,args.state_root,args.qualification_refs,args.extension_evidence)))

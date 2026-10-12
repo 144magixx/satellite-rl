@@ -26,6 +26,17 @@ def abort_pending(directory,futures,error,completed_rows):
     for queued in futures:queued.cancel()
 
 
+def production_provenance_metadata(job,plan):
+    """Wire shared by the actual result producer and independent contract checks."""
+    return {'phase':plan['phase'],'mother_order':plan['mother_order'],
+        'execution_epoch':job['scientific_commit'],'case_indices':job['case_indices'],
+        'algorithm_core_commit':'f02c0dcbf76561c325b5a70a1a5b9bf98882b35d','execution_commit':job['scientific_commit'],
+        'admission_ref':job['references'].get('extension_root_gate'),
+        'admission_evidence_refs':{k.removeprefix('extension_'):v for k,v in job['references'].items() if k.startswith('extension_')},
+        'scientific_core_sha256':plan.get('scientific_core_sha256'),
+        'scientific_dependency_sha256':plan.get('scientific_dependency_sha256')}
+
+
 def one(case,variant,job,config,output):
     if (Path(output).parent/'stop.request').exists():return []
     from satellite_rl.coverage.ai_search.core import Scene
@@ -62,6 +73,8 @@ def one(case,variant,job,config,output):
         'input_case_index':case['input_case_index'],'input_sha256':scene.input_sha256,
         'input_dataset_sha256':case['input_dataset_sha256'],'method':variant,'mode':job['mode'],
         'outcome':'stopped' if stop() else 'completed','result':value,'end_to_end_seconds':time.perf_counter()-start}
+    plan=read_json(pin(job['references']['plan']),{})
+    row.update(phase=plan['phase'],algorithm_core_commit='f02c0dcbf76561c325b5a70a1a5b9bf98882b35d',execution_commit=job['scientific_commit'])
     path=Path(output)/(key+'.json');atomic_json(path,clean_json(row))
     return key,{'case_id':case['case_id'],'method':variant,'path':str(path),'sha256':digest(path),'outcome':row['outcome']}
 
@@ -132,6 +145,8 @@ def paired(case,job,config,output,already_complete):
             'common_ref':selected['common'],'prepared_pool_ref':{'path':str(pool_path),'sha256':prepared_file_sha},
             'paired_order':order,'paired_order_position':ordinal,'shared_pool_prepared_once':True,
             'pool_and_parent_sha_verified_before_after':True}
+        plan=read_json(pin(job['references']['plan']),{})
+        row.update(phase=plan['phase'],algorithm_core_commit='f02c0dcbf76561c325b5a70a1a5b9bf98882b35d',execution_commit=job['scientific_commit'])
         destination=Path(output)/(key+'.json');atomic_json(destination,clean_json(row))
         records.append((key,{'case_id':case['case_id'],'method':variant,'path':str(destination),
                              'sha256':digest(destination),'outcome':row['outcome']}))
@@ -189,6 +204,12 @@ def run_job(directory,resume=False):
                         'profile':row['demand_profile'],**{k:record[k] for k in ('common','input_sha','archive_sha','parent_sha','acquisition_cost_refs')}}
                 path=directory/'common_manifest.json';atomic_json(path,{'group':policy.GROUP,'schema':'s1_ai18_common_collection_v1','completed':True,
                     'dataset_sha256':config['datasets']['development']['sha256'],'cases':common_cases,'scientific_commit':job['scientific_commit'],'source_only_no_R1_resolve':True})
+                plan=read_json(pin(job['references']['plan']),{})
+                common_manifest=read_json(path,{})
+                common_manifest.update(phase=plan['phase'],execution_epoch=job['scientific_commit'],case_indices=job['case_indices'],
+                    algorithm_core_commit='f02c0dcbf76561c325b5a70a1a5b9bf98882b35d',execution_commit=job['scientific_commit'],
+                    admission_ref=job['references'].get('extension_root_gate'),scientific_core_sha256=plan.get('scientific_core_sha256'))
+                atomic_json(path,common_manifest)
                 artifacts['common_manifest']={'path':str(path),'sha256':digest(path)}
             else:
                 manifest_cases={}
@@ -198,10 +219,11 @@ def run_job(directory,resume=False):
                         'profile':row['demand_profile'],'role':'development','scene_ref':{'packed':config['datasets']['development'],'case_index':row['input_case_index']},
                         'input_sha256':row['input_sha256'],'common_ref':row['common_ref'],'pool_ref':row['prepared_pool_ref'],'raw_refs':{}})
                     record['raw_refs'][row['method']]={'path':reference['path'],'sha256':reference['sha256']}
+                    record.update(phase=row['phase'],algorithm_core_commit=row['algorithm_core_commit'],execution_commit=row['execution_commit'])
                 path=directory/'result_manifest.json'
                 plan=read_json(pin(job['references']['plan']),{})
                 atomic_json(path,{'group':policy.GROUP,'schema':'s1_ai18_paired_case_manifest_v1','cases':list(manifest_cases.values()),
-                    'phase':plan['phase'],'mother_order':plan['mother_order'],
+                    **production_provenance_metadata(job,plan),
                     'qualification_refs':{k:job['references']['qualification_'+k] for k in plan.get('qualification_refs',{})},
                     'dataset_role':'development','source_commit':job['scientific_commit'],
                     'job_ref':{'path':str(directory/'job.json'),'sha256':digest(directory/'job.json')},

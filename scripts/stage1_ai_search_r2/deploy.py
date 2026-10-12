@@ -19,8 +19,9 @@ def remote(port,code):
 
 def lane(port,commit,bundle):
     i=ops.instance(port);target=i['ops']+'/source_'+commit+'.bundle';uploaded=ops.upload(bundle,target,port)
+    epoch_repo=i['root']+'/source_epochs/'+commit+'/repo'
     code=f'''import sys,json,pathlib,subprocess,os,socket,time,datetime,urllib.request
-root=pathlib.Path({i['root']!r});repo=root/'repo';api={i['api_port']};commit={commit!r}
+root=pathlib.Path({i['root']!r});repo=pathlib.Path({epoch_repo!r});api={i['api_port']};commit={commit!r}
 with socket.socket() as sock:
  sock.settimeout(.5);occupied=sock.connect_ex(('127.0.0.1',api))==0
 if occupied:
@@ -35,6 +36,7 @@ if repo.exists():
  dirty=subprocess.run(['git','-C',str(repo),'status','--porcelain'],capture_output=True,text=True,check=True).stdout.strip()
  if actual!=commit or dirty:raise ValueError('R2 checkout is another epoch or dirty; no hot checkout')
 else:
+ repo.parent.mkdir(parents=True,exist_ok=True)
  subprocess.run(['git','clone','--quiet','--no-checkout',{target!r},str(repo)],check=True)
  subprocess.run(['git','-C',str(repo),'checkout','--quiet',commit],check=True)
 env=os.environ.copy();env.update(PYTHONDONTWRITEBYTECODE='1',PYTHONPATH=str(repo/'src'),SATELLITE_RL_OUTPUT_ROOT=str(root/'archive'),SATELLITE_RL_SSH_PORT={str(port)!r},OMP_NUM_THREADS='1',MKL_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1',NUMEXPR_NUM_THREADS='1')

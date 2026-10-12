@@ -9,8 +9,14 @@ from . import ops
 
 def route(port,commit):
     i=ops.instance(port)
-    code=f'''import sys,json,pathlib
-sys.path.insert(0,{i['repo']!r}+'/src')
+    code=f'''import sys,json,pathlib,subprocess
+registry=json.loads((pathlib.Path({i['ops']!r})/'service.json').read_text())
+if registry['source_commit']!={commit!r}:raise ValueError('route source is not actual service epoch')
+repo=pathlib.Path(registry['source_root']).resolve()
+if not repo.is_relative_to(pathlib.Path({i['root']!r}).resolve()):raise ValueError('service repo outside isolated R2 root')
+actual=subprocess.run(['git','-C',str(repo),'rev-parse','HEAD'],capture_output=True,text=True,check=True).stdout.strip()
+if actual!={commit!r}:raise ValueError('actual route repo commit changed')
+sys.path.insert(0,str(repo/'src'))
 from satellite_rl.workbench.ai_search_resources import observe
 from satellite_rl.training.run_monitor import atomic_json
 raw=observe({i['archive']!r});record={{'group':{ops.GROUP!r},'ssh_port':{port},'scientific_commit':{commit!r},'observed_utc':raw['observed_utc'],'gpu_uuid':raw['gpu'].split(',')[0].strip(),'ready':not raw['foreign_workers'],'observation':raw}}

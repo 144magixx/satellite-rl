@@ -27,7 +27,7 @@ def task_contract(body):return {field:deepcopy(body.get(field)) for field in FIE
 
 def validate_config(config):
     expected={'schema_version','research_stage','algorithm','name','geometry','task','datasets','workers','resources'}
-    if set(config)!=expected or (config['schema_version'],config['research_stage'],config['algorithm'])!=(10,'coverage','ai_search_r2'):
+    if set(config) not in (expected,expected|{'admission'}) or (config['schema_version'],config['research_stage'],config['algorithm'])!=(10,'coverage','ai_search_r2'):
         raise ValueError('invalid R2 schema/config fields')
     if set(config['datasets'])!={'development'} or config['datasets']['development'].get('role')!='development':
         raise ValueError('R2 pilot cannot access training/validation/test partitions')
@@ -51,16 +51,28 @@ def validate_task(contract,plan,port):
         'width_min_deg':geometry['width_min_deg'],'width_max_deg':geometry['width_max_deg'],
         'tolerance':geometry['squared_chord_tolerance'],'profile':'europe_v1'}
     if config['geometry']!=frozen_geometry:raise ValueError('geometry feasible set differs from pinned design')
-    expected_indices=sorted(4*m+p for m in design['input']['pilot_mother_indices_zero_based'] for p in range(4))
+    from . import ai_search_r2_extension as extension
+    phase=plan.get('phase');pilot=design['input']['pilot_mother_indices_zero_based']
+    chosen=pilot if phase=='pilot' else [i for i in range(20) if i not in pilot] if phase=='extension' else []
+    expected_indices=sorted(4*m+p for m in chosen for p in range(4))
     order=plan.get('mother_order',[])
-    selected=[order[i] for i in design['input']['pilot_mother_indices_zero_based']] if len(order)==20 else []
-    if (plan.get('phase')!='pilot' or len(order)!=20 or len(set(order))!=20 or
+    selected=[order[i] for i in chosen] if len(order)==20 else []
+    if (phase not in ('pilot','extension') or len(order)!=20 or len(set(order))!=20 or
             plan.get('selected_mothers')!=selected or plan.get('selected_case_indices')!=expected_indices):
-        raise ValueError('only exact frozen pilot mother/case scope is admitted; extension requires a new reviewed contract')
+        raise ValueError('only exact frozen pilot or remaining extension mother/case scope is admitted')
+    if phase=='extension':extension.validate(plan)
+    if phase=='extension' and config.get('admission')!={'phase':'extension','algorithm_core_commit':extension.PILOT_COMMIT,'root_gate':plan['extension_admission']['root_gate']}:
+        raise ValueError('extension config admission differs from immutable plan')
+    if phase=='pilot' and 'admission' in config:raise ValueError('pilot cannot carry extension admission')
     tasks=list(plan.get('tasks',{}).values())
     if (len(tasks)!=3 or {str(t['executor_port']) for t in tasks}!=set(PORTS) or
             sorted(i for t in tasks for i in t['case_indices'])!=expected_indices or
-            len({t['mode'] for t in tasks})!=1):raise ValueError('exact three-lane24-case pilot matrix required')
+            len({t['mode'] for t in tasks})!=1):raise ValueError('exact three-lane phase matrix required')
+    owners={}
+    for task in tasks:
+        for index in task['case_indices']:
+            mother=index//4
+            if owners.setdefault(mother,task['executor_port'])!=task['executor_port']:raise ValueError('mother profiles split across lanes')
     if any(i not in expected_indices for i in contract['case_indices']):raise ValueError('unselected pilot case cannot run')
     frozen_task={'seconds':design['budget']['per_task']['nominal_guard_seconds'],
         'ray_pair_limit':design['budget']['per_task']['ray_pair_checks'],
@@ -95,14 +107,23 @@ def validate_admission(plan,plan_ref,review_ref):
             review.get('scientific_commit')!=plan['scientific_commit'] or
             review.get('plan_sha256')!=plan_ref['sha256'] or review.get('design_sha256')!=plan['design']['sha256']):
         raise ValueError('exact root plan/source/design admission proof is required')
+    from . import ai_search_r2_extension as extension
+    if plan.get('phase')=='pilot' and plan.get('scientific_commit')!=extension.PILOT_COMMIT:
+        raise ValueError('old pilot cannot be repeated under a new operations epoch')
+    if plan.get('phase')=='extension':extension.validate(plan)
     if any(t['mode']=='evaluate_closed_pool' for t in plan['tasks'].values()):
         refs=plan.get('qualification_refs',{})
         if set(refs)!={'validator_equivalence','charge_before_budget'}:raise ValueError('both source-bound engineering qualifications required')
         for reference in refs.values():
             value=read_json(pin(reference),{})
-            if (value.get('passed')is not True or value.get('scientific_commit')!=plan['scientific_commit'] or
+            expected_commit=extension.PILOT_COMMIT if plan.get('phase')=='extension' else plan['scientific_commit']
+            if (value.get('passed')is not True or value.get('scientific_commit')!=expected_commit or
                     value.get('design_sha256')!=plan['design']['sha256'] or not value.get('core_git_blob_sha256')):
                 raise ValueError('engineering qualification source/design proof differs')
+        if plan.get('phase')=='extension':
+            for name,reference in refs.items():
+                if reference['sha256']!=extension.PILOT_QUALIFICATION_SHA[name] or read_json(pin(reference),{})['core_git_blob_sha256']!=plan['scientific_core_sha256']:
+                    raise ValueError('extension must reuse original f02 qualification bytes/core binding')
 
 
 def external_references(contract):

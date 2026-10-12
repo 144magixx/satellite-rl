@@ -49,6 +49,8 @@ def create(app,body,policy):
         refs={};config=deepcopy(contract['config'])
         to_copy={'plan':body['plan'],'design':plan['design'],'publication_root_review':body['root_review'],**config['datasets']}
         to_copy.update({'qualification_'+k:r for k,r in plan.get('qualification_refs',{}).items()})
+        from .ai_search_r2_extension import plan_references
+        to_copy.update(plan_references(plan))
         for key,ref in to_copy.items():
             original=pin(ref);target=directory/'input_sources'/key/original.name
             target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
@@ -67,6 +69,9 @@ def create(app,body,policy):
             'algorithm':'ai_search_r2','network':'closed_pool','execution_device':'cpu',
             'mode':contract['mode'],'dataset_role':contract['dataset_role'],'case_indices':contract['case_indices'],
             'executor_port':contract['executor_port'],'variants':contract['variants']}
+        from .ai_search_r2_extension import PILOT_COMMIT
+        job.update(phase=plan['phase'],algorithm_core_commit=PILOT_COMMIT,execution_commit=commit,
+            admission_ref=refs.get('extension_root_gate'))
         atomic_json(directory/'config.json',config);job['config_sha256']=digest(directory/'config.json')
         atomic_json(directory/'status.json',{'run_id':run_id,'stage':'queued','pid':None,'completed_cases':0,
             'total_cases':policy.expected_results(contract),'env_step':0,'update_step':0,'heartbeat_at':now()})
@@ -86,6 +91,11 @@ def verify(store,job,policy):
     policy.validate_task(contract,plan,policy.deployment(store))
     if plan.get('tasks',{}).get(job['task_key'])!=contract or plan.get('scientific_commit')!=job['scientific_commit']:
         raise ValueError('original scientific task/source contract changed')
+    if plan.get('phase')=='extension':
+        from .ai_search_r2_extension import PILOT_COMMIT
+        if (job.get('phase')!='extension' or job.get('algorithm_core_commit')!=PILOT_COMMIT
+                or job.get('execution_commit')!=job['scientific_commit'] or job.get('admission_ref')!=job['references'].get('extension_root_gate')):
+            raise ValueError('extension phase/core/execution/admission metadata differs')
     for key in ('mode','dataset_role','case_indices','executor_port','variants'):
         if job[key]!=contract[key]:raise ValueError('published task field changed: '+key)
     expected=deepcopy(contract['config']);expected['datasets']={role:job['references'][role] for role in expected['datasets']}
