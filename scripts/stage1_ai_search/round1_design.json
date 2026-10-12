@@ -1,0 +1,488 @@
+{
+  "schema": "s1_ai17_round1_science_v2",
+  "group": "S1-AI17",
+  "status": "design_contract_not_execution_receipt",
+  "date": "2026-10-13",
+  "seed": 51001,
+  "authorization": "User authorizes iterative exploration including variable N and per-beam width; execution plans separately pin source/data/tasks.",
+  "final_requirements": [
+    "complete_aircraft_coverage",
+    "unique_assignment",
+    "demand_conservation",
+    "variable_nonempty_N_at_most_200",
+    "per_beam_variable_width_affecting_reconstruction_not_only_post_shrink",
+    "same_condition_AI_contribution_evaluation_not_forced_positive",
+    "Pareto_output",
+    "full_local_remote_archive"
+  ],
+  "forbidden_objectives_and_labels": [
+    "served_demand",
+    "satisfaction",
+    "QoS",
+    "PHY",
+    "SI",
+    "SGM",
+    "downstream_policy_result"
+  ],
+  "geometry": {
+    "full_width_menu_deg": [
+      0.3,
+      0.5,
+      1.0
+    ],
+    "width_min_deg": 0.3,
+    "width_max_deg": 1.0,
+    "width_menu_source_status": "Explicit new design domain; original proposal embedded formula still requires visual numeric verification, do not claim verbatim match.",
+    "max_beams": 200,
+    "projection": "existing_GEO_satellite_rays_ground_projection",
+    "squared_chord_tolerance": 1e-14,
+    "demand_rtol": 1e-12,
+    "demand_atol": 1e-06,
+    "continuous_step": "minimum_valid_enclosing_width_at_fixed_center_and_assignment; all_methods; charged_online; no_complete_continuous_optimality_claim"
+  },
+  "metrics": {
+    "pareto_order": [
+      "N",
+      "solid_angle_sum_sr",
+      "maxload",
+      "top10_mean",
+      "CV"
+    ],
+    "minimize_all": true,
+    "solid_angle": "sum(2*pi*(1-cos(full_width_radians/2)))",
+    "solid_angle_meaning": "geometric_angle_occupancy_proxy_not_physical_capacity_or_energy",
+    "tail_count": "ceil(0.1*N)",
+    "CV": "population_std_all_nonempty_beam_requested_loads/mean",
+    "P_T_Q": "diagnostic_only_across_N; comparative_only_same_scene_same_N",
+    "zero_total_demand": "separate_undefined_load_quality_not_fake_zero",
+    "comparison": {
+      "absolute_tolerances": {
+        "N": 0.0,
+        "solid_angle_sum_sr": 1e-12,
+        "maxload": 1e-06,
+        "top10_mean": 1e-06,
+        "CV": 1e-09
+      },
+      "relative_tolerance_non_N": 1e-12,
+      "formula": "atol[field]+rtol*max(abs(a),abs(b)); N exact integer",
+      "same_for": [
+        "online_compare",
+        "Pareto_dominates",
+        "teacher_pair_order"
+      ],
+      "request_unit": "bps"
+    }
+  },
+  "preferences": {
+    "count": 5,
+    "leaders": [
+      "N",
+      "solid_angle_sum_sr",
+      "maxload",
+      "top10_mean",
+      "CV"
+    ],
+    "remaining_tiebreak_order": [
+      "N",
+      "solid_angle_sum_sr",
+      "maxload",
+      "top10_mean",
+      "CV"
+    ],
+    "schedule": "deterministic_round_robin",
+    "representation": "five_onehot_values",
+    "no_weighted_quality_sum": true
+  },
+  "archive": {
+    "max_layouts": 64,
+    "preserve": "five_lexicographic_extremes_then_deterministic_crowding",
+    "keep_all_candidate_delta_evidence": true
+  },
+  "interfaces": {
+    "Scene": [
+      "positions[n,2]",
+      "demands[n]",
+      "aircraft_ids[n]",
+      "profile",
+      "input_sha256"
+    ],
+    "Layout": [
+      "centers[N,2]",
+      "widths_deg[N]",
+      "assignment[n]",
+      "beam_ids[N]"
+    ],
+    "Task": [
+      "task_id",
+      "parent_layout_sha256",
+      "kind",
+      "region_ids",
+      "target_k",
+      "width_policy",
+      "width_mode",
+      "variant",
+      "preference_index"
+    ],
+    "generate_tasks": "(scene,current,search,geometry)->lightweight_Task_iterator; no_decode_before_ordering",
+    "decode_task": "(scene,current,task,ledger,geometry,search)->DecodeResult",
+    "DecodeResult": [
+      "status:completed|censored|no_feasible_found_under_pool",
+      "layout_delta_or_null",
+      "metrics_or_null",
+      "reason",
+      "budget_delta",
+      "parent_sha256",
+      "result_sha256"
+    ],
+    "orderer": "(scene,current,list[Task])->strict_permutation_of_identical_Task_objects",
+    "teacher_row": [
+      "scene_sha256",
+      "parent_layout_sha256",
+      "task_predecode_features",
+      "preference_index",
+      "task_id",
+      "completion_status",
+      "completed_best_metrics",
+      "parent_metrics",
+      "new_nondominated",
+      "budget_delta",
+      "replay_delta_reference"
+    ],
+    "teacher_pair": "same_scene_same_parent_same_preference_completed_tasks_only; lexicographic_best_completed_metrics; ties_omitted"
+  },
+  "search": {
+    "online_seconds": 10,
+    "max_complete_candidates": 8192,
+    "checkpoints": [
+      {
+        "seconds": 2,
+        "complete_candidates": 2048
+      },
+      {
+        "seconds": 10,
+        "complete_candidates": 8192
+      }
+    ],
+    "initialization_seconds": 2,
+    "initialization_candidates": 2048,
+    "initialization_inside_total_budget": true,
+    "all_three_width_initializers_share_initialization_budget": true,
+    "region_sizes": [
+      2,
+      4
+    ],
+    "future_region_size": 8,
+    "local_target_k_deltas": [
+      -1,
+      0,
+      1
+    ],
+    "tasks_per_pool": 24,
+    "complete_candidates_per_task": 64,
+    "max_centers_per_task": 32,
+    "max_assignment_augment_depth": 3,
+    "max_center_assignment_alternations": 4,
+    "max_geometry_calls": 100000,
+    "region_size_overflow": "censored_not_silent_aircraft_drop",
+    "late_candidates": "record_cost_do_not_publish_to_expired_checkpoint",
+    "full_accounting": [
+      "initialization",
+      "generation",
+      "features",
+      "network",
+      "decode",
+      "continuous_width_shrink",
+      "validation",
+      "archive_update"
+    ],
+    "atomic_work": "deadline_checks_inside_candidate_center_assignment_loops; native_calls_need_hard_cap_or_timeout",
+    "post_shrink_reserve_seconds": 1.0,
+    "max_region_users": 256,
+    "variants": 8,
+    "max_regions": 12,
+    "max_restarts": 256
+  },
+  "predecode_features": {
+    "version": "scalar48_preference5_v2",
+    "feature_dim_without_preference": 48,
+    "model_input_dim": 53,
+    "names": [
+      "global_aircraft_log1p",
+      "global_N_over_200",
+      "global_total_request_log1p_mbps",
+      "global_peak_share",
+      "global_tail_share",
+      "global_CV",
+      "global_solid_angle_over_200max",
+      "global_mean_width_over_max",
+      "global_min_width_over_max",
+      "global_max_width_over_max",
+      "global_nonzero_request_fraction",
+      "global_mean_aircraft_request_share",
+      "global_max_aircraft_request_share",
+      "global_request_CV",
+      "region_k_over_8",
+      "region_aircraft_fraction",
+      "region_request_share",
+      "region_beam_peak_share",
+      "region_beam_min_share",
+      "region_beam_mean_share",
+      "region_beam_std_share",
+      "region_mean_width_over_max",
+      "region_min_width_over_max",
+      "region_max_width_over_max",
+      "region_current_center_ray_span_over_maxwidth",
+      "region_current_aircraft_ray_span_over_maxwidth",
+      "region_min_current_coverage_slack_normalized",
+      "region_mean_current_coverage_slack_normalized",
+      "region_zero_request_fraction",
+      "region_singleton_beam_fraction",
+      "region_max_aircraft_request_share",
+      "region_boundary_aircraft_fraction",
+      "kind_transfer",
+      "kind_swap",
+      "kind_joint_reconstruct",
+      "kind_merge",
+      "kind_split",
+      "kind_merge_split",
+      "kind_center",
+      "kind_width",
+      "width_mode_03",
+      "width_mode_05",
+      "width_mode_10",
+      "width_mode_mixed",
+      "target_local_k_over_9",
+      "local_delta_k_over_8",
+      "variant_normalized",
+      "width_policy_shrink"
+    ],
+    "definitions": {
+      "request_share_denominator": "scene_total_request_for_all_share_features",
+      "maxwidth": "1_degree_in_matching_angle_units",
+      "region_span": "max_angle_from_normalized_mean_ray_not_all_pairwise_max",
+      "coverage_slack": "existing_parent_width_chord_limit_minus_parent_assigned_chord_distance; normalized_by_1deg_fullwidth_limit",
+      "boundary_aircraft": "assigned_chord_distance>=0.9*assigned_current_halfwidth_chord_limit",
+      "variant_normalized": "variant_index/max(1,frozen_variant_count-1)",
+      "zero_total": "quality_features_zero_with_explicit_zero_total_mask_in_dataset; excluded_science_quality_denominators",
+      "constant_columns": "zero_standardized_not_divide_by_zero",
+      "width_policy_shrink": "1 iff Task.width_policy==shrink else 0; known before solving"
+    },
+    "normalization": "mean/std_from_training_completed_and_censored_inputs_only; freeze_in_checkpoint; clamp_std_at_1e-8; no_validation_statistics",
+    "forbidden": [
+      "decoded_layout",
+      "exact_candidate_gain",
+      "teacher_feasibility",
+      "actual_task_runtime",
+      "future_state",
+      "final_test_statistics"
+    ],
+    "note": "Compact aggregated input is deliberate R1 model; no claim it observes full aircraft graph. Model architecture comparisons are later rounds."
+  },
+  "learning": {
+    "architecture": "MLP(53,128,128) with ReLU, score_head_1_and_improvement_logit_head_1",
+    "from_scratch": true,
+    "dropout": 0,
+    "optimizer": "AdamW",
+    "learning_rate": 0.0003,
+    "weight_decay": 0.0001,
+    "gradient_clip_norm": 1,
+    "updates": 10000,
+    "effective_batch": 64,
+    "gradient_accumulation": "allowed_equivalent_only_record_actual",
+    "main_loss": "softplus(-(score_preferred-score_other))",
+    "auxiliary_loss": "BCE_new_nondominated_on_completed_tasks",
+    "auxiliary_weight": 0.1,
+    "censored_labels": "excluded_from_negative_and_pair_loss_recorded_separately",
+    "checkpoint_updates": [
+      2500,
+      5000,
+      7500,
+      10000
+    ],
+    "primary_checkpoint": 10000,
+    "no_test_checkpoint_selection": true,
+    "evaluation_rng_isolated": true,
+    "parameter_count": 23682,
+    "validation_execution": {
+      "mode": "asynchronous_workbench_diagnostic_nodes",
+      "intermediate_updates": [
+        2500,
+        5000,
+        7500
+      ],
+      "cases_each": 80,
+      "extra_trajectories": 240,
+      "callback": "immutable_checkpoint_plus_node_ready_only; no_solver_no_SSH; preserve_training_RNG",
+      "controller": "persistent_controller_submits_independent_workbench_tasks",
+      "intermediate_concurrency": "may_overlap_training; no_strict_speed_claim",
+      "final_update": 10000,
+      "final_node": "intent_only; reuse_actual_AI80_from_final_seven_method_interleaved_validation",
+      "no_duplicate_final80": true,
+      "nodes_total_rows": 320,
+      "formal_validation_rows": 560,
+      "extra_plus_formal_rows": 800
+    }
+  },
+  "data": {
+    "training_source": "576_Jan08_Jan09_G16_mothers_pinned_original_arrays",
+    "training_mothers_R1": 192,
+    "training_selection": "fixed_sorted_time_equispaced_indices_before_any_R1_result",
+    "development_mothers": 20,
+    "development_source": "Jan12_existing_G16",
+    "profiles": [
+      "base",
+      "one_hotspot",
+      "two_hotspots",
+      "edge_heavy"
+    ],
+    "profile_rules": "unchanged_G16_total_request_preserving",
+    "validation_candidate_dates": [
+      "2024-02-17",
+      "2024-02-18"
+    ],
+    "validation_per_date": 10,
+    "test_candidate_dates": [
+      "2024-02-19",
+      "2024-02-20"
+    ],
+    "test_per_date": 20,
+    "date_status": "candidate_only_full_project_prior_use_registry_and_official_availability_audit_required",
+    "historical_test_dates": "analyzed_dates_are_development",
+    "test_access_gate": "freeze_selected_candidate_after_validation_before_scientific_test_evaluation",
+    "test_reuse_after_adaptation": "demote_to_development_and_reserve_fresh_test"
+  },
+  "teacher": {
+    "cases": 768,
+    "states_per_case_max": 2,
+    "tasks_per_state": 24,
+    "complete_candidates_per_task": 64,
+    "complete_candidates_total_max": 2359296,
+    "seconds_per_case": 15,
+    "seconds_total_max": 11520,
+    "state2": "actual_archive_after_state1_pool_evaluations_selected_under_state2_preference",
+    "preference_assignment": "deterministic_balanced_by_mother_profile_state",
+    "no_relabel_censored_as_failure": true,
+    "initialization": "same_three_width_shrunk_common_archive_as_online; at_most2seconds_and2048_complete_candidates_inside15seconds_and3072complete_candidates_per_case_total; preference_select_parent_from_actual_archive_each_state",
+    "complete_candidates_per_case_including_initialization": 3072,
+    "states": "state0 chooses common_archive best under frozen preference; state1 chooses expanded actual_archive best under its frozen preference; never manufacture target state"
+  },
+  "methods": [
+    "INIT",
+    "RULE",
+    "RANDOM",
+    "AI",
+    "N_ONLY",
+    "W_ONLY",
+    "POST_SHRINK"
+  ],
+  "ablations": {
+    "N_ONLY": "variable_N_fixed_full_width_0.5_no_continuous_shrink",
+    "W_ONLY": "N_fixed_to_0.5_initializer; initialization_may_shrink_width_then_variable_width_reconstruction; unshrunk0.5_saved_for_slice_reference",
+    "POST_SHRINK": "fixed_N_fixed0.5_JOINT_with_remaining_total_seconds_minus1_reserve_then_minimum_enclosing_width_under_original_total_deadline; no_late_result_in_2s_checkpoint",
+    "bridge": "original07_and_JOINT_sameN_width0.5_each_lex_and_CV; separate_from_joint_Pareto_ranking"
+  },
+  "budgets": {
+    "development_cases": 80,
+    "development_main_trajectories_max": 560,
+    "development_bridge_trajectories": 320,
+    "bridge_seconds": 2,
+    "bridge_complete_candidates": 4096,
+    "development_reference_trajectories": 80,
+    "reference_seconds": 30,
+    "reference_complete_candidates": 24576,
+    "validation_cases": 80,
+    "validation_main_trajectories_max": 560,
+    "extra_intermediate_validation_trajectories": 240,
+    "test_cases": 160,
+    "test_main_trajectories_max": 1120
+  },
+  "resource_slices": {
+    "baseline_reference": "unshrunk_common0.5_initializer_N0_Omega0_before_any_method",
+    "caps": [
+      {
+        "name": "tight",
+        "N_factor": 0.8,
+        "Omega_factor": 0.8
+      },
+      {
+        "name": "common",
+        "N_factor": 1.0,
+        "Omega_factor": 1.0
+      },
+      {
+        "name": "loose",
+        "N_factor": 1.2,
+        "Omega_factor": 1.2
+      }
+    ],
+    "N_rounding": "ceil_then_clip1_to_min200_n",
+    "quality_views": [
+      "lex_maxload_tail_CV",
+      "lex_CV_maxload_tail"
+    ],
+    "compute": "extract_from_existing_archive_no_extra_solve",
+    "empty_slice": "not_found_and_success_rate_not_fake_zero_quality",
+    "primary_confirmatory": "common_slice_maxload_view"
+  },
+  "gates": {
+    "G0": "geometry_assignment_conservation_budget_replay_actual_parameter_update_no_label_leakage_pass",
+    "G1_space": "RULE_generates_new_nondominated_point_vs_INIT_on_at_least20percent_of80dev_cases_and10percent_each_half_mothers",
+    "G1_teacher": "30s_reference_new_point_vs10sRULE_on10percent_cases_OR_at_least20percent_of80dev_cases_have_completed_fullpool_best_strictly_improving_parent_or_new_nondominated_AND_rule_original_first6_of24_tasks_do_not_reach_it_AND_true_label_oracle_first6_replay_reaches_it_with_actual_complete_candidate_and_runtime_cost_not_above_rule_first6_budget; oracle_is_offline_opportunity_only",
+    "G2_test_entry": "validation_quality_or_cost_candidate_signal_on_both_dates_all_layouts_legal; exact decision recorded_before_test",
+    "formal_strict_Pareto": "each_preference_AI_has_point_no_worse_other4metrics_then_mean_leading_metric_relative_gain>=1percent_against_RULE_and_RANDOM_and_simultaneous95percent_lower_bound>0",
+    "formal_primary_slice": "common_N_Omega_slice_success_rate_not_lower; paired_comparable_mothers_at_least90percent_of_prespecified_mothers; mean_maxload_relative_gain>=1percent_against_RULE_and_RANDOM_with_two_comparison_simultaneous95percent_lower_bound>0; full_denominator_success_failures_and_tail_CV_tradeoffs_required; not_claimed_Pareto_dominance",
+    "formal_cost": "reach_same_full5D_reference_point_success_rate_not_lower_and_restricted_mean_time_reduction>=20percent_with_supporting_paired_interval_and_isolated_timing",
+    "not_comparable": "primary_gain_coverage_statistic_can_assign0_but_separate_status_same|tradeoff|not_reached|failed; never_call0_no_regression",
+    "multiplicity": "preregister_primary_common_slice_and_two_baselines; remaining_slices_descriptive; five_preference_strict_Pareto_simultaneous_maxT_or_Bonferroni",
+    "bootstrap": {
+      "unit": "mother",
+      "profile_aggregation": "equal_mean_within_mother",
+      "stratify": "date",
+      "seed": 51001,
+      "replicates": 5000
+    },
+    "final_joint_mechanism": "show_discrete_width_actions_change_center_assignment_and_N_paths; variableN_and_mixed_perbeamwidth_real_outputs; POST_SHRINK_ablation; fixedwidth_success_insufficient",
+    "novel_point": "objective_vector_strictly_new_up_to_frozen_tolerances_not_merely_different_layout_sha",
+    "best_known_reference": "external_dominance_check_against_same_scene_valid07_and_JOINT_bridge_points_with_N0_Omega0; never_claim_best_known_if_dominated; preserve_original2second_budget_and_initialization_cost; not_injected_into_AI_initialization"
+  },
+  "execution": {
+    "preferred_ports_initial": [
+      20418,
+      20424,
+      20473
+    ],
+    "port20474": "join_only_after_live_S2F20_release_not_wait_to_start_other_lanes",
+    "remote_subdir": "s1_ai17/{port}",
+    "workbench_ports": [
+      8970,
+      8971,
+      8972,
+      8973
+    ],
+    "all_science_via_workbench": true,
+    "training_env": "DQN_with_fresh_CUDA_and_package_identity_verification",
+    "timing": "same_mother_all_methods_one_physical_device_interleaved_no_training_contention",
+    "pre_freeze_blockers": [
+      "POST_SHRINK_nested_checkpoint_must_not_copy_final_archive",
+      "features_v2_must_encode_width_policy_shrink_in_old_bias_column",
+      "teacher_common_shrunk_initialization_and_unified15second3072candidate_ledger"
+    ],
+    "pre_freeze_blocker_status": "accepted_changes_not_yet_independently_verified_closed"
+  },
+  "storage": {
+    "candidate_evidence": "shared_scene_initial_plus_compact_parent_linked_deltas_and_periodic_full_checkpoints",
+    "no_full_layout_duplication_each_candidate": true,
+    "minimum_local_free_bytes_per_volume": 8589934592,
+    "replay_and_checksums_required": true
+  },
+  "round_policy": {
+    "no_global_round_limit_inferred": true,
+    "each_round_frozen_bounded": true,
+    "single_branch_failure_does_not_stop_authorized_research": true,
+    "two_no_progress_rounds_stop_same_mechanism_budget_extension": true,
+    "next_round_design_owner": "Astra",
+    "implementation_owner": "GPT-6.1 Sol",
+    "dynamic_sequences": "optional_later_research_not_current_completion_requirement"
+  },
+  "revision": "pre_freeze_implementation_review_20261013"
+}
