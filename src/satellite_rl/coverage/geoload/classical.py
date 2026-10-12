@@ -185,6 +185,8 @@ def run_classical(scene, initial, method, config=SearchConfig(), geometry=Geomet
     initial_validation_seconds = perf_counter() - initialization_start
     objective = "legacyCV" if method == "09-CV" else config.objective
     start = perf_counter(); attempts = calls = accepted = 0; journal = []; stop = "exhausted"
+    if candidate_order is not None and hasattr(candidate_order,'set_deadline'):
+        candidate_order.set_deadline(start + config.seconds)
     checkpoints = []; seen_checkpoints = set(); pools = generated = 0
     generation_stats = {"proposal_geometry_calls": 0}
     accepted_history = [(0., 0, current, values)]
@@ -209,48 +211,77 @@ def run_classical(scene, initial, method, config=SearchConfig(), geometry=Geomet
                     checkpoints.append({"kind": kind, "limit": limit, "actual_seconds": elapsed,
                                         "actual_attempts": attempts, "state_seconds": state[0],
                                         "state_attempts": state[1], "layout": state[2].to_record(), "metrics": state[3]})
-    while True:
-        improved = False
-        if perf_counter() - start >= config.seconds or attempts >= config.max_attempts or calls + generation_stats['proposal_geometry_calls'] >= config.max_geometry_calls:
-            stop = "time_budget" if perf_counter() - start >= config.seconds else "candidate_budget" if attempts >= config.max_attempts else "geometry_budget"
-            break
+    pool_journal = []; late_candidates = 0
+    def remaining():
+        nonlocal stop
+        if perf_counter() - start >= config.seconds: stop = 'time_budget'; return False
+        if attempts >= config.max_attempts: stop = 'candidate_budget'; return False
+        if calls + generation_stats['proposal_geometry_calls'] >= config.max_geometry_calls: stop = 'geometry_budget'; return False
+        return True
+    while remaining():
+        improved = False; exhausted = False
         iterator = candidates(scene, current, method, config, generation_stats)
-        if candidate_order is not None:
-            pool = list(islice(iterator, config.pool_size)); pools += 1; generated += len(pool)
-            ordered = list(candidate_order(scene, current, pool))
-            if len(ordered) != len(pool) or sorted(map(id, ordered)) != sorted(map(id, pool)):
-                raise ValueError("candidate_order must permute the exact shared pool")
-            iterator = iter(ordered)
-        for kind, candidate, details in iterator:
-            checkpoint()
-            elapsed = perf_counter() - start
-            if elapsed >= config.seconds or attempts >= config.max_attempts or calls + generation_stats['proposal_geometry_calls'] >= config.max_geometry_calls:
-                stop = "time_budget" if elapsed >= config.seconds else "candidate_budget" if attempts >= config.max_attempts else "geometry_budget"
+        while remaining() and not improved and not exhausted:
+            # Every suggestion variant consumes the identical successive pools.
+            # Rejected first pools do not truncate the optimizer's neighborhood.
+            pool = []; pool_started = perf_counter() - start
+            for _ in range(config.pool_size):
+                if not remaining(): break
+                try: item = next(iterator)
+                except StopIteration: exhausted = True; break
+                pool.append(item); generated += 1
+            if not pool: break
+            pools += 1
+            if not remaining():
+                pool_journal.append({'pool':pools,'generated':len(pool),'evaluated':0,
+                    'reason':'generation_budget_stop','started_seconds':pool_started,
+                    'completed_seconds':perf_counter()-start})
                 break
-            attempts += 1; calls += 1
-            evidence = validate_layout(scene, candidate, geometry)
-            reason = "invalid_geometry"; candidate_values = None
-            if evidence["valid"]:
-                candidate_values = metrics(scene, candidate, geometry, evidence=evidence)
-                before = objective_key(values, objective); after = objective_key(candidate_values, objective)
-                win = False
-                for x, y in zip(after, before):
-                    if x < y - config.objective_tolerance: win = True; break
-                    if x > y + config.objective_tolerance: break
-                if method == "VARIABLE" and config.target_n is not None:
-                    win = abs(candidate_values["N"] - config.target_n) < abs(values["N"] - config.target_n) or (candidate_values["N"] == values["N"] and win)
-                if method != "VARIABLE" and candidate_values["N"] != initial_metrics["N"]: win = False
-                reason = "accepted" if win else "objective_reject"
+            ordered = pool if candidate_order is None else list(candidate_order(scene,current,pool))
+            if len(ordered) != len(pool) or sorted(map(id, ordered)) != sorted(map(id, pool)):
+                raise ValueError('candidate_order must permute the exact shared pool')
+            if not remaining():
+                pool_journal.append({'pool':pools,'generated':len(pool),'evaluated':0,
+                    'reason':'inference_budget_stop','started_seconds':pool_started,
+                    'completed_seconds':perf_counter()-start})
+                break
+            evaluated = 0
+            for kind,candidate,details in ordered:
+                checkpoint()
+                if not remaining(): break
+                trial_started = perf_counter() - start
+                attempts += 1; calls += 1; evaluated += 1
+                evidence = validate_layout(scene,candidate,geometry)
+                reason = 'invalid_geometry'; candidate_values = None; win = False
+                if evidence['valid']:
+                    candidate_values = metrics(scene,candidate,geometry,evidence=evidence)
+                    before = objective_key(values,objective); after = objective_key(candidate_values,objective)
+                    for x,y in zip(after,before):
+                        if x < y-config.objective_tolerance: win=True; break
+                        if x > y+config.objective_tolerance: break
+                    if method == 'VARIABLE' and config.target_n is not None:
+                        win = abs(candidate_values['N']-config.target_n) < abs(values['N']-config.target_n) or (candidate_values['N']==values['N'] and win)
+                    if method != 'VARIABLE' and candidate_values['N'] != initial_metrics['N']: win=False
+                    reason = 'accepted' if win else 'objective_reject'
+                completed = perf_counter()-start
+                # Indivisible validation/inference can overrun; it is charged
+                # and retained, but never enters the published feasible best.
+                late = completed > config.seconds
+                if late:
+                    reason = 'late_budget_reject'; win=False; late_candidates += 1; stop='time_budget'
                 if win:
-                    current = candidate; values = candidate_values; improved = True; accepted += 1
-                    accepted_history.append((perf_counter() - start, attempts, current, values))
-            journal.append({"attempt": attempts, "kind": kind, "details": details, "reason": reason,
-                            "elapsed_seconds": perf_counter() - start, "coverage_evidence": evidence,
-                            "candidate_metrics": candidate_values})
-            if improved: break
-        else:
-            if improved: continue
-            break
+                    current=candidate;values=candidate_values;improved=True;accepted+=1
+                    accepted_history.append((completed,attempts,current,values))
+                row={'attempt':attempts,'pool':pools,'kind':kind,'details':details,'reason':reason,
+                     'started_seconds':trial_started,'elapsed_seconds':completed,
+                     'trial_seconds':completed-trial_started,'coverage_evidence':evidence,'candidate_metrics':candidate_values}
+                if late: row['candidate_layout']=candidate.to_record()
+                journal.append(row)
+                checkpoint()
+                if improved or late: break
+            pool_journal.append({'pool':pools,'generated':len(pool),'evaluated':evaluated,
+                'reason':'accepted_restart' if improved else 'exhausted' if exhausted else 'continue' if remaining() else stop,
+                'started_seconds':pool_started,'completed_seconds':perf_counter()-start})
         if not improved: break
     elapsed = perf_counter() - start
     checkpoint()
@@ -269,6 +300,7 @@ def run_classical(scene, initial, method, config=SearchConfig(), geometry=Geomet
                                     "metrics": values, "terminated_before_node": True, "stop_reason": stop})
     return SearchResult(current, values, journal, {"attempts": attempts, "geometry_calls": calls + generation_stats['proposal_geometry_calls'], "validation_calls": calls,
         "candidate_pools": pools, "generated_pool_candidates": generated, "checkpoints": checkpoints,
+        "pool_journal":pool_journal, "late_candidates":late_candidates,
         "proposal_geometry_calls": generation_stats['proposal_geometry_calls'],
         "initial_validation_calls": 1, "initial_validation_seconds": initial_validation_seconds,
         "accepted": accepted, "seconds": elapsed, "seconds_limit": config.seconds,

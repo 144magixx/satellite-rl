@@ -1,6 +1,7 @@
 import ast
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 import numpy as np
 from satellite_rl.coverage.geoload.core import Scene, Layout, metrics, validate_layout, initial_layout, evaluate_case
 from satellite_rl.coverage.geoload.classical import run_classical
@@ -86,5 +87,56 @@ class G16CoreTests(unittest.TestCase):
                 self.assertLessEqual(node['state_seconds'], node['seconds_limit'])
         with self.assertRaises(ValueError):
             run_classical(self.scene, self.initial, 'JOINT', cfg, candidate_order=lambda s, l, pool: pool[:-1])
+
+    def test_first_64_rejects_do_not_hide_candidate_65(self):
+        good=Layout(self.initial.centers,[0,1,1,0])
+        def stream(scene,current,method,config,stats=None):
+            for index in range(64): yield 'same',self.initial,{'index':index}
+            yield 'improve',good,{'index':64}
+        config=SearchConfig(seconds=1,max_attempts=65,pool_size=64)
+        with patch('satellite_rl.coverage.geoload.classical.candidates',stream):
+            identity=run_classical(self.scene,self.initial,'JOINT',config)
+            hook=run_classical(self.scene,self.initial,'JOINT',config,candidate_order=lambda s,l,p:p)
+        self.assertEqual(identity.budgets['attempts'],65)
+        self.assertEqual(hook.budgets['attempts'],65)
+        self.assertEqual(identity.budgets['candidate_pools'],2)
+        self.assertLess(hook.metrics['P'],metrics(self.scene,self.initial)['P'])
+        np.testing.assert_array_equal(hook.layout.assignment,identity.layout.assignment)
+
+    def test_late_validator_is_charged_but_cannot_publish(self):
+        good=Layout(self.initial.centers,[0,1,1,0]);clock=[0.]
+        def stream(*args):yield 'improve',good,{}
+        original=validate_layout
+        def slow(scene,layout,geometry):
+            result=original(scene,layout,geometry);clock[0]+=.1;return result
+        with patch('satellite_rl.coverage.geoload.classical.candidates',stream), \
+             patch('satellite_rl.coverage.geoload.classical.perf_counter',lambda:clock[0]), \
+             patch('satellite_rl.coverage.geoload.classical.validate_layout',slow):
+            result=run_classical(self.scene,self.initial,'JOINT',SearchConfig(seconds=.05,max_attempts=4,
+                checkpoint_seconds=(.05,),checkpoint_attempts=(1,)))
+        np.testing.assert_array_equal(result.layout.assignment,self.initial.assignment)
+        self.assertEqual(result.budgets['attempts'],1)
+        self.assertEqual(result.budgets['late_candidates'],1)
+        self.assertEqual(result.journal[0]['reason'],'late_budget_reject')
+        self.assertIn('candidate_layout',result.journal[0])
+        self.assertEqual(result.to_record()['reference_nodes'][0]['state_seconds'],0.)
+        self.assertGreater(result.budgets['deadline_overrun_seconds'],0.)
+
+    def test_reference_time_node_excludes_later_success(self):
+        good=Layout(self.initial.centers,[0,1,1,0]);clock=[0.]
+        def stream(scene,current,*args):
+            if np.array_equal(current.assignment,self.initial.assignment):yield 'improve',good,{}
+        original=validate_layout
+        def slow(scene,layout,geometry):
+            result=original(scene,layout,geometry);clock[0]+=.1;return result
+        with patch('satellite_rl.coverage.geoload.classical.candidates',stream), \
+             patch('satellite_rl.coverage.geoload.classical.perf_counter',lambda:clock[0]), \
+             patch('satellite_rl.coverage.geoload.classical.validate_layout',slow):
+            result=run_classical(self.scene,self.initial,'JOINT',SearchConfig(seconds=.2,max_attempts=4,
+                checkpoint_seconds=(.05,.2),checkpoint_attempts=(1,4)))
+        nodes=result.to_record()['reference_nodes']
+        np.testing.assert_array_equal(nodes[0]['layout']['assignment'],self.initial.assignment)
+        self.assertEqual(nodes[0]['state_seconds'],0.)
+        self.assertLess(nodes[1]['metrics']['P'],nodes[0]['metrics']['P'])
 
 if __name__ == '__main__': unittest.main()
