@@ -144,7 +144,7 @@ def audit(plan, state, registry=None):
                         if name in item.get('json_members',[]) and count<=JSON_LIMIT:
                             value=json.loads(z.read(name))
                             for source in sources: documents.append((node['id'],value,source))
-            if path.suffix == '.json' and path.stat().st_size <= JSON_LIMIT:
+            if item.get('parse_json', True) and path.suffix == '.json' and path.stat().st_size <= JSON_LIMIT:
                 value = json.loads(path.read_text(encoding='utf-8-sig'))
                 for source in item.get('source_paths', []): documents.append((item['id'], value, source))
         except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:

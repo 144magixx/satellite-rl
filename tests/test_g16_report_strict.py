@@ -55,12 +55,16 @@ class StrictReportTests(unittest.TestCase):
         for mother,date in [('a','2024-02-14'),('b','2024-02-15')]:
             for profile in ('base','one_hotspot','two_hotspots','edge_heavy'):
                 for method,p in [('MLM',1.8),('rule',2.)]:
-                    rows.append(dict(mother_id=mother,date=date,demand_profile=profile,method=method,P=p,outcome='completed'))
+                    rows.append(dict(case_id=mother+':'+profile,N=2,mother_id=mother,date=date,demand_profile=profile,method=method,P=p,outcome='completed'))
         value=paired_bootstrap(rows,'MLM','rule')
         self.assertAlmostEqual(value['lower95'],.1)
         self.assertEqual(value['draws'],5000)
         self.assertFalse(value['broad_significance_claim_allowed'])
         with self.assertRaises(AuditError):paired_bootstrap(rows[:-1],'MLM','rule')
+        changed=copy.deepcopy(rows);changed[0]['N']=3
+        with self.assertRaisesRegex(AuditError,'identity/N'):paired_bootstrap(changed,'MLM','rule')
+        changed=copy.deepcopy(rows);changed[0]['case_id']='another_case'
+        with self.assertRaisesRegex(AuditError,'identity/N'):paired_bootstrap(changed,'MLM','rule')
 
     def test_zip_receipt_and_manifest_stream_verification(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -226,15 +226,21 @@ def paired_bootstrap(rows, method, baseline, metric='P', draws=5000, seed=51001)
     for row in rows:
         if row.get('outcome') != 'completed' or row.get('method') not in (method,baseline): continue
         key = (row['mother_id'],row['date'])
-        groups.setdefault(key,{}).setdefault(row['demand_profile'],{})[row['method']] = row[metric]
+        profile=groups.setdefault(key,{}).setdefault(row['demand_profile'],{})
+        if row['method'] in profile:raise AuditError('duplicate paired mother/profile/method')
+        profile[row['method']]=row
     strata = {}
     for (mother,date), profiles in groups.items():
         if set(profiles) != {'base','one_hotspot','two_hotspots','edge_heavy'}: raise AuditError('paired profiles incomplete')
         diffs = []
         for values in profiles.values():
-            if set(values) != {method,baseline} or values[baseline] in (None,0) or values[method] is None:
+            if set(values) != {method,baseline}:raise AuditError('paired methods incomplete')
+            a,b=values[method],values[baseline]
+            if a.get('N') is None or a.get('N')!=b.get('N') or a.get('case_id') is None or a.get('case_id')!=b.get('case_id'):
+                raise AuditError('paired methods case identity/N differs')
+            if b[metric] in (None,0) or a[metric] is None:
                 raise AuditError('paired methods/denominator incomplete')
-            diffs.append((values[baseline]-values[method])/values[baseline])
+            diffs.append((b[metric]-a[metric])/b[metric])
         strata.setdefault(date,[]).append(float(np.mean(diffs)))
     if not strata: raise AuditError('no complete mother pairs')
     rng=np.random.default_rng(seed); samples=np.zeros(draws); n=sum(map(len,strata.values()))

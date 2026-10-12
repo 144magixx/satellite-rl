@@ -6,6 +6,7 @@ Run explicitly after computing/archiving; never schedules or resumes science.
 from __future__ import annotations
 import argparse
 import csv
+import hashlib
 import json
 import re
 from collections import defaultdict
@@ -51,6 +52,102 @@ def _date(mother):
     return value if '-' in value else value[:4]+'-'+value[4:6]+'-'+value[6:]
 
 
+def _model_metadata(archive):
+    """CPU metadata/state inspection only; this is never a GPU inference receipt."""
+    import torch
+    with archive.zip.open('model/checkpoint.pt') as f:
+        checkpoint=torch.load(f,map_location='cpu',weights_only=False)
+    with archive.zip.open('model/final.pt') as f:
+        final=torch.load(f,map_location='cpu',weights_only=False)
+    if set(checkpoint['model'])!=set(final['model']) or any(
+            not torch.equal(value,final['model'][key]) for key,value in checkpoint['model'].items()):
+        raise AuditError('final/checkpoint parameter state differs')
+    return checkpoint,final
+
+
+def validation_tables(archive, dataset, initials, metadata_reader=_model_metadata):
+    """Read the four actual _train validation directories; never calls an evaluator.
+
+    node_done records have no per-node checkpoint SHA in science495. Association
+    therefore follows the final checkpoint's completed-node list, protocol and
+    immutable job/member hashes; do not invent intermediate checkpoint files.
+    """
+    cases=[];curves=[];issues=[]
+    try:
+        cp,final=metadata_reader(archive)
+        protocol=cp['protocol']
+        protocol_sha=hashlib.sha256(json.dumps(protocol,sort_keys=True).encode()).hexdigest()
+        for state in (cp,final):
+            if state.get('format')!='s1_g16_geometry_mlm_v1':raise AuditError('validation model format differs from frozen worker')
+            if state.get('update')!=10000 or state.get('seed')!=51001 or state.get('from_scratch') is not True:
+                raise AuditError('validation source endpoint/seed/from_scratch differs')
+            if state.get('protocol_sha256')!=protocol_sha or state.get('dataset_sha256')!=cp['dataset_sha256']:
+                raise AuditError('validation checkpoint/final protocol/teacher data differs')
+        if protocol.get('scientific_commit')!=archive.job['scientific_commit'] or protocol.get('validation_sha256')!=dataset.ref['sha256']:
+            raise AuditError('validation model/source input SHA differs')
+        teacher=archive.job.get('references',{}).get('teacher',{})
+        if protocol.get('teacher_source_sha256')!=teacher.get('sha256'):
+            raise AuditError('validation teacher source SHA differs')
+        if cp.get('nodes')!=[2500,5000,7500,10000]:raise AuditError('checkpoint completed validation nodes differ')
+        cp_sha=archive.manifest['members']['model/checkpoint.pt']['sha256']
+        final_sha=archive.manifest['members']['model/final.pt']['sha256']
+    except Exception as e:
+        return cases,curves,['MLM validation source: '+str(e)]
+    for node in (2500,5000,7500,10000):
+        node_cases=[]
+        prefix='model/validation_'+str(node).zfill(5)+'/'
+        try:
+            done_member=prefix+'node_done.json';done=archive.read(done_member)
+            if done.get('update')!=node or done.get('count')!=80 or done.get('validation_sha256')!=dataset.ref['sha256']:
+                raise AuditError('node_done update/count/validation source differs')
+            index=done.get('index',[])
+            if len(index)!=80 or {i['case_id'] for i in index}!=set(dataset.ids):
+                raise AuditError('node_done cases missing/duplicated')
+            actual={n for n in archive.manifest['members'] if n.startswith(prefix) and n.endswith('.json') and n!=done_member}
+            wanted={prefix+hashlib.sha256((i['case_id']+'\0MLM').encode()).hexdigest()+'.json' for i in index}
+            if actual!=wanted:raise AuditError('validation node JSON membership differs')
+            for item in index:
+                member=prefix+hashlib.sha256((item['case_id']+'\0MLM').encode()).hexdigest()+'.json'
+                ref=archive.manifest['members'][member]
+                if ref['sha256']!=item['sha256']:raise AuditError('node case SHA differs')
+                raw=archive.read(member);scene=dataset.get(item['case_id'])
+                if raw.get('case_id')!=item['case_id'] or raw.get('mother_id')!=scene['mother_id'] or raw.get('demand_profile')!=scene['demand_profile']:
+                    raise AuditError('node case/mother/profile identity differs')
+                metric,events=audit_search(scene,{**raw,'method':'MLM','initial_metrics':initials[item['case_id']]})
+                budget=raw.get('budgets',{})
+                required=('seconds','attempts','geometry_calls','late_candidates')
+                if any(k not in budget for k in required):raise AuditError('validation actual budget unknown')
+                if any(not np.isfinite(budget[k]) or budget[k]<0 for k in required):raise AuditError('validation actual budget invalid')
+                node_cases.append(dict(node=node,case_id=item['case_id'],mother_id=scene['mother_id'],date=_date(scene['mother_id']),
+                    demand_profile=scene['demand_profile'],**metric,coverage_100=True,unique_assignment=True,demand_conserved=True,
+                    search_seconds=budget['seconds'],attempts=budget['attempts'],geometry_calls=budget['geometry_calls'],
+                    late_candidates=budget['late_candidates'],accepted=sum(e['accepted'] for e in events),
+                    source_zip=str(archive.path),source_member=member,source_sha256=ref['sha256'],
+                    node_done_sha256=archive.manifest['members'][done_member]['sha256'],checkpoint_sha256=cp_sha,
+                    endpoint_sha256=final_sha,validation_input_sha256=dataset.ref['sha256'],protocol_sha256=protocol_sha,
+                    model_association='final_checkpoint_completed_nodes; intermediate_checkpoint_not_retained',
+                    scope='training_diagnostic_not_common_timing'))
+            mothers=defaultdict(list)
+            for row in node_cases:mothers[row['mother_id']].append(row)
+            if len(mothers)!=20 or any(len(rows)!=4 or {r['demand_profile'] for r in rows}!=
+                    {'base','one_hotspot','two_hotspots','edge_heavy'} for rows in mothers.values()):
+                raise AuditError('validation 20 mothers x 4 profiles incomplete')
+            # Each mother contributes its four-profile mean once, regardless of aircraft count.
+            means={k:[float(np.mean([r[k] for r in rows])) for rows in mothers.values()] for k in ('P','T','Q','CV','N')}
+            curves.append(dict(node=node,mothers=20,cases=80,
+                **{k:float(np.mean(values)) for k,values in means.items()},
+                hard_coverage_cases=sum(r['coverage_100'] for r in node_cases),hard_violations=0,
+                search_seconds_total=sum(r['search_seconds'] for r in node_cases),
+                attempts_total=sum(r['attempts'] for r in node_cases),geometry_calls_total=sum(r['geometry_calls'] for r in node_cases),
+                late_candidates_total=sum(r['late_candidates'] for r in node_cases),
+                node_done_sha256=archive.manifest['members'][done_member]['sha256'],checkpoint_sha256=cp_sha,
+                endpoint_sha256=final_sha,validation_input_sha256=dataset.ref['sha256'],
+                aggregation='mother_mean_of_four_profiles',scope='training_diagnostic_not_common_timing'))
+            cases.extend(node_cases)
+        except Exception as e:issues.append('MLM validation node '+str(node)+': '+str(e))
+    return cases,curves,issues
+
+
 def _expected_keys(plan, gate):
     keys={'prepare_'+k for k in plan['preparations']}
     for role in ('train','development','validation','test'):
@@ -64,7 +161,7 @@ def _expected_keys(plan, gate):
 def build(plan_path,state_path,destination,closure=None):
     plan=read_json(plan_path);state=read_json(state_path);out=Path(destination)
     out.mkdir(parents=True,exist_ok=True)
-    issues=[]; archives={};datasets={};case_rows=[];timing=[];candidate_rows=[];learning=[];initials={}
+    issues=[]; archives={};datasets={};case_rows=[];timing=[];candidate_rows=[];learning=[];initials={};validation_cases=[];validation_curves=[]
     tasks=state.get('tasks',{});science=plan['scientific_commit']
     if state.get('plan_sha256')!=digest(plan_path):issues.append('controller snapshot plan SHA differs')
     if plan.get('group')!='S1-G16' or state.get('group')!='S1-G16':raise AuditError('wrong experiment')
@@ -159,6 +256,14 @@ def build(plan_path,state_path,destination,closure=None):
             expected_pairs={(c,m) for c in datasets.get(role,object()).ids for m in expected_methods} if role in datasets else set()
             actual=[(r['case_id'],r['method']) for r in selected]
             if len(actual)!=len(set(actual)) or set(actual)!=expected_pairs:issues.append(role+' method matrix incomplete/duplicated')
+            same_case=defaultdict(list)
+            for r in selected:same_case[r['case_id']].append(r)
+            for case_id,rows in same_case.items():
+                if len({(r['mother_id'],r['date'],r['demand_profile']) for r in rows})!=1:
+                    issues.append(role+' same-case mother/profile/date differs '+case_id)
+                completed=[r for r in rows if r.get('outcome')=='completed']
+                if any(r.get('N') is None for r in completed) or len({r.get('N') for r in completed})>1:
+                    issues.append(role+' same-case method N differs '+case_id)
             hosts=defaultdict(set)
             for r in selected:hosts[r['mother_id']].add(r['port'])
             if any(len(h)!=1 for h in hosts.values()):issues.append(role+' mother split across hosts')
@@ -177,14 +282,10 @@ def build(plan_path,state_path,destination,closure=None):
                         for line in f:
                             row=json.loads(line);learning.append({k:row.get(k) for k in ('update','loss','attempt_id')})
                 if [r['update'] for r in learning]!=list(range(1,10001)):issues.append('MLM 10000 retained updates not complete')
-                for node in (2500,5000,7500,10000):
-                    found=[n for n in members if '/validation_'+str(node).zfill(5)+'/' in n and n.endswith('.json') and not n.endswith('/node_done.json')]
-                    if len(found)!=80:issues.append('MLM diagnostic node incomplete '+str(node))
-                    for member in found:
-                        try:
-                            raw=a.read(member);scene=datasets['validation'].get(raw['case_id'])
-                            audit_search(scene,{**raw,'method':'MLM','initial_metrics':initials[raw['case_id']]})
-                        except Exception as e:issues.append('MLM diagnostic '+member+': '+str(e))
+                if 'validation' not in datasets:issues.append('MLM validation canonical input unresolved')
+                else:
+                    validation_cases,validation_curves,node_issues=validation_tables(a,datasets['validation'],initials)
+                    issues.extend(node_issues)
                 artifacts=a.read('job/artifacts.json');ledger=artifacts.get('training',{}).get('ledger')
                 if ledger is None:issues.append('MLM actual update/unknown/replay ledger absent')
                 else:
@@ -240,6 +341,7 @@ def build(plan_path,state_path,destination,closure=None):
             plan_sha256=digest(plan_path),state_sha256=digest(state_path),gate_passed=gate,
             learning_status='science_stopped_teacher_gate_failed_not_trained' if gate is False else 'completed_only_if_audited',
             case_rows=len(case_rows),mother_rows=len(mother_rows),comparisons=comparisons,
+            validation_diagnostic_cases=len(validation_cases),validation_diagnostic_nodes=len(validation_curves),
             no_global_optimality_certificate=True,single_training_seed=51001,
             candidate_geometry_limitation='final/reference layouts independently audited; ordinary candidate geometry retained as worker evidence with independent load algebra',
             unknown_replay_budget='must be closed by archive acceptance recovery/attempt ledger; unknown is never zero',
@@ -250,7 +352,7 @@ def build(plan_path,state_path,destination,closure=None):
         for (role,method),rows in grouped_summary.items():
             descriptive.append(dict(role=role,method=method,mothers=len(rows),
                 **{k:float(np.mean([r[k] for r in rows])) for k in ('N','P','T','Q','CV') if all(k in r for r in rows)}))
-        for name,rows in [('per_case',case_rows),('per_mother',mother_rows),('timing',timing),('candidate',candidate_rows),('learningcurve',learning),('summary',descriptive),('learning_comparisons',comparisons)]:write_csv(out/(name+'.csv'),rows)
+        for name,rows in [('per_case',case_rows),('per_mother',mother_rows),('timing',timing),('candidate',candidate_rows),('learningcurve',learning),('summary',descriptive),('learning_comparisons',comparisons),('validation_cases',validation_cases),('validation_curves',validation_curves)]:write_csv(out/(name+'.csv'),rows)
         (out/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
         return summary
     finally:
