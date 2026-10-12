@@ -54,8 +54,13 @@ def observe(state):
         key,task=pair
         try:
             result=ops.api(task['port'],'/api/runs/'+task['run_id'])
+            artifacts=result['artifacts']
+            if artifacts.get('status')=='prepared':
+                artifacts={k:artifacts.get(k) for k in ('status','path','sha256','role','count','mother_count','format_version')}
+                artifacts['canonical_artifacts_path']=ops.instance(task['port'])['archive']+'/outputs/workbench/jobs/'+task['run_id']+'/artifacts.json'
+                artifacts['source_retained_in_remote_artifacts']=True
             return key,{'stage':result['status']['stage'],'status':result['status'],
-                        'artifacts':result['artifacts'],'observed_at':now(),'transport_error':None}
+                        'artifacts':artifacts,'observed_at':now(),'transport_error':None}
         except Exception as error:return key,{'transport_error':str(error),'failed_observation_at':now()}
     with ThreadPoolExecutor(max_workers=2) as pool:
         for key,value in pool.map(one,active):state['tasks'][key].update(value)
@@ -65,7 +70,9 @@ def done(state,*keys):return all(state.get('tasks',{}).get(k,{}).get('stage')=='
 def dataset(task,role):
     record=task['artifacts']
     if record.get('status')!='prepared':raise ValueError('prepared dataset artifact required')
-    return {**record,'role':role}
+    if record.get('role')!=role or type(record.get('count')) is not int or record['count']<=0:
+        raise ValueError('prepared dataset role/count differs')
+    return {key:record[key] for key in ('path','sha256','role','count')}
 
 def raw_rows(task):
     info=ops.instance(task['port']);root=info['archive']+'/outputs/workbench/jobs/'+task['run_id']

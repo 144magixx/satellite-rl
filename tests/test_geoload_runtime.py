@@ -136,5 +136,25 @@ class GeometryRuntimeTests(unittest.TestCase):
             return {'exit_code':1,'stderr':'synthetic stop before IO'}
         with patch('scripts.stage1_geoload.archive.ops.remote_python',side_effect=remote):
             with self.assertRaises(RuntimeError):export_job(20424,'sample','E:/unused.zip')
+    def test_pipeline_large_prepared_source_stays_remote(self):
+        from scripts.stage1_geoload.pipeline import dataset,observe,body
+        source={'source_aircraft_ids':['unchanged-source-evidence']*100000}
+        artifact={'status':'prepared','path':'/remote/inputs.npz','sha256':'a'*64,'role':'train','count':2304,
+                  'mother_count':576,'source':source}
+        state={'tasks':{'prepare_train':{'port':20424,'run_id':'original','stage':'running'}}}
+        with patch('scripts.stage1_geoload.pipeline.ops.api',return_value={'status':{'stage':'completed'},'artifacts':artifact}):
+            observe(state)
+        retained=state['tasks']['prepare_train']['artifacts']
+        self.assertNotIn('source',retained)
+        self.assertTrue(retained['source_retained_in_remote_artifacts'])
+        self.assertTrue(retained['canonical_artifacts_path'].endswith('/original/artifacts.json'))
+        ref=dataset(state['tasks']['prepare_train'],'train')
+        self.assertEqual(set(ref),{'path','sha256','role','count'})
+        plan={'scientific_commit':'b'*40,'science_plan_refs':{'20424':{'path':'/p','sha256':'c'*64}},
+              'partition_refs':{'20424':{'path':'/part','sha256':'d'*64}}}
+        request=body(plan,'teacher',20424,'prepare','teacher','train',{'train':ref},['JOINT'])
+        self.assertLess(len(json.dumps(request).encode()),8192)
+        self.assertIs(artifact['source'],source)
+        self.assertEqual(len(source['source_aircraft_ids']),100000)
 
 if __name__=='__main__':unittest.main()
