@@ -70,12 +70,21 @@ def dataset(task,role):
 def raw_rows(task):
     info=ops.instance(task['port']);root=info['archive']+'/outputs/workbench/jobs/'+task['run_id']
     code=f'''import hashlib,json,pathlib
-root=pathlib.Path({root!r});index=json.loads((root/'case_index.json').read_text());rows=[]
+root=pathlib.Path({root!r});index_bytes=(root/'case_index.json').read_bytes();index=json.loads(index_bytes);rows=[]
+def metrics(value):
+ if value is None:return None
+ result={{k:value.get(k) for k in ('P','T','Q','CV','N','total_demand')}}
+ evidence=value.get('evidence',{{}})
+ result['evidence']={{k:evidence.get(k) for k in ('valid','reasons','unique_assignment','demand_conserved','coverage_100')}}
+ return result
 for key,item in index.items():
  p=root/'cases'/(key+'.json');data=p.read_bytes()
  if hashlib.sha256(data).hexdigest()!=item['sha256']:raise RuntimeError('gate result SHA differs')
- row=json.loads(data);rows.append({{k:row.get(k) for k in ('case_id','mother_id','demand_profile','method','outcome','metrics','reference_nodes')}})
-print(json.dumps({{'rows':rows,'index_sha256':hashlib.sha256((root/'case_index.json').read_bytes()).hexdigest()}}))
+ row=json.loads(data);small={{k:row.get(k) for k in ('case_id','mother_id','demand_profile','method','outcome')}}
+ small['metrics']=metrics(row.get('metrics'));small['source_case_sha256']=item['sha256']
+ small['reference_nodes']=[{{**{{k:n.get(k) for k in ('kind','seconds_limit','candidate_limit','actual_seconds','actual_attempts','terminated_before_node')}},'metrics':metrics(n.get('metrics'))}} for n in row.get('reference_nodes',[])]
+ rows.append(small)
+print(json.dumps({{'rows':rows,'index_sha256':hashlib.sha256(index_bytes).hexdigest()}}))
 '''
     result=ops.remote_python(code,task['port'],timeout=60)
     if result['exit_code']:raise RuntimeError(result['stderr'][-1000:])
@@ -115,7 +124,9 @@ def make_gate(state,local):
         if valid and a['P'] is not None and a['P']>0:
             qualifies=(a['P']-b['P'])/a['P']>=.01 or (abs(a['P']-b['P'])<=1e-9 and a['T']>0 and (a['T']-b['T'])/a['T']>=.01)
         if qualifies:improved.append(old['mother_id'])
-        rows.append({'case_id':key,'mother_id':old['mother_id'],'qualified':qualifies,'baseline':a,'reference30':b})
+        rows.append({'case_id':key,'mother_id':old['mother_id'],'qualified':qualifies,'baseline':a,'reference30':b,
+                     'baseline_source_case_sha256':old.get('source_case_sha256'),
+                     'reference_source_case_sha256':new.get('source_case_sha256')})
     fractions=[sum(x in h for x in improved)/40 for h in halves]
     gate={'group':'S1-G16','passed':violations==0 and len(improved)/80>=.2 and min(fractions)>=.1,
         'reference_seconds':30,'improved_case_fraction':len(improved)/80,'half_fractions':fractions,

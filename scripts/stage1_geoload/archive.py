@@ -20,10 +20,12 @@ with zipfile.ZipFile(target.with_suffix('.tmp'), 'w',compression=zipfile.ZIP_DEF
    if not p.is_file() or p.is_symlink():continue
    name=prefix+'/'+p.relative_to(source).as_posix()
    h=hashlib.sha256()
-   with p.open('rb') as f:
-    for b in iter(lambda:f.read(1048576),b''):h.update(b)
+   count=0
+   with p.open('rb') as f,z.open(name,'w',force_zip64=True) as writer:
+    for b in iter(lambda:f.read(1048576),b''):
+     h.update(b);count+=len(b);writer.write(b)
+   if count!=p.stat().st_size:raise RuntimeError('archive source changed while streaming')
    members[name]={{'sha256':h.hexdigest(),'bytes':p.stat().st_size}}
-   z.write(p,name)
  z.writestr('archive_manifest.json',json.dumps({{'group':'S1-G16','run_id':job['run_id'],'scientific_commit':job['scientific_commit'],'members':members}},sort_keys=True))
 target.with_suffix('.tmp').replace(target);h=hashlib.sha256()
 with target.open('rb') as f:

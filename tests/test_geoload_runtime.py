@@ -105,5 +105,36 @@ class GeometryRuntimeTests(unittest.TestCase):
         c=default_config();self.assertEqual(c['inference']['device'],'cuda')
         c['inference']['device']='cpu'
         with self.assertRaises(ValueError):validate_config(c)
+    def test_gate_transport_projects_trace_and_layout_on_remote(self):
+        import contextlib,io,hashlib
+        from scripts.stage1_geoload.pipeline import raw_rows
+        with tempfile.TemporaryDirectory() as d:
+            archive=Path(d)/'archive';job=archive/'outputs/workbench/jobs/sample';(job/'cases').mkdir(parents=True)
+            value={'case_id':'a','mother_id':'m','method':'JOINT','metrics':{'P':2.,'T':1.5,'Q':2.1,
+                'beam_loads':[4.]*200,'evidence':{'valid':True,'loads':[4.]*200}},
+                'journal':[{'full_trace':'must_never_cross_SSH'*10000}],
+                'reference_nodes':[{'seconds_limit':30,'layout':{'assignment':[0]*10000},
+                                    'metrics':{'P':1.8,'T':1.4,'evidence':{'valid':True}}}]}
+            path=job/'cases/a.json';path.write_text(json.dumps(value));case_sha=digest(path)
+            index=job/'case_index.json';index.write_text(json.dumps({'a':{'sha256':case_sha}}))
+            def remote(code,port,timeout):
+                out=io.StringIO()
+                with contextlib.redirect_stdout(out):exec(code,{})
+                self.assertLess(len(out.getvalue()),3000)
+                self.assertNotIn('must_never_cross_SSH',out.getvalue())
+                return {'exit_code':0,'stdout':out.getvalue(),'stderr':''}
+            with patch('scripts.stage1_geoload.pipeline.ops.instance',return_value={'archive':str(archive)}),patch('scripts.stage1_geoload.pipeline.ops.remote_python',side_effect=remote):
+                row=raw_rows({'port':20424,'run_id':'sample'})['rows'][0]
+                self.assertEqual(row['source_case_sha256'],case_sha)
+                self.assertNotIn('layout',row['reference_nodes'][0]);self.assertNotIn('beam_loads',row['metrics'])
+    def test_archive_manifest_is_remote_not_ssh_argument(self):
+        from scripts.stage1_geoload.archive import export_job
+        def remote(code,port,timeout):
+            self.assertLess(len(code),5000)
+            self.assertIn('members={}',code)
+            self.assertIn("z.open(name,'w',force_zip64=True)",code)
+            return {'exit_code':1,'stderr':'synthetic stop before IO'}
+        with patch('scripts.stage1_geoload.archive.ops.remote_python',side_effect=remote):
+            with self.assertRaises(RuntimeError):export_job(20424,'sample','E:/unused.zip')
 
 if __name__=='__main__':unittest.main()
