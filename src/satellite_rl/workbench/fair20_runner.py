@@ -835,7 +835,7 @@ def run_job(job_dir, *, resume=False):
             raise ValueError("冻结任务输入合同发生变化")
         if job.get("experiment_id") != EXPERIMENT or config["mode"] != job.get("mode"):
             raise ValueError("任务身份不符")
-        from .fair20_service import validate_execution_job, execution_view
+        from .fair20_source_repair import validate_execution_job, execution_view
         validate_execution_job(job, directory)
         preflight = strict_cuda_preflight(execution_view(job))
         torch.set_num_threads(config["training"]["cpu_threads"])

@@ -115,7 +115,7 @@ class SourceRepairTests(unittest.TestCase):
                 repair.repair_job(self.scheduler,"failed",self.body())
         self.assertEqual(read_json(directory/"job.json"),job)
 
-    def test_failed_validation_binds_immutable_proof_without_changing_checkpoint(self):
+    def validation_fixture(self):
         directory,job=self.job("validation")
         atomic_json(directory/"status.json",{"stage":"failed","env_step":100000,"phase":"validation_100000"})
         atomic_json(directory/"launch.json",{"pid":12345,"process_start_time":1.})
@@ -150,9 +150,68 @@ class SourceRepairTests(unittest.TestCase):
         self.assertEqual(digest(directory/"checkpoint.pt"),checkpoint_sha)
         self.assertEqual(digest(changed["validation_only_resume_proof"]["proof_path"]),digest(proof))
         repair.validate_execution_job(changed,directory)
+        return directory,changed,proof
+
+    def test_failed_validation_binds_immutable_proof_without_changing_checkpoint(self):
+        directory,changed,proof=self.validation_fixture()
         preserved=directory/"source_lineage"/"origin"/"artifacts"/"failure.json"
         preserved.write_text("tampered origin")
         with self.assertRaises(ValueError):repair.validate_execution_job(changed,directory)
+
+    def test_real_worker_startup_reaches_preflight_after_real_frozen_config_and_source_checks(self):
+        from satellite_rl.workbench.fair20_runner import run_job
+        from satellite_rl.workbench.fair20_service import fingerprint,INPUT_FIELDS
+        repair.register_group(self.scheduler,self.body())
+        directory,job=self.job("startup")
+        job["frozen_input_sha256"]=fingerprint({key:job.get(key) for key in INPUT_FIELDS})
+        atomic_json(directory/"job.json",job)
+        bound=repair.bind_future_job(self.store,job)
+        class PreflightSentinel(RuntimeError):pass
+        with patch("satellite_rl.workbench.runner.strict_cuda_preflight",side_effect=PreflightSentinel("preflight reached")) as preflight,patch("satellite_rl.workbench.fair20_runner._train") as learning,patch("satellite_rl.power_refinement.optimizer.optimize_power") as solve:
+            with self.assertRaisesRegex(PreflightSentinel,"preflight reached"):run_job(directory)
+            preflight.assert_called_once()
+            self.assertEqual(preflight.call_args.args[0]["source_root"],bound["execution_source"]["snapshot_path"])
+            learning.assert_not_called();solve.assert_not_called()
+
+    def test_explicit_R1_R2_replacement_preserves_both_epochs_and_no_training_bytes(self):
+        directory,old_job,old_proof_path=self.validation_fixture()
+        old_body=self.body();repair.register_group(self.scheduler,old_body)
+        old_sha=old_body["contract_sha256"]
+        (directory/"worker.log").write_text("R1 startup ImportError; no CUDA or agent",encoding="utf-8")
+        atomic_json(directory/"launch.json",{"pid":54329,"process_start_time":2.})
+        status=read_json(directory/"status.json");status.update(stage="failed",pid=54329)
+        atomic_json(directory/"status.json",status)
+        atomic_json(directory/"failure.json",{"traceback":"ImportError: cannot import name validate_execution_job from fair20_service",
+                    "config_sha256":digest(directory/"config.json")})
+        epoch={key:{"path":str(directory/name),"sha256":digest(directory/name)} for key,name in
+               (("job","job.json"),("status","status.json"),("launch","launch.json"),("failure","failure.json"),("worker_log","worker.log"))}
+        epoch.update(original_pid=54329,original_process_start_time=2.)
+        original_checkpoint=digest(directory/"checkpoint.pt")
+        original_origin=digest(directory/"source_lineage"/"origin"/"job.json")
+        old_contract_path=Path(old_job["execution_source"]["contract_path"])
+        source=self.execution/"src/satellite_rl/workbench/fair20_runner.py";source.write_text("fixed startup module import\n")
+        self.git(self.execution,"add",".");self.git(self.execution,"commit","-m","synthetic R2 startup")
+        new_commit=self.git(self.execution,"rev-parse","HEAD").decode().strip()
+        self.contract["execution_commit"]=new_commit;self.contract["supersedes_contract_sha256"]=old_sha
+        self.contract["diff_files"][0]["execution_sha256"]=hashlib.sha256(self.git(self.execution,"show",new_commit+":"+self.contract["diff_files"][0]["path"])).hexdigest()
+        proof=read_json(old_proof_path);proof["execution_commit"]=new_commit
+        proof_path=self.root/"R2-proof.json";atomic_json(proof_path,proof)
+        self.contract["runs"]["validation"]["validation_only_resume_proof"]={"path":str(proof_path),"sha256":digest(proof_path)}
+        self.contract["runs"]["validation"]["current_epoch_records"]=epoch
+        new_body=self.body()
+        repair.register_group(self.scheduler,new_body)
+        with patch("satellite_rl.workbench.runtime.pid_alive",return_value=False):
+            updated=repair.repair_job(self.scheduler,"validation",new_body)
+        new_job=read_json(directory/"job.json")
+        self.assertEqual(updated["stage"],"queued_resources")
+        self.assertEqual(new_job["git_commit"],self.origin)
+        self.assertEqual(new_job["execution_source"]["execution_commit"],new_commit)
+        self.assertEqual(len(new_job["source_history"]),2)
+        self.assertEqual(digest(old_contract_path),old_sha)
+        self.assertEqual(digest(directory/"checkpoint.pt"),original_checkpoint)
+        self.assertEqual(digest(directory/"source_lineage"/"origin"/"job.json"),original_origin)
+        self.assertEqual(digest(directory/"source_lineage"/"epochs"/old_sha/"failure.json"),epoch["failure"]["sha256"])
+        self.assertTrue((self.store.root/"fair20_source_lineage"/"epochs"/old_sha/"registration.json").is_file())
 
     def test_generic_resume_endpoint_cannot_bypass_f20_validation_failure_protection(self):
         from satellite_rl.workbench.service import Application

@@ -53,6 +53,7 @@ def validate_contract(store,path,sha256):
             contract.get("scientific_commit")!=ORIGIN_COMMIT):
         raise ValueError("unknown F20 execution-source contract")
     execution=_hash(contract.get("execution_commit"),40)
+    if contract.get("supersedes_contract_sha256") is not None:_hash(contract["supersedes_contract_sha256"])
     if execution==ORIGIN_COMMIT:raise ValueError("execution repair must have an honest distinct commit")
     lane=store.archive_root.parent
     repository=inside(contract.get("execution_source_repo",""),lane)
@@ -136,8 +137,14 @@ def register_group(scheduler,body):
         registration=store.root/"fair20_execution_source.json"
         old=read_json(registration)
         if old and old["contract_sha256"]!=body["contract_sha256"]:
-            raise ValueError("F20 registered repair cannot silently change")
-        target=store.root/"fair20_source_lineage"/"contract.json";target.parent.mkdir(exist_ok=True)
+            if contract.get("supersedes_contract_sha256")!=old["contract_sha256"]:
+                raise ValueError("F20 registered repair replacement must explicitly supersede its exact old SHA")
+            _pin(old["contract_path"],old["contract_sha256"])
+            history=store.root/"fair20_source_lineage"/"epochs"/old["contract_sha256"]
+            history.mkdir(parents=True,exist_ok=True)
+            target_registration=history/"registration.json"
+            if not target_registration.exists():shutil.copyfile(registration,target_registration)
+        target=store.root/"fair20_source_lineage"/"contracts"/(body["contract_sha256"]+".json");target.parent.mkdir(parents=True,exist_ok=True)
         if not target.exists():shutil.copyfile(path,target)
         _pin(target,body["contract_sha256"])
         snapshot=freeze_execution(store,contract)
@@ -160,7 +167,7 @@ def registered_source(store):
 def _bind(store,job,directory,contract,path,sha256,snapshot,comparison_scope):
     if job.get("git_commit")!=ORIGIN_COMMIT or job.get("experiment_id")!="S2-F20":
         raise ValueError("F20 execution source cannot replace the original scientific identity")
-    target=directory/"source_lineage"/"contract.json";target.parent.mkdir(exist_ok=True)
+    target=directory/"source_lineage"/"contracts"/(sha256+".json");target.parent.mkdir(parents=True,exist_ok=True)
     if not target.exists():shutil.copyfile(path,target)
     _pin(target,sha256)
     job["execution_source"]=_reference(contract,target,sha256,snapshot)
@@ -228,6 +235,70 @@ def execution_view(job):
     return view
 
 
+def _supersede_job(store,job,status,directory,contract,path,new_sha,item):
+    """Only an explicitly pinned startup-only failed epoch can change execution."""
+    from .runtime import pid_alive
+    old=job["execution_source"];old_sha=old["contract_sha256"]
+    if contract.get("supersedes_contract_sha256")!=old_sha or status.get("stage")!="failed":
+        raise ValueError("F20 execution replacement needs exact superseded SHA and a failed exited epoch")
+    old_contract=read_json(_pin(old["contract_path"],old_sha))
+    origin=old_contract.get("runs",{}).get(job["run_id"])
+    if not origin or not item:raise ValueError("supersession must retain original per-run repair pins")
+    for key in ("job_sha256","status_sha256","config_sha256","launch_sha256","original_pid",
+                "original_process_start_time","origin_manifest_sha256","artifacts"):
+        if item.get(key)!=origin.get(key):raise ValueError("supersession cannot rewrite original 2fc evidence pins")
+    epoch=item.get("current_epoch_records",{})
+    required={"job":"job.json","status":"status.json","launch":"launch.json","failure":"failure.json","worker_log":"worker.log"}
+    if not all(key in epoch for key in (*required,"original_pid","original_process_start_time")):
+        raise ValueError("supersession current epoch evidence is incomplete")
+    launch=read_json(directory/"launch.json",{})
+    if (launch.get("pid")!=epoch["original_pid"] or launch.get("process_start_time")!=epoch["original_process_start_time"] or
+            pid_alive(launch.get("pid"),launch.get("process_start_time"))):
+        raise ValueError("superseded execution worker birth must match and be exited")
+    for key,name in required.items():
+        row=epoch[key]
+        if Path(row.get("path","")).resolve()!=(directory/name).resolve():raise ValueError("epoch record path differs")
+        _pin(directory/name,row["sha256"])
+    failure=read_json(directory/"failure.json",{})
+    if ("ImportError" not in failure.get("traceback","") or "validate_execution_job" not in failure.get("traceback","") or
+            "full_b_case" in failure.get("traceback","") or failure.get("config_sha256")!=digest(directory/"config.json")):
+        raise ValueError("supersession is restricted to the pinned pre-preflight import failure")
+    previous=job.get("validation_only_resume_proof",{})
+    old_proof=read_json(_pin(previous["proof_path"],previous["proof_sha256"]))
+    proof_ref=item.get("validation_only_resume_proof",{})
+    new_proof=read_json(_pin(proof_ref["path"],proof_ref["sha256"]))
+    comparison=deepcopy(new_proof);comparison["execution_commit"]=old_proof["execution_commit"]
+    if comparison!=old_proof or new_proof.get("execution_commit")!=contract["execution_commit"]:
+        raise ValueError("supersession proof may change only its execution commit")
+    if (digest(directory/"checkpoint.pt")!=old_proof["checkpoint_sha256"] or
+            status.get("env_step")!=old_proof["checkpoint_step"]):
+        raise ValueError("supersession must retain the exact original checkpoint/node")
+    for name,row in old_proof["training_logs"].items():
+        current=directory/name
+        if current.stat().st_size!=old_proof["training_log_sizes"][name]:raise ValueError("supersession has new training log bytes")
+        _pin(current,row["sha256"])
+    archive=directory/"source_lineage"/"epochs"/old_sha
+    archive.mkdir(parents=True,exist_ok=True)
+    for key,name in required.items():
+        destination=archive/name
+        if not destination.exists():shutil.copyfile(directory/name,destination)
+        _pin(destination,epoch[key]["sha256"])
+    new_path=directory/"source_lineage"/("validation_only_resume_"+new_sha+".json")
+    if not new_path.exists():shutil.copyfile(proof_ref["path"],new_path)
+    _pin(new_path,proof_ref["sha256"])
+    job["validation_only_resume_proof"]={"proof_path":str(new_path),"proof_sha256":proof_ref["sha256"]}
+    job.update(resume=True,resume_origin_stage="failed",resume_origin_env_step=status.get("env_step"),
+               resume_attempt=job.get("resume_attempt",0)+1,source_repair_pending=True)
+    snapshot=freeze_execution(store,contract)
+    job=_bind(store,job,directory,contract,path,new_sha,snapshot,"same_id_validation_only_repair")
+    status.update(stage="queued_resources" if job.get("resource_hold") else "queued",pid=None,error=None,
+                  execution_source=job["execution_source"],heartbeat_at=now(),
+                  queue_reason="显式R1→R2执行来源更替；原2fc与R1失败证据、100000步断点保持")
+    atomic_json(directory/"status.json",status)
+    job["source_repair_pending"]=False;atomic_json(directory/"job.json",job)
+    return status
+
+
 def repair_job(scheduler,run_id,body):
     from .runtime import pid_alive
     if set(body)!={"contract_path","contract_sha256"}:raise ValueError("source repair accepts only immutable contract reference")
@@ -236,7 +307,8 @@ def repair_job(scheduler,run_id,body):
         directory=store.job_dir(validate_id(run_id));job=read_json(directory/"job.json",{});status=read_json(directory/"status.json",{})
         if job.get("execution_source"):
             validate_execution_job(job,directory)
-            if job["execution_source"]["contract_sha256"]!=body["contract_sha256"]:raise ValueError("same task cannot change repair contract")
+            if job["execution_source"]["contract_sha256"]!=body["contract_sha256"]:
+                return _supersede_job(store,job,status,directory,contract,path,body["contract_sha256"],contract.get("runs",{}).get(run_id))
             if job.get("source_repair_pending"):
                 status.update(stage="queued_resources" if job.get("resource_hold") else "queued",pid=None,error=None,
                               heartbeat_at=now(),queue_reason="继续已绑定的F20来源修复事务")
