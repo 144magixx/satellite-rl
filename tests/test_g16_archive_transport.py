@@ -39,11 +39,14 @@ class Fake:
 
 def fixture(size=1024):
     stream=io.BytesIO();content=b'a'*size
+    job=json.dumps(dict(run_id='fixture',scientific_commit=transfer.SCIENCE)).encode()
+    status=json.dumps(dict(stage='completed')).encode()
     manifest=dict(group='S1-G16',run_id='fixture',scientific_commit=transfer.SCIENCE,
-        members={'job/test.bin':dict(sha256=hashlib.sha256(content).hexdigest(),bytes=len(content))})
+        members={name:dict(sha256=hashlib.sha256(data).hexdigest(),bytes=len(data)) for name,data in [('job/test.bin',content),('job/job.json',job),('job/status.json',status)]})
     raw=json.dumps(manifest,sort_keys=True).encode()
     with zipfile.ZipFile(stream,'w',compression=zipfile.ZIP_STORED) as z:
         z.writestr('job/test.bin',content);z.writestr('archive_manifest.json',raw)
+        z.writestr('job/job.json',job);z.writestr('job/status.json',status)
     data=stream.getvalue()
     receipt=dict(path='/isolated/fixture.zip',sha256=hashlib.sha256(data).hexdigest(),bytes=len(data),
         manifest_sha256=hashlib.sha256(raw).hexdigest(),run_id='fixture',port=20424,scientific_commit=transfer.SCIENCE)
@@ -109,6 +112,25 @@ class ArchiveTransportTests(unittest.TestCase):
         self.assertIn('unknown archive requires pinned receipt',code)
         self.assertIn('unknown packer/source reader active',code)
         self.assertNotIn('unlink(',code)
+
+    def test_existing_receipt_attestation_executes_exact_pins(self):
+        import contextlib
+        class LocalOnly:
+            def instance(self,port):return {}
+            def remote_python(self,code,port,timeout):
+                output=io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(output):exec(compile(code,'synthetic_attest','exec'),{})
+                    return dict(exit_code=0,stdout=output.getvalue(),stderr='')
+                except Exception as error:return dict(exit_code=1,stdout='',stderr=str(error))
+        data,receipt=fixture()
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'fixture.zip';path.write_bytes(data)
+            old=dict(path=str(path),bytes=len(data),sha256=receipt['sha256'])
+            upgraded=transfer.attest_existing(old,20424,'fixture',transport=LocalOnly())
+            self.assertEqual(upgraded['manifest_sha256'],receipt['manifest_sha256'])
+            self.assertEqual(upgraded['scientific_commit'],transfer.SCIENCE)
+            with self.assertRaisesRegex(RuntimeError,'SHA'):transfer.attest_existing({**old,'sha256':'0'*64},20424,'fixture',transport=LocalOnly())
 
 
 if __name__=='__main__':unittest.main()
