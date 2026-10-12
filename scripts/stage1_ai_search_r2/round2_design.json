@@ -1,0 +1,505 @@
+{
+  "schema": "s1_ai17_round2_development_v2",
+  "group": "S1-AI17-R2",
+  "date": "2026-10-13",
+  "status": "design_frozen_pending_root_source_and_execution_review",
+  "scope": "finite_development_gate_only_no_model_training_no_new_validation_or_test_algorithms",
+  "parent_group": "S1-AI17",
+  "training_admitted": false,
+  "seed": 51001,
+  "hypothesis": "A byte-identical strong start, peak-aligned small task pool, shared exact O(n) geometry validation and bounded active-set reassignment can expose real fixed-resource quality and cost opportunities before learning.",
+  "preserve": [
+    "fbd_R1_scientific_source",
+    "880_R1_results",
+    "768_R1_diagnostic_teachers",
+    "original_oracle_gate",
+    "original_failures_and_cost_unknowns"
+  ],
+  "input": {
+    "role": "development",
+    "source": "same_G16_Jan12_20_mothers_80_profiles_used_by_R1",
+    "mother_order": "UTC_timestamp_ascending_then_stable_mother_id; freeze_exact_manifest_before_submit",
+    "pilot_mother_indices_zero_based": [
+      0,
+      4,
+      8,
+      11,
+      15,
+      19
+    ],
+    "pilot_mothers": 6,
+    "pilot_cases": 24,
+    "extension": "remaining14mothers56cases_only_after_G0_G1_G2; no_repeat_pilot",
+    "all_cases_max": 80,
+    "profiles_order": [
+      "base",
+      "one_hotspot",
+      "two_hotspots",
+      "edge_heavy"
+    ],
+    "validation_algorithm_cases": 0,
+    "test_algorithm_cases": 0
+  },
+  "common_start": {
+    "source_methods": [
+      "07-CV",
+      "07-LEX",
+      "JOINT-CV",
+      "JOINT-LEX",
+      "POST_SHRINK"
+    ],
+    "source_scope": "same_scene_previously_audited_R1",
+    "extraction": "one_actual_final_descriptive_published_layout_per_method; not_search_best_over_unlisted_Pareto_points",
+    "source_binding": [
+      "raw_case_path_sha256",
+      "case_audit_path_sha256",
+      "case_audit_passed_and_issues_empty",
+      "source_layout_sha256",
+      "source_mode_method",
+      "scene_sha256"
+    ],
+    "no_new_baseline_solves": true,
+    "slice_reference": "original_unshrunk0.5_initial_of_same_case_POST_SHRINK; other_source_allowed_only_exact_geometry_ownership_semantic_match; missing_is_missing",
+    "primary_filter": "N<=N0_and_solid_angle<=Omega0_with_frozen_tolerances",
+    "primary_order": [
+      "maxload",
+      "top10_mean",
+      "CV",
+      "N",
+      "solid_angle_sum_sr",
+      "layout_sha256"
+    ],
+    "primary_metrics_are_raw_not_normalized_P_T": true,
+    "serialization": "canonical_UTF8_JSON_sorted_keys_compact_separators_allow_nan_false; separate_content_sha_and_artifact_file_sha; immutable_arrays_after_load",
+    "fields": [
+      "schema",
+      "group",
+      "case_id",
+      "mother_id",
+      "profile",
+      "scene_ref",
+      "source_refs",
+      "slice_reference",
+      "source_layouts",
+      "archive",
+      "primary_parent",
+      "primary_parent_sha256",
+      "archive_sha256",
+      "acquisition_cost_refs",
+      "extraction_and_verification_cost"
+    ],
+    "shared_checks": "both_D0_D1_assert_same_scene_archive_parent_pool_sha_before_and_after",
+    "cost": "original_source_acquisition_cost_kept_not_claimed_free_or_rerun; extraction_verification_IO_and_incremental_cost_separate; future_full_pipeline_requires_new_common_from_raw_inputs_test"
+  },
+  "geometry": {
+    "max_beams": 200,
+    "full_width_menu_deg": [
+      0.3,
+      0.5,
+      1.0
+    ],
+    "width_min_deg": 0.3,
+    "width_max_deg": 1.0,
+    "squared_chord_tolerance": 1e-14,
+    "demand_rtol": 1e-12,
+    "demand_atol": 1e-06,
+    "whole_layout_validator": "float64_all_aircraft_assigned_ray_only_with_ID_unique_owner_nonempty_beam_width_visibility_conservation_checks",
+    "validator_equivalence_gate": "match_R1_all_pairs_selected_assignment_column_on_boundary_legal_illegal_small_examples_and_frozen_real_layouts",
+    "local_eligibility": "actual_region_aircraft_by_local_centers_matrix; includes_fixed_aircraft_checks",
+    "forbidden": [
+      "PHY",
+      "served_demand",
+      "satisfaction",
+      "QoS",
+      "SI",
+      "SGM"
+    ]
+  },
+  "metrics": {
+    "primary_slice": "N<=N0_and_Omega<=Omega0",
+    "primary_lex_order": [
+      "maxload",
+      "top10_mean",
+      "CV"
+    ],
+    "full_archive": [
+      "N",
+      "solid_angle_sum_sr",
+      "maxload",
+      "top10_mean",
+      "CV"
+    ],
+    "full_archive_cap": 261,
+    "outside_primary_slice": "retain_all_geometrically_valid_N<=200_candidates_in_full_archive_and_raw_evidence; label_outside_primary_slice_not_geometry_failure",
+    "no_additional_N0plus2_or_1.2Omega_publish_limit": true,
+    "solid_angle_meaning": "geometric_proxy_only_not_capacity_energy_or_antenna_resource",
+    "P_T_Q": "diagnostic_only_compare_same_scene_same_N",
+    "absolute_tolerances": {
+      "N": 0,
+      "solid_angle_sum_sr": 1e-12,
+      "maxload": 1e-06,
+      "top10_mean": 1e-06,
+      "CV": 1e-09
+    },
+    "relative_tolerance_non_N": 1e-12,
+    "zero_total_request": "geometry_only_exclude_from_load_gate_denominator_preserve_record",
+    "full_archive_preservation": {
+      "policy": "preserve_all_observed_nondominated_points_under_frozen_comparator; no_crowding_or_scientific_pruning",
+      "bound_formula": "8*per_task_complete_candidate_cap+actual_common_source_point_count",
+      "default_finite_upper_bound": 261,
+      "common_points_max": 5,
+      "implementation_buffer": "archive_limit_must_be_at_least_bound_formula; larger_capacity_does_not_authorize_more_candidates",
+      "dominated_and_duplicate": "may_be_removed_from_nondominated_view_but_all_raw_candidate_evidence_retained",
+      "not_global_Pareto_claim": true
+    }
+  },
+  "pool": {
+    "slots": 8,
+    "region_A": "anchor_heaviest_parent_beam_then_satellite_ray_nearest_total4_beams_or_all_if_N<4",
+    "region_B": "anchor_smallest_requested_load_nonempty_parent_beam_then_ray_nearest_total2_or_all_if_N<2",
+    "ties": "stable_beam_id_for_beams_stable_aircraft_id_for_users",
+    "regions_may_duplicate": "keep_slot_mark_duplicate_do_not_replace_based_on_outcome",
+    "generation_order": [
+      "A_reassign",
+      "A_width_reallocate",
+      "A_merge",
+      "A_split",
+      "B_reassign",
+      "B_width_reallocate",
+      "B_merge",
+      "B_split"
+    ],
+    "rule_order": [
+      "A_reassign",
+      "A_width_reallocate",
+      "B_reassign",
+      "B_width_reallocate",
+      "B_merge",
+      "A_merge",
+      "A_split",
+      "B_split"
+    ],
+    "same_parent_for_all_slots": true,
+    "random": "one_stable_case_id_seed51001_permutation;100_additional_fixed_permutations_for_distribution_only_not_best_of100",
+    "Task_fields": [
+      "task_id",
+      "slot",
+      "parent_sha256",
+      "region_beam_ids",
+      "region_aircraft_ids",
+      "kind",
+      "target_k",
+      "retained_beam_ids",
+      "deleted_beam_id",
+      "split_source_beam_id",
+      "new_beam_id",
+      "recipient_beam_id",
+      "proposed_widths_deg",
+      "center_seed_sets",
+      "active_mandatory_aircraft_ids",
+      "source_feature_cost_ref"
+    ],
+    "task_hash_excludes": [
+      "timing",
+      "actual_cost",
+      "decoded_result",
+      "teacher_gain"
+    ],
+    "seed_sets": {
+      "count_max": 8,
+      "common_to_both_decoders": true,
+      "S0": "current_centers_in_retained_id_order; split_appends_farthest_source_beam_aircraft_from_current_source_center; merge_drops_explicit_deleted_slot",
+      "focus": "heaviest_region_beam_for_reassign_width; nearest_surviving_beam_to_deleted_for_merge; newly_appended_beam_for_split",
+      "S1": "replace_focus_center_with_mean_ray_ground_point_of_focus_original_members; merge_uses_union_deleted_and_recipient; split_uses_source_original_members",
+      "S2_to_S7": "replace_focus_center_with_first6_distinct_visible_pair_midpoint_ground_points_from_top8_radially_extreme_focus_members_ordered_by_mean_ray_distance_then_ID; pair_order_by_ID",
+      "missing_or_duplicate_seed": "keep_explicit_unavailable_or_duplicate_marker_do_not_invent_extra_seed; no_performance_based_replacement",
+      "predecode": "derived_only_from_parent_and_input; all_geometry_charged_common_pool_preparation"
+    },
+    "operators": {
+      "reassign": {
+        "target": "k",
+        "widths": "current_widths_in_retained_order"
+      },
+      "width_reallocate": {
+        "target": "k",
+        "focus": "heaviest_region_beam",
+        "widths": "focus_next_strictly_larger_menu_or_current_max_if_none; others_smallest_menu_covering_their_parent_owned_aircraft_at_parent_center; exact_task_vector_shared",
+        "no_larger_focus": "completed_no_applicable_width_step_not_geometry_failure"
+      },
+      "merge": {
+        "target": "k-1",
+        "deleted": "lightest_region_beam_by_load_then_ID",
+        "recipient": "nearest_survivor_by_ray_angle_then_ID",
+        "widths": "all_target_slots1.0_then_preserve_base_and_minimum_envelope_candidates; full_archive_keeps_legal_outside_primary_slice",
+        "k1": "structurally_unsupported"
+      },
+      "split": {
+        "target": "k+1",
+        "source": "heaviest_region_beam",
+        "new_id": "hash(parent_sha,slot,source_id)_stable",
+        "widths": "all_retained_current_widths_unchanged_append_new_width0.5; finite_R2_probe_choice_not_exhaustive_split_width_search",
+        "mandatory_active": "farthest_source_aircraft_seed_id",
+        "hard_cap": "only_N<=min200_aircraft_count; outside_primary_slice_not_invalid"
+      }
+    }
+  },
+  "decoders": {
+    "D0": {
+      "name": "R1_neighborhood_with_shared_equivalent_geometry_and_peak_objective",
+      "starts": 8,
+      "center_updates": 4,
+      "complete_candidate_cap": 32,
+      "region_user_limit": 256,
+      "region_overflow_status": "censored_region_limit_under_D0_full_region_contract; not_closed_for_D0_oracle; no_dropped_aircraft",
+      "same_Task_slots_delete_width_seed_semantics": true,
+      "not_exact_fbd_reexecution": true
+    },
+    "D1": {
+      "name": "bounded_active_set_peak_reassignment",
+      "active_cap": 64,
+      "starts": 2,
+      "seed_indices": [
+        0,
+        1
+      ],
+      "center_updates": 1,
+      "complete_candidate_cap": 8,
+      "candidate_forms": [
+        "base_width",
+        "minimum_legal_envelope"
+      ],
+      "all_region_aircraft_retained": true,
+      "active_selection": "mandatory_deleted_beam_all_members_or_split_seed_first; remaining_slots_split_ceil_half_heaviest_beam_request_desc_then_other_half_tight_parent_coverage_margin; deduplicate_and_fill_by_margin_then_ID; stable_ID_ties",
+      "mandatory_over64": "terminal_unsupported_active_set_with_explicit_proof; not_claim_full_geometric_infeasibility",
+      "fixed_users": "retain_original_owner_and_request; moving_center_must_still_cover_all_fixed_users",
+      "orders": [
+        "fewest_eligible_then_request_desc_then_ID",
+        "fewest_eligible_then_parent_margin_ascending_then_ID"
+      ],
+      "assignment_target": "deterministic_provisional_load_greedy_including_fixed_loads; primary_min_max_partial_load_then_sum_squares_then_beam_ID; final_complete_candidate_rank_is_raw_maxload_top10_CV_not_claim_global_assignment_optimum",
+      "center_update": "mean_ray_of_all_candidate_owned_members_including_fixed; reject_if_any_fixed_member_would_be_lost",
+      "starts_share_Task_center_sets": true,
+      "provisional_vs_final_order": "provisional:max_partial_load,sum_squares,stable_beam_ID; final_complete_layout:raw_maxload,top10_mean,CV; do_not_replace_provisional_sum_squares_with_tail"
+    }
+  },
+  "budget": {
+    "per_task": {
+      "ray_pair_checks": 262144,
+      "geometry_calls": 256,
+      "complete_candidates": 32,
+      "nominal_guard_seconds": 3
+    },
+    "per_pool": {
+      "tasks": 8,
+      "ray_pair_checks": 2097152,
+      "geometry_calls": 2048,
+      "complete_candidates": 256,
+      "preparation_nominal_guard_seconds": 3
+    },
+    "charge_before_operation": true,
+    "ray_pair_definition": "one_ACTUAL_two_ray_squared_chord_or_angle_comparison; includes_boundary_center_distance_seed_selection_eligibility_assignment_and_final_validation; pure_mean_ray_midpoint_sum_normalization_or_ray_construction_is_NOT_raypair",
+    "geometry_call_definition": "one_executed_angle_chord_eligibility_visibility_or_envelope_geometric_query; pure_mean_or_rayconstruction_counted_separately; both_D0_D1_identical_categories",
+    "charged_stages": [
+      "common_pool_geometry_preparation",
+      "predecode_feature_geometry",
+      "failed_eligibility",
+      "candidate_generation_geometry",
+      "assignment_eligibility",
+      "envelope_width",
+      "complete_assigned_validation",
+      "postprocess_geometry_if_needed"
+    ],
+    "other_counters": [
+      "ray_constructions",
+      "assignment_updates",
+      "cache_hits",
+      "cache_misses",
+      "task_started",
+      "task_completed",
+      "candidate_invalid",
+      "late_candidates",
+      "mean_ray_calls",
+      "mean_ray_input_count",
+      "mean_ray_seconds",
+      "ray_construction_seconds"
+    ],
+    "shared_cache": "execute_once_if_reused_but_charge_full_measured_preparation_cost_to_each_decoder_comparable_pool_ledger; deduct_from_pool_total; no_cost_division_by_number_of_methods; distinguish_actual_compute_from_comparable_cost",
+    "failed_attempts": "cost_not_zero_even_if_complete_candidates0",
+    "late": "record_actual_overrun_and_work; no_expired_publication",
+    "strict_wall_upper_bound_claim": false,
+    "pilot": {
+      "cases": 24,
+      "decoder_tasks": 384,
+      "nominal_task_seconds": 1152,
+      "common_preparation_nominal_seconds_once_per_case": 72,
+      "complete_candidate_ledger_cap": 12288,
+      "ray_pair_ledger_cap": 100663296,
+      "geometry_call_ledger_cap": 98304
+    },
+    "extension": {
+      "cases": 56,
+      "decoder_tasks": 896,
+      "nominal_task_seconds": 2688,
+      "common_preparation_nominal_seconds_once_per_case": 168,
+      "complete_candidate_ledger_cap": 28672,
+      "ray_pair_ledger_cap": 234881024,
+      "geometry_call_ledger_cap": 229376
+    },
+    "all": {
+      "cases": 80,
+      "decoder_tasks": 1280,
+      "nominal_task_seconds": 3840,
+      "common_preparation_nominal_seconds_once_per_case": 240,
+      "complete_candidate_ledger_cap": 40960,
+      "ray_pair_ledger_cap": 335544320,
+      "geometry_call_ledger_cap": 327680
+    },
+    "cap_notes": "D1_algorithm_cap8_makes_actual_tighter; no_padding; shared_preparation_work_inside_ledger_caps; source_extraction_hash_IO_separate_from_new_solving_cost",
+    "pure_mean_rule": "charge_actual_input_count_call_count_and_time_separately_for_both_decoders; never_insert_lenmembers_as_raypair; no_one_sided_legacy_omission"
+  },
+  "statuses": [
+    "completed_with_candidate",
+    "completed_no_feasible_candidate",
+    "terminal_structurally_unsupported",
+    "terminal_unsupported_active_set",
+    "censored_time",
+    "censored_work",
+    "censored_region_limit",
+    "not_started_due_guard",
+    "engineering_failure",
+    "incomplete_preparation",
+    "unknown_preparation_work"
+  ],
+  "closed_pool": "all8slots_status_and_actual_cost_known; completed_or_terminal_supported_by_predecode_proof; no_censored_or_unknown; new_candidate_yield_gate_also_required",
+  "target": {
+    "same_primary_slice": true,
+    "maxload_relative_reduction_from_strong_parent_min": 0.01,
+    "top10_not_worse_than_parent": true,
+    "CV_not_worse_than_parent": true,
+    "tolerance": "frozen_metric_tolerances"
+  },
+  "prefix_analysis": {
+    "save": "every_candidate_actual_completion_order_and_cumulative_raypair_geometry_completecandidate_seconds_with_shared_parent_and_taskSHA",
+    "rule_random": "cost_of_actual_completed_preceding_tasks_plus_first_target_hitting_candidate_prefix_in_winning_task_plus_shared_preparation",
+    "oracle": "minimum_observed_target_hitting_task_prefix_plus_same_shared_preparation; optimistic_offline_diagnosis_not_deployable_or_global_schedule_optimum",
+    "no_target": "not_reached_with_denominator_preserved",
+    "incomplete_pool": "unknown_for_full_ordering_claim_not_zero_opportunity",
+    "do_not_use_old_best_six_cost": true,
+    "fixed_slot_control": "best_constant_slot_on_development_only; if same_success_and_within20percent_oracle_cost_prefer_rule_no_learning_need_claim"
+  },
+  "gates": {
+    "G0": "all_hard_constraints_source_replay_common_archive_parent_poolSHA_validator_equivalence_and_charge_before_budget_pass",
+    "pilot_G1": "D1_closed_pools>=22of24_AND_cases_with_real_new_feasible_reconstruction>=12of24; not_parent_fallback_or_all_unsupported",
+    "pilot_G2": "D1_target_hit_cases>=6of24_AND_target_hit_mothers>=3of6; all_primary_slice; compare_D0_actual_results_and_external_strong_points",
+    "pilot_G3": "eligible_closed_target_hit_pools>=4of24; oracle_vs_rule_and_one_random_order_median_raypair_saving>=20percent_at_same_target_and_geometry_calls_not_increased; >=2different_winning_slots_across_mothers; best_fixed_slot_cannot_match_success_within20percent_oracle_cost",
+    "extension_admission": "G0_G1_G2_only; G3_controls_candidate_learning_route_not_additional_budget",
+    "full_development_G1": "D1_closed_pools>=72of80",
+    "full_development_G2": "D1_target_hit_cases>=20of80_AND_mothers>=8of20",
+    "full_development_G3": "eligible_ordering_opportunity_cases>=12of80_and_same20percent_cost_nonconstant_conditions",
+    "training_admission_after_gates": "none_in_this_contract; freeze_separate_learning_pilot_from_actual_evidence_not_automatic_old10000updates",
+    "inferential_scope": "development_mechanism_not_independent_test_significance"
+  },
+  "failure_routes": {
+    "G0_fail": "fix_correctness_before_effect_claim_preserve_failed_attempts",
+    "G1_fail": "cost_bottleneck_diagnosis_then_new_finite_revision_no_automatic_repeat_or_cap_raise",
+    "D0_improves_D1_not": "active_restriction_loses_quality_do_not_train_D1_ranker; use_D0_success_structures_for_next_design",
+    "both_no_quality_space": "stop_strong_solution_incremental_ranking_branch; next_design_learning_construction_assignment_initial_guess_or_repair_amortization_from_raw_inputs_at_same_quality_full_endtoend_cost; not_AI_impossibility",
+    "quality_yes_ordering_no": "retain_nonlearning_reconstruction_result; no_ranker_training_until_new_evidence",
+    "quality_and_ordering_yes": "design_finite_single_seed_learning_pilot_with_actual_labels_and_new_validation_gate_separately"
+  },
+  "joint_mechanism": {
+    "width_change": "retained_beam_ids_matched_numeric_values; new_beam_actual_width_recorded_separately; deleted_beams_separate; array_length_or_order_not_width_change",
+    "layers": [
+      "candidate",
+      "archive_retained",
+      "primary_slice_selected",
+      "final_published"
+    ],
+    "fields": [
+      "N_delta",
+      "retained_width_changed",
+      "new_beam_widths",
+      "deleted_beam_ids",
+      "whole_layout_mixed_width",
+      "centers_changed",
+      "ownership_changed",
+      "menu_vs_envelope"
+    ],
+    "R2_limit": "single_parent_independent_tasks; split_may_all_be_outside_common_slice; this_is_not_complete_multistep_final_algorithm",
+    "final_user_goal": "genuine_variableN_and_perbeam_width_joint_choice_N<=200; fixedN_incremental_success_alone_insufficient"
+  },
+  "execution": {
+    "worktree": "C:/Users/Admin/.codex/worktrees/stage1-ai18/paper",
+    "module": "satellite_rl.coverage.ai_search_r2",
+    "files": [
+      "config.py",
+      "initials.py",
+      "tasks.py",
+      "decoder.py",
+      "probe.py"
+    ],
+    "remote": "s1_ai18/{port}",
+    "ports": [
+      20418,
+      20424,
+      20473
+    ],
+    "workbench_ports": [
+      8980,
+      8981,
+      8982
+    ],
+    "api": "/api/ai-search-r2/tasks",
+    "workbench_schema": 10,
+    "modes": [
+      "prepare_common",
+      "evaluate_closed_pool"
+    ],
+    "methods": [
+      "D0",
+      "D1"
+    ],
+    "case_workers_per_physical_lane": 1,
+    "native_math_threads_per_worker": 1,
+    "pair_order": "case_index_even_D0_D1_odd_D1_D0; same_case_same_physical_lane",
+    "parallelism": "three_lanes_by_mother; prepare_and_hash_may_parallel_no_scientific_case_contention_on_same_lane",
+    "port20474": "not_admitted_without_real_F20_release_proof",
+    "all_science_via_workbench": true,
+    "long_compute": "persistent_workers_model_only_bounded_verification",
+    "source_freeze": "root must bind final scientific commit and exact artifacts; design acceptance does not run science"
+  },
+  "outputs": {
+    "base": "outputs/experiments/first_stage_ai_search_20261013/round2",
+    "independent": [
+      "run_manifest.json",
+      "run_plan.json",
+      "controller",
+      "common_starts",
+      "raw",
+      "analysis"
+    ],
+    "evidence": "shared_scene_parent_and_task_descriptor_plus_candidate_delta_actual_cost_prefix; no_whole_scene_duplication_per_candidate",
+    "minimum_free_bytes": 8589934592,
+    "delivery": "source_data_commonSHA_task_budget_mechanism_quality_cost_failures_report_curves_and_archive; root_updates_status_indexes"
+  },
+  "diagnosis_scope": {
+    "three_method_initial_mismatch_cases": 18,
+    "denominator": 80,
+    "INIT_RULE_same_actual_initial_cases": 71,
+    "novel_Pareto_cases_within_same_initial_pairs": 71,
+    "implication": "new_tradeoff_evidence_exists_but_not_fixed_resource_peak_or_AI_gain"
+  },
+  "revision": "archive_preservation_and_typed_preparation_failure_20261013",
+  "previous_version": {
+    "path": "round2_design_v1_before_archive_clarification.json",
+    "sha256": "9ccd449b8db52b94a15ac70a65956dc6aa264e85a7b46e4baae3f8dd66da5fa1"
+  },
+  "preparation_failure": {
+    "typed_stop_artifact": "save_incomplete_preparation_with_actual_cost_reason_input_archive_parent_config_bindings; tasks_empty_and_pool_sha_null_if_pool_not_completed",
+    "paired_result": "D0_and_D1_use_same_artifact; closed_false; no_decode; same_full_preparation_cost_in_comparable_ledgers_actual_compute_not_doubled",
+    "G1": "incomplete_preparation_is_not_closed_and_cannot_count_toward_G1; keep_prespecified_case_denominator",
+    "resume": "persist_pool_started_before_any_preparation; bind_completed_or_typed_failed_artifact_SHA_atomically; reuse_known_artifact_no_reprepare",
+    "unknown_crash": "pool_started_without_completed_artifact_is_unknown_preparation_work; preserve_unknown_cumulative_spend; prohibit_automatic_reprepare_and_zero_fill",
+    "budget_effect": "no_new_case_task_repeat_or_budget_authorization; root_resolves_unknown_state_before_new_frozen_attempt_if_needed"
+  }
+}

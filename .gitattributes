@@ -1,0 +1,2 @@
+# Keep the signed scientific contract identical in Git archives and deployments.
+scripts/stage1_ai_search_r2/round2_design.json -text whitespace=cr-at-eol
