@@ -147,7 +147,8 @@ while time.monotonic()<deadline:
   break
  except (ConnectionError,TimeoutError,urllib.error.URLError):time.sleep(.2)
 need(health is not None and health['status']==200,'bounded readonly endpoint health failed')
-need(health['body']['job']==job and health['body']['status']['stage']=='failed' and health['body']['status']['completed_cases']==147,'readonly health altered original task')
+api_job=health['body']['job'];extra=set(api_job)-set(job)
+need({k:api_job.get(k) for k in job}==job and extra<=set(('read_only',)) and (not extra or api_job['read_only'] is False) and health['body']['status']['stage']=='failed' and health['body']['status']['completed_cases']==147,'readonly health altered original task beyond legacy display flag')
 for ref in plan['unchanged_refs'].values():pin(ref)
 need(not (directory/'operations_recovery.json').exists(),'unexpected recovery dispatch during endpoint deployment')
 record.update(new_service_identity=proc(child.pid),health=health,completed_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),original_records_unchanged=True)
