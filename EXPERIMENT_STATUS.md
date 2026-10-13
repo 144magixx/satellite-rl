@@ -4,6 +4,13 @@
 
 09:34真实74 API为completed、GPU/compute查询exit0、原UUID060b，compute空且无科学worker或本组归档进程；全部12任务卷和新统计仍在本地E及原远端归档，未重压、未删除或恢复任何任务。用户要求暂停后跟进已PAUSED并[逐字段回读](outputs/experiments/s2_fair20_20261012/followup/user_reboot_pause2_readback.json)，计算、观察、归档与统计进程的精确出生均核退出，74隧道已停止。还发现迁移用18旧隧道33804仍本地活跃，已按原出生1791784930.025809关闭，不做18 SSH/API查询；这一历史连接边界遗漏及本轮纠正保存在E/user_reboot_pause2_20261013/local_pause_receipt.json，不宣称此前全部连接都排除18。该实例此次可由用户重启，74最终交付/归还仍待，不伪称resource_return完成；24/73与AI17未干预。用户通知继续后应从已完成主统计接续复核/附录/出图/报告和最终归档，不重训、不重评6600、不双起已完成统计。
 
+**2026-10-13 09:34 S1-AI17已按用户明确要求暂停，等待实例重启与用户恢复指令。** 用户要求“暂停任务，我要重启实例”，覆盖此前中途不停的授权。持续目标状态已为`paused`，小时自动跟进`s1-ai17`已为`PAUSED`，正在编写采集器和核对文献的两个子agent已中断。09:34根只读核四端20418/20424/20473/20474均无` satellite_rl.workbench.runner `科学worker，本地也无本组Python控制器/采集器；不启动新任务、不自动接续或恢复调度。[暂停现场快照](outputs/experiments/first_stage_ai_search_20261013/controller/reboot_pause_snapshot.json)。未主动终止其它实验组或云实例。
+
+已完成结果、冻结代码、报告12/13、先导24与扩展56的原始远端记录、诊断教师本地归档全部保留。全80独立采集/审计及下一版AI设计仍未交付；暂停不等于研究完成。恢复时先核重启后的实际API、进程出生、GPU与DQN、455执行源/f02算法核心和原始文件完整性，再从已保存接续状态继续，不能直接按旧PID重启或重跑已经完成的80景。最终要求仍是同时支持可变束数与逐束可变宽度。
+
+**2026-10-13 06:14 S1-AI17-R2剩余56景计算已完成，累计80景进入独立采集与审计，暂无全80效果结论。** 根通过三端真实API核`evaluate_ai_search_r2_20261013_061246_af2f08fc`、`061247_195faf18`、`061249_1d0ab6d2`分别40/40、40/40、32/32方法记录；原worker33425/70873/73827均退出，唯一controller35720也completed且根核PID不存在。[根现场回执](outputs/experiments/first_stage_ai_search_20261013/round2/extension/root_evaluation_actual_0614.json)。本次为56案例/112行、预登记896任务槽，原先导24/48行直接复用、不重跑。执行455、算法f02、B5与1ba9均保持，三端实际source manifest各225成员；旧repo仍f02，新服务32223/69973/72867在各自source_epochs，74未使用。
+
+前序56共同输入任务`060554_1da3bdf4`、`060600_14184a1e`、`060606_23206c49`全部完成，worker及controller2292退出；[共同来源终态](outputs/experiments/first_stage_ai_search_20261013/round2/extension/preflight/prepare_terminal_handoff.json)。[评价计划](outputs/experiments/first_stage_ai_search_20261013/round2/extension/run_plan_evaluate.json)SHA`8f247d5b…`经[根精确验收](outputs/experiments/first_stage_ai_search_20261013/round2/extension/evaluation_plan_root_review.json)后由工作台执行。随后只读核全量来源/共同parent与pool/顺序、采集原始字节，独立审计新56并以原SHA索引合并24＋56；未经审计不发布优胜或门槛结论。此次未取得完整运行中CPU/GPU峰值采样，结束后空进程不填作历史0；科学模型训练与新val/test算法评价仍0，研究继续。
 
 **2026-10-13 06:05 S1-AI17原768条诊断教师的本地原始归档已完成，仍不准入训练。** 原三端teacher目录4023文件、782,237,430B已完整保留到E；根对6240逻辑引用/5815唯一当地文件逐SHA复核，并与远端逐成员清单闭合。实际192母×4案例、22824任务行的结构检查保留6644完成、4977池内未找到、11203截断，截断标签不填零；这只是身份/文件/结构验收，未做独立几何标签科学审计。[原始位置](outputs/experiments/first_stage_ai_search_20261013/analysis/diagnostic_teacher_location.json) · [根归档验收](outputs/experiments/first_stage_ai_search_20261013/analysis/diagnostic_teacher/root_archive_acceptance.json)。37.8MB训练NPZ只存一个E canonical blob，原fbd源码复用；运输首attempt的本地catalog键错误、失败日志、旧锁与最小修复来源全部保留，没有重算/新标签/训练。最终collector37872已completed并退出，R2大IO等待解除。
 
