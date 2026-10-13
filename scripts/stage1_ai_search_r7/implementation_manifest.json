@@ -1,6 +1,6 @@
 {
   "schema": "R7FirstWaveImplementationEngineeringV1",
-  "status": "pure_checks_passed_pending_root_independent_source_review_and_interface_admission",
+  "status": "independent_review_fixes_pure_checked_pending_root_exact_data_source_admission",
   "base_commit": "c550fed",
   "phases": [
     "data_train_dev",
@@ -17,9 +17,9 @@
   ],
   "source_recipe_sha256": "349370987e28f5ba925f8c0412d463d0408d694b865284d2db0a66ec339f39c3",
   "shared_interface_source_commit": "6496abe61d8bdc5029388ce024508b15a7e306c7",
-  "requires_root_merge_shared_interface": true,
-  "AST_files": 32,
-  "pure_unit_tests": 28,
+  "requires_root_merge_shared_interface": false,
+  "AST_files": 37,
+  "pure_unit_tests": 39,
   "passed": true,
   "disposable_format2_full_source_foreign_cwd_import_check": true,
   "science_POSTs": 0,
@@ -45,20 +45,23 @@
   "case_threads": 2,
   "minimum_free_disk_bytes": 8589934592,
   "source_file_sha256": {
-    "scripts/stage1_ai_search_r7/analyze_data.py": "9f23afddd047ab5dd9ab213085d60786fa886b1086d605f7e51fea8f50e70b16",
-    "scripts/stage1_ai_search_r7/analyze_labels.py": "267aae1b1557d5d87cab8f02cd99b223057b1f8eabf9fc983e8a1785385df5a9",
+    "scripts/stage1_ai_search_r7/analyze_data.py": "6f6cfdb052def1aa8bc91f76af5d5a86fd3231ac657f108cc7b660b830ff9b17",
+    "scripts/stage1_ai_search_r7/analyze_labels.py": "6f010b1f6bbef9b566c6df7f0aa747685abe937a28f4a93c629e05576ab17668",
     "scripts/stage1_ai_search_r7/analyze_node.py": "d74b60860da3c8515a6e06378cb42f15e7ffc0a0449f8551525a40cd391ea8bd",
-    "scripts/stage1_ai_search_r7/contract.py": "f8a376ddcced5896470b6f8724f896abcf3cbf9f565bda2ff217d48606f9a6fc",
+    "scripts/stage1_ai_search_r7/contract.py": "c39e1681f3ac35580a806648ab300cfb3528af6c7271b116f9062f956d162dfe",
     "scripts/stage1_ai_search_r7/controller.py": "19d354a7d61773b99a7024ed48acce9132b416f0d6e0a5a8e0f97a4704a5e8b1",
+    "scripts/stage1_ai_search_r7/data_draft.py": "ca2ed60587a66520b7c126917ccea777d99a8f9cc1f8ce4a92cbfc504ce124de",
     "scripts/stage1_ai_search_r7/deploy.py": "8dfe5662137f6e0f9f55c028e20554de70e58d00efd5d29a548cf23c719b186d",
     "scripts/stage1_ai_search_r7/label_audit.py": "a75e2a8ee81d5365d6119c1ee3920c164defd24f139268a36c8e5e8fe622085d",
-    "scripts/stage1_ai_search_r7/plan_builder.py": "cfde692324c54f229d849532f5227dfa48f4e75a82c592e095a53f5cd1011a83",
+    "scripts/stage1_ai_search_r7/plan_builder.py": "29140a30c747b8f1db1b3cfc9e2ba2f78acdbbf99dde78239c2901e5ead032a4",
     "scripts/stage1_ai_search_r7/preflight.py": "43a87f5d482b2331a2740cc71df1fe8bdc4633c4071e23b9babe3a30919913ab",
     "scripts/stage1_ai_search_r7/supply.py": "0300ce56f2d69398096fd627436e23325c9579b2b7672cb584fa0db1182d16b8",
     "scripts/stage1_ai_search_r7/__init__.py": "4bb5695386810501adf92a38ac42614645b506219a387d61742115af082b1803",
-    "src/satellite_rl/workbench/coverage_ai_search_r7.py": "c533d8b51271f5a87cd9dd76a739dec92d5f66ebc3b12c7eb142955b8a90de83",
+    "src/satellite_rl/workbench/coverage_ai_search_r7.py": "fd598093e37c6804fa6b05eb4b17e008c52bf64e4e32af3ee6da122a9c3bf898",
+    "src/satellite_rl/workbench/r7_case_binding.py": "332d46a334432d474e109e7a9470747a27c6486186ac5d5891be5e4975223d47",
     "src/satellite_rl/workbench/r7_case_worker.py": "ac8b652356639c2475ab966b68919e66e75b8ccfe4b3b3e1313e09da95e8cfdb",
-    "src/satellite_rl/workbench/r7_labels.py": "167406542a924dbd690166b23c131b2fa67c1894f6faea51ba4fb660fcb88829",
+    "src/satellite_rl/workbench/r7_labels.py": "3e6a6156e3622551d389f2cc9c46f58591483b3652d6d4540a783e1f7d430f28",
+    "src/satellite_rl/workbench/r7_label_guard_audit.py": "bc4aca5a9736f2ea22eb0806b6e61469cd9a93ea215c23cc94d365cd4bd5ee26",
     "src/satellite_rl/workbench/r7_model_d5_stage.py": "ffea28b42fc47046d3518a49e11186f329de2458e96958ef6e333645ab92aa27",
     "src/satellite_rl/workbench/r7_model_eval_stage.py": "c066c1ab92135fe9cf00c3f34b4372da756ae584d95c3a87db7811a3e7d7c073",
     "src/satellite_rl/workbench/r7_model_freeze.py": "d6d30bc8c0a6156542bce7c0171746ac54342f144b7c4e8d43169d3260ec188a",
@@ -72,11 +75,13 @@
     "src/satellite_rl/workbench/r7_publish.py": "222f80d5536aa61faacc63b8e41c1ae8597d31523fec932bc80e69457a84bc35",
     "src/satellite_rl/workbench/r7_resources.py": "82ae0db7a011875ea218a998df91d3c22c470dd8daec0dacfaba3fea66284a48",
     "src/satellite_rl/workbench/r7_runner.py": "a3de55033e1665546fbf75471447aa2a198ca60718604902f24b90ad7caa88d2",
+    "src/satellite_rl/workbench/r7_source_bridge.py": "ffefd013ec0fb74a77ba85cc2e4646709dfbfd18fc8fe7436c23a285977991ee",
     "src/satellite_rl/workbench/r7_stage.py": "ae261d86178cc3977687faedfef0168b0ab082cfd262d90d904e326d7c25d5b2",
-    "src/satellite_rl/workbench/r7_uniform_data.py": "586bb97781d9f19d86d7591bf9df43d96fe76ef19cd56c831aedc931a5285c32",
+    "src/satellite_rl/workbench/r7_uniform_data.py": "9a7e18a49462b0cb8d097dbd4345b0278ba960b945ee9e0885181791b135f405",
     "src/satellite_rl/workbench/server.py": "5c329a500d1c9cfefcb8e72355774d050d7eb5bad7acb72329bcfcd9a508a63e",
     "src/satellite_rl/workbench/runner.py": "7655a16cd70b2608184c219f8bda1d5ac9180af13756812f8d837f4b0bf13f13",
-    "src/satellite_rl/workbench/runtime.py": "00e4f6ad759e742a317c3adffbd2b864cce6ee5034b8d3942463bb20bb409d28"
+    "src/satellite_rl/workbench/runtime.py": "00e4f6ad759e742a317c3adffbd2b864cce6ee5034b8d3942463bb20bb409d28",
+    "src/satellite_rl/workbench/frozen_round_tasks.py": "a6c06ac104f9244c762b4de7018a5079223e847d0d94233219a7f1f2cf1755e3"
   },
   "remaining": [
     "root independent source review and source admission",
@@ -90,5 +95,21 @@
   "new_source_deployment_scripts": [
     "deploy.py",
     "preflight.py"
+  ],
+  "shared_interface_merged_as_commits": [
+    "19b0cb2",
+    "8dc368c"
+  ],
+  "actual_create_format2_hook_and_actual_job_foreign_cwd_import_checked": true,
+  "pure_mock_actual_create_job_publications": 1,
+  "root_interface_ancestor_receipt_sha256": "9fbf8fbd1924c977a6a6dd7c066225ce9dcfcd263c7c6bff35fa1df7c2a65e54",
+  "closure_fixes": [
+    "source_interface_bridge_exact_all_snapshot_members",
+    "original_interface6496_and9fbf_ancestry_unchanged",
+    "role_index_caseID_n_inttotal_bound_at_build_aggregate_supply_audit",
+    "guard_request_WAL_birth_caps_output_status_unknown_independent_rebuild",
+    "typed_prepare_unavailable_no_T_no_D5",
+    "existing_scene_arrays_rejected_if_not_root_original",
+    "generic_create_calls_policy_format2_freeze_hook"
   ]
 }

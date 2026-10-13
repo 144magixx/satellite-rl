@@ -8,6 +8,7 @@ from satellite_rl.workbench.coverage_ai_search import pin
 from satellite_rl.workbench.r6_io import read_asset,pin_tree
 from .label_audit import audit_bundle,audit_exact_proposal,gate
 from .contract import GROUP
+from satellite_rl.workbench.r7_label_guard_audit import audit_chain
 
 def analyze(manifest_refs,dataset_ref,model_identity,output):
     from satellite_rl.workbench.r7_uniform_data import load_algorithm_case
@@ -26,22 +27,32 @@ def analyze(manifest_refs,dataset_ref,model_identity,output):
     results=[];qualified=[]
     for i in range(576):
         ref=cases[str(i)];pin_tree(ref);row=read_json(pin(ref),{});ident=row['identity']
-        if row['source_commit']!=source_commit or row['input_case_index']!=i or ident['role']!='train' or ident['profile']!='uniform21600000':raise ValueError('original train identity')
+        if row['source_commit']!=source_commit or row['input_case_index']!=i or ident['role']!='train' or ident['profile']!='uniform21600000' or row.get('source_dataset_sha256')!=dataset_ref['sha256'] or row.get('core_sha256')!='9f187e4cd8122a6fce415b590d0ab0a385724b7d840cc88dd874e34ea936aea5':raise ValueError('original train identity and frozen core')
         for guard in row['guard_refs']:pin_tree(guard)
         endpoint=read_json(pin(ref['cost_endpoint_ref']),{})
         values=endpoint['components'].values()
         if endpoint['raw_ref']['sha256']!=ref['sha256'] or endpoint['identity']!=ident or any(not isinstance(x,(int,float)) or not math.isfinite(x) or x<0 for x in values) or not math.isclose(sum(endpoint['components'].values()),endpoint['complete_offline_label_seconds'],rel_tol=1e-12,abs_tol=1e-9):raise ValueError('independent exact cost endpoint')
-        assets=[read_asset(row[k]) for k in ('prepared_ref','original_T_terminal_ref','D5_qualification_ref')]
+        closure=audit_chain(row)
+        if row.get('cost_closed')is not closure['closed'] or endpoint.get('cost_closed')is not closure['closed'] or row.get('actual_calls')!=closure['actual_calls']:raise ValueError('producer cost/call closure differs from original guard/request/caps proof')
         source=dataset['cases'][i]
         if source['case_ref']!=row['shared_case_ref']:raise ValueError('original root case source changed')
         record,scene=load_algorithm_case(source['case_ref'],dataset['authority_ref'])
+        from satellite_rl.workbench.r7_case_binding import validate_binding
+        validate_binding(record,'train',i,source)
         if ident['shared_case_content_sha256']!=record['content_sha256'] or ident['input_sha256']!=scene.input_sha256:raise ValueError('uniform shared/S1 source identity')
         with np.load(pin(row['scene_ref']),allow_pickle=False) as z:
             plain=dict(positions=z['positions'].tolist(),demands=z['demands'].tolist(),aircraft_ids=list(map(str,z['aircraft_ids'])),profile=str(z['profile']))
         if not plain['demands'] or any(x!=21600000 for x in plain['demands']):raise ValueError('uniform input all-plane request')
         if plain['positions']!=scene.positions.tolist() or plain['aircraft_ids']!=list(scene.aircraft_ids) or plain['profile']!=scene.profile:raise ValueError('all original planes and positions required')
-        checked=audit_bundle(plain,*assets,ident,assets[0]['source_sha256'],bool(row['cost_closed'] and endpoint['cost_closed']))
-        exact=audit_exact_proposal(read_asset(assets[2]['proposal_ref']),assets[1]['result'],ident,assets[0]['source_sha256'],row['producer_sha256'])
+        if row.get('status')=='preparation_unavailable':
+            from scripts.stage1_ai_search_r4.audit import audit_ledger
+            prepared=read_asset(row['prepared_ref'])
+            if prepared['identity']!=ident or prepared['source_sha256']!=row['core_sha256'] or prepared['result']['status']=='available' or row.get('original_T_terminal_ref')is not None or row.get('D5_qualification_ref')is not None or not audit_ledger(prepared['result']['ledger'],len(plain['demands']),'prepare')['valid']:raise ValueError('typed unavailable witness cannot spend teacher/decoder')
+            checked=dict(qualified=False,nontrivial=False,capability=False,mother_id=ident['mother_id'],label_origin='no_T_witness_unavailable',typed_unavailable=True);exact=None
+        else:
+            assets=[read_asset(row[k]) for k in ('prepared_ref','original_T_terminal_ref','D5_qualification_ref')]
+            checked=audit_bundle(plain,*assets,ident,row['core_sha256'],closure['closed'])
+            exact=audit_exact_proposal(read_asset(assets[2]['proposal_ref']),assets[1]['result'],ident,row['core_sha256'],row['producer_sha256'])
         if checked!=row['label_audit'] or exact!=row['proposal_audit']:raise ValueError('producer audit differs from independent replay')
         results.append(checked)
         if checked['qualified']:
