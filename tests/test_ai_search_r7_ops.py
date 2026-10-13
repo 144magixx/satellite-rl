@@ -78,7 +78,7 @@ class GateTests(unittest.TestCase):
 
 class DispatcherFaultTests(unittest.TestCase):
     def setUp(self):
-        self.spec=dict(scientific_commit='b'*40,tasks=[dict(port=20474,body={'request_id':'r7_mock'},task_key='key')]);self.state=dict(phase='running',intents={});self.route=lambda port,commit:dict(ready=True,root_accepted=True,ssh_port=port,scientific_commit=commit);self.persist=lambda state:None
+        self.spec=dict(phase='labels',scientific_commit='b'*40,tasks=[dict(port=20474,body={'request_id':'r7_mock'},task_key='key')]);self.state=dict(phase='running',intents={});self.route=lambda port,commit:dict(ready=True,root_accepted=True,ssh_port=port,scientific_commit=commit);self.persist=lambda state:None
     def test_unknown_POST_is_never_replayed(self):
         calls=[]
         def api(port,path,body=None):calls.append(body);raise ConnectionError('mock unknown response')

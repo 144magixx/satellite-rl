@@ -14,7 +14,7 @@ def execute(req,directory):
  from satellite_rl.coverage.ai_search_r5.core import prepare_case,PreparedCase,build_teacher,build_proposal,decode_groups
  directory=Path(directory);began=time.monotonic();identity=req["identity"]
  with np.load(pin(req["scene_ref"]),allow_pickle=False) as z:scene=Scene(z["positions"],z["demands"],tuple(str(x) for x in z["aircraft_ids"]),str(z["profile"]))
- if identity["role"] not in ("train","development") or identity.get("profile")!="uniform21600000" or not (scene.demands==21600000).all() or scene.input_sha256!=identity["input_sha256"]:raise ValueError("uniform train/dev identity required")
+ if identity["role"] not in ("train","development","validation","test") or identity.get("profile")!="uniform21600000" or not (scene.demands==21600000).all() or scene.input_sha256!=identity["input_sha256"]:raise ValueError("uniform true-role identity required")
  manifest=req["phase_manifest"]
  stage=req["stage"];source=req["source_sha256"];started=time.monotonic();proposal_ref=None
  if stage=="preparation":result=prepare_case(scene,identity,source,phase_manifest=manifest,time_limit=10.).to_dict()

@@ -17,9 +17,11 @@ def run_job(directory,resume=False):
     try:
         with exclusive_lock(directory/'worker.lock'),exclusive_lock(Path(job['archive_root']).parent/'ops/compute.lock'):
             mode=job['mode'];refs=job['model_inputs'];runtime=None
+            from .r7_deadline import stop_boundary
+            stop_boundary(job,directory)
             import time
             setup_began=time.monotonic()
-            if mode in ('train_setup','train2000','node2000'):
+            if mode in ('train_setup','train2000','train6000','node2000','fixed6000_development') or (mode in ('validation','test') and config.get('heldout_stage')=='evaluate'):
                 # Configure the fresh worker before deployment queries CUDA.
                 from satellite_rl.coverage.ai_search_r6.runtime_v3 import configure_v3_runtime
                 runtime=configure_v3_runtime();atomic_json(directory/'runtime_v3_identity.json',runtime)
@@ -42,20 +44,30 @@ def run_job(directory,resume=False):
                         owner=read_json(owner_path,{})
                         if owner.get('supply_run_id',job['run_id'])!=job['run_id']:raise ValueError('original supply one owner; no regeneration')
                         owner.update(model_identity=job['model_identity'],supply_run_id=job['run_id'],supply_executor_port=job['executor_port'],qualified_ref=refs['qualified']);atomic_json(owner_path,owner)
-                        prepare(refs['qualified'],refs['labels_gate'],directory/'supply',initial['feature_graph_source_SHA'])
+                        prepare(refs['qualified'],refs['labels_gate'],directory/'supply',initial['feature_graph_source_SHA'],stop=lambda:stop_boundary(job,directory))
                         from .r7_train_binding import publish_setup
                         endpoint,setup_ref=publish_setup(job,config,directory,setup_began,runtime,owner)
                         atomic_json(owner_path,owner)
                         atomic_json(directory/'artifacts.json',dict(train_setup_endpoint=setup_ref))
                     completed=len(job['case_indices'])
-                elif mode=='train2000':
+                elif mode in ('train2000','train6000'):
                     from .r7_model_train import train
                     result=train(job,config,directory);completed=result['updates']
-                elif mode=='node2000':
+                elif mode in ('validation','test') and config.get('heldout_stage')=='derive':
+                    from .r7_heldout_data import derive
+                    result=derive(refs['heldout_recipe'],refs['heldout_unlock_gate'],mode,job['case_indices'],directory/'heldout_derivation',stop=lambda:stop_boundary(job,directory));atomic_json(directory/'result_manifest.json',result);completed=len(result['cases'])
+                elif mode in ('node2000','fixed6000_development','validation','test'):
                     from .r7_node import node
                     result=node(job,config,directory);completed=len(result['cases'])*4
-                else:raise ValueError('later phase dispatch sealed')
+                else:raise ValueError('unknown original frozen phase')
             update(stage='completed',completed_cases=completed,completed_at=now())
     except BaseException as error:
         atomic_json(directory/'failure.json',dict(message=str(error),traceback=traceback.format_exc(),unknown_spend_preserved=True,automatic_retry=False));update(stage='failed',error=str(error));raise
-    finally:done.set()
+    finally:
+        if job.get('mode')=='train_setup' and status.get('stage')=='failed' and 'setup_began' in locals():
+            import time
+            supply=directory/'supply'
+            atomic_json(directory/'interrupted_setup_activity.json',dict(model_identity=job.get('model_identity'),run_id=job.get('run_id'),charged_setup_seconds_to_exit=time.monotonic()-setup_began,
+                        successful_setup_endpoint_published=(directory/'train_setup_endpoint.json').exists(),partial_cache_file_refs=[dict(path=str(p),sha256=__import__('hashlib').sha256(p.read_bytes()).hexdigest()) for p in sorted(supply.glob('*.npz'))],
+                        user_restart_0700=(directory/'stop.request').exists(),same_ID_root_supply_reconciliation_required=True,implicit_supply_regeneration_forbidden=True,optimizer_updates=0))
+        done.set()

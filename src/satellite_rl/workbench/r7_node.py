@@ -17,6 +17,8 @@ def method_order(i):
 def node(job,config,directory):
     from scripts.stage1_ai_search_r4.audit import audit_layout,audit_ledger
     directory=Path(directory);refs=job['model_inputs'];initial=signed_json(refs['initialization_receipt'])
+    from .r7_successor_binding import evaluation_binding
+    checkpoint_updates=evaluation_binding(job['mode'],refs,job['model_identity'])
     actual=verify_model_source_equivalence(refs['source_equivalence'],refs['initialization_receipt'],initial)
     provenance={k:actual[k] for k in ('model_graph_source_SHA','feature_graph_source_SHA','adapter_source_SHA','b7_decoder_source_SHA')}
     provenance.update(model_initial_state_SHA=initial['model_initial_state_SHA'],source_epoch=job['scientific_commit'])
@@ -25,6 +27,8 @@ def node(job,config,directory):
         if shutil.disk_usage(directory).free<8589934592:raise OSError('8GiB reserve')
         return (directory/'stop.request').exists()
     for i in job['case_indices']:
+        from .r7_deadline import stop_boundary
+        stop_boundary(job,directory)
         target=directory/'bundles'/str(i)
         if str(i) in index:
             old=read_json(pin(index[str(i)]),{})
@@ -44,6 +48,7 @@ def node(job,config,directory):
             method_rows={m:dict(status='unexecuted',reason='witness_unavailable',request=None,result_ref=None,guard_proof=None,audit=dict(missing)) for m in methods}
         else:
             for method in method_order(i):
+                stop_boundary(job,directory)
                 begin=time.monotonic()
                 if method=='T':
                     tg,teacher,tref=guarded(target/'T',{**request,'stage':'teacher','prepared_ref':pref},45,stop)
@@ -56,7 +61,7 @@ def node(job,config,directory):
                     continue
                 req=dict(method=method,identity=request['identity'],scene_ref=request['scene_ref'],prepared_ref=pref,
                          producer_sha256=job['source_manifest_sha256'],model_identity=job['model_identity'],b7_decoder_source_SHA=CORE_SHA)
-                if method=='AI':req.update(checkpoint_ref=refs['checkpoint'],normalization_ref=refs['normalization'],AI_provenance=provenance,runtime_profile_SHA=initial['runtime_profile_SHA'])
+                if method=='AI':req.update(checkpoint_ref=refs['checkpoint'],checkpoint_updates=checkpoint_updates,normalization_ref=refs['normalization'],AI_provenance=provenance,runtime_profile_SHA=initial['runtime_profile_SHA'])
                 guard,value,result_ref=guarded(target/method,req,90 if method=='AI' else 15,stop,module='satellite_rl.workbench.r7_model_eval_stage',rss=4294967296 if method=='AI' else 2147483648)
                 checked=audit_row(plain,prepared['result'],value,req);methods[method]=checked;results[method]=result_ref;artifact_refs.append(result_ref)
                 cost_components[method+'_parent']=time.monotonic()-begin+(guard['actual_stage_wall_seconds'] if guard.get('reused_completed_call') else 0.)
@@ -68,7 +73,7 @@ def node(job,config,directory):
                  costs=costs,cost_components=cost_components,total_request=int(record['total_request_bps_int64']),
                  source_commit=job['scientific_commit'],checkpoint_ref=refs['checkpoint'],model_identity=job['model_identity'],
                  status='preparation_unavailable' if unavailable else 'complete',stage_proofs=proofs,
-                 core_sha256=CORE_SHA,producer_sha256=job['source_manifest_sha256'],source_dataset_sha256=config['datasets']['development']['sha256'],
+                 core_sha256=CORE_SHA,producer_sha256=job['source_manifest_sha256'],source_dataset_sha256=config['datasets'][job['dataset_role']]['sha256'],
                  method_order=method_order(i),new_calls=dict(prepare=1,T=0 if unavailable else 1,D5=0 if unavailable else 3),publication_seconds=0.)
         stage_results=audit_preparation_teacher(row)
         row['preparation_identity_and_cost_closed']=stage_results['preparation']['closed']
@@ -79,6 +84,8 @@ def node(job,config,directory):
         # method estimates, outside the immutable row through an endpoint.
         endpoint=target/'cost_endpoint.json';atomic_json(endpoint,dict(raw_ref=index[str(i)],identity=request['identity'],common_row_index_publication_seconds=time.monotonic()-publish,costs_before_publication=costs,requires_separate_isolated_epoch_for_strict_speed=True))
         index[str(i)]['cost_endpoint_ref']=dict(path=str(endpoint),sha256=digest(endpoint));atomic_json(directory/'case_index.json',index);cases[str(i)]=row
-    manifest=dict(group=job['experiment_id'],phase='node2000',scientific_commit=job['scientific_commit'],cases=index,
-                  checkpoint_ref=refs['checkpoint'],model_identity=job['model_identity'],new_calls={k:sum(read_json(pin(index[str(i)]),{})['new_calls'][k] for i in job['case_indices']) for k in ('prepare','T','D5')},future_dispatch_allowed=False)
+    manifest=dict(group=job['experiment_id'],phase=job['mode'],role=job['dataset_role'],scientific_commit=job['scientific_commit'],cases=index,
+                  checkpoint_ref=refs['checkpoint'],checkpoint_updates=checkpoint_updates,model_identity=job['model_identity'],training_endpoint_ref=refs['training_endpoint'],train_setup_endpoint_ref=refs['train_setup_endpoint'],normalization_ref=refs['normalization'],
+                  test_statistical_plan_ref=refs.get('test_statistical_plan'),
+                  new_calls={k:sum(read_json(pin(index[str(i)]),{})['new_calls'][k] for i in job['case_indices']) for k in ('prepare','T','D5')},future_dispatch_allowed=False)
     atomic_json(directory/'result_manifest.json',manifest);return manifest

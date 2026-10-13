@@ -13,7 +13,7 @@ def execute(req,directory):
  from satellite_rl.coverage.ai_search.core import Scene
  from satellite_rl.coverage.ai_search_r5.core import PreparedCase,build_proposal
  directory=Path(directory);began=time.monotonic();method=req['method']
- if method not in ('AI','RULE','RANDOM') or req['identity']['role']!='development' or req.get('teacher_ref'):raise ValueError('node inference has no T inputs')
+ if method not in ('AI','RULE','RANDOM') or req['identity']['role'] not in ('development','validation','test') or req.get('teacher_ref'):raise ValueError('true-role inference has no T inputs')
  with np.load(pin(req['scene_ref']),allow_pickle=False) as z:scene=Scene(z['positions'],z['demands'],tuple(map(str,z['aircraft_ids'])),str(z['profile']))
  if scene.input_sha256!=req['identity']['input_sha256']:raise ValueError('original raw input SHA')
  prepared_record=read_asset(req['prepared_ref'])['result'];prepared=PreparedCase.from_dict(scene,prepared_record)
@@ -29,7 +29,7 @@ def execute(req,directory):
   from satellite_rl.coverage.ai_search_r6.ai_adapter import build_ai_proposal
   if prepared.status!='available':raise ValueError('signed node20 expects original successful prepared')
   load_started=time.monotonic();state=torch.load(pin(req['checkpoint_ref']),map_location='cpu',weights_only=False)
-  if state.get('updates')!=2000 or state.get('provenance',{}).get('model_identity')!=req['model_identity']:raise ValueError('fixed exact2000 model')
+  if req.get('checkpoint_updates') not in (2000,6000) or state.get('updates')!=req['checkpoint_updates'] or (req['identity']['role'] in ('validation','test') and req['checkpoint_updates']!=6000) or state.get('provenance',{}).get('model_identity')!=req['model_identity']:raise ValueError('fixed exact2000/6000 model for true role')
   stats=FeatureStats.from_record(read_json(pin(req['normalization_ref']),{}))
   if state['stats']!=stats.to_record():raise ValueError('checkpoint training normalization differs')
   model=initialize_model();model.load_state_dict(state['model'],strict=True);model=model.to('cuda');model.eval();model_load_seconds=time.monotonic()-load_started

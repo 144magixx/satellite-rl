@@ -19,7 +19,7 @@ def audit_preparation_teacher(row):
         result[stage]=audit_stage(**row['stage_proofs'][stage],stage=stage,identity=row['identity'],scene_ref=row['scene_ref'],
                                   source_sha=row['core_sha256'],producer_sha=row['producer_sha256'],dataset_sha=row['source_dataset_sha256'],
                                   asset_ref=row['prepared_ref'] if stage=='preparation' else row['result_refs']['T'],prepared_ref=row['prepared_ref'] if stage=='teacher' else None,
-                                  phase_role='development',phase_stage='development')
+                                  phase_role=row['identity']['role'],phase_stage=row['identity']['role'])
     return result
 
 def audit_method_proof(method,row,case):

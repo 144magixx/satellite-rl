@@ -48,7 +48,7 @@ class NodeUnavailableBindings(unittest.TestCase):
         import satellite_rl.workbench.r7_node as subject
         from satellite_rl.workbench.r7_node_audit import node_gate
         from satellite_rl.workbench.r7_node_guard_audit import audit_costs
-        job=dict(dataset_role='development',case_indices=list(range(20)),model_inputs={k:ref(k) for k in ('initialization_receipt','source_equivalence','checkpoint','normalization')},
+        job=dict(mode='node2000',dataset_role='development',case_indices=list(range(20)),model_inputs={k:ref(k) for k in ('initialization_receipt','source_equivalence','checkpoint','normalization','training_endpoint','train_setup_endpoint')},
                  model_identity='one_r7',scientific_commit='a'*40,source_manifest_sha256='b'*64,experiment_id='S1-AI17-R7')
         cfg=dict(datasets={'development':dict(sha256='c'*64)})
         scene=SimpleNamespace(positions=np.array([[50.,8.]]),demands=np.array([21600000.]),aircraft_ids=('a',),profile='europe_v1')
@@ -57,7 +57,7 @@ class NodeUnavailableBindings(unittest.TestCase):
         def guarded(target,request,*a,**k):
             calls.append(request['stage']);return dict(actual_stage_wall_seconds=0.),dict(result=dict(status='unavailable',ledger={})),ref('prepared')
         sources={k:'sha' for k in ('model_graph_source_SHA','feature_graph_source_SHA','adapter_source_SHA','b7_decoder_source_SHA')}
-        with tempfile.TemporaryDirectory() as tmp,patch.object(subject,'signed_json',return_value={'model_initial_state_SHA':'init'}),patch.object(subject,'verify_model_source_equivalence',return_value=sources),patch.object(subject,'supply_case',side_effect=supply),patch.object(subject,'guarded',side_effect=guarded),patch.object(subject,'stage_proof',return_value={'pure_mock':True}),patch.object(subject,'audit_preparation_teacher',return_value={'preparation':dict(closed=True,wall_seconds=0.)}):
+        with tempfile.TemporaryDirectory() as tmp,patch('satellite_rl.workbench.r7_deadline.stop_boundary',return_value=True),patch('satellite_rl.workbench.r7_successor_binding.evaluation_binding',return_value=2000),patch.object(subject,'signed_json',return_value={'model_initial_state_SHA':'init'}),patch.object(subject,'verify_model_source_equivalence',return_value=sources),patch.object(subject,'supply_case',side_effect=supply),patch.object(subject,'guarded',side_effect=guarded),patch.object(subject,'stage_proof',return_value={'pure_mock':True}),patch.object(subject,'audit_preparation_teacher',return_value={'preparation':dict(closed=True,wall_seconds=0.)}):
             result=subject.node(job,cfg,Path(tmp));rows=[json.loads(Path(result['cases'][str(i)]['path']).read_text()) for i in range(20)]
         self.assertEqual(calls,['preparation']*20);self.assertEqual(result['new_calls'],dict(prepare=20,T=0,D5=0));self.assertFalse(node_gate(rows)['passed']);self.assertEqual(node_gate(rows)['denominator'],20)
         for row in rows:

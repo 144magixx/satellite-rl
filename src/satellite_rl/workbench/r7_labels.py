@@ -31,7 +31,7 @@ def guarded(target,request,limit,stop,module='satellite_rl.workbench.r7_stage',r
 def supply_case(job,config,i,target):
     role=job['dataset_role'];dataset=read_json(pin(config['datasets'][role]),{});row=dataset['cases'][i]
     if row['case_index']!=i or row['role']!=role:raise ValueError('original dataset order/role')
-    record,scene=load_algorithm_case(row['case_ref'],job['model_inputs']['authority'])
+    record,scene=load_algorithm_case(row['case_ref'],job['model_inputs']['authority'],job['model_inputs'].get('heldout_data_gate'),role)
     from .r7_case_binding import validate_binding
     validate_binding(record,role,i,row)
     if row['case_content_sha256']!=record['content_sha256'] or row['case_id']!=record['case_id']:raise ValueError('root frozen case changed')
@@ -44,7 +44,7 @@ def supply_case(job,config,i,target):
     ident=dict(case_id=record['case_id'],mother_id=record['original_mother_id'],profile='uniform21600000',role=role,
                input_sha256=scene.input_sha256,identity_sha256=job['references']['identity']['sha256'],
                shared_case_content_sha256=record['content_sha256'],source_asset_SHA=record['source_asset_SHA'])
-    phase_manifest=dict(stage='labels' if role=='train' else 'development',role=role,admitted=True,
+    phase_manifest=dict(stage='labels' if role=='train' else role,role=role,admitted=True,
                         identity_sha256=ident['identity_sha256'],dataset_sha256=config['datasets'][role]['sha256'],cases={ident['case_id']:ident})
     req=dict(identity=ident,scene_ref=dict(path=str(raw),sha256=digest(raw)),source_sha256=CORE_SHA,
              producer_sha256=job['source_manifest_sha256'],phase_manifest=phase_manifest)

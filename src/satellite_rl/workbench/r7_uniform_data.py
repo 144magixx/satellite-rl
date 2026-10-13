@@ -119,12 +119,21 @@ def derive(recipe_ref, indices, directory, transport_ref=None):
     return dict(group=GROUP,phase='data_train_dev',cases=index,builds=len(index),algorithm_reads=0,
                 requires_independent_root_manifest=True,validation_test_reads=0)
 
-def load_algorithm_case(case_ref, authority_ref):
+def load_algorithm_case(case_ref, authority_ref,heldout_gate_ref=None,expected_role=None):
     """Only independent root-frozen authority enables raw-bps algorithm input."""
     from satellite_rl.shared_interface.content import read_wire,content_sha
     from satellite_rl.shared_interface.contracts import Authority
     from satellite_rl.shared_interface.stages import algorithm_scene
+    gate=None
+    if expected_role in ('validation','test'):
+        if not heldout_gate_ref:raise ValueError('heldout algorithm role locked before case array read')
+        gate=read_json(pin(heldout_gate_ref),{})
+        if gate.get('passed')is not True or gate.get('phase')!=expected_role+'_data' or gate.get('authority_ref')!=authority_ref:raise ValueError('root heldout data gate before case arrays')
     authority=json.loads(pin(authority_ref).read_text(encoding='utf-8'))
     record=read_wire(pin(case_ref).read_bytes())
-    if record['actual_role'] not in ('train','development'):raise ValueError('heldout algorithm role locked')
+    if record['actual_role'] not in ('train','development'):
+        if record['actual_role'] not in ('validation','test') or not heldout_gate_ref:raise ValueError('heldout algorithm role locked')
+        gate=gate or read_json(pin(heldout_gate_ref),{})
+        if gate.get('passed')is not True or gate.get('phase')!=record['actual_role']+'_data' or gate.get('authority_ref')!=authority_ref or gate.get('case_content_shas',{}).get(record['case_id'])!=record['content_sha256']:raise ValueError('independent root role data/authority gate required before any heldout algorithm')
+    if expected_role is not None and record['actual_role']!=expected_role:raise ValueError('expected original algorithm role differs')
     return record,algorithm_scene(record,Authority(authority,content_sha(authority)))

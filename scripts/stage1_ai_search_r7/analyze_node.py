@@ -15,28 +15,42 @@ from satellite_rl.workbench.r7_case_binding import validate_binding
 from satellite_rl.workbench.r7_publish import publish_terminal
 from satellite_rl.workbench.r7_postprocess_source import execution_source,new_output
 
-def analyze(manifest_refs,dataset_ref,checkpoint_ref,model_identity,output):
+def analyze(manifest_refs,dataset_ref,checkpoint_ref,model_identity,output,phase='node2000',heldout_data_gate_ref=None,statistics_ref=None,training_refs=None):
     output=new_output(output);postsource=execution_source()
     dataset=read_json(pin(dataset_ref),{});cases={};commit=None
-    if dataset.get('schema')!='R7UniformDatasetV1' or dataset.get('role')!='development' or dataset.get('count')!=20:raise ValueError('root frozen development20 dataset')
+    from satellite_rl.workbench.r7_successor_binding import EVALUATIONS,evaluation_binding
+    if phase not in EVALUATIONS:raise ValueError('original fixed model evaluation phase')
+    role,count,updates=EVALUATIONS[phase]
+    if phase=='test':
+        if not statistics_ref:raise ValueError('pre-frozen statistics required before test case reads')
+        statistics=read_json(pin(statistics_ref),{})
+        from . import test_statistics
+        if statistics.get('statistical_source_sha256')!=digest(test_statistics.__file__) or statistics.get('matrix_generated_once_before_test_reads')is not True:raise ValueError('actual frozen pre-test statistical source')
+    if phase!='node2000' and not training_refs:raise ValueError('exact fixed6000 model endpoint/setup/normalization refs')
+    if training_refs:
+        if training_refs['checkpoint']!=checkpoint_ref:raise ValueError('analyzer fixed checkpoint differs')
+        evaluation_binding(phase,training_refs,model_identity)
+    if dataset.get('schema')!='R7UniformDatasetV1' or dataset.get('role')!=role or dataset.get('count')!=count:raise ValueError('root frozen true-role20/40 dataset')
     for ref in manifest_refs:
         manifest=read_json(pin(ref),{})
-        if manifest.get('group')!=GROUP or manifest.get('phase')!='node2000' or manifest.get('checkpoint_ref')!=checkpoint_ref or manifest.get('model_identity')!=model_identity:raise ValueError('exact2000 model/source chain')
+        if manifest.get('group')!=GROUP or manifest.get('phase')!=phase or manifest.get('checkpoint_ref')!=checkpoint_ref or manifest.get('model_identity')!=model_identity or manifest.get('checkpoint_updates')!=updates or manifest.get('role')!=role:raise ValueError('exact fixed model/source/role chain')
+        if training_refs and any(manifest.get(k+'_ref')!=training_refs[k] for k in ('training_endpoint','train_setup_endpoint','normalization')):raise ValueError('same actual fixed training endpoint/setup/norm')
+        if phase=='test' and manifest.get('test_statistical_plan_ref')!=statistics_ref:raise ValueError('original actual test statistical freeze')
         if commit and commit!=manifest['scientific_commit']:raise ValueError('two source commits')
         commit=manifest['scientific_commit']
         for i,row in manifest['cases'].items():
             if i in cases:raise ValueError('duplicate host owner')
             cases[i]=row
-    if sorted(map(int,cases))!=list(range(20)):raise ValueError('exact20 original denominator; no missing cases')
+    if sorted(map(int,cases))!=list(range(count)):raise ValueError('exact original20/40 denominator; no missing cases')
     independent=[];typed_layouts={};typed_directory=Path(output).with_name(Path(output).stem+'_typed_layouts')
-    for i in range(20):
+    for i in range(count):
         ref=cases[str(i)];row=read_json(pin(ref),{});ident=row['identity'];source=dataset['cases'][i]
         common_audit_started=time.monotonic()
-        record,scene=load_algorithm_case(source['case_ref'],dataset['authority_ref'])
+        record,scene=load_algorithm_case(source['case_ref'],dataset['authority_ref'],heldout_data_gate_ref,role)
         if row['case_index']!=i or row['source_commit']!=commit or row['model_identity']!=model_identity or row['checkpoint_ref']!=checkpoint_ref or ident['shared_case_content_sha256']!=record['content_sha256'] or scene.input_sha256!=ident['input_sha256']:raise ValueError('independent root scene identity')
         plain=dict(positions=scene.positions.tolist(),demands=scene.demands.tolist(),aircraft_ids=list(scene.aircraft_ids),profile=scene.profile)
-        validate_binding(record,'development',i,source)
-        if ident['role']!='development' or row['source_dataset_sha256']!=dataset_ref['sha256'] or row['core_sha256']!='9f187e4cd8122a6fce415b590d0ab0a385724b7d840cc88dd874e34ea936aea5':raise ValueError('original development/source/core binding')
+        validate_binding(record,role,i,source)
+        if ident['role']!=role or row['source_dataset_sha256']!=dataset_ref['sha256'] or row['core_sha256']!='9f187e4cd8122a6fce415b590d0ab0a385724b7d840cc88dd874e34ea936aea5':raise ValueError('original true role/source/core binding')
         prepared=read_asset(row['prepared_ref'])['result'];stage_results=audit_preparation_teacher(row)
         if prepared['identity']!=ident or row.get('preparation_identity_and_cost_closed')is not stage_results['preparation']['closed'] or not audit_ledger(prepared['ledger'],len(scene.demands),'prepare')['valid']:raise ValueError('independent original prepare identity/ledger/closure')
         costs=audit_costs(row,stage_results);unavailable=row['status']=='preparation_unavailable'
@@ -60,7 +74,7 @@ def analyze(manifest_refs,dataset_ref,checkpoint_ref,model_identity,output):
             for method in ('AI','RULE','RANDOM'):
                 method_audit_started=time.monotonic()
                 actual=row['method_rows'][method];req=actual['request'];guard_closure=audit_method_proof(method,actual,row)
-                if method=='AI' and (req['checkpoint_ref']!=checkpoint_ref or req['model_identity']!=model_identity):raise ValueError('actual AI checkpoint/source')
+                if method=='AI' and (req['checkpoint_ref']!=checkpoint_ref or req.get('checkpoint_updates')!=updates or req['model_identity']!=model_identity):raise ValueError('actual AI fixed update/checkpoint/source')
                 if row['cost_components'][method+'_parent']<guard_closure['outer_wall_seconds']:raise ValueError('actual outer cold method wall not fully paid')
                 actual_value=read_asset(actual['result_ref']);checked=audit_row(plain,prepared,actual_value,req)
                 if checked!=actual['audit'] or checked!=row['methods'][method]:raise ValueError('producer metrics differ from independent raw audit')
@@ -87,9 +101,12 @@ def analyze(manifest_refs,dataset_ref,checkpoint_ref,model_identity,output):
                     typed_layout_conversion_validation_publication_seconds=publication_seconds,complete_method_costs=complete_costs,same_rule_all_four_methods=True,new_geometry_search_or_PHY_calls=0,
                     caller_whole_publisher_elapsed_includes_internal_final_IO_hash_read=True,final_this_endpoint_IO_separate_metadata=True,
                     original_algorithm_source_epoch=commit,**postsource))
-        independent.append(dict(case_index=i,methods=methods,costs=complete_costs,
+        am=methods['AI'];metrics=am.get('metrics');widths=metrics.get('widths',[]) if metrics else []
+        witness_N=len(prepared.get('Wenv',{}).get('centers',[]))
+        joint=bool(am['nonfallback'] and metrics and metrics['N']!=witness_N and len(widths)>1 and np.ptp(widths)>1e-12 and any(w>.3+1e-12 for w in widths))
+        independent.append(dict(case_index=i,mother_id=record['original_mother_id'],methods=methods,costs=complete_costs,actual_AI_both_N_width_capability=joint,
                                 teacher_identity_and_cost_closed=teacher_closed,total_request=record['total_request_bps_int64']))
-    gate=node_gate(independent);gate.update(group=GROUP,model_identity=model_identity,checkpoint_sha256=checkpoint_ref['sha256'],
+    gate=node_gate(independent,phase,statistics_ref,Path(output).with_name('test_confirmation.json') if phase=='test' else None);gate.update(group=GROUP,model_identity=model_identity,checkpoint_sha256=checkpoint_ref['sha256'],
                                          manifest_refs=manifest_refs,dataset_ref=dataset_ref,scientific_commit=commit,science_updates=0,
                                          typed_layouts=typed_layouts,typed_publication_is_postprocessing=True,original_layouts_used=True,new_decoder_or_PHY_calls=0)
     gate.update(original_algorithm_source_epoch=commit,**postsource)

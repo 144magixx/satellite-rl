@@ -15,7 +15,7 @@ RUNS = {'b0_ai_search_r4_20261013_150920_a0ebefd3',
 
 
 def rss_tree(pid, proc=Path('/proc'), page_size=None, samples=None):
-    """Actual kernel RSS; only ENOENT is an exit race, other failures propagate."""
+    """Actual kernel RSS; ESRCH ignored only after gone/Z/X confirmation."""
     if os.name == 'nt' and proc == Path('/proc'):
         from .r4_stage_guard import rss_tree as original
         return original(pid)
@@ -48,6 +48,15 @@ def rss_tree(pid, proc=Path('/proc'), page_size=None, samples=None):
                 samples.append({'pid': current, 'source': source, 'rss_bytes': resident, 'at': now()})
             queue.extend(int(x) for x in (root / 'task' / str(current) / 'children').read_text().split())
         except FileNotFoundError:
+            continue
+        except ProcessLookupError:
+            try:
+                raw=(root/'stat').read_text();state=raw[raw.rfind(')')+2:].split()[0]
+                gone=state in ('Z','X')
+            except (FileNotFoundError,ProcessLookupError):
+                gone=True
+            if not gone:raise
+            if samples is not None:samples.append(dict(pid=current,source='confirmed_proc_exit_ESRCH',at=now()))
             continue
     return total
 

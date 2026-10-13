@@ -12,6 +12,18 @@ from .r6_io import pin_tree
 MODEL_OWNER_ROOT=Path("/home/u2024110224/first_stage_satellite_rl/s1_ai17/round7_model_ownership")
 
 def train(job,config,directory):
+ context={}
+ try:return _train(job,config,directory,context)
+ finally:
+  session=context.get('session')
+  if session is not None and session.active_started is not None:
+   session.pause_activity(reason='resource_queue')
+   directory=Path(directory)
+   atomic_json(directory/'user_restart_activity_pause.json',dict(reason='user_restart_0700' if (directory/'stop.request').exists() else 'resource_withdrawal_or_failed_worker',core_pause_reason='resource_queue',
+               charged_active_seconds=session.elapsed(),updates=session.updates,checkpoint_index=read_json(directory/'checkpoint_index.json',{}),optimizer_completion=read_json(directory/'optimizer_completion.json',{}),
+               requires_root_hashed_verified_clock_recovery=True,no_automatic_resume=True,not_a_scientific_node_gate=True))
+
+def _train(job,config,directory,activity_context):
  from .r7_model_limits import check
  from satellite_rl.coverage.ai_search_r6.runtime_v3 import assert_v3_runtime
  from satellite_rl.coverage.ai_search_r6.model import initialize_model,model_tensor_sha
@@ -21,7 +33,13 @@ def train(job,config,directory):
  from .r7_train_binding import validate_setup,validate_owner
  setup_ref=refs['train_setup_endpoint'];setup_endpoint=signed_json(setup_ref)
  gate=signed_json(plan['prerequisite_gate_ref'])
- if gate.get('phase')!='train_setup' or gate.get('passed')is not True or gate.get('model_identity')!=job['model_identity'] or gate.get('train_setup_endpoint_ref')!=setup_ref:raise ValueError('actual plan prerequisite exact original setup endpoint')
+ if job['mode']=='train2000':
+  if gate.get('phase')!='train_setup' or gate.get('passed')is not True or gate.get('model_identity')!=job['model_identity'] or gate.get('train_setup_endpoint_ref')!=setup_ref:raise ValueError('actual plan prerequisite exact original setup endpoint')
+ elif job['mode']=='train6000':
+  from .r7_successor_binding import gate_requirements,continuation
+  gate_requirements('train6000',gate,job['model_identity'],refs['checkpoint'])
+  if refs['node_gate']!=plan['prerequisite_gate_ref'] or continuation(signed_json(refs['train2000_endpoint']),refs,job['model_identity'],job['case_indices'],config['datasets']['train'])!=job['model_dir']:raise ValueError('same original learner root and2000 checkpoint/node gate')
+ else:raise ValueError('two original training segments only')
  complete_setup_charge=validate_setup(setup_endpoint,setup_ref,refs,job['model_identity'],job['executor_port'],job['case_indices'],config['datasets']['train'])
  if initial.get("passed")is not True or not initial.get("model_initial_state_SHA") or not initial.get("model_graph_source_SHA") or not initial.get("feature_graph_source_SHA"):raise ValueError("root accepted engineering initialization qualification")
  runtime=signed_json({'path':str(directory/'runtime_v3_identity.json'),'sha256':digest(directory/'runtime_v3_identity.json')})
@@ -51,9 +69,13 @@ def train(job,config,directory):
   owner.setdefault("initial_state_ref",refs["initial_state"]);owner["provenance_sha"]=record_sha(provenance);owners=owner.setdefault("segment_runs",{})
   if owners.get(job["mode"],job["run_id"])!=job["run_id"]:raise ValueError("same model segment already has another run owner; no retry as new task")
   owners[job["mode"]]=job["run_id"];atomic_json(owner_path,owner)
+  if start==0:
+   if owner.get('original_learner_run_id',job['run_id'])!=job['run_id'] or owner.get('model_dir',job['model_dir'])!=job['model_dir']:raise ValueError('original learner root already owned')
+   owner.update(original_learner_run_id=job['run_id'],model_dir=job['model_dir']);atomic_json(owner_path,owner)
+  elif owner.get('original_learner_run_id')!=signed_json(refs['train2000_endpoint'])['run_id'] or owner.get('model_dir')!=job['model_dir']:raise ValueError('continuation cannot acquire a fresh learner root')
   model=initialize_model();model.load_state_dict(torch.load(pin(refs["initial_state"]),map_location='cpu',weights_only=True),strict=True)
   if model_tensor_sha(model)!=initial["model_initial_state_SHA"]:raise ValueError("initial tensor identity mismatch")
-  sampler=CaseSampler(rows);session=TrainingSession(model,stats,sampler,provenance,'cuda');clock=directory/'activity_clock.json'
+  sampler=CaseSampler(rows);session=TrainingSession(model,stats,sampler,provenance,'cuda');clock=directory/'activity_clock.json';activity_context['session']=session
   checkpoint_index=read_json(directory/'checkpoint_index.json',{});resume_ref=None;recovery=None
   if checkpoint_index:
    receipt=signed_json({"path":str(directory/'root_recovery.json'),"sha256":read_json(directory/'root_recovery_pin.json',{})['sha256']})
@@ -61,7 +83,9 @@ def train(job,config,directory):
    resume_ref=receipt.get('checkpoint_ref',checkpoint_index['latest']);recovery=receipt['recovery_clock'];pin(resume_ref)
    if resume_ref!=checkpoint_index['latest'] and receipt.get('original_checkpoint_index_sha256')!=digest(directory/'checkpoint_index.json'):raise ValueError('root orphan-state recovery does not bind original checkpoint index')
   elif start:
-   resume_ref=refs['checkpoint'];recovery_record=signed_json(refs['recovery_clock']);recovery=recovery_record['recovery_clock']
+   resume_ref=refs['checkpoint'];recovery_record=signed_json(refs['recovery_clock']);recovery=dict(recovery_record['recovery_clock'])
+   if recovery_record.get('train2000_endpoint_ref')!=refs['train2000_endpoint'] or recovery_record.get('checkpoint_ref')!=resume_ref or recovery_record.get('model_identity')!=job['model_identity']:raise ValueError('root original2000 checkpoint clock continuation evidence')
+   if owner['last_completed_update']!=2000 or owner['science_updates_reserved']!=2000 or owner.get('last_completed_checkpoint_ref',{}).get('sha256')!=resume_ref['sha256']:raise ValueError('continuation original global2000 ledger/state; no unknown replay')
    state=torch.load(pin(resume_ref),map_location='cpu',weights_only=False)
    if state.get('updates')!=2000 or state.get('provenance')!=provenance:raise ValueError('exact original 2000 checkpoint chain')
   elif (directory/'step_intent.json').exists() or owner['last_completed_update']!=0:raise ValueError('unknown or previously completed learner; no blind reinitialization')
@@ -71,6 +95,8 @@ def train(job,config,directory):
    if start and saved_provenance.get('node2000_gate_pass'):
     if {k:v for k,v in saved_provenance.items() if k not in ('node2000_gate_pass','node2000_gate_sha256')}!=provenance or saved_provenance.get('node2000_gate_sha256')!=refs['node_gate']['sha256']:raise ValueError('continued provenance gate changed')
     session.provenance=saved_provenance
+   recovery=dict(recovery);original_clock=recovery['clock_path'];recovery['clock_path']=str(clock)
+   atomic_json(directory/'recovery_clock_destination.json',dict(original_root_recovery_clock_path=original_clock,new_phase_clock_path=str(clock),original_recovery_clock=recovery,original_checkpoint_ref=resume_ref,prior_phase_clock_not_overwritten=True))
    assert_v3_runtime(runtime);session.restore(pin(resume_ref),recovery_clock=recovery)
   else:session.active_seconds=supply_charge
   if start:
@@ -83,8 +109,16 @@ def train(job,config,directory):
   if owner['last_completed_update']>session.updates:raise ValueError('known completed optimizer steps lack recoverable state; replay forbidden')
   setup_seconds=time.monotonic()-setup_began;session.active_seconds+=setup_seconds;atomic_json(directory/"setup_activity_receipt.json",{"charged_setup_seconds":setup_seconds,"offline_supply_seconds_added_only_at_initial":supply_charge if not resume_ref else 0.,"includes_manifest_initialization_checkpoint_load":True})
   session.start_activity(clock_path=clock)
+  if not checkpoint_index:
+   initial_checkpoint=model_directory/'checkpoints'/'initial_000000.pt'
+   if initial_checkpoint.exists():raise ValueError('orphan initial checkpoint retained; root same-ID reconciliation required')
+   receipt=session.checkpoint(initial_checkpoint)
+   checkpoint_index=dict(latest=dict(path=str(initial_checkpoint),sha256=receipt['checkpoint_file_sha']),previous=None,updates=0,charged_active_seconds=receipt['charged_active_seconds'],model_identity=job['model_identity'],clock_path=str(clock))
+   atomic_json(directory/'checkpoint_index.json',checkpoint_index);atomic_json(directory/'optimizer_completion.json',dict(completed_optimizer_update=0,recoverable_state_published=True,checkpoint_ref=checkpoint_index['latest'],model_identity=job['model_identity'],new_optimizer_updates=0))
+   owner['last_completed_checkpoint_ref']=checkpoint_index['latest'];atomic_json(owner_path,owner)
   while session.updates<end:
-   if (directory/'stop.request').exists():raise RuntimeError('requested stop retained; root recovery needed')
+   from .r7_deadline import stop_boundary
+   stop_boundary(job,directory)
    check(directory,gpu=True)
    if session.elapsed()>=28800 or owner['science_updates_reserved']>=6000:raise RuntimeError('global activity/update cap reached')
    update=session.updates+1;owner['science_updates_reserved']+=1;atomic_json(owner_path,owner);atomic_json(directory/'step_intent.json',{'step':update,'reserved_total':owner['science_updates_reserved'],'sampler_before':session.sampler.state_dict(),'at':now(),'unknown_tail_preserved':True})
@@ -99,6 +133,7 @@ def train(job,config,directory):
    atomic_json(directory/'optimizer_completion.json',{'completed_optimizer_update':update,'recoverable_state_published':True,'checkpoint_ref':checkpoint_index['latest'],'model_identity':job['model_identity']})
    owner['last_completed_update']=update;owner['last_completed_checkpoint_ref']=checkpoint_index['latest'];atomic_json(owner_path,owner)
    atomic_json(directory/'updates'/('%06d.json'%update),result);atomic_json(directory/'status_progress.json',{'update':session.updates,'active_seconds':session.elapsed(),'heartbeat_at':now()})
+   stop_boundary(job,directory) # only after optimizer marker/checkpoint/index/owner are durable
   # Only the two contracted scientific nodes get immutable weight copies.
   immutable=model_directory/'nodes'/('%06d.pt'%end);immutable.parent.mkdir(parents=True,exist_ok=True)
   if immutable.exists():
@@ -108,4 +143,7 @@ def train(job,config,directory):
    with temporary.open('rb+') as stream:os.fsync(stream.fileno())
    os.replace(temporary,immutable)
   checkpoint_index['fixed_node_ref']={'path':str(immutable),'sha256':digest(immutable)};atomic_json(directory/'checkpoint_index.json',checkpoint_index)
-  session.pause_activity(reason='explicit_node_evaluation');atomic_json(directory/'training_endpoint.json',{'phase':job['mode'],'passed':session.updates==end,'updates':session.updates,'active_seconds':session.elapsed(),'checkpoint_ref':checkpoint_index['fixed_node_ref'],'model_tensor_SHA':model_tensor_sha(session.model),'normalization_ref':refs['normalization'],'initialization_receipt_ref':refs['initialization_receipt'],'model_identity':job['model_identity'],'source_commit':job['scientific_commit'],'science_updates_reserved':owner['science_updates_reserved'],'future_phase_dispatch_allowed':False});atomic_json(directory/'artifacts.json',{'training_endpoint':{'path':str(directory/'training_endpoint.json'),'sha256':digest(directory/'training_endpoint.json')},'fixed_checkpoint':checkpoint_index['fixed_node_ref']});return checkpoint_index
+  if session.elapsed()>28800:raise RuntimeError('complete cumulative training charge exceeds8h; durable final weights not an admitted endpoint')
+  session.pause_activity(reason='explicit_node_evaluation');atomic_json(directory/'training_endpoint.json',{'group':'S1-AI17-R7','phase':job['mode'],'passed':session.updates==end,'updates':session.updates,'active_seconds':session.elapsed(),'checkpoint_ref':checkpoint_index['fixed_node_ref'],'model_tensor_SHA':model_tensor_sha(session.model),'normalization_ref':refs['normalization'],'initialization_receipt_ref':refs['initialization_receipt'],'model_identity':job['model_identity'],'source_commit':job['scientific_commit'],'science_updates_reserved':owner['science_updates_reserved'],'future_phase_dispatch_allowed':False,
+                  'run_id':job['run_id'],'original_learner_run_id':owner['original_learner_run_id'],'model_dir':job['model_dir'],'training_refs':setup_endpoint['training_refs'],'train_setup_endpoint_ref':setup_ref,'dataset_ref':config['datasets']['train'],'case_indices':job['case_indices'],'new_optimizer_updates':end-start,
+                  'original_job_ref':dict(path=str(directory/'job.json'),sha256=digest(directory/'job.json')),'activity_clock_ref':dict(path=str(clock),sha256=digest(clock))});atomic_json(directory/'artifacts.json',{'training_endpoint':{'path':str(directory/'training_endpoint.json'),'sha256':digest(directory/'training_endpoint.json')},'fixed_checkpoint':checkpoint_index['fixed_node_ref']});return checkpoint_index

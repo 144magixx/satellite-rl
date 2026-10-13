@@ -32,9 +32,12 @@ def audit_row(scene,prepared,value,request):
   checked={**checked,'parent_case_SHA':identity['shared_case_content_sha256'],'layout_sha256':canonical_sha(result['layout'])}
  return {'valid':True,'published':published,'nonfallback':result['status']=='success','status':result['status'],'metrics':checked['metrics'] if checked else None,'geometry_audit':checked,'identity_closed':True,'budget_closed':True}
 
-def node_gate(cases):
- if len(cases)!=20 or sorted(c['case_index'] for c in cases)!=list(range(20)):raise ValueError('exact20 development denominator')
- nonfallback=quality=0;closed=True
+def node_gate(cases,phase='node2000',statistics_ref=None,statistics_output=None):
+ from .r7_successor_binding import EVALUATIONS
+ if phase not in EVALUATIONS:raise ValueError('original evaluation phase only')
+ count=EVALUATIONS[phase][1]
+ if len(cases)!=count or [c['case_index'] for c in cases]!=list(range(count)):raise ValueError('exact original20/40 mother denominator/order')
+ nonfallback=quality=joint=0;closed=True
  for case in cases:
   methods=case['methods']
   if set(methods)!=set(('AI','RULE','RANDOM')) or any(not r.get('valid') for r in methods.values()):raise ValueError('hard error/missing method stops dependency')
@@ -42,7 +45,15 @@ def node_gate(cases):
   costs=case['costs']
   closed=closed and set(costs)==set(('AI','RULE','RANDOM','T')) and all(finite(x) and x>=0 for x in costs.values())
   ai=methods['AI'];nonfallback+=ai['nonfallback'];base=min(((m,methods[m]) for m in ('RULE','RANDOM') if methods[m]['published']),key=lambda p:(p[1]['metrics']['maxload'],p[1]['metrics']['top10_mean'],p[1]['metrics']['CV'],p[0]),default=None)
+  joint+=bool(case.get('actual_AI_both_N_width_capability'))
   if not case['total_request']>0:raise ValueError('positive uniform request required')
   if base and ai['nonfallback']:
    am=ai['metrics'];bm=base[1]['metrics'];quality+=bool(bm['maxload']>0 and within(am['maxload'],bm['maxload'],.99,'maxload') and within(am['top10_mean'],bm['top10_mean'],1.02,'top10_mean') and within(am['CV'],bm['CV'],1.02,'CV'))
- return dict(phase='node2000',passed=bool(closed and nonfallback>=15 and quality>=5),hard_identity_budget_cost_closed=bool(closed),nonfallback=nonfallback,quality_successes=quality,denominator=20,future_dispatch_allowed=False,efficiency_branch=False)
+ passed=bool(closed and nonfallback>=15 and quality>=5)
+ confirmation=None
+ if phase in ('fixed6000_development','validation'):passed=passed and joint>=5
+ if phase=='test':
+  if not statistics_ref:raise ValueError('fixed pre-test statistical source/draw plan required')
+  from scripts.stage1_ai_search_r7.test_statistics import confirm
+  confirmation=confirm(cases,statistics_ref,statistics_output);passed=bool(closed and joint>=10 and confirmation['passed'])
+ return dict(phase=phase,passed=bool(passed),hard_identity_budget_cost_closed=bool(closed),nonfallback=nonfallback,quality_successes=quality,actual_AI_both_N_width_capability=joint,denominator=count,confirmation=confirmation,future_dispatch_allowed=False,efficiency_branch=False)

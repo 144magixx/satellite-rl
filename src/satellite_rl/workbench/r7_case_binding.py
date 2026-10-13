@@ -1,9 +1,11 @@
 """Pure immutable-case role/index/row binding, before any algorithm call."""
 def validate_binding(case,role,index,row=None,recipe_row=None):
-    if role not in ('train','development') or type(index)is not int or not 0<=index<(576 if role=='train' else 20):raise ValueError('original R7 role/index')
-    source_role='train' if role=='train' else 'validation'
+    from scripts.stage1_ai_search_r7.contract import ROLE_COUNTS,ROLE_DATES
+    if role not in ROLE_COUNTS or type(index)is not int or not 0<=index<ROLE_COUNTS[role]:raise ValueError('original R7 role/index')
+    source_role='validation' if role=='development' else role
     if case['actual_role']!=role or case['source_role']!=source_role or case['source']['original_case_index']!=index:raise ValueError('immutable case actual/source role or original index differs')
     if case['original_mother_id']!=source_role+':'+case['UTC'] or case['case_id']!=f"r7:{role}:{case['original_mother_id']}:uniform21600000":raise ValueError('immutable case role/mother/case ID differs')
+    if role in ('validation','test') and case['UTC'][:10] not in ROLE_DATES[role]:raise ValueError('original sealed dates only; no S2 Feb21/22')
     expected=dict(role=role,case_index=index,case_id=case['case_id'],original_mother_id=case['original_mother_id'],
                   case_content_sha256=case['content_sha256'],aircraft_count=len(case['aircraft_ids']),total_request_bps_int64=case['total_request_bps_int64'])
     if case['total_request_bps_int64']!=len(case['aircraft_ids'])*21600000:raise ValueError('exact original all-plane total')

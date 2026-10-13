@@ -43,7 +43,8 @@ def create(app,body,policy):
         if commit!=plan.get('scientific_commit'):raise ValueError('scientific epoch differs from source')
         run_id=new_id(policy.run_prefix(contract) if hasattr(policy,'run_prefix') else ('prepare_ai_search_r2' if contract['mode']=='prepare_common' else 'evaluate_ai_search_r2'))
         directory=store.job_dir(run_id);directory.mkdir()
-        model_dir=store.models_root/run_id;model_dir.mkdir()
+        model_dir=policy.model_directory(store,contract,run_id) if hasattr(policy,'model_directory') else store.models_root/run_id
+        model_dir.mkdir(exist_ok=hasattr(policy,'model_directory'))
         atomic_json(owner_path,{'group':policy.GROUP,'run_id':run_id,'request_id':request,'request_hash':payload_sha,
             'archive_root':str(store.archive_root),'job_path':str(directory/'job.json'),'status':'reserved','at':now()})
         refs={};config=deepcopy(contract['config'])
