@@ -1,0 +1,79 @@
+{
+  "schema": "R7ReadOnlyCopyProvenanceV1",
+  "original_head": "29e23a6bb2bcaf594724cb63c1a447b8b49e4f46",
+  "source_freeze_status": "uncommitted_read_only_ancestor",
+  "files": [
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\src\\satellite_rl\\workbench\\r6_model_train.py",
+      "original_sha256": "1a69df781dba1c69f2b6d1be38a6dc236d8b31ad7dc222863a36c70c653e70c0",
+      "copied_to": "src/satellite_rl/workbench/r7_model_train.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\src\\satellite_rl\\workbench\\r6_model_io.py",
+      "original_sha256": "5800bdd8dde112598f144bfc406344037fd590c5586521fd58972ea00105ba9e",
+      "copied_to": "src/satellite_rl/workbench/r7_model_io.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\src\\satellite_rl\\workbench\\r6_model_limits.py",
+      "original_sha256": "c9e2423b071476285e8c481b4c6702597f6deed02637bd4a5fa29c9bba5527cb",
+      "copied_to": "src/satellite_rl/workbench/r7_model_limits.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\src\\satellite_rl\\workbench\\r6_model_eval_stage.py",
+      "original_sha256": "13d5a636e461df1366c16ac2f0fdf096ce4da1a645c241f1e8e0677a017920d7",
+      "copied_to": "src/satellite_rl/workbench/r7_model_eval_stage.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\src\\satellite_rl\\workbench\\r6_model_d5_stage.py",
+      "original_sha256": "11c8b39ad28e534728f0171ba7e6e14de46883571bcf889b2c456014bceae667",
+      "copied_to": "src/satellite_rl/workbench/r7_model_d5_stage.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\src\\satellite_rl\\workbench\\r6_node_audit.py",
+      "original_sha256": "128a1db4d2974521a7ca33fb939981e6fd6945e5c5742379d314be1322fc37c1",
+      "copied_to": "src/satellite_rl/workbench/r7_node_audit.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\src\\satellite_rl\\workbench\\r6_model_freeze.py",
+      "original_sha256": "45a8afab7e6682c13fe64762ab3d9f89e7f056ad4f8beeccdb0fd0cea1c047d0",
+      "copied_to": "src/satellite_rl/workbench/r7_model_freeze.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\scripts\\stage1_ai_search_r6model\\supply.py",
+      "original_sha256": "b4e5e731da169f73fec0d7038983faf8a0f1df52e9287e3bc640a08a2dd87927",
+      "copied_to": "scripts/stage1_ai_search_r7/supply.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\scripts\\stage1_ai_search_r6\\label_audit.py",
+      "original_sha256": "b335e278ba99f15b188fda838e22b16e73b439233ca21398f30b9eb6b4cad2d5",
+      "copied_to": "scripts/stage1_ai_search_r7/label_audit.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\src\\satellite_rl\\workbench\\ai_search_r6_stage.py",
+      "original_sha256": "e04109aeaf3db0be1f59db4fcdf606daf92d13becaef30c98be496bb52da6fe1",
+      "copied_to": "src/satellite_rl/workbench/r7_stage.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\src\\satellite_rl\\workbench\\r6_resources.py",
+      "original_sha256": "6de255de241602486cc787a4529ce2e3b99ac98a55e9d58c0bfc69e624a775c9",
+      "copied_to": "src/satellite_rl/workbench/r7_resources.py",
+      "adapted": true
+    },
+    {
+      "original_path": "C:\\Users\\Admin\\.codex\\worktrees\\stage1-ai22\\paper\\tests\\test_ai_search_r6_model_ops.py",
+      "original_sha256": "ec4485c5edc248fd6b92c6c93072485d67b93eba2220aca954054f3b5df839e5",
+      "copied_to": "tests/test_ai_search_r7_checkpoint_mock.py",
+      "adapted": true
+    }
+  ]
+}

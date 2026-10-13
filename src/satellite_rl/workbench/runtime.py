@@ -251,6 +251,14 @@ class Scheduler:
 
     def _launch(self, job, status):
         directory = self.store.job_dir(job["run_id"])
+        if job.get("experiment_id") == "S1-AI17-R7":
+            try:
+                from . import coverage_ai_search_r7, frozen_round_tasks
+                frozen_round_tasks.verify(self.store,job,coverage_ai_search_r7)
+                observation=coverage_ai_search_r7.resource_admission(self.store,job)
+                atomic_json(directory/"resource_before_launch.json",observation)
+            except Exception as error:
+                self._status(directory,status,stage="queued",queue_reason=str(error));return
         if job.get("experiment_id") == "S1-AI17-R6":
             try:
                 from . import coverage_ai_search_r6, frozen_round_tasks
@@ -354,6 +362,9 @@ class Scheduler:
                 return
         env = dict(os.environ)
         env["PYTHONPATH"] = str(Path(job["source_root"]) / "src")
+        if job.get("experiment_id") == "S1-AI17-R7":
+            env["PYTHONPATH"] += os.pathsep + str(Path(job["source_root"]))
+            env["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         r6_dependency = None
         if job.get("experiment_id") == "S1-AI17-R6":
             try:
