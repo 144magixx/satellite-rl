@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 11:42 S1-AI17-R3方案19与唯一科学合同v2已根冻结，三路Sol并行实现；正式先导尚未启动。** [方案19](docs/第一阶段/方案/19_学习辅助可变束数与束宽构造方案.md)从原始飞机输入生成公共多宽度候选束，以一个监督计数网络筛选候选，再由共同整数补全确定实际非空N与逐束宽度。固定512中心、三菜单各两副本、全部飞机唯一整数归属；这是有限候选域，不宣称原连续问题全局最优。[合同v2](outputs/experiments/first_stage_ai_search_20261013/design/round3_design.json)SHA`2ddacb75…`与[根设计验收](outputs/experiments/first_stage_ai_search_20261013/design/round3_root_design_acceptance.json)保留原v1和更改依据，初批24开发案例/六法/最多144次MILP，经G0/G1/G2才追加56；全80达标后才768新教师与一个seed51001/6000更新模型，后续验证/test另有冻结门槛。整轮上限4544求解调用、26496名义solver秒；输入、模型、原生启动等成本另账，不冒称总墙钟上界。
+
+唯一highspy1.15.1已安装到本地及18/24/73各自R3隔离vendor，官方wheelSHA、每端18成员、实际包路径/CUDA和21项options set/get均已核；根独立核本地成员。[依赖回执](outputs/experiments/first_stage_ai_search_20261013/round3/engineering/vendor_receipt.json) · [根验收](outputs/experiments/first_stage_ai_search_20261013/round3/engineering/root_vendor_acceptance.json)。尚未调用native run或setSolution、未做工程toy/CUDA更新；完整可行起点被原生实际接受仍须G0资格。Astra设计已交付，Sol分别实现科学核心、工作台与运行、独立审计/闸门，均在新`stage1-ai19`树；旧R1/R2源和数据保留。74仍为S2-F20，不准入；科学AI更新和新val/test算法评价仍0。
+
 **2026-10-13 S1-AI17-R2全80开发审计与根复核已完成；G0/G1/G2通过，G3未过，继续设计输入端学习构造。** 先导24与新增56按原SHA索引合并为20母80案例/160方法行、1280任务记录；新56审计与累计80均formal_ready、未解决问题0，根逐80审计文件SHA与身份复核并独立重计。[根全80验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/root_full80_gate_acceptance.json) · [完整位置与源码/结果入口](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension_location.json)。只读流水39436及所属进程树全部退出，总390.203秒，这不是算法求解耗时；76份后处理产物校验通过，没有重算原24或训练模型。
 
 D1完整池80/80、目标36/80且覆盖16/20母；D0完整46/80、目标30/80且覆盖13母，质量分母保留80。D1相对规则的离线oracle射线对中位节省0%，相对单随机75.6342%；固定A区重分覆盖同36成功案例、主成本相对oracle超额中位0%，仍不支持旧八槽排序训练（固定槽几何调用并非全不增加，不能说所有成本或终点等价）。最终共同变N和保留束真实宽度为D0 33/80、D1 39/80；36个D1固定A首命中全不改N/宽度、全改归属，33中心不动3改变。D1最终峰值均值1665.17Mbps低于D0的1711.86，但逐景13低/22高/45同，不能宣布全面优胜。[独立数字/机制复核](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/root_report14_numeric_acceptance.json)。
