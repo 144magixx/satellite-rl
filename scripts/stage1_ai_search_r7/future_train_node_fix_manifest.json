@@ -1,10 +1,10 @@
 {
   "schema": "R7FutureTrainNodeFixEngineeringV1",
-  "status": "pure_checked_unexecuted_pending_independent_review_and_new_phase_source_freeze",
+  "status": "TN04_TN05_repaired_pure_checked_unexecuted_pending_new_independent_source_review",
   "frozen_data_source_commit": "13702ff5d4c2aac8c559ddf79bdd2d8202dec45f",
   "data_source_not_modified": true,
-  "pure_tests": 44,
-  "AST_files": 39,
+  "pure_tests": 48,
+  "AST_files": 40,
   "actual_prepare": 0,
   "actual_T": 0,
   "actual_D5": 0,
@@ -88,7 +88,7 @@
     "scripts/stage1_ai_search_r7/preflight.py": "43a87f5d482b2331a2740cc71df1fe8bdc4633c4071e23b9babe3a30919913ab",
     "scripts/stage1_ai_search_r7/supply.py": "0300ce56f2d69398096fd627436e23325c9579b2b7672cb584fa0db1182d16b8",
     "scripts/stage1_ai_search_r7/__init__.py": "4bb5695386810501adf92a38ac42614645b506219a387d61742115af082b1803",
-    "src/satellite_rl/workbench/coverage_ai_search_r7.py": "92562e13519871c2d180bbeecce165337bdeef5563409b2bc77cc722b25507d9",
+    "src/satellite_rl/workbench/coverage_ai_search_r7.py": "3be140cb4e85fb5313b8027f0ab5a801cf21659e0562213d9c515ff62c2f9849",
     "src/satellite_rl/workbench/r7_case_binding.py": "332d46a334432d474e109e7a9470747a27c6486186ac5d5891be5e4975223d47",
     "src/satellite_rl/workbench/r7_case_worker.py": "ac8b652356639c2475ab966b68919e66e75b8ccfe4b3b3e1313e09da95e8cfdb",
     "src/satellite_rl/workbench/r7_labels.py": "3e6a6156e3622551d389f2cc9c46f58591483b3652d6d4540a783e1f7d430f28",
@@ -106,14 +106,26 @@
     "src/satellite_rl/workbench/r7_parent.py": "a16021518c2fc659ba1ae823382596c5655d6e98d119b090ab56a4c54e633888",
     "src/satellite_rl/workbench/r7_publish.py": "222f80d5536aa61faacc63b8e41c1ae8597d31523fec932bc80e69457a84bc35",
     "src/satellite_rl/workbench/r7_resources.py": "82ae0db7a011875ea218a998df91d3c22c470dd8daec0dacfaba3fea66284a48",
-    "src/satellite_rl/workbench/r7_runner.py": "32166711da689a652150032d7774ecb6d3fcfe1196cb81a827c2be1a023e03c5",
+    "src/satellite_rl/workbench/r7_runner.py": "0f4c9273bed883f5626db96b3915e97d7143954cc3bfe5cd1931a81a60e9814a",
     "src/satellite_rl/workbench/r7_source_bridge.py": "ffefd013ec0fb74a77ba85cc2e4646709dfbfd18fc8fe7436c23a285977991ee",
     "src/satellite_rl/workbench/r7_stage.py": "ae261d86178cc3977687faedfef0168b0ab082cfd262d90d904e326d7c25d5b2",
-    "src/satellite_rl/workbench/r7_train_binding.py": "af9bd9e8d963681f46c9237a6c361ee666b17fd07b56abb66fc484f2c5adc9e9",
+    "src/satellite_rl/workbench/r7_training_dataset.py": "9e03a5087b7ab58355e446e5afa0c4d91cc63408c2b0cd745a4c346d3af91fae",
+    "src/satellite_rl/workbench/r7_train_binding.py": "209317e97c087fef3f96f279a1d45d22432dee37219f12d32b46080afd95ebbb",
     "src/satellite_rl/workbench/r7_uniform_data.py": "9a7e18a49462b0cb8d097dbd4345b0278ba960b945ee9e0885181791b135f405",
     "src/satellite_rl/workbench/frozen_round_tasks.py": "a6c06ac104f9244c762b4de7018a5079223e847d0d94233219a7f1f2cf1755e3",
     "src/satellite_rl/workbench/runner.py": "7655a16cd70b2608184c219f8bda1d5ac9180af13756812f8d837f4b0bf13f13",
     "src/satellite_rl/workbench/runtime.py": "00e4f6ad759e742a317c3adffbd2b864cce6ee5034b8d3942463bb20bb409d28",
     "src/satellite_rl/workbench/server.py": "5c329a500d1c9cfefcb8e72355774d050d7eb5bad7acb72329bcfcd9a508a63e"
-  }
+  },
+  "prior_failed_review_source_commit": "f4c903973cca2ecc70e9f37360dc039e3533ac06",
+  "actual_CUDA_test_calls": 0,
+  "actual_model_or_numeric_qualification_calls": 0,
+  "runtime_entry_fix": "fresh GPU-mode R7worker configure_v3_runtime exactly once before frozen_round_tasks.verify/policy.deployment; exact identity reused downstream; preinitialized CUDA failclosed",
+  "dataset_entry_fix": "API train_setup admission + worker before supply + publish_setup + validate_setup/train source bind actualconfig.train.refSHA == labelsGate.sourceDatasetSHA == qualifiedManifest.sourceDatasetSHA; exact root authority/model/gate retained",
+  "new_pure_tests": [
+    "actual r7worker→configure→actual deployment order with fake CUDA only",
+    "original v3 pre_cuda_environment rejects already initialized fake CUDA beforeverify/train",
+    "config changed dataset SHA refuses despite internally matching gate/table",
+    "qualified orlabels gate source SHA mismatch refuses"
+  ]
 }

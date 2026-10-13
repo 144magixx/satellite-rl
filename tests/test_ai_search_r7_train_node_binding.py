@@ -14,6 +14,7 @@ def setup_fixture():
                   model_identity='one_r7',executor_port=20474,case_indices=[0],dataset_ref=ref('dataset'),training_refs={k:refs[k] for k in TRAIN_KEYS},
                   run_id='setup_original',runtime_identity={'fixed':'runtime'},charged_train_setup_seconds=3.,
                   activity_origin=dict(scope='entire_original_train_setup_only_once',setup_process_pid=1,setup_process_birth=2,supply_started_ref=ref('started')))
+    endpoint['dataset_source_binding']={'pure_mock':'matching_original_source'}
     started=dict(qualified_ref=refs['qualified'],gate_ref=refs['labels_gate'],charged_to_training_activity=True)
     supply=dict(qualified_ref=refs['qualified'],normalization_ref=refs['normalization'],cache_ref=refs['feature_cache'],charged_supply_seconds_including_publication=2.)
     return refs,endpoint,started,supply
@@ -21,14 +22,14 @@ def setup_fixture():
 class SetupBindings(unittest.TestCase):
     def test_every_setup_ref_same_endpoint_and_clock(self):
         refs,endpoint,started,supply=setup_fixture()
-        with patch('satellite_rl.workbench.r7_train_binding.pin',side_effect=lambda r:Path(r['path'])),patch('satellite_rl.workbench.r7_train_binding.read_json',side_effect=lambda p,*a:started if str(p).endswith('started') else supply):
+        with patch('satellite_rl.workbench.r7_training_dataset.validate_training_dataset',return_value=endpoint['dataset_source_binding']),patch('satellite_rl.workbench.r7_train_binding.pin',side_effect=lambda r:Path(r['path'])),patch('satellite_rl.workbench.r7_train_binding.read_json',side_effect=lambda p,*a:started if str(p).endswith('started') else supply):
             self.assertEqual(validate_setup(endpoint,refs['train_setup_endpoint'],refs,'one_r7',20474,[0],ref('dataset')),3.)
             for key in TRAIN_KEYS:
                 changed=copy.deepcopy(refs);changed[key]=ref('different_'+key)
                 with self.subTest(key=key),self.assertRaises(ValueError):validate_setup(endpoint,refs['train_setup_endpoint'],changed,'one_r7',20474,[0],ref('dataset'))
     def test_supply_clock_and_original_process_cannot_reset(self):
         refs,endpoint,started,supply=setup_fixture()
-        with patch('satellite_rl.workbench.r7_train_binding.pin',side_effect=lambda r:Path(r['path'])),patch('satellite_rl.workbench.r7_train_binding.read_json',side_effect=lambda p,*a:started if str(p).endswith('started') else supply):
+        with patch('satellite_rl.workbench.r7_training_dataset.validate_training_dataset',return_value=endpoint['dataset_source_binding']),patch('satellite_rl.workbench.r7_train_binding.pin',side_effect=lambda r:Path(r['path'])),patch('satellite_rl.workbench.r7_train_binding.read_json',side_effect=lambda p,*a:started if str(p).endswith('started') else supply):
             endpoint['charged_train_setup_seconds']=1.
             with self.assertRaises(ValueError):validate_setup(endpoint,refs['train_setup_endpoint'],refs,'one_r7',20474,[0],ref('dataset'))
     def test_original_global_owner_required_and_all_refs_bound(self):

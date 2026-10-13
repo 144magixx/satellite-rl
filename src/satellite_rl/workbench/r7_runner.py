@@ -16,17 +16,21 @@ def run_job(directory,resume=False):
             update(env_step=progress.get('update',0),update_step=progress.get('update',0),active_seconds=progress.get('active_seconds'),completed_cases=progress.get('update',parallel.get('completed_cases',status.get('completed_cases',0))))
     try:
         with exclusive_lock(directory/'worker.lock'),exclusive_lock(Path(job['archive_root']).parent/'ops/compute.lock'):
+            mode=job['mode'];refs=job['model_inputs'];runtime=None
+            import time
+            setup_began=time.monotonic()
+            if mode in ('train_setup','train2000','node2000'):
+                # Configure the fresh worker before deployment queries CUDA.
+                from satellite_rl.coverage.ai_search_r6.runtime_v3 import configure_v3_runtime
+                runtime=configure_v3_runtime();atomic_json(directory/'runtime_v3_identity.json',runtime)
             frozen_round_tasks.verify(Store(job['archive_root'],source_root=job['source_root']),job,policy);update(stage='running');threading.Thread(target=heartbeat,daemon=True).start()
-            mode=job['mode'];refs=job['model_inputs']
             if mode in ('data_train_dev','labels'):
                 from .r7_parallel import parallel_cases
                 result=parallel_cases(job,config,directory);completed=len(result['cases'])
             else:
-                import time
-                setup_began=time.monotonic()
-                from satellite_rl.coverage.ai_search_r6.runtime_v3 import configure_v3_runtime
-                runtime=configure_v3_runtime();atomic_json(directory/'runtime_v3_identity.json',runtime)
                 if mode=='train_setup':
+                    from .r7_training_dataset import validate_training_dataset
+                    validate_training_dataset(refs,config['datasets']['train'],job['model_identity'])
                     from .r7_model_io import signed_json,verify_model_source_equivalence
                     initial=signed_json(refs['initialization_receipt']);verify_model_source_equivalence(refs['source_equivalence'],refs['initialization_receipt'],initial)
                     if runtime!=initial['training_runtime_identity']:raise ValueError('supply actual74 qualified runtime identity')

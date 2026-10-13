@@ -13,6 +13,8 @@ def publish_setup(job,config,directory,began,runtime,owner):
     directory=Path(directory);refs=job['model_inputs']
     if not set(INPUT_KEYS)<=set(refs):raise ValueError('complete setup original input refs required')
     for key in INPUT_KEYS:pin(refs[key])
+    from .r7_training_dataset import validate_training_dataset
+    dataset_binding=validate_training_dataset(refs,config['datasets']['train'],job['model_identity'])
     supply=directory/'supply';generated={k:dict(path=str(supply/(name+'.json')),sha256=digest(supply/(name+'.json'))) for k,name in (('normalization','normalization'),('feature_cache','feature_cache'),('supply_endpoint','supply_endpoint'))}
     terminal=read_json(pin(generated['supply_endpoint']),{});started=supply/'supply_started.json'
     charge=time.monotonic()-began
@@ -22,7 +24,7 @@ def publish_setup(job,config,directory,began,runtime,owner):
                   model_identity=job['model_identity'],executor_port=job['executor_port'],run_id=job['run_id'],
                   source_commit=job['scientific_commit'],source_manifest_sha256=job['source_manifest_sha256'],
                   training_refs={**{k:refs[k] for k in INPUT_KEYS},**generated},dataset_ref=config['datasets']['train'],case_indices=job['case_indices'],
-                  runtime_identity=runtime,charged_train_setup_seconds=charge,
+                  runtime_identity=runtime,charged_train_setup_seconds=charge,dataset_source_binding=dataset_binding,
                   activity_origin=dict(supply_started_ref=dict(path=str(started),sha256=digest(started)),setup_process_pid=os.getpid(),setup_process_birth=birth(os.getpid()),scope='entire_original_train_setup_only_once'),
                   optimizer_updates=0,future_dispatch_allowed=False)
     path=directory/'train_setup_endpoint.json';atomic_json(path,endpoint);setup_ref=dict(path=str(path),sha256=digest(path))
@@ -37,6 +39,8 @@ def validate_setup(endpoint,setup_ref,refs,model_identity,executor_port,case_ind
     expected=endpoint.get('training_refs',{})
     if set(expected)!=set(TRAIN_KEYS) or any(refs.get(k)!=expected[k] for k in TRAIN_KEYS):raise ValueError('training refs must all match one exact original train_setup')
     for key in TRAIN_KEYS:pin(expected[key])
+    from .r7_training_dataset import validate_training_dataset
+    if endpoint.get('dataset_source_binding')!=validate_training_dataset(refs,dataset_ref,model_identity):raise ValueError('actual original setup dataset/labels/qualified source binding changed')
     origin=endpoint.get('activity_origin',{})
     if origin.get('scope')!='entire_original_train_setup_only_once' or type(origin.get('setup_process_pid'))is not int or type(origin.get('setup_process_birth'))is not int:raise ValueError('original setup activity process identity missing')
     started=read_json(pin(origin['supply_started_ref']),{})

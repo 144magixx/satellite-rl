@@ -71,6 +71,8 @@ def validate_admission(p,plan_ref,review_ref):
         if p['phase']=='train_setup':
             from .r7_train_binding import INPUT_KEYS
             if not set(INPUT_KEYS)<=set(refs) or refs['labels_gate']!=p['prerequisite_gate_ref']:raise ValueError('complete original setup inputs and exact labels gate')
+            from .r7_training_dataset import validate_training_dataset
+            validate_training_dataset(refs,task['config']['datasets']['train'],p['model_identity'])
         if p['phase']=='train2000':
             from .r7_train_binding import validate_setup
             setup_ref=refs.get('train_setup_endpoint')
