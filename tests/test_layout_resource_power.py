@@ -99,6 +99,7 @@ class LayoutPowerChecks(unittest.TestCase):
         self.assertLessEqual(float(record['refined_whole_beam_power_w'].sum()), 3000)
         self.assertEqual(read_wire(wire_bytes(record))['content_sha256'], record['content_sha256'])
         self.assertEqual(record['diagnostics']['options']['maxeval'], 8)
+        self.assertLessEqual(record['diagnostics']['total_capacity_attempts_including_record'], 8)
         np.testing.assert_array_equal(record['actual_slot_count'], [2])
 
     def test_solver_budget_alias_and_partial_allocation_are_rejected(self):

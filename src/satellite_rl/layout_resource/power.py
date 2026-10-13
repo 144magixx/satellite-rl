@@ -29,7 +29,8 @@ class LayoutPowerProblem(FixedAllocationPhysics):
         stage = UniformStage3FixedInput.from_layout_and_allocation(
             stage3_input.case, stage3_input.layout, stage3_input.allocation,
             stage3_input.authority, stage3_input.physics)
-        if stage.allocation['requested_actions_separate'].get('terminal') is not True:
+        requested = stage.allocation['requested_actions_separate']
+        if not isinstance(requested, dict) or requested.get('terminal') is not True:
             raise ValueError('complete terminal S2 allocation required; partial export refused')
         self.stage = stage
         fixed = stage.fixed_initial_evaluation()
@@ -102,26 +103,31 @@ def refine_layout_power(stage3_input, *, options):
     for key in ("maxiter", "maxeval"):
         if type(options[key]) is not int or options[key] < 1:
             raise ValueError("positive integer solver budget required")
+    if options['maxeval'] < 4:
+        raise ValueError('maxeval must cover fixed input, solver initial, final check and record (at least 4)')
     seconds = options["max_time_seconds"]
     if type(seconds) not in (int, float) or not np.isfinite(seconds) or seconds <= 0:
         raise ValueError("finite positive solver time budget required")
     problem = LayoutPowerProblem(stage3_input)
     started = perf_counter()
-    evaluations = 0
+    evaluations = 1  # Constructor's shared fixed-initial capacity evaluation.
     original_evaluate = problem.evaluate
 
     def counted(power_w, with_jacobian=False):
         nonlocal evaluations
         evaluations += 1
-        try:
-            return original_evaluate(power_w, with_jacobian)
-        except ValueError as error:
-            raise _InfeasibleTrial(str(error)) from error
+        power = np.asarray(power_w, dtype=np.float64)
+        if (power.shape != (problem.beam_count,) or not np.isfinite(power).all()
+                or (power < 0).any() or (power[~problem.active] != 0).any()
+                or float(power.sum()) > problem.power_budget_w):
+            raise _InfeasibleTrial('solver proposed power outside shared constraints')
+        return original_evaluate(power, with_jacobian)
 
     problem.evaluate = counted
     try:
+        solver_options = dict(options, maxeval=options['maxeval'] - 3)
         result = optimize_priority(problem, problem.initial_power_w.copy(),
-                                   method="sca_si_lp", options=options)
+                                   method="sca_si_lp", options=solver_options)
         power = np.asarray(result["power_w"], np.float64)
         counted(power)  # Strict shared constraints also apply at publication.
         diagnostics = dict(status="completed_bounded_solver", solver=result,
@@ -137,5 +143,6 @@ def refine_layout_power(stage3_input, *, options):
     problem.evaluate = original_evaluate
     diagnostics["options"] = deepcopy(options)
     diagnostics["record_verification_calls"] = 1
+    diagnostics['total_capacity_attempts_including_record'] = evaluations + 1
     diagnostics["adapter_elapsed_seconds"] = perf_counter() - started
     return problem.refined_record(power, method="sca_si_lp", diagnostics=diagnostics)
