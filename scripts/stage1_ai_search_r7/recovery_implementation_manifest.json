@@ -1,0 +1,39 @@
+{
+  "schema": "R7Labels74OperationalRepairEngineeringV1",
+  "status": "pure_checked_pending_root_exact_contract_source_and_fresh_sameID_API_admission",
+  "scientific_source_commit": "13702ff5d4c2aac8c559ddf79bdd2d8202dec45f",
+  "scientific_snapshot_members": 698,
+  "original_run_id": "r7_labels_20261013_234807_312cdce7",
+  "scope": "only74 sameID residual139; preserve147 complete; failed2 originaldenominator",
+  "pure_tests": 6,
+  "AST_files": 4,
+  "new_science_calls": 0,
+  "POST_resume_calls": 0,
+  "service_orworker_deployment_calls": 0,
+  "changes_to_original_scientific_files": 0,
+  "source_file_sha256": {
+    "src/satellite_rl/workbench/r7_recovery_ops.py": "c70135b46d3cf8f80b90d9b329a9bd0dab997531deda5bc82305cb6ca56f5cfc",
+    "scripts/stage1_ai_search_r7/recovery_bootstrap.py": "a163f28b5dcbf4b3dbf7b8cfc4868f9cb46ab6da854629a4139e8a7b8827b5c1",
+    "scripts/stage1_ai_search_r7/recovery_server.py": "2417754648f2768c8f4d5d85a3b89a21494d02f41bd0a212992b1eacf0cebb38",
+    "scripts/stage1_ai_search_r7/recovery_contract.py": "7954e206d91c5c40096f12958f917ce960b6d593bd8de168e55e505aa9d963cc"
+  },
+  "physical_recovery_slots": {
+    "prepare": 139,
+    "T": 139,
+    "D5": 139
+  },
+  "failed_original_cases": [
+    295,
+    297
+  ],
+  "original_job_config_request_owner_bytes_unchanged": true,
+  "ops_metadata": "separate operations_recovery.json sidecar and explicit bootstrap args",
+  "RSSfix": "onlyconfirmed gone/zombie /proc ESRCH ignored; permission/malformed/livePID_ESRCH remain fatal; same2GiBcase/4GiBlane meaning",
+  "original_science_stages": "stilloriginal137 W/T/D commands and functions; wrapper onlyRSS observer propagated in newcasebootstrap",
+  "pending": [
+    "root exact originaljob/config/index/owner/698/PID birth recheck",
+    "root opssource+contract+addendum acceptance",
+    "root once exactsameID resume only",
+    "new independent failure-aware postprocessor before labelgate"
+  ]
+}
