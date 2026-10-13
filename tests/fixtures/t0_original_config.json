@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "name": "G11 T0",
+  "algorithm": "sac",
+  "network": {
+    "kind": "transformer",
+    "transformer_layout": "tsac_natural_context",
+    "hidden_sizes": [
+      256,
+      256
+    ],
+    "activation": "relu",
+    "dropout": 0.0,
+    "cnn_channels": [
+      16,
+      32
+    ],
+    "kernel_size": 3,
+    "embedding_dim": 128,
+    "num_heads": 8,
+    "num_layers": 2,
+    "feedforward_dim": 512,
+    "sac_policy_structure": "factorized",
+    "sac_critic_structure": "additive",
+    "temporal_mode": "none",
+    "temporal_window": 16,
+    "graph_mode": "none"
+  },
+  "state": {
+    "features": [
+      "beam",
+      "power",
+      "interference",
+      "occupancy",
+      "natural_global_context"
+    ],
+    "demand_visibility": "known",
+    "context_level": "compact"
+  },
+  "reward": {
+    "preset": "legacy_repaired",
+    "terms": [
+      {
+        "id": "si_delta",
+        "weight": 1,
+        "scale": 1,
+        "timing": "step"
+      }
+    ]
+  },
+  "environment": {
+    "profile": "europe_v1",
+    "power_budget_w": 3000,
+    "basic_fraction": 0.1,
+    "action_mode": "legacy_clip",
+    "action_mask": "joint_feasible",
+    "power_levels_w": [
+      5,
+      10,
+      15,
+      20,
+      25,
+      30,
+      35,
+      40,
+      45,
+      50
+    ]
+  },
+  "training": {
+    "seed": 51001,
+    "scene_order": "shuffle_each_cycle",
+    "scene_order_seed": 51001,
+    "total_steps": 150000,
+    "batch_size": 256,
+    "actor_lr": 1e-05,
+    "critic_lr": 0.0001,
+    "alpha_lr": 0.0001,
+    "gamma": 0.99,
+    "tau": 0.005,
+    "replay_capacity": 20000,
+    "warmup_steps": 2000,
+    "update_every": 1,
+    "gradient_steps": 1,
+    "initial_alpha": 0.01,
+    "target_entropy": 6.9,
+    "alpha_mode": "fixed",
+    "fixed_alpha": 0.01,
+    "gradient_clip": 10,
+    "rollout_steps": 256,
+    "ppo_epochs": 4,
+    "gae_lambda": 0.95,
+    "clip_ratio": 0.2,
+    "entropy_coef": 0.01,
+    "value_coef": 0.5,
+    "eps_start": 1,
+    "eps_end": 0.05,
+    "eps_decay_steps": 5000,
+    "target_update_interval": 500,
+    "checkpoint_interval": 10000,
+    "log_interval": 50,
+    "device": "cuda"
+  },
+  "evaluation": {
+    "validation_count": 20,
+    "test_count": 100,
+    "validation_seed": 274000,
+    "test_seed": 275000,
+    "interval_steps": 10000,
+    "action_mode": "stochastic",
+    "repeats": 3,
+    "extra_steps": [
+      0,
+      2000,
+      5000
+    ]
+  },
+  "telemetry": {
+    "mode": "async",
+    "flush_interval_seconds": 2.0,
+    "queue_capacity": 2048
+  }
+}
