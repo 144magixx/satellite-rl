@@ -82,9 +82,16 @@ for observation in contract['original_pid_births']:
  else:raise ValueError('untyped PID birth')
  need(not alive,'original owned PID still live: '+str(observation['pid']))
 opsdir=Path(plan['operations_dir']);allowed=Path('/home/u2024110224/first_stage_satellite_rl/s1_ai17/20474/round7/operations_recovery')
-need(opsdir.is_relative_to(allowed) and not opsdir.exists(),'new independent operations epoch required')
-opsdir.mkdir(parents=True)
-lock=(opsdir/'deployment.lock').open('xb');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+need(opsdir.is_relative_to(allowed),'independent original operations epoch required')
+if opsdir.exists():
+ need(plan.get('reuse_staged_only') is True,'existing operations epoch requires explicit stage-only recovery')
+ pin(plan['previous_staged_preflight_ref'])
+ expected={str(Path(item['ref']['path']).relative_to(opsdir)) for item in payload['assets'].values() if Path(item['ref']['path']).is_relative_to(opsdir)}|{'deployment.lock','deployment_preflight.json'}
+ need({str(p.relative_to(opsdir)) for p in opsdir.rglob('*') if p.is_file()}==expected,'staged-only directory has unexpected launch/receipt/new records')
+ previous=json.loads(pin(plan['previous_staged_preflight_ref']).read_text())
+ need(previous['actual_POST']==0 and previous['actual_new_science_calls']==0 and previous['plan_sha256']==plan['previous_stage_only_plan_sha256'],'original stage-only attempt differs')
+else:opsdir.mkdir(parents=True)
+lock=(opsdir/'deployment.lock').open('ab');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 for key,item in payload['assets'].items():
  ref=item['ref'];target=Path(ref['path']);data=base64.b64decode(item['base64'])
  need(target.is_relative_to(allowed) and hashlib.sha256(data).hexdigest()==ref['sha256'],'asset target/source differs')
@@ -96,13 +103,19 @@ sys.path[:0]=[str(Path(job['source_root'])/'src'),job['source_root']]
 spec=importlib.util.spec_from_file_location('satellite_rl.workbench.r7_recovery_ops',pin(contract['operations_source_refs']['module']));ops=importlib.util.module_from_spec(spec);sys.modules[spec.name]=ops;spec.loader.exec_module(ops)
 ops.validate(job,dict(contract_ref=plan['contract_ref'],root_review_ref=plan['recovery_review_ref']))
 record={'schema':'R7EndpointOperationalDeploymentV1','checked_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'plan_sha256':payload['plan_sha256'],'root_admission_sha256':payload['admission_sha256'],'original_service':old,'scientific_commit':plan['scientific_commit'],'operational_commit':plan['operational_commit'],'operations_source_refs':plan['operations_source_refs'],'source698_verified':True,'original_pid_observations_gone':len(contract['original_pid_births']),'free_bytes':free,'memory':mem,'gpu':gpu.stdout,'compute':compute.stdout,'actual_POST':0,'actual_new_science_calls':0}
-(opsdir/'deployment_preflight.json').write_text(json.dumps(record,indent=2)+'\n')
+preflight=opsdir/plan.get('preflight_filename','deployment_preflight.json')
+need(not preflight.exists(),'attempt preflight already exists; no blind deployment retry')
+preflight.open('x').write(json.dumps(record,indent=2)+'\n')
 for ref in plan['unchanged_refs'].values():pin(ref)
 def same_old():
  state=proc(old['pid']);return state is not None and all(state[k]==old[k] for k in ('birth','cmdline','cmdline_sha256','pythonpath'))
 need(same_old(),'old service identity changed before stop')
-need(hasattr(os,'pidfd_open') and hasattr(signal,'pidfd_send_signal'),'race-safe pidfd signal unavailable')
-pidfd=os.pidfd_open(old['pid']);need(same_old(),'PID reuse before stop');signal.pidfd_send_signal(pidfd,signal.SIGTERM);os.close(pidfd)
+if plan.get('termination_mode')=='fresh_exact_PID_TERM':
+ need(same_old() and Path('/proc/sys/kernel/random/boot_id').read_text().strip()==old['boot_id'],'fresh PID/birth/cmd/PYTHONPATH/boot differs before TERM')
+ os.kill(old['pid'],signal.SIGTERM)
+else:
+ need(hasattr(os,'pidfd_open') and hasattr(signal,'pidfd_send_signal'),'race-safe pidfd signal unavailable')
+ pidfd=os.pidfd_open(old['pid']);need(same_old(),'PID reuse before stop');signal.pidfd_send_signal(pidfd,signal.SIGTERM);os.close(pidfd)
 deadline=time.monotonic()+10
 while time.monotonic()<deadline:
  state=proc(old['pid'])
