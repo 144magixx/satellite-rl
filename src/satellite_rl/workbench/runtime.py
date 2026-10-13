@@ -360,6 +360,8 @@ class Scheduler:
                 from .r6_runtime_dependency import prepare as r6_dependency_prepare
                 r6_dependency = r6_dependency_prepare(self.store,job,directory,self.python)
                 env["PYTHONPATH"] = r6_dependency["pythonpath"]
+                command=[self.python,'-B','-u',r6_dependency['bootstrap_path'],'--job-dir',str(directory)]
+                if job.get('resume'):command.append('--resume')
                 atomic_json(directory/"runtime_script_dependency.json",r6_dependency)
             except Exception as error:
                 self._status(directory,status,stage="queued",queue_reason="R6 pinned script dependency rejected: "+str(error))

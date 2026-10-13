@@ -34,6 +34,9 @@ def validate_task(c,p,port):
  if c["config"]["protocol_ref"]!=p["design"]:raise ValueError("protocol differs")
  return c["config"]
 def validate_admission(p,plan_ref,review_ref):
+ if p.get('scientific_commit')=='7bb5e68456c00846f5a8b249bba19f8800ea13ee':
+  from .r6_runtime_dependency import service_validate_admission
+  return service_validate_admission(p,plan_ref,review_ref,Path(__file__).resolve().parents[3])
  audit(p);r=read_json(pin(review_ref),{})
  if not r.get("passed") or r.get("group")!=GROUP or r.get("scientific_commit")!=p["scientific_commit"] or r.get("plan_sha256")!=plan_ref["sha256"] or r.get("design_sha256")!=DESIGN_SHA:raise ValueError("root exact source-plan admission")
  pin(p["design"]);pin(p["identity_ref"])
