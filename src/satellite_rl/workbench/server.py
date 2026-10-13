@@ -75,7 +75,10 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict):
                         raise ValueError("请求须为JSON对象")
-                if parts[1:2] == ["ai-search-r5"]:
+                if parts[1:2] == ["ai-search-r6"]:
+                    from .coverage_ai_search_r6 import api as r6_api
+                    self._json(r6_api(self.server.application, method, parts[2:], body))
+                elif parts[1:2] == ["ai-search-r5"]:
                     from .coverage_ai_search_r5 import api as r5_api
                     self._json(r5_api(self.server.application, method, parts[2:], body))
                 elif parts[1:2] == ["ai-search-r4"]:
