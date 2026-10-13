@@ -4,3 +4,8 @@ scripts/stage1_ai_search_r3/round3_design.json -text whitespace=cr-at-eol
 scripts/stage1_ai_search_r4/round4_design.json -text whitespace=cr-at-eol
 scripts/stage1_ai_search_r5/round5_design.json -text whitespace=cr-at-eol
 scripts/stage1_ai_search_r6/round6_design.json -text whitespace=cr-at-eol
+
+# R7 new operational sources are canonical LF bytes before root source freeze.
+scripts/stage1_ai_search_r7/** -text
+src/satellite_rl/workbench/*r7*.py -text
+tests/test_ai_search_r7*.py -text
