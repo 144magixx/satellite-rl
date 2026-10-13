@@ -24,7 +24,8 @@ def execute(req,directory):
   owner=None
   if req['arm']=='A':
    with np.load(pin(refs['actual_model_outputs_NPZ']),allow_pickle=False) as z:owner=z['owner'].copy()
-  provenance=dict(designSHA=plan['design_ref']['sha256'],actualarm=req['arm'],sourceepoch=plan['scientific_commit'],sourcefileSHA=core_ref['sha256'],original_case_ref=refs['shared_case'],original_prepared_ref=refs['original_prepared_Wenv'],AI_envelope_ref=refs['AI_envelope'],owner_tensor_ref=refs['actual_model_outputs_NPZ'],checkpointSHA=plan['checkpoint_ref']['sha256'],identity8=case['identity'])
+  provenance=dict(design_sha256=plan['design_ref']['sha256'],actual_arm=req['arm'],source_epoch=plan['scientific_commit'],adapter_source_SHA=core_ref['sha256'],case_identity=case['identity'],checkpoint_sha256=plan['checkpoint_ref']['sha256'],source_refs={key:refs[key] for key in ('shared_case','original_scene','original_prepared_Wenv','AI_envelope','actual_model_outputs_NPZ','R7_RULE_final','R7_T_final')})
+  if req['arm']=='A':provenance['owner_array_sha256']=read_asset(refs['AI_envelope'])['valid_aircraft_pointer_owner_tensor_refs_and_SHAs']['sha256']['owner']
   def stopped():
    try:boundary(plan,'local_candidate_boundary');return False
    except Exception:return True
