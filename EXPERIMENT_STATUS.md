@@ -1,5 +1,11 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 16:15 S1-AI17-R4-B0全部科学计算与报告16完成，原G1/G2未通过；继续方案21设计复核。** 三原任务均completed40/40，二次真实GET确认worker退出；3264原文件/543804142B采集及科学refs SHA闭合。根重算原冻结24景门槛：G0=true、G1=false、G2=false；T合格24、EXACT同质量24、PERT同质量3（要求18）、质量改善4（要求6）。PERT虽10个derived成功，另14回退，且成功中7不满足质量；RULE同教师质量13、随机0。[根门槛验收](outputs/experiments/first_stage_ai_search_20261013/round4/analysis/root_gate_acceptance.json)。不进入本轮768教师或2000/6000训练，不开新val/test；整体研究继续，原失败不回写。
+
+[正式报告16](docs/第一阶段/实验报告/16_离散分组与共同几何修复先导对照.md)（SHA`ed4b68bd…`）、五PNG/PDF与84项文档核验已根通读/逐PNG看图/重核门槛。T相对Wenv实际N变19/24、宽度分布24/24；RULE/EXACT各24，PERT10、随机0，fallback原有异宽不算新改善。全部实际N≤200、宽度0.3–1.0且覆盖/归属/守恒/Ω合格，尚无AI贡献。PERT回退为资源修复7、最终锚点回投6、孤机1，随机为资源13/孤机11，不能归因此前RSS监测。受限完整成本RULE/RANDOM/EXACT/PERT均值19.8642/37.2654/9.3987/33.6803秒，不用9.6762秒PERT原发布时间冒称效率门槛通过。[图文根验收](outputs/experiments/first_stage_ai_search_20261013/round4/analysis/report16_root_acceptance.json)。
+
+实际27prepare/24T/96decoder，0学习/MILP/新CUDA；3历史失败prepare已记墙钟9.5085秒且unknown保留，额外恢复输入重读3次0.0722秒另账。科学69e与运维d859双来源保留，旧工程review的58a已以精确SHA机械恢复旁路闭合，非原保存副本，原review/gap/audit/gates未改。[分析入口](outputs/experiments/first_stage_ai_search_20261013/round4/analysis/b0_location.json)。R4报告与完整双端归档正在接续，尚未宣称归档完成。Astra候选方案21拟全程飞机锚点域、几何先筛及有界成员撤回/补全；候选合同尚待源接口与缺失统计口径复核，未启动新科学计算。
+
 **2026-10-13 15:42 S1-AI17-R4-B0已按三个原ID恢复并实际运行。** 根在UTC07:39:25附近GET核18/24/73均running、worker23509/22187/22724真实alive，原40槽分别完成26/25/23，error为空；任务ID仍150920_a0ebefd3/150925_aa879954/150931_5fdf8e1f。[恢复后现场](outputs/experiments/first_stage_ai_search_20261013/round4/repair/linux_rss_01/root_after_resume_live.json)。科学69e、原plan a3d6、合同5124及3core原Git字节保持；新运维epoch`d859c738…`、主集成601a，仅修LinuxRSS后备与来源明确的同ID恢复入口，原guard/WAL/output不改。新service的部署助手通用字段名scientific_commit实际为运维epoch，不据此改写任务科学来源。
 
 86相关检查根通过，18端3个纯进程stub检查通过（未现场触发statm后备，该分支mock核验），0新增几何资格/MILP/CUDA。原三个prepare失败消耗另账，签定补充最多3次必要prepare、总上限27，教师24/解码96不变；新准备写独立operations_repair目录，不将旧unknown费用标成已知。[修复合同](outputs/experiments/first_stage_ai_search_20261013/round4/repair/linux_rss_01/repair_contract.json) · [根修复准入](outputs/experiments/first_stage_ai_search_20261013/round4/repair/linux_rss_01/root_repair_review.json)。额外输入重读写append-only运维账，原冷流程费用及历史unknown均保留，不能称严格完整墙钟优势。已派Sol持久只读等终态、采集原始资产并执行原冻结24景门槛；尚未据部分结果宣布成功或训练。
