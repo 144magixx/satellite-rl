@@ -41,16 +41,19 @@ def create(app,body,policy):
             if previous.get('request_id')==request:raise ValueError('request already used by another frozen semantic task')
         source,commit=store.freeze_source()
         if commit!=plan.get('scientific_commit'):raise ValueError('scientific epoch differs from source')
-        run_id=new_id('prepare_ai_search_r2' if contract['mode']=='prepare_common' else 'evaluate_ai_search_r2')
+        run_id=new_id(policy.run_prefix(contract) if hasattr(policy,'run_prefix') else ('prepare_ai_search_r2' if contract['mode']=='prepare_common' else 'evaluate_ai_search_r2'))
         directory=store.job_dir(run_id);directory.mkdir()
         model_dir=store.models_root/run_id;model_dir.mkdir()
         atomic_json(owner_path,{'group':policy.GROUP,'run_id':run_id,'request_id':request,'request_hash':payload_sha,
             'archive_root':str(store.archive_root),'job_path':str(directory/'job.json'),'status':'reserved','at':now()})
         refs={};config=deepcopy(contract['config'])
-        to_copy={'plan':body['plan'],'design':plan['design'],'publication_root_review':body['root_review'],**config['datasets']}
+        to_copy={'plan':body['plan'],'design':plan['design'],'publication_root_review':body['root_review']}
+        if not getattr(policy,'CANONICAL_DATASETS',False):to_copy.update(config['datasets'])
+        else:
+            for role,reference in config['datasets'].items():pin(reference);refs[role]=deepcopy(reference)
         to_copy.update({'qualification_'+k:r for k,r in plan.get('qualification_refs',{}).items()})
         from .ai_search_r2_extension import plan_references
-        to_copy.update(plan_references(plan))
+        to_copy.update(policy.plan_references(plan) if hasattr(policy,'plan_references') else plan_references(plan))
         for key,ref in to_copy.items():
             original=pin(ref);target=directory/'input_sources'/key/original.name
             target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(original,target)
@@ -68,10 +71,13 @@ def create(app,body,policy):
             'kind':'prepare' if contract['mode']=='prepare_common' else 'evaluate','research_stage':'coverage',
             'algorithm':'ai_search_r2','network':'closed_pool','execution_device':'cpu',
             'mode':contract['mode'],'dataset_role':contract['dataset_role'],'case_indices':contract['case_indices'],
-            'executor_port':contract['executor_port'],'variants':contract['variants']}
-        from .ai_search_r2_extension import PILOT_COMMIT
-        job.update(phase=plan['phase'],algorithm_core_commit=PILOT_COMMIT,execution_commit=commit,
-            admission_ref=refs.get('extension_root_gate'))
+            'executor_port':contract['executor_port'],'variants':contract.get('variants',[])}
+        if hasattr(policy,'decorate_job'):
+            job.update(policy.decorate_job(contract,plan,refs,commit))
+        else:
+            from .ai_search_r2_extension import PILOT_COMMIT
+            job.update(phase=plan['phase'],algorithm_core_commit=PILOT_COMMIT,execution_commit=commit,
+                admission_ref=refs.get('extension_root_gate'))
         atomic_json(directory/'config.json',config);job['config_sha256']=digest(directory/'config.json')
         atomic_json(directory/'status.json',{'run_id':run_id,'stage':'queued','pid':None,'completed_cases':0,
             'total_cases':policy.expected_results(contract),'env_step':0,'update_step':0,'heartbeat_at':now()})
@@ -96,8 +102,9 @@ def verify(store,job,policy):
         if (job.get('phase')!='extension' or job.get('algorithm_core_commit')!=PILOT_COMMIT
                 or job.get('execution_commit')!=job['scientific_commit'] or job.get('admission_ref')!=job['references'].get('extension_root_gate')):
             raise ValueError('extension phase/core/execution/admission metadata differs')
-    for key in ('mode','dataset_role','case_indices','executor_port','variants'):
+    for key in getattr(policy,'RUNTIME_FIELDS',('mode','dataset_role','case_indices','executor_port','variants')):
         if job[key]!=contract[key]:raise ValueError('published task field changed: '+key)
+    if hasattr(policy,'verify_metadata'):policy.verify_metadata(job,plan)
     expected=deepcopy(contract['config']);expected['datasets']={role:job['references'][role] for role in expected['datasets']}
     actual=read_json(directory/'config.json',{})
     if actual!=expected or digest(directory/'config.json')!=job['config_sha256']:raise ValueError('frozen task config changed')

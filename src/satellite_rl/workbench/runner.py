@@ -1777,6 +1777,9 @@ def run_job(job_dir, *, resume=False):
         from satellite_rl.power_refinement.runner import run_refinement_job
         return run_refinement_job(directory, resume=resume)
     if research_stage == "coverage":
+        if _read_json(directory / "config.json", {}).get("schema_version") == 11:
+            from .ai_search_r3_runner import run_job as run_r3_job
+            return run_r3_job(directory, resume=resume)
         if _read_json(directory / "config.json", {}).get("schema_version") == 10:
             from .ai_search_r2_runner import run_job as run_r2_job
             return run_r2_job(directory, resume=resume)
@@ -1895,3 +1898,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
