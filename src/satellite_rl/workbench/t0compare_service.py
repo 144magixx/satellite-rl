@@ -93,6 +93,8 @@ class Workbench:
    proof=deepcopy(template['proof']);proof.update(format='s2t24_resource_admission_v1',run_id=run_id,executor_port=self.port,scientific_commit=job['git_commit'])
    from satellite_rl.workbench.t0compare_qualification import qualify
    qualify(job,proof,job['t0_mode'])
+   from satellite_rl.workbench.t0compare_qualification import qualify_original_leases
+   qualify_original_leases(proof,self.port)
    from satellite_rl.workbench.t0compare_resources import observe,reasons
    known=[{'run_id':j['run_id'],'launch':read_json(self.store.job_dir(j['run_id'])/'launch.json',{})} for j,_ in self.store.jobs()]
    actual=observe(self.port,known);proof['observed_utc']=actual['observed_utc'];failed=reasons(actual,proof,self.max_workers)
@@ -109,6 +111,8 @@ class Workbench:
    proof=read_json(proof_ref['path'])
    if digest(proof_ref['path'])!=proof_ref['sha256']:raise ValueError('admission rawproof SHA changed')
    from satellite_rl.workbench.t0compare_qualification import qualify
+   from satellite_rl.workbench.t0compare_qualification import qualify_original_leases
+   qualify_original_leases(proof,self.port)
    nested=qualify(job,proof,job['t0_mode']);atomic_json(d/'nested_qualification_checked.json',nested)
    # Frozen parent-coordinated release must rule out oldcontroller future work, not GPUidle.
    if proof.get('format')!='s2t24_resource_admission_v1' or proof.get('run_id')!=run_id or proof.get('executor_port')!=self.port or proof.get('scientific_commit')!=job['git_commit']:raise ValueError('admission job/source identity differs')

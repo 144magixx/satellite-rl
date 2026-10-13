@@ -118,3 +118,14 @@ class CompletedEndpointControllerTests(unittest.TestCase):
    if path.endswith('/task/matrix'):return {'status':{'stage':'queued_resources'}}
    raise AssertionError(path)
   tick(state,plan,[20418],api);self.assertEqual(body_seen[0]['endpoint_models']['sac'],ref);self.assertEqual(state['tasks']['matrix']['status']['stage'],'queued_resources')
+class OriginalLeaseFreshPureTests(unittest.TestCase):
+ def test_original_lease_identity_and_future_exclusion(self):
+  from unittest.mock import patch
+  from satellite_rl.workbench.t0compare_qualification import qualify_original_leases
+  prefix='/home/u2024110224/first_stage_satellite_rl/s1_ai17/resource_leases/'
+  proof={'gpu_uuid':'fixtureGPU','original_lease_ref':{'path':prefix+'s2_t24_20418.json','sha256':'actualFixture'},'original_future_reservation_ref':{'path':prefix+'S1_future_reservation_after_s2_t24.json','sha256':'actualFixture'}}
+  lease={'schema':'S1AI17PersistentResourceLeaseV1','status':'active_lent','port':20418,'borrower':'S2-T24','s1_new_science_allowed':False,'gpu_uuid':'fixtureGPU'};future={'schema':'S1AI17FutureReservationUpdateV1','borrowed_ports':[20418,20424],'new_S1_scientific_dispatch_ports':[20473,20474]}
+  with patch('satellite_rl.workbench.t0compare_qualification.pin',side_effect=[lease,future]):self.assertTrue(qualify_original_leases(proof,20418)['original_bytes_checked'])
+  with patch('satellite_rl.workbench.t0compare_qualification.pin',side_effect=[{**lease,'s1_new_science_allowed':True},future]):
+   with self.assertRaises(ValueError):qualify_original_leases(proof,20418)
+  with self.assertRaises(ValueError):qualify_original_leases({**proof,'original_lease_ref':{'path':'copied_stale_snapshot','sha256':'actualFixture'}},20418)

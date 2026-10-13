@@ -29,3 +29,13 @@ def qualify(job,proof,mode):
   if role=='ops' and (q.get('no_internal_training_test') is not True or q.get('checkpoint_policy_namespace_RNG_qualified') is not True or q.get('Direct_only') is not True):raise ValueError('full lifecycle/Direct checkpoint qualification absent')
   if role=='core' and q.get('original_T0_environment_reward_unchanged') is not True:raise ValueError('T0 original scientific core not qualified')
  return {'source_commit':job['git_commit'],'input_identity_sha256':dataset,'mode':mode,'nested_refs_verified':list(REQUIRED)}
+
+
+def qualify_original_leases(proof,port):
+ prefix='/home/u2024110224/first_stage_satellite_rl/s1_ai17/resource_leases/'
+ lease_ref=proof.get('original_lease_ref');future_ref=proof.get('original_future_reservation_ref')
+ if not isinstance(lease_ref,dict) or lease_ref.get('path')!=prefix+'s2_t24_'+str(port)+'.json' or not isinstance(future_ref,dict) or future_ref.get('path')!=prefix+'S1_future_reservation_after_s2_t24.json':raise ValueError('fresh original remote lease/future paths required; snapshot not release')
+ lease=pin(lease_ref);future=pin(future_ref)
+ if lease.get('schema')!='S1AI17PersistentResourceLeaseV1' or lease.get('status')!='active_lent' or lease.get('port')!=port or lease.get('borrower')!='S2-T24' or lease.get('s1_new_science_allowed') is not False or lease.get('gpu_uuid')!=proof.get('gpu_uuid'):raise ValueError('actual original lease no longer owned by S2-T24')
+ if future.get('schema')!='S1AI17FutureReservationUpdateV1' or port not in future.get('borrowed_ports',[]) or port in future.get('new_S1_scientific_dispatch_ports',[]) or future.get('new_S1_scientific_dispatch_ports')!=[20473,20474]:raise ValueError('actual old-owner future reservation includes borrowed lane')
+ return {'lease_ref':lease_ref,'future_ref':future_ref,'original_bytes_checked':True}
