@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 18:29 S1-AI17-R5完整双端分支归档已根验收。** [稳定入口](outputs/experiments/first_stage_ai_search_20261013/round5/delivery/r5_p0_location.json)含181980789B压缩包，SHA`65fc59408e3e96258ddc678815866978afd2c0b2e558b3dac8bd2d4a4c758cca`；10028原路径对应7691去重对象及3清单，两端7694成员全部核SHA，根再次独立重算全部成员与13稳定引用通过。旧R4共1243依赖两端按原址闭合、自包含b7 Git bundle及1044树成员核验齐；旧数据通过依赖索引，不重复打包。原Linux receipt与本地换行摘要分别保留，不冒称同字节。[根归档验收](outputs/experiments/first_stage_ai_search_20261013/round5/delivery/root_archive_acceptance.json)。本条完成R5-P0分支、原pass=false与0科学权重不变；R6新模型/标签流程继续实现复核，整体AI17未结案。
+
 **2026-10-13 18:15 S1-AI17-R5报告17根验收完成，原P0未过；R6方案22v2已准入并行实现，科学训练仍0。** R5四任务均completed42/42，原ID分别为`p0_ai_search_r5_20261013_172829_ea5fd1d3`、`172834_57a66b7b`、`172838_22729e74`、`172842_a5196414`（后三同前缀），终态二次GET及worker退出证据闭合。冻结科学`b7ed79fc…`、合同`3555fdc7…`，新168解码、0prepare/T/训练/MILP/新valtest；工程8fixture共10D5及3进程stub另账，94检查通过。7738原文件约1.873GB逐SHA核验；完整双端分支归档正在进行，不以采集完成冒充交付完成。
 
 [报告17](docs/第一阶段/实验报告/17_锚点域成员修复与同输入对照.md)与五PNG/PDF已根通读、逐图目视及10图SHA复核。逐景独立重算G0=true、P0=false：EXACT24/24，OWNER10为12/24、JOINT10为14/24，均未达各18；质量机会8/9，48配对净增21、损失0，可变N与非floor异宽去重24景。两类成功各17却N实际改变各15，不混称。原R5后续768标签/2000–6000训练停止，原失败不改；尚无AI贡献。新增guard691.924814秒与终点4.650037秒，168独立冷方法1682.174905秒含重复历史费用；旧unknown仍保留。[根门槛验收](outputs/experiments/first_stage_ai_search_20261013/round5/analysis/root_gate_acceptance.json) · [图文验收](outputs/experiments/first_stage_ai_search_20261013/round5/analysis/report17_root_acceptance.json) · [原始入口](outputs/experiments/first_stage_ai_search_20261013/round5/analysis/p0_location.json)。
