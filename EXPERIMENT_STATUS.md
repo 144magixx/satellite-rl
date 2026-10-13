@@ -6,7 +6,7 @@
 
 13任务原卷/共享数据依赖/原TAR/历史控制元数据补卷合计17大卷原字节、成员及双端回执闭合；另669个报告、图、统计数组、原曲线、冻结代码、Gitbundle及控制证据合成117107368B交付包，SHA`e57a4daa55599040857ee7533793e2c49a2d348622eaa75233400c02bd7e45bb`，20474独立整包读回相同。大卷为引用，不假称全部大数据包含在小包中。8份遗漏owned大型原JSON已补卷75,486,480B/18c0b95a，迁移adopt复用既成卷；旧scope/history和失败保留，不追外国诊断target或称外国资产已归档。[最终交付索引](outputs/experiments/s2_fair20_20261012/delivery/final_readback_manifest_index.json)。
 
-20474已于北京时间13:02:49停止本组8954控制服务及本地隧道，真实API监听关闭、无运行科学执行、GPU UUID060b与两查询exit0/compute空核验通过；[实际归还证明](outputs/experiments/s2_fair20_20261012/delivery/20474_resource_return.json)齐。[用户授权的74归还通知](outputs/experiments/s2_fair20_20261012/delivery/resource74_return_message_receipt.json)已发原聊天，供其当前已授权新任务先核资源使用，不恢复结案ND12。18先前归还及回执保持缓存、未重复访问；未做云实例终止。本组自动跟进在最终控制回执归档与配置回读后暂停，不恢复科学或计时任务。
+20474已于北京时间13:02:49停止本组8954控制服务及本地隧道，真实API监听关闭、无运行科学执行、GPU UUID060b与两查询exit0/compute空核验通过；[实际归还证明](outputs/experiments/s2_fair20_20261012/delivery/20474_resource_return.json)齐。[用户授权的74归还通知](outputs/experiments/s2_fair20_20261012/delivery/resource74_return_message_receipt.json)已发原聊天，供其当前已授权新任务先核资源使用，不恢复结案ND12。18先前归还及回执保持缓存、未重复访问；未做云实例终止。最终控制回执和PAUSED配置已实际双端读回，小时跟进s2-f20已暂停，原本地持久进程均按出生实核退出；不恢复科学或计时任务。
 
 **2026-10-13 第一阶段已收到20474正式归还凭据（本轮仅登记交接）。** S2-F20在13:02:49北京时间记录8954控制服务与本地74隧道已停止、无运行科学执行、GPU/compute查询成功且UUID060b匹配，允许其它已授权工作使用；未终止云实例。本聊天已核归还JSON SHA`3c4be378…`及其最终读回索引、根验收和既有18归还三个引用SHA全部相符。[收到通知的核验记录](outputs/experiments/first_stage_ai_search_20261013/followup/s2_20474_return_notice_received_20261013.json)。本轮未独立连接SSH、未部署或发起任务，也未修改S1-AI17-R3已冻结的18/24/73路由；74可作为后续已授权工作待现场准入的资源，实际启用仍须检查新鲜资源与唯一任务归属，不能按历史空闲推断当前可用。已结案ND12/G16等保持不恢复，S2-F20冻结资产未改。
 
