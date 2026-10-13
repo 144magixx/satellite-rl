@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-14 S2-W26：按用户更正完成T0架构下的束宽/状态四组新方案，待审核，未训练。** [方案26](docs/第二阶段/方案/26_T0架构下束宽变量与状态空间对照方案.md)保原T0的14令牌Transformer、三头频率/槽数/5—50W、加性双Q、真实legacy_repaired奖励、gamma0.99及固定alpha0.01。拟S00/S10/S01/S11四种207/208/407/408真实状态，未选字段不构建、不零填；仅必要投影扩展，数据/物理/算法其余条件共同。方案25的规则功率/SI差分/gamma1/完整联合Q/零槽/零填方案停止作为本轮科学继承，工程历史保留，不称新方案已经实现。
+
+首轮建议同一冻结S1几何Wenv产生器的实际合法连续宽度，统一21.6Mbps/机、完整飞机及实际N≤200；0.3/0.5/1.0是候选菜单，非所有最终宽度。预算仅建议：4×150000/seed51001、最多636母数据准备、4320开发回合、680共同Direct回合，工程8192另账，S3/随机宽度扩展0。当前仅文档/只读源核查，科学调用/参数更新/远端资源核验与调度均0；病例数据已验收不等于全量layout资格通过。先用户批准，再实核远端任务归属/GPU/显存/CPU与并行条件，完成源码/数据/工作台资格后再训练；不占用S1/T24资源。代码尚待独立实现，旧25资格不转移。入口：[通俗方案](docs/第二阶段/方案/26_T0架构下束宽变量与状态空间对照方案.md) · [四组问答](Q&A/算法与训练/T0架构下的束宽与状态对照.md)。
+
 **2026-10-14 00:17 R7数据596例已全部根验收；74标签任务在147/288因/proc观察竞态失败，73原任务继续，正做保守同ID恢复。** [根数据接受](outputs/experiments/first_stage_ai_search_20261013/round7/analysis/root_data_acceptance.json)SHAec19ec75逐例核原飞机ID/顺序/位置字节、role/index/UTC、固定21,600,000 bit/s和精确总量，621,421条机时记录、train576/dev20、4808原字节成员闭合。新标签[正式根签图](outputs/experiments/first_stage_ai_search_20261013/round7/deployment_labels_01/root_final/root_signed_labels_graph_before_dispatch.json)与plan087baef5仅train576，两端各288/2case、prepare/T/D5各≤576、模型/留出调用0；源137及698快照保持，controller32588/spec ee480569。
 
 原标签ID为73 `r7_labels_20261013_234804_bcaaa9eb`（worker61927）与74 `r7_labels_20261013_234807_312cdce7`（worker64582）。74实际堆栈为r7_parallel的RSS采样经r5_stage_guard调用r4_monitor_repair读取已消失/proc PID status，抛ProcessLookupError/ESRCH；当时内存峰约2.035GB，低于4GiB，不是已证算法质量失败。[原失败与逐case实核](E:/paper_archives/outputs/experiments/first_stage_ai_search_20261013/round7/learning/recovery/labels74_failure_readonly_01/)保原failure/WAL/guard/output/source。74为147已完整父发布、295/297两partial、139完全未spawn；累计started W149/T148/D147，完整guard W148/T147/D147。295仅W原output、无guard/exit，后继未start；297 W完整、T已spawn无guard/output、D未start。原相关进程均退出，未知不记0，不以partial充完整标签。
