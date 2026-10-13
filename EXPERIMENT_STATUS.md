@@ -1,5 +1,11 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 15:20 S1-AI17-R4-B0已冻结部署，三任务准备监测异常；启动有界同ID运维修复。** 科学源`69e83fd4…`、主集成`c46eb97`，签定方案20/合同5124保持；74项相关检查根复跑通过，三端597个src/scripts/配置成员逐Git字节一致，DQN CUDA/独立8994–8996核验齐。[源准入](outputs/experiments/first_stage_ai_search_20261013/round4/engineering/root_source_preflight.json) · [24景120槽精确计划](outputs/experiments/first_stage_ai_search_20261013/round4/run_plan_b0.json) · [运行清单](outputs/experiments/first_stage_ai_search_20261013/round4/run_manifest.json)。原18=`150920_a0ebefd3`、24=`150925_aa879954`、73=`150931_5fdf8e1f`三任务均failed0/40（完整前缀b0_ai_search_r4_20261013_），controller24708已attention退出；不是运行中。
+
+每端首个prepare child均exit0并保存产物，但Linux退出过渡期`VmRSS`缺失被监测器误判，原guard记monitor_error/unknown并使worker停止。独审确认三份case0/16/32原W/Wenv、数据9929/身份/源fee85a、覆盖/归属/请求/资源与预算有效，原worker/child及本地controller均gone；不倒写原失败为成功。[只读独审](outputs/experiments/first_stage_ai_search_20261013/round4/diagnostics/prepare_recovery_audit/independent_prepare_recovery_audit.json)。截至该现场，实际3次prepare、0teacher/decoder/学习更新。为取得完整成本，根依既有必要恢复授权限定各补1次prepare：总尝试上限27（3历史失败另账），教师24/decoder96、原数据与G0–G2不变；3原目录/receipt/source不改，新补跑只写独立恢复目录并沿原ID，未知新WAL不自动重试。运维修复将用真实statm后备采样和有来源的运行时入口，原科学69e字节保持；修复尚未部署或恢复。
+
+R3[报告15](docs/第一阶段/实验报告/15_多宽度候选构造与整数补全先导对照.md)双端归档现已完成：33MB/1115成员、ZIP SHA`0f4982f9…`，18端全包与逐成员读回、独立本地1115和576原Git源码核验通过。[归档入口](outputs/experiments/first_stage_ai_search_20261013/delivery/r3_partial_stop_location.json)。这是R3已执行分支结案，旧大资产/全Git历史通过依赖索引引用，不是整体AI17最终完成；整体研究继续。
+
 **2026-10-13 14:44 S1-AI17-R3正式报告15及五图根验收完成，R4-B0继续实现复核。** [报告15](docs/第一阶段/实验报告/15_多宽度候选构造与整数补全先导对照.md)（SHA`664fed34…`）明确24准备与部分12发布/3选择错误/129未执行、14native和原G2停止；12发布仅三同景终态，N51/75/88与中心均未改变，归属和包络收缩来自共同后处理。72原线性匹配非MILP，36投影失败均因已匹配菜单Ω超cap，不是原问题不可行。12有规范原向量中case16 FULL原生接受证据仍不足；2无规范解、未知耗时与watchdog保留。五图、六CSV及450原证据26.3MB逐SHA复核；819重复束实例只对应三景214束。G0/G1全24未评、0科学训练/test保持。[根图数验收](outputs/experiments/first_stage_ai_search_20261013/round3/analysis/root_partial_numeric_visual_acceptance.json) · [报告验收](outputs/experiments/first_stage_ai_search_20261013/round3/analysis/report15_root_acceptance.json)。双端归档正在进行，未宣称完成。
 
 R4核心固定8合成输入资格已执行，41发布点只读几何/归属/请求/资源核验通过，原结果均为0.3°宽度下界、非floor连续宽度仅手算检查，不冒称真实24已完成。独审发现排序/哈希计量和typed不可用身份检查缺口，根修正后19静态mock通过；原8case执行源码/原成本保留，未重跑或倒写，0新MILP/CUDA。工作台guard/恢复与独立门槛脚本仍复核中；正式24教师/96decoder尚未提交，整体持续探索继续。
