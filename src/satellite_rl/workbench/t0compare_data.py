@@ -42,6 +42,46 @@ def write(path, obj):
     tmp.replace(path)
 
 
+def _canonical_sha(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
+def _scientific_identity(config):
+    # Only this operational proof is renewable. All other config fields,
+    # including freshness registry, purpose and source references, stay frozen.
+    return _canonical_sha({k: v for k, v in config.items() if k != "admission_reference"})
+
+
+def _record_admission(state, out, reference):
+    """Preserve every original proof byte and verify the append-only SHA chain."""
+    previous = None
+    history = state.setdefault("admission_history", [])
+    for event in history:
+        _pin(event["receipt"])
+        if event["scientific_identity"] != state["identity"]:
+            raise ValueError("admission history scientific identity changed")
+        if event["previous_event_sha256"] != previous:
+            raise ValueError("admission history continuity changed")
+        payload = {k: v for k, v in event.items() if k != "event_sha256"}
+        if _canonical_sha(payload) != event["event_sha256"]:
+            raise ValueError("admission history event SHA changed")
+        previous = event["event_sha256"]
+    raw = _pin(reference).read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if history and history[-1]["receipt"]["sha256"] == digest:
+        return
+    folder = out / "admission_history"; folder.mkdir(exist_ok=True)
+    target = folder / (digest + ".json")
+    if target.exists() and sha(target) != digest:
+        raise ValueError("immutable admission receipt changed")
+    if not target.exists(): target.write_bytes(raw)
+    event = {"receipt": {"path": str(target), "sha256": digest},
+             "previous_event_sha256": previous,
+             "scientific_identity": state["identity"]}
+    event["event_sha256"] = _canonical_sha(event)
+    history.append(event)
+
+
 def _pin(ref):
     path = Path(ref["path"])
     if sha(path) != ref["sha256"]:
@@ -216,10 +256,18 @@ def prepare_test_data(config, output_dir, *, progress=None, stop_requested=None,
     if (admission.get("approved") is not True or admission.get("owner_run_id") != config["owner_run_id"]
             or admission.get("frozen_source_sha") != config["frozen_source_sha"]):
         raise ValueError("root worker source and owner admission mismatch")
-    identity = hashlib.sha256(json.dumps(config, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    identity = _scientific_identity(config)
     sp = out / "preparation_state.json"
-    state = json.loads(sp.read_text()) if sp.exists() else dict(identity=identity, status="preparing", files=[], assets=[], rejections=[])
-    if state["identity"] != identity: raise ValueError("resume data identity changed")
+    state = json.loads(sp.read_text()) if sp.exists() else dict(identity=identity, identity_schema="scientific_config_except_admission_v2", status="preparing", files=[], assets=[], rejections=[])
+    if state["identity"] != identity:
+        # A pre-v2 partial can upgrade only with its exact original proof and
+        # config bytes. Unknown legacy identities are never silently replaced.
+        if state.get("identity_schema") is None and state["identity"] == _canonical_sha(config):
+            state["identity_migration"] = {"previous_full_config_identity": state["identity"], "new_scientific_identity": identity, "original_admission_sha256": config["admission_reference"]["sha256"]}
+            state.update(identity=identity, identity_schema="scientific_config_except_admission_v2")
+        else: raise ValueError("resume data identity changed")
+    _record_admission(state, out, config["admission_reference"])
+    write(sp, state)
     for f in state["files"]:
         for ref in (f, f["observations"], f["mother_csv"], f["provenance"], f["member_ledger"]): _pin(ref)
     if state.get("status") == "completed":

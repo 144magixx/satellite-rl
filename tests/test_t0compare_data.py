@@ -3,6 +3,7 @@ import json
 import io
 import tarfile
 import tempfile
+import copy
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -89,6 +90,58 @@ class PreparationTests(unittest.TestCase):
     def test_used_date_blocks(self):
         ref = self.config["freshness_registry"]; write(ref["path"], {"qualified": True, "used_dates": [DATES[0]]}); ref["sha256"] = sha(ref["path"])
         with self.assertRaisesRegex(ValueError, "test date already used"): qualify_metadata(self.config)
+
+    def renew_admission(self, config, filename="fresh_admission.json"):
+        p=self.root/filename
+        write(p, {"approved":True, "owner_run_id":config['owner_run_id'],
+                  "frozen_source_sha":config['frozen_source_sha'],
+                  "actual_pid_birth":12345, "checked_utc":"new_real_check"})
+        config['admission_reference']={"path":str(p),"sha256":sha(p)}
+
+    def test_fresh_admission_same_science_reuses_every_completed_artifact(self):
+        first=prepare_test_data(self.config,self.out,adapters=self.adapters)
+        state_before=json.loads((self.out/'preparation_state.json').read_text())
+        calls=self.convert_calls
+        self.renew_admission(self.config)
+        def forbid(*args,**kwargs):raise AssertionError('completed source preparation repeated')
+        resumed=prepare_test_data(self.config,self.out,adapters=dict(download=forbid,scan=forbid,convert=forbid))
+        state_after=json.loads((self.out/'preparation_state.json').read_text())
+        self.assertEqual(first,resumed);self.assertEqual(calls,self.convert_calls)
+        self.assertEqual(state_before['identity'],state_after['identity'])
+        self.assertEqual(state_before['files'],state_after['files'])
+        self.assertEqual(len(state_after['admission_history']),2)
+        self.assertEqual(state_after['admission_history'][1]['previous_event_sha256'],state_after['admission_history'][0]['event_sha256'])
+        # Replaying an identical operational proof does not create another event.
+        prepare_test_data(self.config,self.out,adapters=dict(convert=forbid))
+        self.assertEqual(len(json.loads((self.out/'preparation_state.json').read_text())['admission_history']),2)
+
+    def test_fresh_admission_partial_resume_and_scientific_mutations_block(self):
+        with self.assertRaises(InterruptedError):
+            prepare_test_data(self.config,self.out,adapters=self.adapters,stop_requested=lambda:self.convert_calls>=4)
+        partial=json.loads((self.out/'preparation_state.json').read_text())
+        self.renew_admission(self.config)
+        completed=prepare_test_data(self.config,self.out,adapters=self.adapters)
+        hashes={f['selected_time_utc']:f['sha256'] for f in completed['scene_sets']['test']['files']}
+        self.assertTrue(all(hashes[f['selected_time_utc']]==f['sha256'] for f in partial['files']))
+        for field in ('frozen_source_sha','historical_authority','freshness_registry'):
+            changed=copy.deepcopy(self.config)
+            if field=='frozen_source_sha': changed[field]='new_source'
+            else:
+                p=self.root/(field+'_changed.json')
+                original=json.loads(Path(changed[field]['path']).read_text())
+                original['new_scientific_version']=1;write(p,original)
+                changed[field]={'path':str(p),'sha256':sha(p)}
+            self.renew_admission(changed,field+'_new_admit.json')
+            with self.assertRaisesRegex(ValueError,'resume data identity changed'):
+                prepare_test_data(changed,self.out,adapters=self.adapters)
+
+    def test_admission_chain_tamper_is_rejected(self):
+        prepare_test_data(self.config,self.out,adapters=self.adapters)
+        state=json.loads((self.out/'preparation_state.json').read_text())
+        Path(state['admission_history'][0]['receipt']['path']).write_bytes(b'changed')
+        self.renew_admission(self.config)
+        with self.assertRaisesRegex(ValueError,'pinned source changed'):
+            prepare_test_data(self.config,self.out,adapters=self.adapters)
 
     def test_request_model_change_blocks(self):
         self.config["demand_model"]["sampling"] = "expected"
