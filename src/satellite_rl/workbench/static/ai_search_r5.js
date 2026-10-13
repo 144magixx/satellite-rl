@@ -1,0 +1,1 @@
+async function refresh(){const node=document.getElementById('status');try{const r=await fetch('/api/ai-search-r5/tasks',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);node.textContent=JSON.stringify(await r.json(),null,2);}catch(e){node.textContent='查询失败：'+e.message;}}document.getElementById('refresh').addEventListener('click',refresh);refresh();
