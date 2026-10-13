@@ -1,5 +1,13 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 16:39 S1-AI17-R5方案21v2已根准入，三路Sol并行实现；P0正式调用仍0。** [方案21](docs/第一阶段/方案/21_锚点域内归属修复与单模型验证.md)及合同SHA`3555fdc7…`、方案SHA`4a37d4e6…`保留v1原字节，经独立可行性与根复核，选全飞机锚点域的D5：几何先筛、EVICT128成员撤回、INSERT256补全、Q0上尾/CV保护，保持512proposal/8refit/2048n/5秒名义预算。遮蔽分数不读取；D4薄adapter、原T双来源、真实role、EVICT容差与母级零值/缺失统计均预先澄清。[根设计准入](outputs/experiments/first_stage_ai_search_20261013/design/round5_root_design_acceptance.json)。
+
+P0精确24景复用原R4已核成功prepare/T，新增D5五法120及D4同域OWNER10/JOINT10共48，总168解码、0newprepare/teacher/训练/valtest；原D4另72行仅历史参照。493引用逐SHA闭合，首三case专取成功prepare_retry、原unknown不复用。[P0登记](outputs/experiments/first_stage_ai_search_20261013/round5/source/p0_reference_registry.json)。新树C:/Users/Admin/.codex/worktrees/stage1-ai21/paper、分支codex/stage1-ai21自d859，core/ops/audit三6.1Sol分别实现；最多8固定fixture/24D5由core唯一记账，未预算额外prepare/T工程search。最终source/资格/精确工作台plan仍需根核后发起。
+
+UTC08:29附近四端18/24/73/74实际4090D、DQN CUDA可用、无science runner、9000–9003未监听；GPU UUID分别ef58/d6c7/0337/060b，74归还证据已核。默认包仍旧repo，后续必须显式新冻结PYTHONPATH并现场重新准入；此处未部署或绑定端口。[资源现场](outputs/experiments/first_stage_ai_search_20261013/round5/preflight/resource_inventory.json)。P0过门槛才进入合同已列单seed51001/2000节点至6000模型及后续validation/test，阶段源与精确计划仍逐段冻结；总1088prepare/1008T/1968D/6000更新上限不转移，训练累计活动8小时，SciPy1.11.4匹配依赖须训练前实际核，不静默改共享DQN。
+
+R4[报告16](docs/第一阶段/实验报告/16_离散分组与共同几何修复先导对照.md)完整双端分支归档已闭合：80.7MB/3895去重成员、ZIP SHA`a68b728f…`，18全包/成员读回及根独立3895重算通过；597科学源、5运维补丁与3264原文件、历史失败/未知/修复及五图数值齐全。[归档入口](outputs/experiments/first_stage_ai_search_20261013/delivery/r4_b0_location.json) · [根归档验收](outputs/experiments/first_stage_ai_search_20261013/delivery/r4_b0_root_acceptance.json)。R4完整结案、无科学模型权重，整体AI17研究尚未完成；不恢复R4旧门槛或旧任务。
+
 **2026-10-13 16:15 S1-AI17-R4-B0全部科学计算与报告16完成，原G1/G2未通过；继续方案21设计复核。** 三原任务均completed40/40，二次真实GET确认worker退出；3264原文件/543804142B采集及科学refs SHA闭合。根重算原冻结24景门槛：G0=true、G1=false、G2=false；T合格24、EXACT同质量24、PERT同质量3（要求18）、质量改善4（要求6）。PERT虽10个derived成功，另14回退，且成功中7不满足质量；RULE同教师质量13、随机0。[根门槛验收](outputs/experiments/first_stage_ai_search_20261013/round4/analysis/root_gate_acceptance.json)。不进入本轮768教师或2000/6000训练，不开新val/test；整体研究继续，原失败不回写。
 
 [正式报告16](docs/第一阶段/实验报告/16_离散分组与共同几何修复先导对照.md)（SHA`ed4b68bd…`）、五PNG/PDF与84项文档核验已根通读/逐PNG看图/重核门槛。T相对Wenv实际N变19/24、宽度分布24/24；RULE/EXACT各24，PERT10、随机0，fallback原有异宽不算新改善。全部实际N≤200、宽度0.3–1.0且覆盖/归属/守恒/Ω合格，尚无AI贡献。PERT回退为资源修复7、最终锚点回投6、孤机1，随机为资源13/孤机11，不能归因此前RSS监测。受限完整成本RULE/RANDOM/EXACT/PERT均值19.8642/37.2654/9.3987/33.6803秒，不用9.6762秒PERT原发布时间冒称效率门槛通过。[图文根验收](outputs/experiments/first_stage_ai_search_20261013/round4/analysis/report16_root_acceptance.json)。
