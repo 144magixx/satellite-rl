@@ -1,0 +1,34 @@
+{
+  "schema": "R8CoveragePreservingCachedOwnerCoreImplementationV2",
+  "design_sha256": "e0e24cf00e873965ee585d77f5f1e38c7455196a19a5357de7c5732fcfa08bb4",
+  "root_design_acceptance_sha256": "463c0dd539fa11313c88c753771ecbd880190e793c618c106df0e092e1748569",
+  "code_files": {
+    "core.py": "f49e13258b972f0a47b8f70550c1dff462fccb6072aa1b12050f3afb6542d1a0",
+    "geometry.py": "353553bfa910669070941a058c42833c723432322944dd374bfb433abb5595fa",
+    "ledger.py": "2fa6d639be2a765126b52db6054e39e2752451d61e4c7f80bf2a27512debe234",
+    "__init__.py": "54776e1bffe63fd283df2bd3734928cbd2d72361466d69399991be5d452439c9"
+  },
+  "pure_test_sha256": "44fac400a6db76466481d9e44a86879cdb778f57cd857d2969677bb3a38cc30c",
+  "pure_tests": 12,
+  "AST_files": 5,
+  "actual_engineering_12_local_runs": 0,
+  "new_W_T_D5_model_forward_optimizer_calls": 0,
+  "old_523_e513_all_code_model_input_unchanged": true,
+  "fixed_pool_max": 512,
+  "candidate_extractions_including_stale_max": 128,
+  "primary": "exact integer(max,largest ceil(N/10) sum,sum squared), strict current improvement and initial topsum/sumsq guard",
+  "one_scan_rank": "<=200 integer count vector, top-k heap, exact squared-sum two-count delta",
+  "A": "original full200 float32 owner->float64 stable softmax temperature1 in original columns; dynamic source exclude-self and destination member means; finite float64 comparator with no rounding/epsilon",
+  "R": "exact design SHA256 UTF8 JSON recipe",
+  "geometry": "unchanged validate_owned independent start/candidate/final; fixed original centres/anchors/N; same chord-angle envelope arithmetic; outward nextafter fullwidth.3..1; cached distance member scans paid; original geometry/D5 not modified",
+  "D5": "core returns current onehot ProposalV2 only; outerG/A/R explicit and innerEXACT compatibility not teacher, no D5 call in core",
+  "persistence": "one static NPZ plus atomic state, remaining fixed tuples/cursor/reserved pending/used quotas/current owners+widths/A exact member sums/trace; pending unknown cannot replay; partial resume requiresroot signed stateSHA and verifiedchargedactiveclock; never reset10s or counters",
+  "costs": "geometry/ranking/cached scans/softmax/multiply-add/update/hash/IO tracked; caller charges full cache intake/return/asset publication/external exit clock. State publication clock sample excludes current IO until later snapshot; verified resume tail required",
+  "current_ops_continue_limitation": "3756014 service has predeadline hooks but no human post-deadlinecontinue route; core math partialstate support does not authorize future resume",
+  "qualification_remaining": [
+    "root source and exact12 geometry fixture plan",
+    "actual12 original geometry runs+independent source/budget closure",
+    "root exact20 source/input/ownresource/storage/deadline/controller plan",
+    "no formal local/D5 until root execution admission"
+  ]
+}
