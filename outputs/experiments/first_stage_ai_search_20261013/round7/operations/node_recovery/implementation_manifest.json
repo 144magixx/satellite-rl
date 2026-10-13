@@ -4,7 +4,7 @@
   "branch": "codex/r7-node-recovery",
   "run_id": "r7_node2000_20261014_042707_19e62edd",
   "runtime_files": {
-    "bootstrap.py": "7351cf37444393deb555aa284354ec4321a3d8b121d3f2ad2fb97678857180f0",
+    "bootstrap.py": "00b73ec2ac85a9d137186e7bf0a505d278b1ee4eaed4a32537a6649ce4df1da6",
     "compat.py": "e3233fd6531681b12e49db1f9f44fc4db218d69b0783a556df93282fe25b8839",
     "contracts.py": "89824c787dad6aab9a4d486bb2860aaf2febd0ced3fd794b4f4c693990c56ab7",
     "qualification.py": "4351789fffc334db6d70d05b4cb79b68de8f9bac6ea97e8445df39b303a54b3b",
@@ -67,5 +67,6 @@
     "root separate future recovery qualification result acceptance before6000"
   ],
   "prior_failed_review_source_commit": "2e25261d8be3e31c9562c13d4fc4f86f6f807510",
-  "cost_alias_fix": "case0 costs dict clear/update in place, unchanged caller endpoint local alias also null; mixed observed/reused-childwall components explicitly non-additive"
+  "cost_alias_fix": "case0 costs dict clear/update in place, unchanged caller endpoint local alias also null; mixed observed/reused-childwall components explicitly non-additive",
+  "worker_envelope": "finally sample is provisional only; final v2 requires external sameboot actualgone postflight, final receipt IO/hash/interpreter exit not yet closed"
 }

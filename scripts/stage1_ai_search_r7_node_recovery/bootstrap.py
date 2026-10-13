@@ -113,6 +113,8 @@ def main():
     finally:
         atomic(ops/'worker_epoch_exit.json',dict(observed_parent_epoch_seconds_after_hooks=time.monotonic()-began,worker_enclosing_spend_upper_bound_seconds=time.clock_gettime(time.CLOCK_BOOTTIME)-birth_lower,
             enclosing_bound_includes_module_startup_and_hook_preflight=True,upper_bound_is_not_exact_method_latency=True,original_failure_epoch_seconds=None,
+            bound_scope='provisional birth_lower through finally sample; excludes subsequent final receipt IO/digest and interpreter exit; not a complete worker exit bound',
+            provisional_until_finally_sample=True,worker_exit_bound_closed=False,requires_external_sameboot_gone_postflight=True,
             additive_new_epoch_only=True,contract_ref=contract_ref,original_job_sha256=digest(directory/'job.json'),original_config_sha256=digest(directory/'config.json')))
     if digest(directory/'job.json')!=contract['original_job_ref']['sha256'] or digest(directory/'config.json')!=contract['original_config_ref']['sha256']:raise ValueError('original job/config bytes mutated')
 
