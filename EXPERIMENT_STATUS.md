@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 14:44 S1-AI17-R3正式报告15及五图根验收完成，R4-B0继续实现复核。** [报告15](docs/第一阶段/实验报告/15_多宽度候选构造与整数补全先导对照.md)（SHA`664fed34…`）明确24准备与部分12发布/3选择错误/129未执行、14native和原G2停止；12发布仅三同景终态，N51/75/88与中心均未改变，归属和包络收缩来自共同后处理。72原线性匹配非MILP，36投影失败均因已匹配菜单Ω超cap，不是原问题不可行。12有规范原向量中case16 FULL原生接受证据仍不足；2无规范解、未知耗时与watchdog保留。五图、六CSV及450原证据26.3MB逐SHA复核；819重复束实例只对应三景214束。G0/G1全24未评、0科学训练/test保持。[根图数验收](outputs/experiments/first_stage_ai_search_20261013/round3/analysis/root_partial_numeric_visual_acceptance.json) · [报告验收](outputs/experiments/first_stage_ai_search_20261013/round3/analysis/report15_root_acceptance.json)。双端归档正在进行，未宣称完成。
+
+R4核心固定8合成输入资格已执行，41发布点只读几何/归属/请求/资源核验通过，原结果均为0.3°宽度下界、非floor连续宽度仅手算检查，不冒称真实24已完成。独审发现排序/哈希计量和typed不可用身份检查缺口，根修正后19静态mock通过；原8case执行源码/原成本保留，未重跑或倒写，0新MILP/CUDA。工作台guard/恢复与独立门槛脚本仍复核中；正式24教师/96decoder尚未提交，整体持续探索继续。
+
 **2026-10-13 14:24 S1-AI17-R3按冻结G2科学停止，R4-B0方案20已根准入实现；整体研究继续。** R3计划144方法槽实际为12已发布、3已知ORACLE求解前选择失败、129未执行；实际14次MILP，余130调用额度不转移。三REF在原正需求case0/16/32均只返回共同W且无合格峰值证书，独立原向量/目标核验确认；即使修正接口，ORACLE也只能不可用，已不可逆触发原G2两个缺失分支。因此不部署恢复、不补后继、不扩56/教师/训练；G0/G1和全24效果没有完整评价。[根科学停止](outputs/experiments/first_stage_ai_search_20261013/round3/analysis/root_scientific_stop.json) · [部分反证独审](outputs/experiments/first_stage_ai_search_20261013/round3/analysis/partial_gate_witness_audit.json) · [封存库存](outputs/experiments/first_stage_ai_search_20261013/round3/sealed_partial_inventory.json)。原源码1c5、已完成结果、失败/未知选择耗时和14原native全部保留；caller最小修复`090e9b4`、主集成`9fe23fb`仅本地4项mock验证，未部署、不虚称原运行已修复。报告15数值与最多五图正在收束。
 
 [方案20](docs/第一阶段/方案/20_离散分组学习与共同几何修复先导方案.md)选择离散启用/飞机锚点/整机分组学习的后续接口，由共同几何过程确定指向与连续宽度；本次B0仅24有界教师＋96共同解码、0MILP/训练/新val-test，分别原规则、单固定随机、精确教师与固定扰动教师，真实教师成本在B0诊断中计入。冻结v2合同SHA`512482fa…`保留原v1；重复anchor允许、四法最终回投同一飞机锚点表达域、全部几何排序工作计账，最终N≤200和逐束宽度均可变。[根设计验收](outputs/experiments/first_stage_ai_search_20261013/design/round4_root_design_acceptance.json)。
