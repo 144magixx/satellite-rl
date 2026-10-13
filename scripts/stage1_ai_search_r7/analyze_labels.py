@@ -1,6 +1,6 @@
 """Independent raw label/cost/layout re-audit; no search, inference or updates."""
 from pathlib import Path
-import math
+import math,time
 import numpy as np
 from satellite_rl.training.run_monitor import atomic_json
 from satellite_rl.workbench.storage import read_json,digest
@@ -9,6 +9,7 @@ from satellite_rl.workbench.r6_io import read_asset,pin_tree
 from .label_audit import audit_bundle,audit_exact_proposal,gate
 from .contract import GROUP
 from satellite_rl.workbench.r7_label_guard_audit import audit_chain
+from satellite_rl.workbench.r7_publish import publish_terminal
 
 def analyze(manifest_refs,dataset_ref,model_identity,output):
     from satellite_rl.workbench.r7_uniform_data import load_algorithm_case
@@ -24,9 +25,9 @@ def analyze(manifest_refs,dataset_ref,model_identity,output):
             if i in cases:raise ValueError('duplicate case owner')
             cases[i]=row
     if sorted(map(int,cases))!=list(range(576)):raise ValueError('all576 labels accounted including failures')
-    results=[];qualified=[]
+    results=[];qualified=[];typed_teachers={};typed_directory=Path(output).with_name(Path(output).stem+'_typed_teachers')
     for i in range(576):
-        ref=cases[str(i)];pin_tree(ref);row=read_json(pin(ref),{});ident=row['identity']
+        audit_began=time.monotonic();ref=cases[str(i)];pin_tree(ref);row=read_json(pin(ref),{});ident=row['identity'];layout_audits={}
         if row['source_commit']!=source_commit or row['input_case_index']!=i or ident['role']!='train' or ident['profile']!='uniform21600000' or row.get('source_dataset_sha256')!=dataset_ref['sha256'] or row.get('core_sha256')!='9f187e4cd8122a6fce415b590d0ab0a385724b7d840cc88dd874e34ea936aea5':raise ValueError('original train identity and frozen core')
         for guard in row['guard_refs']:pin_tree(guard)
         endpoint=read_json(pin(ref['cost_endpoint_ref']),{})
@@ -51,16 +52,28 @@ def analyze(manifest_refs,dataset_ref,model_identity,output):
             checked=dict(qualified=False,nontrivial=False,capability=False,mother_id=ident['mother_id'],label_origin='no_T_witness_unavailable',typed_unavailable=True);exact=None
         else:
             assets=[read_asset(row[k]) for k in ('prepared_ref','original_T_terminal_ref','D5_qualification_ref')]
-            checked=audit_bundle(plain,*assets,ident,row['core_sha256'],closure['closed'])
+            def capture(method,audit):layout_audits[method]=audit
+            checked=audit_bundle(plain,*assets,ident,row['core_sha256'],closure['closed'],on_layout_audit=capture)
             exact=audit_exact_proposal(read_asset(assets[2]['proposal_ref']),assets[1]['result'],ident,row['core_sha256'],row['producer_sha256'])
         if checked!=row['label_audit'] or exact!=row['proposal_audit']:raise ValueError('producer audit differs from independent replay')
+        independent_audit_seconds=time.monotonic()-audit_began;typed_teachers[str(i)]=None;publication_seconds=0.
+        if closure['closed'] and 'T' in layout_audits:
+            published=publish_terminal(record,source['case_ref'],dataset['authority_ref'],assets[1]['result']['layout'],assets[0]['result'],layout_audits['T'],
+                                       dict(original_T_terminal_asset_SHA=row['original_T_terminal_ref'],original_label_row_SHA=ref,original_label_cost_endpoint_SHA=ref['cost_endpoint_ref'],original_prepared_asset_SHA=row['prepared_ref']),
+                                       typed_directory/str(i)/'T','T')
+            typed_teachers[str(i)]=published;publication_seconds=published['charged_seconds']
+        atomic_json(typed_directory/str(i)/'complete_offline_label_cost.json',dict(original_label_cost_endpoint_ref=ref['cost_endpoint_ref'],
+                    original_complete_offline_label_seconds=endpoint['complete_offline_label_seconds'],independent_postprocess_audit_seconds=independent_audit_seconds,
+                    typed_T_conversion_validation_publication_seconds=publication_seconds,complete_offline_label_with_actual_typed_T_seconds=endpoint['complete_offline_label_seconds']+independent_audit_seconds+publication_seconds,
+                    label_origin_remains_original_T=True,new_prepare_T_D5_or_PHY_calls=0))
         results.append(checked)
         if checked['qualified']:
             qualified.append(dict(case_index=i,case_id=ident['case_id'],input_sha=ident['input_sha256'],role='train',identity=ident,
                                   scene_ref=row['scene_ref'],shared_case_ref=row['shared_case_ref'],label_ref_sha=row['original_T_terminal_ref']['sha256'],
                                   original_T_terminal_ref=row['original_T_terminal_ref'],label_receipt_ref=ref))
     result=gate(results);result.update(group=GROUP,phase='labels',model_identity=model_identity,
-                                     scientific_commit=source_commit,source_dataset_sha256=dataset_ref['sha256'],manifest_refs=manifest_refs)
+                                     scientific_commit=source_commit,source_dataset_sha256=dataset_ref['sha256'],manifest_refs=manifest_refs,
+                                     typed_teacher_layouts=typed_teachers,original_T_labels_unchanged=True,typed_layout_publication_is_separate_postprocessing=True,new_prepare_T_D5_PHY_calls=0)
     atomic_json(output,result)
     table=Path(output).with_name('qualified_train.json')
     atomic_json(table,dict(schema='R7QualifiedTrainManifestV1',role='train',source_dataset_sha256=dataset_ref['sha256'],

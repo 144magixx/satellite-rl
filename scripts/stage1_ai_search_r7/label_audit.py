@@ -26,7 +26,7 @@ def gate(rows):
  q=sum(r["qualified"] for r in rows);n=sum(r["nontrivial"] for r in rows);m=len({r["mother_id"] for r in rows if r["capability"]})
  return {"passed":q>=519 and n>=116 and m>=6,"qualified":q,"nontrivial":n,"capable_mothers":m,"denominator":576,"science_updates":0}
 
-def audit_bundle(scene,prepared,teacher,replay,identity,source_sha,cost_closed):
+def audit_bundle(scene,prepared,teacher,replay,identity,source_sha,cost_closed,on_layout_audit=None):
  from scripts.stage1_ai_search_r4.audit import audit_layout,audit_ledger,scene_sha
  from scripts.stage1_ai_search_r5.audit import audit_decoder_ledger
  p=prepared["result"];t=teacher["result"];d=replay["result"];n=len(scene["demands"])
@@ -45,10 +45,13 @@ def audit_bundle(scene,prepared,teacher,replay,identity,source_sha,cost_closed):
  if not witness["valid"] or p["Ncap"]!=min(200,n,math.ceil(1.25*witness["metrics"]["N"])) or abs(p["Omega_cap"]-witness["metrics"]["actual_Omega"])>1e-12:raise ValueError("common prepare caps invalid")
  w=audit_layout(scene,p["Wenv"],p["Ncap"],p["Omega_cap"],False)
  if not w["valid"]:raise ValueError("Wenv constraints")
- for value in (t,d):
+ for method,value in (('T',t),('D5_EXACT',d)):
   if value.get("status") not in ("available","success","fallback"):continue
   checked=audit_layout(scene,value["layout"],p["Ncap"],p["Omega_cap"])
   if not checked["valid"]:raise ValueError("independent terminal constraints")
+  if on_layout_audit is not None:
+   from scripts.stage1_ai_search_r4.audit import canonical_sha
+   on_layout_audit(method,{**checked,'parent_case_SHA':identity['shared_case_content_sha256'],'layout_sha256':canonical_sha(value['layout'])})
   for name in ("maxload","top10_mean","CV","N"):
    x=value["metrics"][name];y=checked["metrics"][name]
    if isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) or x<0:raise ValueError("invalid metric")

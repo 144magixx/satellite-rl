@@ -1,6 +1,6 @@
 """Independent fixed2000/node20 gate; no inference, search, or tensor updates."""
 from pathlib import Path
-import math
+import math,time
 import numpy as np
 from satellite_rl.workbench.coverage_ai_search import pin
 from satellite_rl.workbench.storage import read_json,digest
@@ -12,6 +12,7 @@ from scripts.stage1_ai_search_r4.audit import audit_layout,audit_ledger
 from .contract import GROUP
 from satellite_rl.workbench.r7_node_guard_audit import audit_preparation_teacher,audit_method_proof,audit_costs
 from satellite_rl.workbench.r7_case_binding import validate_binding
+from satellite_rl.workbench.r7_publish import publish_terminal
 
 def analyze(manifest_refs,dataset_ref,checkpoint_ref,model_identity,output):
     dataset=read_json(pin(dataset_ref),{});cases={};commit=None
@@ -25,9 +26,10 @@ def analyze(manifest_refs,dataset_ref,checkpoint_ref,model_identity,output):
             if i in cases:raise ValueError('duplicate host owner')
             cases[i]=row
     if sorted(map(int,cases))!=list(range(20)):raise ValueError('exact20 original denominator; no missing cases')
-    independent=[]
+    independent=[];typed_layouts={};typed_directory=Path(output).with_name(Path(output).stem+'_typed_layouts')
     for i in range(20):
         ref=cases[str(i)];row=read_json(pin(ref),{});ident=row['identity'];source=dataset['cases'][i]
+        common_audit_started=time.monotonic()
         record,scene=load_algorithm_case(source['case_ref'],dataset['authority_ref'])
         if row['case_index']!=i or row['source_commit']!=commit or row['model_identity']!=model_identity or row['checkpoint_ref']!=checkpoint_ref or ident['shared_case_content_sha256']!=record['content_sha256'] or scene.input_sha256!=ident['input_sha256']:raise ValueError('independent root scene identity')
         plain=dict(positions=scene.positions.tolist(),demands=scene.demands.tolist(),aircraft_ids=list(scene.aircraft_ids),profile=scene.profile)
@@ -36,7 +38,7 @@ def analyze(manifest_refs,dataset_ref,checkpoint_ref,model_identity,output):
         prepared=read_asset(row['prepared_ref'])['result'];stage_results=audit_preparation_teacher(row)
         if prepared['identity']!=ident or row.get('preparation_identity_and_cost_closed')is not stage_results['preparation']['closed'] or not audit_ledger(prepared['ledger'],len(scene.demands),'prepare')['valid']:raise ValueError('independent original prepare identity/ledger/closure')
         costs=audit_costs(row,stage_results);unavailable=row['status']=='preparation_unavailable'
-        methods={};teacher_closed=False
+        methods={};teacher_closed=False;publish_candidates={};method_audit_seconds={m:0. for m in ('AI','RULE','RANDOM','T')}
         if unavailable:
             if prepared['status']=='available' or set(row['result_refs'])!=set(('AI','RULE','RANDOM','T')) or any(v is not None for v in row['result_refs'].values()) or row['new_calls']!=dict(prepare=1,T=0,D5=0):raise ValueError('unavailable node prep must not spend T or D5')
             missing=dict(valid=True,published=False,nonfallback=False,status='unavailable',metrics=None,identity_closed=True,budget_closed=True)
@@ -46,22 +48,43 @@ def analyze(manifest_refs,dataset_ref,checkpoint_ref,model_identity,output):
             if prepared['status']!='available' or row['new_calls']!=dict(prepare=1,T=1,D5=3):raise ValueError('available node exact4 method call counts')
             teacher=read_asset(row['result_refs']['T'])['result']
             if any(teacher.get(k)!=v for k,v in ident.items()):raise ValueError('original T identity')
+            teacher_audit_started=time.monotonic()
             teacher_audit=audit_layout(plain,teacher['layout'],prepared['Ncap'],prepared['Omega_cap']) if teacher['status']=='available' else None
             teacher_closed=bool(stage_results['preparation']['closed'] and stage_results['teacher']['closed'] and teacher_audit and teacher_audit['valid'] and audit_ledger(teacher['cost'],len(scene.demands),'TEACHER')['valid'])
+            method_audit_seconds['T']=time.monotonic()-teacher_audit_started
+            if teacher_closed:
+                from scripts.stage1_ai_search_r4.audit import canonical_sha
+                publish_candidates['T']=(teacher['layout'],{**teacher_audit,'parent_case_SHA':record['content_sha256'],'layout_sha256':canonical_sha(teacher['layout'])},row['result_refs']['T'])
             for method in ('AI','RULE','RANDOM'):
+                method_audit_started=time.monotonic()
                 actual=row['method_rows'][method];req=actual['request'];guard_closure=audit_method_proof(method,actual,row)
                 if method=='AI' and (req['checkpoint_ref']!=checkpoint_ref or req['model_identity']!=model_identity):raise ValueError('actual AI checkpoint/source')
                 if row['cost_components'][method+'_parent']<guard_closure['outer_wall_seconds']:raise ValueError('actual outer cold method wall not fully paid')
-                checked=audit_row(plain,prepared,read_asset(actual['result_ref']),req)
+                actual_value=read_asset(actual['result_ref']);checked=audit_row(plain,prepared,actual_value,req)
                 if checked!=actual['audit'] or checked!=row['methods'][method]:raise ValueError('producer metrics differ from independent raw audit')
                 methods[method]={**checked,'budget_closed':bool(checked['budget_closed'] and guard_closure['closed'])}
+                method_audit_seconds[method]=time.monotonic()-method_audit_started
+                if checked['published'] and methods[method]['budget_closed'] and checked['identity_closed']:
+                    publish_candidates[method]=(actual_value['result']['layout'],checked['geometry_audit'],actual['result_ref'])
         if row.get('teacher_identity_and_cost_closed')is not teacher_closed:raise ValueError('producer teacher closure differs from original guarded source')
         endpoint=read_json(pin(ref['cost_endpoint_ref']),{})
         if endpoint['raw_ref']['sha256']!=ref['sha256'] or endpoint['identity']!=ident:raise ValueError('raw publication cost endpoint')
         extra=endpoint['common_row_index_publication_seconds'];endpoint_costs=endpoint['costs_before_publication']
         if endpoint_costs!=costs or not isinstance(extra,(float,int)) or not math.isfinite(extra) or extra<0:raise ValueError('closed publication cost')
-        independent.append(dict(case_index=i,methods=methods,costs={m:(v+extra if v is not None else None) for m,v in costs.items()},
+        common_audit_seconds=max(0.,time.monotonic()-common_audit_started-sum(method_audit_seconds.values()))
+        typed_layouts[str(i)]={m:None for m in ('AI','RULE','RANDOM','T')};publication_seconds={m:0. for m in typed_layouts[str(i)]}
+        for method,(legacy_layout,geometry_audit,terminal_ref) in publish_candidates.items():
+            publication=publish_terminal(record,source['case_ref'],dataset['authority_ref'],legacy_layout,prepared,geometry_audit,
+                                         dict(original_terminal_asset_SHA=terminal_ref,original_node_row_SHA=ref,original_node_cost_endpoint_SHA=ref['cost_endpoint_ref'],original_prepared_asset_SHA=row['prepared_ref']),
+                                         typed_directory/str(i)/method,method)
+            typed_layouts[str(i)][method]=publication;publication_seconds[method]=publication['charged_seconds']
+        complete_costs={m:(v+extra+common_audit_seconds+method_audit_seconds[m]+publication_seconds[m] if v is not None else None) for m,v in costs.items()}
+        atomic_json(typed_directory/str(i)/'complete_method_costs.json',dict(case_index=i,original_node_cost_endpoint_ref=ref['cost_endpoint_ref'],original_complete_costs=costs,
+                    common_row_publication_seconds=extra,common_independent_read_audit_seconds_each_method=common_audit_seconds,method_audit_seconds=method_audit_seconds,
+                    typed_layout_conversion_validation_publication_seconds=publication_seconds,complete_method_costs=complete_costs,same_rule_all_four_methods=True,new_geometry_search_or_PHY_calls=0))
+        independent.append(dict(case_index=i,methods=methods,costs=complete_costs,
                                 teacher_identity_and_cost_closed=teacher_closed,total_request=record['total_request_bps_int64']))
     gate=node_gate(independent);gate.update(group=GROUP,model_identity=model_identity,checkpoint_sha256=checkpoint_ref['sha256'],
-                                         manifest_refs=manifest_refs,dataset_ref=dataset_ref,scientific_commit=commit,science_updates=0)
+                                         manifest_refs=manifest_refs,dataset_ref=dataset_ref,scientific_commit=commit,science_updates=0,
+                                         typed_layouts=typed_layouts,typed_publication_is_postprocessing=True,original_layouts_used=True,new_decoder_or_PHY_calls=0)
     atomic_json(output,gate);return gate

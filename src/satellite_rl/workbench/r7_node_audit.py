@@ -1,7 +1,7 @@
 """Read-only node20 hard constraints, actual AI semantics, fixed quality gate."""
 import math
 import numpy as np
-from scripts.stage1_ai_search_r4.audit import audit_layout,scene_sha
+from scripts.stage1_ai_search_r4.audit import audit_layout,scene_sha,canonical_sha
 from scripts.stage1_ai_search_r5.audit import audit_decoder_ledger,audit_proposal
 from scripts.stage1_ai_search_r4.gates import within,finite
 from .r6_io import read_asset
@@ -29,7 +29,8 @@ def audit_row(scene,prepared,value,request):
   for key in ('maxload','top10_mean','CV','N'):
    x=result['metrics'][key];y=checked['metrics'][key]
    if not finite(x) or abs(x-y)>(1e-9 if key=='CV' else 1e-6)+1e-12*abs(y):raise ValueError('independent metrics')
- return {'valid':True,'published':published,'nonfallback':result['status']=='success','status':result['status'],'metrics':checked['metrics'] if checked else None,'identity_closed':True,'budget_closed':True}
+  checked={**checked,'parent_case_SHA':identity['shared_case_content_sha256'],'layout_sha256':canonical_sha(result['layout'])}
+ return {'valid':True,'published':published,'nonfallback':result['status']=='success','status':result['status'],'metrics':checked['metrics'] if checked else None,'geometry_audit':checked,'identity_closed':True,'budget_closed':True}
 
 def node_gate(cases):
  if len(cases)!=20 or sorted(c['case_index'] for c in cases)!=list(range(20)):raise ValueError('exact20 development denominator')
