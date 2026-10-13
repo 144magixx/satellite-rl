@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 20:44 用户更正为统一固定单机请求，并将三阶段一致性列为铁律；R6旧训练后继不启动。** 用户明确所有飞机同一固定请求，热点由飞机密度形成；要求真实流量量级与第二阶段训练数据相符，并保证三阶段一致。根已确认旧G16/base采用二项活跃人数×对数正态请求，另三profile重加权；因此原768=192母×4异质请求，并非统一请求样本，仅选base也不满足新口径。原R6四任务全部completed各192（12:25UTC控制器终态），现只读采集/独审/归档继续，科学模型更新0，旧结果与失败不重写。后继正式setup/train/node关闭；新组等待实际S2需求量级和全接口审计后重签数据与门槛。[最新铁律](AGENTS.md#统一单机请求与三阶段一致性铁律2026-10-13)。
+
+正在核原G11-T0及S2-T24拟复用训练输入的逐束bps分布、总请求、原飞机计数/覆盖与缩放；理论合成均值21.6Mbps/机仅是待实核候选，不是已定统一值。第一阶段输出的实际N/中心/逐束宽度/唯一归属与逐束请求必须直接进入第二阶段，第三阶段沿用同一需求和实际资源结果。内部单位化不能替代真实bps接口；旧固定100束/0.5°训练支持范围也须核验，不能只对齐均值就称三阶段一致。资源方面新S2-T24已获其用户借1–2卡授权，正只读核18/24移交并登记持久排除，73/74留本组；此处尚不冒称移交完成。
+
 **2026-10-13 20:03 S1-AI17-R6四原ID已恢复并真实生成标签；固定micro4工程资格已根验收。** 四端均running/进程存活，工作台最新记录合计287/768候选完成，逐端为72/72/72/71，不据部分结果提前判标签门槛。原任务ID为18 `labels_ai_search_r6_20261013_190216_ecc1eb4a`、24 `190220_be67ae33`、73 `190225_f760c531`、74 `190229_baf6ffe9`（后三同前缀），科学7bb/核心9f187保持；9006–9009运维与controller为3e55781。controller33212及90秒只读helper40920持久运行，模型不代替进程轮询。[实时接手清单](outputs/experiments/first_stage_ai_search_20261013/round6/run_manifest.json) · [工作台观测](outputs/experiments/first_stage_ai_search_20261013/round6/control/labels_runtime_deps_02/state.json)。
 
 首worker四端缺scripts退出、V1脚本依赖后完整来源校验又错误指向运维repo/不完整snapshot，均未进入算法；原日志、快照/配置/ID及124/V1证据保留。V2仅运维bootstrap显式加载原7bb校验函数，全部原hardchecks与实际科学模块来自原冻结来源；69相关purechecks、四端真实bootstrap完整verify后才经API同IDresume。未热填旧快照或改教师/D5；当前科学计算已经开始，不能继续将全组写成0调用。[同ID恢复准入](outputs/experiments/first_stage_ai_search_20261013/round6/operations_repair/runtime_deps_02/root_same_ID_resume_admission.json)。
