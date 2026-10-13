@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 S1-AI17-R7方案23 v2已根审查通过，进入共享接口实现，尚无新科学调用。** [方案23](docs/第一阶段/方案/23_统一单机请求与三阶段接口下的学习构造.md)与合同603e0a1e保持单机21.6 Mbps、656个母场景（576训练/20开发/20验证/40考核），阶段总上限676准备、676教师、876 D5、单模型seed51001最多6000更新/8小时；原2000节点含在其中。先完成12个固定合成样例的身份/需求/宽度/实际分配与两个真实S2/S3入口核验，再逐阶段冻结新数据与任务；当前科学发布未准入。新增球面方向图为明确理想化工程模型，0.5°只锚定峰值，不冒称legacy全图等价或实际硬件认证。根已核3设计产物SHA、10依据SHA、9本地链接及预算，见[设计验收](outputs/experiments/first_stage_ai_search_20261013/design/round7_root_design_acceptance_v2.json)和[新运行清单](outputs/experiments/first_stage_ai_search_20261013/round7/run_manifest.json)。
+
 **2026-10-13 21:18 统一请求已核定为21.6 Mbps/机，三阶段一致性为新主线硬约束；R6历史标签已根验收，旧训练后继关闭。** 根依据真实原T0的576训练母、599,640条飞机—时刻记录选定21,600,000 bit/s；原合成数据实际均值21.595498 Mbps/机，统一值保留全部飞机后的平均总请求22.4865 Gbps，比旧实际逐束训练输入高0.22816%。这不是实测机载流量，也不代表该需求已被满足。596份原NPZ与596份逐机资产均核SHA、逐束聚合及ID对应；旧训练输入遗漏2028条飞机记录，不能调低请求抵消遗漏。[请求决定](outputs/experiments/first_stage_ai_search_20261013/consistency/20261013_uniform_request/root_constant_request_decision.json) · [数据审计](outputs/experiments/first_stage_ai_search_20261013/consistency/20261013_uniform_request/report.md)。
 
 当前通用S2已有可变N支持，但输入schema不含逐束width/稳定beam IDs；S2/S3方向图仍固定0.5°。因此尚未实现完整三阶段兼容：必须新建统一飞机/布局/实际分配对象，严格传递ID、位置、归属、真实N、逐束全宽、整数bps、实际槽与功率，并验证共同物理调用。方案23正在根审查，先有限合成接口资格，再新统一数据与教师；当前新数据/新科学训练/第三阶段求解均0，不把旧T0或旧异质标签称作最终兼容结果。新R7只使用73/74、训练74；18/24已实时核原任务终态和GPU无进程，并以持久lease借给S2-T24，[正式资源交接](outputs/experiments/s2_t0_fair24_20261013/preflight/s1_ai17_resource_handoff.json)，未停止云实例。
