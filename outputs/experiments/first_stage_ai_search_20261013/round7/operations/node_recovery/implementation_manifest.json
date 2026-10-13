@@ -1,0 +1,68 @@
+{
+  "schema": "R7Node2000AdditiveOperationsImplementationManifestV1",
+  "base_scientific_commit": "523fbc2b1e2480dcc563d302ddcc85317e271aa1",
+  "branch": "codex/r7-node-recovery",
+  "run_id": "r7_node2000_20261014_042707_19e62edd",
+  "runtime_files": {
+    "__init__.py": "5bc915222410338d7711dec6d1c2b59b5d4d839faa5dd08aba16bfbf6e376d71",
+    "bootstrap.py": "7351cf37444393deb555aa284354ec4321a3d8b121d3f2ad2fb97678857180f0",
+    "compat.py": "f6ebefde52e4c4fe82454c2506bc27b06971ad82ccf1db81c5d4e36d0d12c837",
+    "contracts.py": "89824c787dad6aab9a4d486bb2860aaf2febd0ced3fd794b4f4c693990c56ab7",
+    "qualification.py": "4351789fffc334db6d70d05b4cb79b68de8f9bac6ea97e8445df39b303a54b3b",
+    "server.py": "1a650b0d57453d4f8509ad9f8f5352f2113f9fdd2615bb5fda6fd2d96d68af13"
+  },
+  "pure_test_ref": {
+    "path": "tests/test_r7_node_recovery_ops.py",
+    "sha256": "a8279db9d1cd4badb8eb3b1505687084da8c63eaf56c495bc40f687771b48606"
+  },
+  "new_code_only": true,
+  "all_original_src_and_old_scripts_unchanged": true,
+  "qualified_six_math_and_nine_shared_unchanged": true,
+  "audit_fix": "strict original8 identity/provenance/input/role/preparedref/producer then deepcopy proposal case_identity6; original AI branch unchanged",
+  "resume": "restricted localhost9018 exact oneID; old9016 PID/birth must be gone; no scheduler/queued/create; durable intent before spawn; release handshake before child science locks; no unknown replay",
+  "original_spent_calls": {
+    "prepare": 1,
+    "T": 0,
+    "D5": 2
+  },
+  "remaining_calls_max": {
+    "prepare": 19,
+    "T": 20,
+    "D5": 58
+  },
+  "whole_node_max": {
+    "prepare": 20,
+    "T": 20,
+    "D5": 60
+  },
+  "original_failed_case0_complete_costs": null,
+  "original_exact_cost_gate": false,
+  "new_timer_scope": "new/reused call return timers persist before audit; original lost parent costs never reconstructed; enclosing new worker CLOCK_BOOTTIME upper bound separate",
+  "quality_readback": "qualification.py preserves original gatefalse and namedV2 facts; recovery qualification remainsfalse pending independent full call/geometry/cost+rootresult, no6000 binding or dispatch implemented",
+  "deadline": "original c33 and23UTC global pause plus originalstop.request preserved; pure actualguard scan fixture bound entirely to E temporary directory",
+  "tests": {
+    "final_suite": 14,
+    "AST_files": 7,
+    "all_passed": true,
+    "history_invocations": [
+      9,
+      12,
+      14,
+      14,
+      14
+    ],
+    "final_stable_source_suite_passed": true
+  },
+  "science_calls": 0,
+  "model_updates": 0,
+  "remote_mutations": 0,
+  "POST": 0,
+  "deployment_authorized": false,
+  "formal_remaining_prerequisites": [
+    "root exact full-source/ref transport/contract review",
+    "idle old9016 fresh owner/PIDbirth and root controlledTERM",
+    "rootfresh74 resources/contract and original fullsource/evidence SHA",
+    "root deployment+sole sameIDPOST admission",
+    "root separate future recovery qualification result acceptance before6000"
+  ]
+}
