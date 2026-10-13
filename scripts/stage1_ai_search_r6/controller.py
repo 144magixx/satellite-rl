@@ -9,19 +9,25 @@ sys.path.insert(0,str(Path.cwd()))
 from scripts.stage1_ai_search_r6 import ops
 
 
-def route(port,commit):
+def route(port,commit,operational_commit=None):
     i=ops.instance(port)
+    service_commit=operational_commit or commit
     code=f'''import sys,json,pathlib,subprocess
 registry=json.loads((pathlib.Path({i['ops']!r})/'service.json').read_text())
-if registry['source_commit']!={commit!r}:raise ValueError('route source is not actual service epoch')
+if registry['source_commit']!={service_commit!r}:raise ValueError('route source is not actual operational service epoch')
 repo=pathlib.Path(registry['source_root']).resolve()
 if not repo.is_relative_to(pathlib.Path({i['root']!r}).resolve()):raise ValueError('service repo outside isolated R6 root')
 actual=subprocess.run(['git','-C',str(repo),'rev-parse','HEAD'],capture_output=True,text=True,check=True).stdout.strip()
-if actual!={commit!r}:raise ValueError('actual route repo commit changed')
+if actual!={service_commit!r}:raise ValueError('actual operational route repo commit changed')
+if {service_commit!r}!={commit!r}:
+ ref=json.loads((pathlib.Path({i['ops']!r})/'runtime_dependency_admission_ref.json').read_text());p=pathlib.Path(ref['path']);import hashlib
+ if hashlib.sha256(p.read_bytes()).hexdigest()!=ref['sha256']:raise ValueError('runtime dependency admission SHA')
+ admission=json.loads(p.read_text())
+ if admission.get('passed')is not True or admission.get('science_commit')!={commit!r} or admission.get('operational_service_commit')!={service_commit!r}:raise ValueError('operational/scientific route admission differs')
 sys.path.insert(0,str(repo/'src'))
 from satellite_rl.workbench.r6_resources import observe
 from satellite_rl.training.run_monitor import atomic_json
-raw=observe({i['archive']!r});record={{'group':{ops.GROUP!r},'ssh_port':{port},'scientific_commit':{commit!r},'observed_utc':raw['observed_utc'],'gpu_uuid':raw['gpu'].split(',')[0].strip(),'ready':not raw['foreign_workers'],'observation':raw}}
+raw=observe({i['archive']!r});record={{'group':{ops.GROUP!r},'ssh_port':{port},'scientific_commit':{commit!r},'operational_service_commit':{service_commit!r},'observed_utc':raw['observed_utc'],'gpu_uuid':raw['gpu'].split(',')[0].strip(),'ready':not raw['foreign_workers'],'observation':raw}}
 atomic_json(pathlib.Path({i['ops']!r})/'resource_route.json',record);print(json.dumps(record))
 '''
     r=ops.remote_python(code,port,timeout=40)
@@ -56,7 +62,7 @@ def run(spec_path,state_root):
             if (root/'stop.request').exists():state['phase']='dispatch_stopped_workers_preserved';atomic_json(statefile,state);return
             state['routes']={}
             for port in sorted({x['port'] for x in spec['tasks']}):
-                try:state['routes'][str(port)]=route(port,spec['scientific_commit'])
+                try:state['routes'][str(port)]=route(port,spec['scientific_commit'],spec.get('operational_service_commit'))
                 except Exception as e:
                     state['routes'][str(port)]={'ready':False,'error':str(e)}
                     state.update(phase='attention_required',failure_operation='resource_route',error=str(e));atomic_json(statefile,state);return state

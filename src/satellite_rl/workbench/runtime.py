@@ -354,6 +354,16 @@ class Scheduler:
                 return
         env = dict(os.environ)
         env["PYTHONPATH"] = str(Path(job["source_root"]) / "src")
+        r6_dependency = None
+        if job.get("experiment_id") == "S1-AI17-R6":
+            try:
+                from .r6_runtime_dependency import prepare as r6_dependency_prepare
+                r6_dependency = r6_dependency_prepare(self.store,job,directory,self.python)
+                env["PYTHONPATH"] = r6_dependency["pythonpath"]
+                atomic_json(directory/"runtime_script_dependency.json",r6_dependency)
+            except Exception as error:
+                self._status(directory,status,stage="queued",queue_reason="R6 pinned script dependency rejected: "+str(error))
+                return
         # Only SI-priority refinement jobs may use their frozen, isolated
         # solver dependencies. The frozen scientific source stays first and
         # unrelated workers keep the original single-source PYTHONPATH.
@@ -384,7 +394,8 @@ class Scheduler:
                         "python": self.python, "source_root": job["source_root"], "at": now(),
                         "priority_solver_deps_path": job.get("priority_solver_deps_path"),
                         "runtime_extensions": job.get("runtime_extensions",[]),
-                        "runtime_identity": "composite" if job.get("runtime_extensions") else "frozen_source",
+                        "runtime_identity": "composite_r6_scripts" if r6_dependency else "composite" if job.get("runtime_extensions") else "frozen_source",
+                        "r6_script_dependency": r6_dependency,
                         "process_start_time": process_start_time(child.pid)})
         except Exception as error:
             self._status(directory, status, stage="failed", error=str(error))
