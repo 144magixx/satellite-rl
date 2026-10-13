@@ -6,6 +6,8 @@ GROUP='S1-AI17-R8'
 DESIGN_SHA='e0e24cf00e873965ee585d77f5f1e38c7455196a19a5357de7c5732fcfa08bb4'
 CHECKPOINT_SHA='10ff42e745ee0b1639cab9781d53ca43f5baa61b7e9e75aa12e49eec15bc9a40'
 DEADLINE=1791932400.0
+OPS_FILES=('__init__.py','contracts.py','deadline.py','server.py','worker.py','child.py','plan_builder.py')
+CORE_FILES=('__init__.py','core.py','geometry.py','ledger.py')
 def digest(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def pin(r):
  p=Path(r['path'])
@@ -29,6 +31,29 @@ def identity(pid):
  return dict(pid=pid,birth_ticks=int(fields[19]),state=fields[0],boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip())
 def order(i):
  arms=['G','A','R'];return arms[i%3:]+arms[:i%3]
+def validate_sources(p):
+ for ref in p['source_files'].values():pin(ref)
+ for name in OPS_FILES:
+  key='scripts/stage1_ai_search_r8/'+name
+  if key not in p['source_files'] or Path(p['source_files'][key]['path']).resolve()!=Path(__file__).with_name(name).resolve():raise ValueError('actual complete seven R8 operations source')
+ for name in CORE_FILES:
+  key='src/satellite_rl/coverage/ai_search_r8/'+name
+  expected=Path(p['core_source_root'])/'satellite_rl/coverage/ai_search_r8'/name
+  if key not in p['source_files'] or Path(p['source_files'][key]['path']).resolve()!=expected.resolve():raise ValueError('complete four actual R8 core sources')
+ if p['core_ref']!=p['source_files']['src/satellite_rl/coverage/ai_search_r8/core.py']:raise ValueError('exact sole actual core ref')
+def validate_imported_core(p,modules):
+ for name in CORE_FILES:
+  ref=p['source_files']['src/satellite_rl/coverage/ai_search_r8/'+name];pin(ref)
+  if name not in modules or Path(modules[name].__file__).resolve()!=Path(ref['path']).resolve():raise ValueError('loaded R8 relative module differs: '+name)
+def storage_inventory(p):
+ inventory=read(p['storage_inventory_ref']);root=Path(p['archive_root']).resolve()
+ if inventory.get('schema')!='R8OwnedStorageInventoryV1' or inventory.get('group')!=GROUP or inventory.get('archive_root')!=p['archive_root'] or inventory.get('root_accepted')is not True or inventory.get('new_logical_bytes_max')!=1073741824 or inventory.get('free_reserve_bytes')!=8589934592:raise ValueError('exact root-pinned R8 storage inventory/caps')
+ growth=Path(inventory['owned_growth_root']).resolve()
+ if '/round8' not in growth.as_posix() or not root.is_relative_to(growth):raise ValueError('own R8 growth tree must contain own archive')
+ for path in inventory.get('additional_owned_roots',[]):
+  if '/round8' not in Path(path).resolve().as_posix():raise ValueError('additional growth must be own R8 directory')
+ if not isinstance(inventory.get('fixed_other_owned_bytes'),int) or inventory['fixed_other_owned_bytes']<0:raise ValueError('explicit immutable source/meta bytes outside growth roots')
+ return inventory
 def validate(plan_ref,review_ref):
  p=read(plan_ref);r=read(review_ref)
  if p.get('schema')!='R8ExactCachedOwnerPilotPlanV1' or p.get('group')!=GROUP or p.get('executor_port') not in (20473,20474):raise ValueError('own exact R8 plan/route')
@@ -47,11 +72,7 @@ def validate(plan_ref,review_ref):
   if item['checkpoint_ref']!=p['checkpoint_ref']:raise ValueError('same cached model checkpoint')
   pin(item['normalization_ref'])
   for ref in item['refs'].values():pin(ref)
- for ref in p['source_files'].values():pin(ref)
- for name in ('__init__.py','contracts.py','deadline.py','server.py','worker.py','child.py'):
-  key='scripts/stage1_ai_search_r8/'+name
-  if key not in p['source_files'] or Path(p['source_files'][key]['path']).resolve()!=Path(__file__).with_name(name).resolve():raise ValueError('actual complete loaded R8 operations source')
- if p['core_ref'] not in p['source_files'].values():raise ValueError('core source must belong to frozen closure')
+ validate_sources(p);storage_inventory(p)
  sm=read(p['original_source_manifest_ref'])
  if sm['git_commit']!='523fbc2b1e2480dcc563d302ddcc85317e271aa1':raise ValueError('original D5 source epoch')
  source=Path(p['original_source_manifest_ref']['path']).parent

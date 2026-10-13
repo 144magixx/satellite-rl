@@ -1,11 +1,28 @@
 """Fail-closed R8 boundaries registered separately from original R7/archive."""
-import json,os,signal,time,ctypes,sys
+import json,os,signal,time,ctypes,sys,shutil
 from pathlib import Path
-from .contracts import DEADLINE,read,atomic,identity,GROUP
+from .contracts import DEADLINE,read,atomic,identity,GROUP,storage_inventory
 
 class Paused(RuntimeError):pass
+def storage_boundary(plan,point):
+ inventory=storage_inventory(plan);root=Path(plan['archive_root']);disk=shutil.disk_usage(root)
+ # Count declared owned logical bytes once per resolved file, no symlink traversal.
+ files=set();logical=inventory.get('fixed_other_owned_bytes',0)
+ if not isinstance(logical,int) or logical<0:raise ValueError('explicit fixed owned source/meta byte count')
+ for dirname in [inventory['owned_growth_root'],*inventory.get('additional_owned_roots',[])]:
+  for current,dirs,names in os.walk(dirname,followlinks=False):
+   if any((Path(current)/name).is_symlink() for name in dirs+names):raise ValueError('owned storage cannot follow undeclared directory/file links')
+   for name in names:
+    p=(Path(current)/name).resolve()
+    if p not in files:files.add(p);logical+=p.stat().st_size
+ receipt=dict(point=point,actual_disk_path=str(root.resolve()),disk_free_bytes=disk.free,owned_logical_bytes=logical,new_logical_bytes_max=1073741824,free_reserve_bytes=8589934592,physical_occupancy_not_claimed=True,storage_inventory_ref=plan['storage_inventory_ref'])
+ atomic(root/'storage_boundary_latest.json',receipt)
+ if disk.free<8589934592 or logical>1073741824:
+  atomic(root/'pause_state.json',dict(group=GROUP,paused=True,reason='storage_cap_or_reserve',storage_observation=receipt,no_assets_deleted=True));raise Paused('storage cap or 8GiB reserve reached; no new child/WAL')
+ return receipt
 def before_start(plan,point,hard_seconds=15,startup_margin_seconds=5):
  admission=boundary(plan,point)
+ storage_boundary(plan,point)
  if DEADLINE-time.time()<hard_seconds+startup_margin_seconds:
   atomic(Path(plan['archive_root'])/'pause_state.json',dict(group=GROUP,paused=True,requires_explicit_human_continue=True,point=point,reason='insufficient_time_for_new_child_hard_guard_plus5seconds_startup',deadline_unix_seconds=DEADLINE))
   raise Paused('safe boundary before new child; insufficient deadline margin')

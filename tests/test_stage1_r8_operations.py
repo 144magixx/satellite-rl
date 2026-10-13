@@ -28,9 +28,35 @@ class Operations(unittest.TestCase):
  def test_new_child_refused_only_within20seconds_deadline(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);plan=dict(archive_root=tmp,deadline_registration_ref={})
-   with patch.object(deadline,'read',return_value=self.registration(root)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-19):
+   with patch.object(deadline,'read',return_value=self.registration(root)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-19),patch.object(deadline,'storage_boundary',return_value={}):
     with self.assertRaises(deadline.Paused):deadline.before_start(plan,'local_before_intent')
-   with patch.object(deadline,'read',return_value=self.registration(root)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-21):self.assertTrue(deadline.before_start(plan,'D5_before_intent')['passed'])
+   with patch.object(deadline,'read',return_value=self.registration(root)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-21),patch.object(deadline,'storage_boundary',return_value={}):self.assertTrue(deadline.before_start(plan,'D5_before_intent')['passed'])
+ def sources(self):
+  root=Path(contracts.__file__).resolve().parents[2];files={}
+  for name in contracts.OPS_FILES:
+   p=Path(contracts.__file__).with_name(name);files['scripts/stage1_ai_search_r8/'+name]=dict(path=str(p),sha256=contracts.digest(p))
+  for name in contracts.CORE_FILES:
+   p=root/'src/satellite_rl/coverage/ai_search_r8'/name;files['src/satellite_rl/coverage/ai_search_r8/'+name]=dict(path=str(p),sha256=contracts.digest(p))
+  return dict(source_files=files,core_source_root=str(root/'src'),core_ref=files['src/satellite_rl/coverage/ai_search_r8/core.py'])
+ def test_complete_four_core_and_seven_operations_required(self):
+  p=self.sources();contracts.validate_sources(p);del p['source_files']['src/satellite_rl/coverage/ai_search_r8/ledger.py']
+  with self.assertRaises(ValueError):contracts.validate_sources(p)
+ def test_actual_relative_module_path_cannot_differ(self):
+  from types import SimpleNamespace
+  p=self.sources();modules={name:SimpleNamespace(__file__=p['source_files']['src/satellite_rl/coverage/ai_search_r8/'+name]['path']) for name in contracts.CORE_FILES};contracts.validate_imported_core(p,modules)
+  modules['geometry.py']=SimpleNamespace(__file__=modules['core.py'].__file__)
+  with self.assertRaises(ValueError):contracts.validate_imported_core(p,modules)
+ def test_storage_cap_and_reserve_pause_without_deletion(self):
+  from collections import namedtuple
+  Disk=namedtuple('Disk','total used free')
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);(root/'evidence').write_bytes(b'protected');plan=dict(archive_root=tmp,storage_inventory_ref={});inventory=dict(owned_growth_root=tmp,additional_owned_roots=[],fixed_other_owned_bytes=1073741825)
+   with patch.object(deadline,'storage_inventory',return_value=inventory),patch.object(deadline.shutil,'disk_usage',return_value=Disk(10**11,0,10**11)):
+    with self.assertRaises(deadline.Paused):deadline.storage_boundary(plan,'before_local')
+   inventory['fixed_other_owned_bytes']=0
+   with patch.object(deadline,'storage_inventory',return_value=inventory),patch.object(deadline.shutil,'disk_usage',return_value=Disk(10**11,0,8589934591)):
+    with self.assertRaises(deadline.Paused):deadline.storage_boundary(plan,'before_D5')
+   self.assertEqual((root/'evidence').read_bytes(),b'protected')
  def endpoint(self,root):
   e=server.Endpoint.__new__(server.Endpoint);e.root=root;e.plan_ref=dict(path='plan',sha256='p');e.review_ref=dict(path='review',sha256='r');e.plan=dict(run_id='r8_pilot_mock',request_id='exact',archive_root=str(root));e.path='/api/ai-search-r8/tasks/r8_pilot_mock';return e
  def test_wrong_post_body_or_old_endpoint_never_spawns(self):

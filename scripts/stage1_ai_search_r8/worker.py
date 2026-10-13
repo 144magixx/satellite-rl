@@ -2,7 +2,7 @@
 import argparse,os,sys,time,subprocess
 from pathlib import Path
 from .contracts import read,validate,atomic,immutable,pin,digest,identity,order
-from .deadline import boundary,before_start,Paused,bind_parent
+from .deadline import boundary,before_start,storage_boundary,Paused,bind_parent
 
 def run(plan_ref,review_ref):
  began=time.monotonic();bind_parent('R8_SERVICE_PID');p=validate(plan_ref,review_ref);boundary(p,'worker_before_runtime')
@@ -21,7 +21,7 @@ def run(plan_ref,review_ref):
    for case in p['cases']:
     i=case['case_index']
     for arm in order(i):
-     boundary(p,'queue_before_slot');key=f'{i}:{arm}';target=root/'slots'/str(i)/arm
+     boundary(p,'queue_before_slot');storage_boundary(p,'queue_before_slot');key=f'{i}:{arm}';target=root/'slots'/str(i)/arm
      if key in index:
       pin(index[key]);continue
      target.mkdir(parents=True,exist_ok=True);local=target/'local';d5=target/'D5';slot_started=time.monotonic();audit_started=None

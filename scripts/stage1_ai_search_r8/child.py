@@ -2,7 +2,7 @@
 import argparse,os,sys,time
 from pathlib import Path
 import numpy as np
-from .contracts import read,pin,atomic,digest
+from .contracts import read,pin,atomic,digest,validate_imported_core
 from .deadline import boundary,bind_parent,Paused
 
 def execute(req,directory):
@@ -20,6 +20,9 @@ def execute(req,directory):
   import satellite_rl.coverage
   satellite_rl.coverage.__path__.append(str(Path(plan['core_source_root'])/'satellite_rl/coverage'))
   from satellite_rl.coverage.ai_search_r8 import core
+  import satellite_rl.coverage.ai_search_r8 as package
+  from satellite_rl.coverage.ai_search_r8 import geometry,ledger
+  validate_imported_core(plan,{'__init__.py':package,'core.py':core,'geometry.py':geometry,'ledger.py':ledger})
   core_ref=plan['core_ref'];pin(core_ref)
   if Path(core.__file__).resolve()!=Path(core_ref['path']).resolve():raise ValueError('actual core source differs')
   owner=None
