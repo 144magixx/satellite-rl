@@ -17,6 +17,9 @@ class Operations(unittest.TestCase):
    contracts.atomic(root/'shared_pause.json',dict(paused=True))
    with patch.object(deadline,'read',return_value=self.registration(root)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-100):
     with self.assertRaises(deadline.Paused):deadline.boundary(plan,'mock_child')
+   contracts.atomic(root/'shared_pause.json',dict(global_dispatch_hold=True))
+   with patch.object(deadline,'read',return_value=self.registration(root)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-100):
+    with self.assertRaises(deadline.Paused):deadline.boundary(plan,'mock_queue')
  def test_registration_cannot_reuse_r7_archive(self):
   with tempfile.TemporaryDirectory() as tmp:
    value=self.registration(Path(tmp));value['archive_root']+='wrong'

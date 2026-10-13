@@ -12,7 +12,7 @@ def boundary(plan,point):
   p=Path(path)
   if p.exists():
    value=json.loads(p.read_bytes())
-   if value.get('paused') or value.get('hold') or value.get('pause_required'):held.append(path)
+   if any(value.get(key) for key in ('paused','hold','pause_required','global_dispatch_hold','dispatch_hold','pause_requested')) or str(value.get('state','')).startswith('paused'):held.append(path)
  if time.time()>=DEADLINE or held or (Path(plan['archive_root'])/'stop.request').exists():
   atomic(Path(plan['archive_root'])/'pause_state.json',dict(group=GROUP,paused=True,requires_explicit_human_continue=True,point=point,actual_process=identity(os.getpid()),deadline_unix_seconds=DEADLINE,held_paths=held))
   raise Paused('R8 paused; explicit human continue and new root admission required')
