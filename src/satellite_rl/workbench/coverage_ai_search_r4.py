@@ -87,6 +87,10 @@ def api(app,method,parts,body):
   run=validate_id(parts[1]);job=read_json(app.store.job_dir(run)/'job.json',{})
   if job.get('experiment_id')!=GROUP:raise ValueError('othergroup')
   if method=='GET'and len(parts)==2:return app.run_detail(run)
-  if method=='POST'and parts[2:]==['resume']:return frozen_round_tasks.resume(app.scheduler,run,policy)
+  if method=='POST'and parts[2:]==['resume']:
+   if body.get('repair_id'):
+    from .r4_monitor_repair import repair_resume
+    return repair_resume(app.scheduler,run,policy,body)
+   return frozen_round_tasks.resume(app.scheduler,run,policy)
   if method=='POST'and parts[2:]==['stop']:return app.scheduler.request_stop(run)
  raise FileNotFoundError('unknown B0 endpoint')
