@@ -11,8 +11,8 @@ from .r6_io import pin_tree
 
 MODEL_OWNER_ROOT=Path("/home/u2024110224/first_stage_satellite_rl/s1_ai17/round7_model_ownership")
 
-def train(job,config,directory):
- context={}
+def train(job,config,directory,worker_preflight_began=None):
+ context={'worker_preflight_began':worker_preflight_began} if worker_preflight_began is not None else {}
  try:return _train(job,config,directory,context)
  finally:
   session=context.get('session')
@@ -29,7 +29,7 @@ def _train(job,config,directory,activity_context):
  from satellite_rl.coverage.ai_search_r6.model import initialize_model,model_tensor_sha
  from satellite_rl.coverage.ai_search_r6.features import FeatureStats,record_sha
  from satellite_rl.coverage.ai_search_r6.learning import CaseSampler,TrainingSession
- setup_began=time.monotonic();directory=Path(directory);model_directory=Path(job["model_dir"]);model_directory.mkdir(parents=True,exist_ok=True);refs=job["model_inputs"];plan=signed_json(job["references"]["plan"]);manifest,rows=qualified_rows(refs["qualified"],refs["labels_gate"]);initial=signed_json(refs["initialization_receipt"])
+ setup_began=activity_context.get('worker_preflight_began',time.monotonic());directory=Path(directory);model_directory=Path(job["model_dir"]);model_directory.mkdir(parents=True,exist_ok=True);refs=job["model_inputs"];plan=signed_json(job["references"]["plan"]);manifest,rows=qualified_rows(refs["qualified"],refs["labels_gate"]);initial=signed_json(refs["initialization_receipt"])
  from .r7_train_binding import validate_setup,validate_owner
  setup_ref=refs['train_setup_endpoint'];setup_endpoint=signed_json(setup_ref)
  gate=signed_json(plan['prerequisite_gate_ref'])
@@ -109,7 +109,11 @@ def _train(job,config,directory,activity_context):
   if owner['last_completed_update']>session.updates:raise ValueError('known completed optimizer steps lack recoverable state; replay forbidden')
   setup_seconds=time.monotonic()-setup_began;session.active_seconds+=setup_seconds;atomic_json(directory/"setup_activity_receipt.json",{"charged_setup_seconds":setup_seconds,"offline_supply_seconds_added_only_at_initial":supply_charge if not resume_ref else 0.,"includes_manifest_initialization_checkpoint_load":True})
   session.start_activity(clock_path=clock)
-  if not checkpoint_index:
+  if not checkpoint_index and resume_ref:
+   checkpoint_index=dict(latest=resume_ref,previous=None,updates=session.updates,charged_active_seconds=session.elapsed(),model_identity=job['model_identity'],clock_path=str(clock))
+   atomic_json(directory/'checkpoint_index.json',checkpoint_index);atomic_json(directory/'optimizer_completion.json',dict(completed_optimizer_update=session.updates,recoverable_state_published=True,checkpoint_ref=resume_ref,model_identity=job['model_identity'],new_optimizer_updates=0))
+  if not checkpoint_index and not resume_ref:
+   if start!=0 or session.updates!=0:raise ValueError('zero checkpoint only fresh original0-update learner')
    initial_checkpoint=model_directory/'checkpoints'/'initial_000000.pt'
    if initial_checkpoint.exists():raise ValueError('orphan initial checkpoint retained; root same-ID reconciliation required')
    receipt=session.checkpoint(initial_checkpoint)

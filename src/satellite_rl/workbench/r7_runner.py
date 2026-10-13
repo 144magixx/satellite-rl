@@ -17,10 +17,12 @@ def run_job(directory,resume=False):
     try:
         with exclusive_lock(directory/'worker.lock'),exclusive_lock(Path(job['archive_root']).parent/'ops/compute.lock'):
             mode=job['mode'];refs=job['model_inputs'];runtime=None
-            from .r7_deadline import stop_boundary
-            stop_boundary(job,directory)
             import time
             setup_began=time.monotonic()
+            from .r7_deadline import stop_boundary
+            proof=stop_boundary(job,directory)
+            atomic_json(directory/'worker_deadline_preflight.json',dict(schema='R7ActualWorkerDeadlinePreflightV1',actual_guard_admission=proof,point='before_first_runtime_configuration_or_CUDA_query',run_id=job['run_id'],mode=mode,
+                        source_commit=job['scientific_commit'],runner_source_sha256=__import__('hashlib').sha256(Path(__file__).read_bytes()).hexdigest(),preserves_source_snapshot=True))
             if mode in ('train_setup','train2000','train6000','node2000','fixed6000_development') or (mode in ('validation','test') and config.get('heldout_stage')=='evaluate'):
                 # Configure the fresh worker before deployment queries CUDA.
                 from satellite_rl.coverage.ai_search_r6.runtime_v3 import configure_v3_runtime
@@ -52,7 +54,7 @@ def run_job(directory,resume=False):
                     completed=len(job['case_indices'])
                 elif mode in ('train2000','train6000'):
                     from .r7_model_train import train
-                    result=train(job,config,directory);completed=result['updates']
+                    result=train(job,config,directory,worker_preflight_began=setup_began);completed=result['updates']
                 elif mode in ('validation','test') and config.get('heldout_stage')=='derive':
                     from .r7_heldout_data import derive
                     result=derive(refs['heldout_recipe'],refs['heldout_unlock_gate'],mode,job['case_indices'],directory/'heldout_derivation',stop=lambda:stop_boundary(job,directory));atomic_json(directory/'result_manifest.json',result);completed=len(result['cases'])

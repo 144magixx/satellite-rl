@@ -87,10 +87,10 @@ def run(spec_path,state_root,api,observe,admit=None,explicit_resume_ref=None):
             time.sleep(30)
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--spec',required=True);p.add_argument('--state-root',required=True);p.add_argument('--guard-transition');p.add_argument('--guard-transition-sha256');p.add_argument('--controller-resume');p.add_argument('--controller-resume-sha256');args=p.parse_args();spec=read_json(args.spec,{})
+    p=argparse.ArgumentParser();p.add_argument('--spec',required=True);p.add_argument('--state-root',required=True);p.add_argument('--guard-transition');p.add_argument('--guard-transition-sha256');p.add_argument('--guard-transition-admission');p.add_argument('--guard-transition-admission-sha256');p.add_argument('--controller-resume');p.add_argument('--controller-resume-sha256');args=p.parse_args();spec=read_json(args.spec,{})
     if args.guard_transition:
         from satellite_rl.workbench.r7_deadline import install_transition
-        install_transition(dict(path=args.guard_transition,sha256=args.guard_transition_sha256))
+        install_transition(dict(path=args.guard_transition,sha256=args.guard_transition_sha256),dict(path=args.guard_transition_admission,sha256=args.guard_transition_admission_sha256))
     def api(port,path,body=None):
         base=spec['workbench_urls'][str(port)]
         req=urllib.request.Request(base.rstrip('/')+path,data=json.dumps(body).encode() if body else None,headers={'Content-Type':'application/json'},method='POST' if body else 'GET')

@@ -13,6 +13,7 @@ MODES=IMPLEMENTED_PHASES
 CANONICAL_DATASETS=True
 RUNTIME_FIELDS=FIELDS[1:]
 SERVICE_GUARD_REFS=None
+SERVICE_HOOK_RECEIPT_REF=None
 
 def task_contract(body):return {k:deepcopy(body.get(k)) for k in FIELDS}
 def run_prefix(c):return 'r7_'+c['mode']
@@ -139,7 +140,9 @@ def api(app,method,parts,body):
         if parts[1] not in MODES or SERVICE_GUARD_REFS is None:raise RuntimeError('actual pinned service deadline hooks required')
         from .r7_deadline import load
         guard,spec=load(SERVICE_GUARD_REFS);guard.require_dispatch_admission(spec,archive_root=app.store.archive_root,experiment_id=GROUP,mode=parts[1])
-        return dict(group=GROUP,mode=parts[1],passed=True,archive_root=str(app.store.archive_root),actual_guard_refs=SERVICE_GUARD_REFS,science_calls=0)
+        if SERVICE_HOOK_RECEIPT_REF is None:raise RuntimeError('actual service API/scheduler/worker hook installation receipt required')
+        pin(SERVICE_HOOK_RECEIPT_REF)
+        return dict(group=GROUP,mode=parts[1],passed=True,archive_root=str(app.store.archive_root),actual_guard_refs=SERVICE_GUARD_REFS,actual_service_hook_receipt_ref=SERVICE_HOOK_RECEIPT_REF,science_calls=0)
     if method=='GET' and parts==['schema']:return dict(group=GROUP,schema_version=16,modes=MODES,labels=576,node_cases=20,node_D5=60,test_cases=40,allowed_ports=PORTS,train_port=20474,all_phases_require_exact_root_gate_and_pause_hooks=True)
     if method=='GET' and parts==['tasks']:
         from .coverage_ai_search import observed_status

@@ -54,6 +54,7 @@ def rss_tree(pid, proc=Path('/proc'), page_size=None, samples=None):
                 raw=(root/'stat').read_text();state=raw[raw.rfind(')')+2:].split()[0]
                 gone=state in ('Z','X')
             except (FileNotFoundError,ProcessLookupError):
+                if root.exists():raise
                 gone=True
             if not gone:raise
             if samples is not None:samples.append(dict(pid=current,source='confirmed_proc_exit_ESRCH',at=now()))

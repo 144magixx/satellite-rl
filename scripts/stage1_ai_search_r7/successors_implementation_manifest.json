@@ -10,7 +10,7 @@
   "actual_model_load_or_optimizer_calls": 0,
   "actual_heldout_array_reads": 0,
   "actual_remote_or_API_mutations": 0,
-  "pure_checks": {"prior_R7_tests": 52, "successor_tests": 11, "failed_label_tests": 6},
+  "pure_checks": {"prior_R7_tests": 52, "successor_tests": 13, "failed_label_tests": 6},
   "original_total_budget": {"builds": 656, "prepare": 676, "T": 676, "D5": 876, "updates": 6000},
   "training": {
     "single_seed": 51001,
@@ -46,6 +46,7 @@
     "no_real_continue_receipt_generated": true,
     "partial_setup_supply": "preserved/charged; explicit root same-ID supply reconciliation required; implicit regeneration rejected"
   },
+  "actual_hook_receipts": {"service_schema": "R7ActualServiceDeadlineHooksV1", "service_path": "guard_spec.guard_root/actual_service_hooks/servicePID.json", "GET_admission_includes_ref": true, "worker_schema": "R7ActualWorkerDeadlinePreflightV1", "worker_path": "job/worker_deadline_preflight.json", "before_CUDA": true, "actual_deployed_receipts": null},
   "RSS": "same resource bounds/meaning; ESRCH ignored only after gone/Z/X confirmation; live PermissionError/malformed still fatal",
   "protected_shared_9_changed": false,
   "remaining_root_requirements": [

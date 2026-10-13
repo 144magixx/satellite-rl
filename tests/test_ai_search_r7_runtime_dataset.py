@@ -43,7 +43,7 @@ class FreshActualWorkerOrder(unittest.TestCase):
             events.append('deployment_cuda_query');self.assertTrue(state['initialized'])
         def verify(store,job,policy):policy.deployment(store)
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);job=dict(mode='train2000',model_inputs={},archive_root='/home/u2024110224/first_stage_satellite_rl/s1_ai17/20474/round7/archive',source_root=str(root))
+            root=Path(tmp);job=dict(run_id='pure_mock_runtime',scientific_commit='a'*40,mode='train2000',model_inputs={},archive_root='/home/u2024110224/first_stage_satellite_rl/s1_ai17/20474/round7/archive',source_root=str(root))
             atomic_json(root/'job.json',job);atomic_json(root/'config.json',dict(schema_version=16,research_stage='coverage'));atomic_json(root/'status.json',{})
             with patch.dict(sys.modules,{'torch':fake_torch}),patch('satellite_rl.workbench.r7_deadline.stop_boundary',return_value=True),patch.dict('os.environ',{'SATELLITE_RL_SSH_PORT':'20474','CUBLAS_WORKSPACE_CONFIG':':4096:8'}),patch.object(runtime_v3,'configure_v3_runtime',side_effect=configure) as configured,patch.object(subject,'Store',side_effect=lambda archive,**kwargs:SimpleNamespace(archive_root=SimpleNamespace(resolve=lambda:PurePosixPath(archive)))),patch.object(subject.policy,'Path',PurePosixPath),patch.object(subject,'exclusive_lock',side_effect=lambda *a,**k:nullcontext()),patch.object(subject.frozen_round_tasks,'verify',side_effect=verify) as verified,patch('satellite_rl.workbench.coverage._require_remote_dqn',side_effect=remote_dqn),patch.object(trainer,'train',return_value={'updates':0}) as train:
                 if initialized:

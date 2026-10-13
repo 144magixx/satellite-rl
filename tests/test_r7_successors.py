@@ -74,10 +74,17 @@ class DataLocks(unittest.TestCase):
 
 class PauseAndRSS(unittest.TestCase):
     def test_shared_guard_require_uses_exact_mode_registry(self):
-        refs={k:ref(k) for k in r7_deadline.KEYS};guard=SimpleNamespace(require_dispatch_admission=lambda *a,**kw:None,registrations=lambda s:[dict(archive_root='/a',experiment_id=GROUP,modes=['fixed6000_development'])])
+        refs={k:ref(k) for k in r7_deadline.KEYS};guard=SimpleNamespace(process_identity=lambda pid:dict(pid=pid,alive=True),require_dispatch_admission=lambda *a,**kw:None,registrations=lambda s:[dict(archive_root='/a',experiment_id=GROUP,modes=['fixed6000_development'])])
         with patch.object(r7_deadline,'load',return_value=(guard,{})),patch.object(r7_deadline,'ACTIVE_TRANSITION_REF',None),patch.dict('os.environ',{},clear=True):
             self.assertTrue(r7_deadline.require(refs,'/a',GROUP,'fixed6000_development'))
             with self.assertRaises(RuntimeError):r7_deadline.require(refs,'/a',GROUP,'test')
+    def test_actual_service_installers_select_new_guard_after_explicit_continue(self):
+        old={k:ref('old'+k) for k in r7_deadline.KEYS};new={k:ref('new'+k) for k in r7_deadline.KEYS};first=SimpleNamespace();second=SimpleNamespace()
+        transition=dict(old_guard_refs_by_port={'20474':old},new_guard_refs_by_port={'20474':new})
+        with patch.object(r7_deadline,'ACTIVE_TRANSITION_REF',ref('transition')),patch.object(r7_deadline,'install_transition',return_value=transition),patch.object(r7_deadline,'load',side_effect=[(first,dict(ssh_port=20474)),(second,dict(ssh_port=20474))]):
+            guard,spec,actual=r7_deadline.active_service_guard(old);self.assertIs(guard,second);self.assertEqual(actual,new)
+    def test_restored2000_never_enters_zero_checkpoint_branch(self):
+        source=Path(__file__).resolve().parents[1]/'src/satellite_rl/workbench/r7_model_train.py';s=source.read_text();self.assertIn('if not checkpoint_index and resume_ref:',s);self.assertIn('updates=session.updates',s);self.assertIn('if not checkpoint_index and not resume_ref:',s)
     def test_trainer_pause_finally_closes_resource_clock_without_core_enum_change(self):
         from satellite_rl.workbench import r7_model_train as t
         session=SimpleNamespace(active_started=1,updates=42,elapsed=lambda:13.)
@@ -104,5 +111,9 @@ class PauseAndRSS(unittest.TestCase):
                         with self.assertRaises(ProcessLookupError):r4_monitor_repair.rss_tree(7,proc=Path(d),page_size=4096)
         with tempfile.TemporaryDirectory() as d,patch.object(Path,'read_text',side_effect=PermissionError('live permission')):
             with self.assertRaises(PermissionError):r4_monitor_repair.rss_tree(7,proc=Path(d),page_size=4096)
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d)/'7').mkdir()
+            with patch.object(Path,'read_text',side_effect=ProcessLookupError(3,'provider error while root still exists')):
+                with self.assertRaises(ProcessLookupError):r4_monitor_repair.rss_tree(7,proc=Path(d),page_size=4096)
 
 if __name__=='__main__':unittest.main()
