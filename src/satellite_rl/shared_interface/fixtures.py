@@ -59,7 +59,7 @@ def object_recipe(spec):
     elif mutation=='case_request0=21599999;update_sum_and_selfhash;fixed_request_bps_still21600000':case['request_bps_int64'][0]=21599999;case['total_request_bps_int64']=21599999;case=seal(case)
     elif mutation=='delete_layout_full_width_deg':layout.pop('full_width_deg');layout=seal(layout)
     registry=dict(schema='R7PublishedParentRegistryV1',case_sha_by_id={ident:original['case']['content_sha256']},
-        layout_shas=[original['layout']['content_sha256']],allocation_shas=[allocation['content_sha256']],source=dict(recipe_contract_sha=DESIGN_SHA))
+        layout_shas=[original['layout']['content_sha256']],allocation_shas=sorted(set([original['allocation']['content_sha256'],allocation['content_sha256']])),source=dict(recipe_contract_sha=DESIGN_SHA))
     return dict(case=case,layout=layout,allocation=allocation,original_authoritative_objects=original,
         authority_registry=registry,authority_registry_sha=content_sha(registry),expected=spec['expected'],recipe=spec)
 
@@ -76,6 +76,7 @@ def write_plan(design_path,acceptance_path,directory):
         objects=object_recipe(spec);folder=root/spec['id'];folder.mkdir()
         for name in ('case','layout','allocation','authority_registry'):
             path=folder/(name+'.json');path.write_bytes(wire_bytes(seal(objects[name]) if name=='authority_registry' else objects[name]));members[path.relative_to(root).as_posix()]=file_sha(path)
+        canonical_path=folder/'allocation_canonical.json';canonical_path.write_bytes(wire_bytes(objects['original_authoritative_objects']['allocation']));members[canonical_path.relative_to(root).as_posix()]=file_sha(canonical_path)
         (folder/'expected.json').write_text(json.dumps(dict(expected=objects['expected'],recipe=spec,
             authority_registry_sha=objects['authority_registry_sha']),sort_keys=True,indent=2),encoding='utf8')
         members[(folder/'expected.json').relative_to(root).as_posix()]=file_sha(folder/'expected.json')
@@ -84,8 +85,9 @@ def write_plan(design_path,acceptance_path,directory):
     plan=dict(schema='R7InterfaceQualificationPlanV1',design_sha=DESIGN_SHA,root_acceptance_sha=ACCEPTANCE_SHA,
         fixture_count=12,planned_counts=COUNTS,fixture_members=members,caller_chain_source_sha256=chain,
         actual_callers=['satellite_rl.shared_interface.stages.s1_publish_import',
-            'satellite_rl.shared_interface.stages.UniformStage2Input.from_wire->terminal_fixed_evaluation',
-            'satellite_rl.shared_interface.stages.UniformStage3FixedInput.from_wire->fixed_initial_evaluation'],
+            'satellite_rl.shared_interface.stages.UniformStage2Input.from_wire->export_actual_allocation->canonical_bytes_compare->terminal_fixed_evaluation',
+            'frozen legal allocation permutation of actual S2 exported record->UniformStage3FixedInput.from_wire->fixed_initial_evaluation'],
+        count_definition='36 roundtrips=12fixedfixtures*3 stage object-graph serialization/reception checks; actual object read_wire calls separately reported; S2 export is part of its stage object graph not a new case',
         setup_operations='hand-specified arrays/hash and12 cap/actualOmega expressions; no visibility/coverage/pattern/PHY call',
         execution_counts=dict(roundtrips=0,coefficient_builds=0,capacity_evaluations=0,pattern_points=0,normalization_integrals=0),
         no_new_data_labels_planning_optimizer_model_solver=True)
