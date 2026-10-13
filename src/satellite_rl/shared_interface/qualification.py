@@ -7,7 +7,8 @@ from pathlib import Path
 import subprocess
 import numpy as np
 from . import stages
-from .content import read_wire,content_sha
+from . import content
+from .content import read_wire,content_sha,seal,wire_bytes
 from .contracts import Authority
 from .spherical_gaussian import PHYSICS,gain_dbi,pattern_solid_angle
 from .fixtures import COUNTS,file_sha,write_plan
@@ -88,23 +89,48 @@ def execute_plan(directory,budget_path):
     ledger=BudgetLedger(budget['global_claim_path'],file_sha(plan_path),budget['source_commit']);output.mkdir(parents=True)
     result=dict(schema='R7ExactInterfaceQualificationV1',passed=False,source_commit=budget['source_commit'],plan_sha=file_sha(plan_path),cases=[],
         numpy_version=np.__version__,numpy_source=np.__file__,scipy_version=scipy.__version__,scipy_source=scipy.__file__)
-    originals=(stages.build_link_coefficients,stages.capacity_bps);current=[None]
+    originals=(stages.build_link_coefficients,stages.capacity_bps,stages.read_wire,read_wire);current=[None]
+    decode_counts=dict(object_reads=0)
+    def decode(*args,**kwargs):decode_counts['object_reads']+=1;return originals[3](*args,**kwargs)
     def build(*args,**kwargs):ledger.charge('coefficient_builds',current[0]);return originals[0](*args,**kwargs)
     def evaluate(*args,**kwargs):ledger.charge('capacity_evaluations',current[0]);return originals[1](*args,**kwargs)
     stages.build_link_coefficients=build;stages.capacity_bps=evaluate
+    stages.read_wire=decode
     try:
         for index in range(1,13):
             ident=f'F{index:02d}';current[0]=ident;folder=root/ident;expected=json.loads((folder/'expected.json').read_text())
-            registry=read_wire((folder/'authority_registry.json').read_bytes());authority=Authority(registry,expected['authority_registry_sha'])
-            outcomes=[];evaluations=[]
+            registry=decode((folder/'authority_registry.json').read_bytes());authority=Authority(registry,expected['authority_registry_sha'])
+            outcomes=[];evaluations=[];s2_exported=None;export_chain=None
             for caller in range(3):
                 ledger.charge('roundtrips',ident)
                 try:
                     case_bytes=(folder/'case.json').read_bytes();layout_bytes=(folder/'layout.json').read_bytes();allocation_bytes=(folder/'allocation.json').read_bytes()
-                    case=read_wire(case_bytes);layout=read_wire(layout_bytes);allocation=read_wire(allocation_bytes)
+                    case=decode(case_bytes);layout=decode(layout_bytes);allocation=decode(allocation_bytes)
                     if caller==0:stages.s1_publish_import(case,layout,authority)
-                    elif caller==1:evaluations.append(stages.UniformStage2Input.from_wire(case_bytes,layout_bytes,authority,PHYSICS).terminal_fixed_evaluation(allocation))
-                    else:evaluations.append(stages.UniformStage3FixedInput.from_wire(case_bytes,layout_bytes,allocation_bytes,authority,PHYSICS).fixed_initial_evaluation())
+                    elif caller==1:
+                        s2=stages.UniformStage2Input.from_wire(case_bytes,layout_bytes,authority,PHYSICS)
+                        rows={bid:dict(group=allocation['group_by_beam_id'][bid],start=int(allocation['actual_start_slot'][i]),
+                            count=int(allocation['actual_slot_count'][i]),power_w=float(allocation['actual_whole_beam_power_w'][i])) for i,bid in enumerate(allocation['beam_ids'])}
+                        s2_exported=s2.export_actual_allocation(rows,requested_actions_separate=allocation['requested_actions_separate'])
+                        if wire_bytes(s2_exported)!=(folder/'allocation_canonical.json').read_bytes():raise AssertionError('actual S2 export differs from preexecution canonical object bytes')
+                        evaluations.append(s2.terminal_fixed_evaluation(s2_exported))
+                        export_chain=dict(canonical_actual_S2_SHA=s2_exported['content_sha256'],parent_layout_SHA=s2_exported['parent_layout_SHA'])
+                    else:
+                        actual=s2_exported
+                        if actual is not None:
+                            import copy
+                            actual=copy.deepcopy(actual)
+                            permutation=expected['recipe'].get('allocation_row_permutation')
+                            if permutation is not None:
+                                actual['beam_ids']=[actual['beam_ids'][i] for i in permutation]
+                                for key in ('actual_start_slot','actual_slot_count','actual_whole_beam_power_w'):actual[key]=actual[key][permutation].copy()
+                                actual=seal(actual)
+                            if wire_bytes(actual)!=allocation_bytes:raise AssertionError('actual S2 exported/permuted object differs from frozen S3 input bytes')
+                            export_chain['actual_S3_SHA']=actual['content_sha256'];export_chain['permutation']=permutation
+                        # For deliberately invalid fixtures S2 cannot export;
+                        # S3 independently rejects the same frozen attempted graph.
+                        incoming=wire_bytes(actual) if actual is not None else allocation_bytes
+                        evaluations.append(stages.UniformStage3FixedInput.from_wire(case_bytes,layout_bytes,incoming,authority,PHYSICS).fixed_initial_evaluation())
                     observed='pass'
                 except ValueError as exc:observed=str(exc)
                 target=expected['expected'][caller]
@@ -145,13 +171,14 @@ def execute_plan(directory,budget_path):
                         if tail>=B*1e-8 or abs(integral-B)>B*1e-8:raise AssertionError('independent normalization integral')
                         record.update(independent_integral=integral,quad_error=error,tail_bound=tail)
                     pattern.append(record)
-            result['cases'].append(dict(id=ident,outcomes=outcomes,pattern=pattern))
+            result['cases'].append(dict(id=ident,outcomes=outcomes,pattern=pattern,actual_S2_to_S3_export_chain=export_chain))
             atomic_json(output/'partial_result.json',result)
         if ledger.value['counts']!=COUNTS:raise AssertionError('exact planned calls incomplete')
         result['passed']=True
     except BaseException as exc:result['error']=repr(exc);raise
     finally:
-        stages.build_link_coefficients,stages.capacity_bps=originals;result['actual_counts']=ledger.value['counts']
+        stages.build_link_coefficients,stages.capacity_bps,stages.read_wire=originals[:3];result['actual_counts']=ledger.value['counts']
+        result['underlying_object_read_wire_calls']=decode_counts['object_reads']
         result['no_labels_planner_teacher_decoder_model_optimizer_solver']=True;result['ledger_sha']=file_sha(ledger.path)
         atomic_json(output/'result.json',result)
     return result
