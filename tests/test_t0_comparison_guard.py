@@ -54,6 +54,22 @@ class GuardQualification(unittest.TestCase):
                     agent.observe(x,a,1.,x,True,action_mask=m,actual_action=bad)
             self.assertEqual(len(agent.rollout) if arm=='ppo' else len(agent.replay),0)
 
+    def test_engineering_view_has_no_formal_evaluation(self):
+        from satellite_rl.t0_comparison.environment import environment_config, summary
+        c=config('ppo')
+        view=environment_config(c,purpose='engineering')
+        self.assertEqual(view['evaluation']['extra_steps'],[])
+        self.assertEqual(view['evaluation']['validation_count'],0)
+        self.assertEqual(view['evaluation']['test_count'],0)
+        self.assertEqual(summary(c,purpose='engineering')['state_dim'],207)
+        self.assertEqual(c['evaluation']['extra_steps'],[0,2000,5000])
+        formal=config('sac')
+        formal['training'].update(total_steps=150000,batch_size=256,ppo_epochs=4,rollout_steps=256)
+        formal['evaluation'].update(test_count=40)
+        science_view=environment_config(formal)
+        self.assertEqual(science_view['evaluation']['extra_steps'],[0,2000,5000])
+        self.assertEqual(science_view['evaluation']['interval_steps'],10000)
+
     def test_ppo_ratio_one_mask_ownership_and_update_restore(self):
         torch.manual_seed(51001)
         c=config('ppo');agent=build_agent(c,207);x=np.zeros(207,np.float32);m=mask()

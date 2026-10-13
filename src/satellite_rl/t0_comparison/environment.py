@@ -16,6 +16,11 @@ def environment_config(config, purpose='science'):
     view = deepcopy(config)
     view['algorithm'] = 'sac'
     view['training'].update(alpha_mode='fixed', fixed_alpha=.01)
+    if purpose == 'engineering':
+        # Engineering fixtures have their own finite step budget. They must not
+        # inherit formal validation nodes or silently execute formal evaluation.
+        view['evaluation'].update(validation_count=0, test_count=0, extra_steps=[],
+                                  interval_steps=max(1, view['training']['total_steps']))
     return view
 
 
