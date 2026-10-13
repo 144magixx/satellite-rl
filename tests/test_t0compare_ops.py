@@ -106,3 +106,15 @@ class EngineeringDeploymentPureTests(unittest.TestCase):
   from scripts.stage2_t0_fair24 import deploy
   self.assertEqual(deploy.PORTS,(20418,20424))
   with self.assertRaises(ValueError):deploy.execute_remote(20473,'raise AssertionError()',{})
+class CompletedEndpointControllerTests(unittest.TestCase):
+ def test_completed_endpoint_catalog_enters_matrix_freeze_body(self):
+  from scripts.stage2_t0_fair24.controller import tick
+  ref={'env_step':150000,'endpoint_verified':True,'algorithm':'sac','model_files':[{'sha256':'actual_fixture'}]};state={'tasks':{'train':{'executor_port':20418,'run_id':'train','status':{'stage':'completed'}}},'scientific_submissions':1};body_seen=[]
+  plan={'tasks':{'train':{'executor_port':20418,'body':{}},'matrix':{'executor_port':20418,'depends_on':['train'],'body':{'request_id':'matrix','endpoint_models':{'sac':{'task_ref':['train','endpoint_model_ref']}}}}}}
+  def api(port,path,body=None):
+   if path.endswith('/task/train'):return {'job':{'t0_mode':'train'},'status':{'stage':'completed'}}
+   if path.endswith('/tasks'):return {'tasks':[{'job':{'run_id':'train'},'endpoint_model_ref':ref}]}
+   if path.endswith('/submit'):body_seen.append(body);return {'job':{'run_id':'matrix'},'status':{'stage':'queued_resources'}}
+   if path.endswith('/task/matrix'):return {'status':{'stage':'queued_resources'}}
+   raise AssertionError(path)
+  tick(state,plan,[20418],api);self.assertEqual(body_seen[0]['endpoint_models']['sac'],ref);self.assertEqual(state['tasks']['matrix']['status']['stage'],'queued_resources')

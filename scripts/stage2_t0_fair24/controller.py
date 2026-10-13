@@ -27,6 +27,10 @@ def tick(state,plan,ports,api=ops.api):
  details={};waiting=[]
  for key,task in state['tasks'].items():
   detail=api(task['executor_port'],'/api/t0compare/task/'+task['run_id']);details[key]=detail;task['status']=detail['status']
+  if detail['status']['stage']=='completed' and detail.get('job',{}).get('t0_mode')=='train':
+   rows=api(task['executor_port'],'/api/t0compare/tasks')['tasks'];matches=[row for row in rows if row['job']['run_id']==task['run_id']]
+   if len(matches)!=1 or not matches[0].get('endpoint_model_ref',{}).get('endpoint_verified'):raise ValueError('completed train actual endpoint catalog proof missing')
+   detail['endpoint_model_ref']=matches[0]['endpoint_model_ref']
   if detail['status']['stage'] in TERMINAL_FAILURE:
    state.update(phase='attention_required',attention_task=key);return state
  for key,task in plan['tasks'].items():
