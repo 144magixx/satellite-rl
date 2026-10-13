@@ -33,7 +33,7 @@ def validate(plan_ref,review_ref):
  p=read(plan_ref);r=read(review_ref)
  if p.get('schema')!='R8ExactCachedOwnerPilotPlanV1' or p.get('group')!=GROUP or p.get('executor_port') not in (20473,20474):raise ValueError('own exact R8 plan/route')
  if not p.get('run_id','').startswith('r8_pilot_') or '/round8/' not in p['archive_root'] or '/round7/' in p['archive_root']:raise ValueError('independent R8 task/archive namespace')
- if r.get('plan_ref')!=plan_ref or any(r.get(k)is not True for k in ('passed','execution_authorized','operations_only')):raise ValueError('root exact R8 execution admission')
+ if r.get('plan_ref')!=plan_ref or any(r.get(k)is not True for k in ('passed','execution_authorized','scientific_execution_authorized')):raise ValueError('root exact R8 scientific execution admission')
  if p['design_ref']['sha256']!=DESIGN_SHA:raise ValueError('frozen R8v2 design')
  design=read(p['design_ref']);read(p['root_design_acceptance_ref'])
  if design['scientific_budgets']!=dict(cases=20,local_runs=60,local_candidates_max=7680,local_rank_items_max=3932160,D5_calls_max=60,D5_proposals_max=30720,D5_refits_max=480,W_calls=0,T_calls=0,model_forwards=0,updates=0,R7_unused4000_transfer=False):raise ValueError('budget exact design')
