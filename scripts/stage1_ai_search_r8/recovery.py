@@ -1,7 +1,7 @@
 """One same-ID corrective epoch after proven pre-local input failure; no replay."""
 import json,os,sys,time,subprocess
 from pathlib import Path
-from .contracts import read,pin,digest,identity,immutable,validate,fresh_route
+from .contracts import read,pin,digest,identity,immutable,validate,fresh_route,CORE_FILES
 from .deadline import before_start
 
 def validate_recovery(plan):
@@ -11,6 +11,11 @@ def validate_recovery(plan):
  original=read(c['original_plan_ref'])
  for key in ('run_id','request_id','archive_root','scientific_commit','design_ref','cases','case_indices','arms','checkpoint_ref','original_source_manifest_ref','scientific_new_calls'):
   if plan[key]!=original[key]:raise ValueError('original scientific task contract changed: '+key)
+ for name in CORE_FILES:
+  key='src/satellite_rl/coverage/ai_search_r8/'+name
+  if plan['source_files'][key]['sha256']!=original['source_files'][key]['sha256']:raise ValueError('original four scientific core files changed')
+ for key in set(original)-{'source_files','core_source_root','core_ref','actual_resource_route_ref','status'}:
+  if key not in plan or plan[key]!=original[key]:raise ValueError('original frozen plan field changed: '+key)
  if c.get('actual_original_calls')!=dict(local=1,D5=1) or c.get('failed_A_actual_local_calls')!=0 or c.get('remaining_actual_calls_max')!=dict(local=59,D5=59) or recovery['remaining_actual_calls_max']!=c['remaining_actual_calls_max']:raise ValueError('no extra algorithm call budget')
  if c['original_slot_index_ref']!=recovery['original_slot_index_ref'] or c['original_failed_status_ref']!=recovery['original_failed_status_ref']:raise ValueError('original exact failed assets')
  oldindex=read(c['original_slot_index_ref'])

@@ -15,6 +15,7 @@ class Recovery(unittest.TestCase):
  def fixture(self,tmp):
   root=pathlib.Path(tmp)/'round8/archive';epoch=root/'operations_recovery/attempt1'
   p=dict(run_id='r8_pilot_fixed',request_id='original',archive_root=str(root),scientific_commit='original',design_ref={},cases=[],case_indices=list(range(20)),arms=['G','A','R'],checkpoint_ref={},original_source_manifest_ref={},scientific_new_calls=dict(local=60,D5=60))
+  p['source_files']={'src/satellite_rl/coverage/ai_search_r8/'+name:dict(sha256=name) for name in ('__init__.py','core.py','geometry.py','ledger.py')}
   recovery=dict(contract_ref={'path':'contract'},root_review_ref={'path':'review'},epoch_root=str(epoch),remaining_actual_calls_max=dict(local=59,D5=59),original_slot_index_ref={'path':'index'},original_failed_status_ref={'path':'status'});p['operations_recovery']=recovery
   c=dict(schema='R8SameIDBeforeLocalReaderRecoveryContractV1',run_id=p['run_id'],archive_root=p['archive_root'],epoch_root=str(epoch),original_plan_ref={'path':'oldplan'},actual_original_calls=dict(local=1,D5=1),failed_A_actual_local_calls=0,remaining_actual_calls_max=dict(local=59,D5=59),original_slot_index_ref={'path':'index'},original_failed_status_ref={'path':'status'},protected_original_refs=[],original_processes=[])
   r=dict(contract_ref=recovery['contract_ref'],execution_authorized=True,passed=True);data={'contract':c,'review':r,'oldplan':copy.deepcopy(p),'index':{'0:G':{'path':'G'}}}
