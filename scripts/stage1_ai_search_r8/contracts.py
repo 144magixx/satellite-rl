@@ -6,7 +6,7 @@ GROUP='S1-AI17-R8'
 DESIGN_SHA='e0e24cf00e873965ee585d77f5f1e38c7455196a19a5357de7c5732fcfa08bb4'
 CHECKPOINT_SHA='10ff42e745ee0b1639cab9781d53ca43f5baa61b7e9e75aa12e49eec15bc9a40'
 DEADLINE=1791932400.0
-OPS_FILES=('__init__.py','contracts.py','deadline.py','server.py','worker.py','child.py','plan_builder.py')
+OPS_FILES=('__init__.py','contracts.py','deadline.py','server.py','worker.py','child.py','plan_builder.py','recovery.py')
 CORE_FILES=('__init__.py','core.py','geometry.py','ledger.py')
 def digest(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def pin(r):

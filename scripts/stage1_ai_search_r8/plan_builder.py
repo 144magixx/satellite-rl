@@ -1,13 +1,13 @@
 """Prepare an unexecutable exact-plan draft; never register or POST a task."""
 import argparse,json
 from pathlib import Path
-from .contracts import read,digest,atomic,GROUP
+from .contracts import read,digest,atomic,GROUP,OPS_FILES
 
 def draft(qualification_ref,design_ref,root_design_ref,archive_root,source_root,executor_port=20474):
  q=read(qualification_ref)
  if q.get('passed')is not True or len(q['cases'])!=20:raise ValueError('full qualified original20 required')
  own=Path(source_root);files={}
- for name in ('__init__.py','contracts.py','deadline.py','server.py','worker.py','child.py','plan_builder.py'):
+ for name in OPS_FILES:
   p=own/'scripts/stage1_ai_search_r8'/name;files['scripts/stage1_ai_search_r8/'+name]=dict(path=str(p),sha256=digest(p))
  for name in ('__init__.py','core.py','geometry.py','ledger.py'):
   p=own/'src/satellite_rl/coverage/ai_search_r8'/name;files['src/satellite_rl/coverage/ai_search_r8/'+name]=dict(path=str(p),sha256=digest(p))
