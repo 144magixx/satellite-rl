@@ -5,23 +5,23 @@ from satellite_rl.workbench.environment import WorkbenchEnv
 from .algorithms import validate_contract
 
 
-def environment_config(config):
+def environment_config(config, purpose='science'):
     """Original 85f validator only accepts masked SAC; physical semantics identical.
 
     This view changes algorithm metadata for constructing the original wrapper,
     never its state, reward, action, scene or physics fields. External task and
     model records must retain the actual comparison algorithm configuration.
     """
-    validate_contract(config, 207, (100, 10, 10))
+    validate_contract(config, 207, (100, 10, 10), purpose)
     view = deepcopy(config)
     view['algorithm'] = 'sac'
     view['training'].update(alpha_mode='fixed', fixed_alpha=.01)
     return view
 
 
-def make_env(config):
-    return WorkbenchEnv(environment_config(config))
+def make_env(config, purpose='science'):
+    return WorkbenchEnv(environment_config(config, purpose))
 
 
-def summary(config):
-    return config_summary(environment_config(config))
+def summary(config, purpose='science'):
+    return config_summary(environment_config(config, purpose))

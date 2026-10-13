@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from satellite_rl.agents.workbench_algorithms import WorkbenchAgent
-from satellite_rl.t0_comparison.algorithms import build_agent, masked_additive_argmax
+from satellite_rl.t0_comparison.algorithms import build_agent as core_build_agent, masked_additive_argmax
 
 CONFIG = Path(__file__).parent / 'fixtures' / 't0_original_config.json'
 
@@ -15,8 +15,12 @@ CONFIG = Path(__file__).parent / 'fixtures' / 't0_original_config.json'
 def config(algorithm):
     c = json.loads(CONFIG.read_text(encoding='utf-8'))
     c['algorithm'] = algorithm
-    c['training'].update(batch_size=2, ppo_epochs=1, rollout_steps=2)
+    c['training'].update(batch_size=2, ppo_epochs=1, rollout_steps=2, total_steps=8)
     return c
+
+
+def build_agent(config, state_dim, *args, **kwargs):
+    return core_build_agent(config, state_dim, *args, purpose='engineering', **kwargs)
 
 
 def mask():
@@ -38,7 +42,8 @@ class T0ComparisonTests(unittest.TestCase):
         original = WorkbenchAgent(c, 207, (100, 10, 10))
         torch.manual_seed(51001)
         actual = build_agent(c, 207)
-        self.assertIs(type(actual), WorkbenchAgent)
+        self.assertIsInstance(actual, WorkbenchAgent)
+        self.assertIs(actual._update_masked_sac.__func__, WorkbenchAgent._update_masked_sac)
         for arm in ('sac', 'ppo', 'dqn'):
             torch.manual_seed(51001)
             agent = build_agent(config(arm), 207)
@@ -136,8 +141,8 @@ class T0ComparisonTests(unittest.TestCase):
     def test_original_reward_and_selected_power_in_real_environment(self):
         from satellite_rl.t0_comparison.environment import make_env, summary
         c = config('ppo')
-        self.assertEqual(summary(c)['state_dim'], 207)
-        env = make_env(c)
+        self.assertEqual(summary(c, purpose='engineering')['state_dim'], 207)
+        env = make_env(c, purpose='engineering')
         state = env.reset(seed=20260928)
         self.assertEqual(len(state), 207)
         self.assertEqual(env.raw_env.beam_num, 100)

@@ -6,13 +6,15 @@ heads; masking does not introduce a learned joint action table.
 """
 from copy import deepcopy
 import random
+import math
 import numpy as np
 import torch
 from torch.nn import functional as F
+from .contract import canonical_config
 
 from satellite_rl.agents.action_masking import copy_action_mask, mask_batch, masked_policy
 from satellite_rl.agents.workbench_algorithms import (
-    WorkbenchAgent, build_agent as t0_build_agent, _state_tensor, _gather,
+    WorkbenchAgent, _state_tensor, _gather,
     _finite_loss, _grad_norm, _diagnostics, generalized_advantages,
 )
 
@@ -28,7 +30,8 @@ def masked_additive_argmax(heads, frequency_slots, power):
                         p.masked_fill(~power, -torch.inf).argmax(1)), 1)
 
 
-def validate_contract(config, state_dim, action_dims):
+def validate_contract(config, state_dim, action_dims, purpose="science"):
+    canonical_config(config, purpose)
     if state_dim != 207 or tuple(action_dims) != (100, 10, 10):
         raise ValueError("T0 comparison requires 207 state fields and (100,10,10) heads")
     n = config["network"]
@@ -101,6 +104,7 @@ class MaskedT0Agent(WorkbenchAgent):
 
     def observe(self, state, action, reward, next_state, done, action_mask=None,
                 next_action_mask=None, actual_action=None):
+        verify_actual_action(action, actual_action, self.config)
         mask = copy_action_mask(action_mask, self.action_dims)
         if (next_action_mask is None) != bool(done):
             raise ValueError("Only real terminal transitions may have no successor mask")
@@ -174,9 +178,9 @@ class MaskedT0Agent(WorkbenchAgent):
         metrics = {}
         for _ in range(self.train["ppo_epochs"]):
             indices = list(range(len(rows)))
-            self.minibatch_rng.shuffle(indices)
-            for start in range(0, len(rows), self.train["batch_size"]):
-                i = torch.tensor(indices[start:start+self.train["batch_size"]], device=self.device)
+            # Frozen plan retains the original whole-current-rollout PPO update.
+            for start in (0,):
+                i = torch.tensor(indices, device=self.device)
                 _, _, lf, lp, ef, ep, _, _ = masked_policy(self.actor(s[i]), fl_mask[i], p_mask[i])
                 batch_a = a[i]
                 local = torch.arange(len(i), device=self.device)
@@ -216,10 +220,38 @@ class MaskedT0Agent(WorkbenchAgent):
         self.minibatch_rng.setstate(data["minibatch_rng"])
 
 
-def build_agent(config, state_dim, action_dims=(100, 10, 10), device="cpu"):
-    validate_contract(config, state_dim, action_dims)
+def verify_actual_action(action, actual, config):
+    """Reject clipped/projected observations instead of learning the request."""
+    if len(action) != 3 or any(isinstance(v, (bool, np.bool_)) or not isinstance(
+            v, (int, np.integer)) for v in action):
+        raise ValueError("Action must contain three integer indices")
+    if actual is None:
+        return
+    if not isinstance(actual, dict) or not {'indices', 'freq', 'slots', 'power_w'} <= set(actual):
+        raise ValueError("actual_action must be the original environment physical record")
+    indices = actual['indices']
+    if (not isinstance(indices, (list, tuple)) or tuple(indices) != tuple(action)
+            or actual['freq'] != action[0] or actual['slots'] != action[1]+1):
+        raise ValueError("Actual frequency/slots/indices differ from sampled action")
+    wanted = config['environment']['power_levels_w'][action[2]]
+    for field in ('power_w', 'selected_power_w', 'charged_power_w'):
+        if field in actual and not math.isclose(float(actual[field]), wanted, rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError("Actual power differs from selected power level")
+
+
+class GuardedT0SAC(WorkbenchAgent):
+    """Original initialization/update/RNG, with only actual-record admission guard."""
+    def observe(self, state, action, reward, next_state, done, action_mask=None,
+                next_action_mask=None, actual_action=None):
+        verify_actual_action(action, actual_action, self.config)
+        return super().observe(state, action, reward, next_state, done,
+                               action_mask, next_action_mask, actual_action)
+
+
+def build_agent(config, state_dim, action_dims=(100, 10, 10), device="cpu", purpose="science"):
+    validate_contract(config, state_dim, action_dims, purpose)
     if config["algorithm"] == "sac":
-        return t0_build_agent(config, state_dim, action_dims, device)
+        return GuardedT0SAC(config, state_dim, action_dims, device)
     if config["algorithm"] not in ("ppo", "dqn"):
         raise ValueError("Only SAC/PPO/Double DQN are supported")
     return MaskedT0Agent(config, state_dim, action_dims, device)
