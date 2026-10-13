@@ -113,6 +113,8 @@ def derive(recipe_ref, indices, directory, transport_ref=None):
                     recipe_sha256=recipe_ref['sha256'],case_ref=dict(path=str(path),sha256=digest(path)),
                     raw_ref=transported({'path':row['source_local_path'],'sha256':row['source_asset_SHA']},transport),
                     metadata_ref=transported(recipe['source_job_ref'],transport),transport_map_ref=transport_ref)
+        from .r7_case_binding import validate_binding
+        validate_binding(case,row['actual_role'],row['source_phase_index'],record,row)
         index[str(i)]=record;atomic_json(index_path,index)
     return dict(group=GROUP,phase='data_train_dev',cases=index,builds=len(index),algorithm_reads=0,
                 requires_independent_root_manifest=True,validation_test_reads=0)

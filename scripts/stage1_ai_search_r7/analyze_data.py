@@ -7,6 +7,7 @@ from satellite_rl.workbench.storage import read_json,digest
 from satellite_rl.workbench.r7_uniform_data import validate_recipe,metadata_field
 from satellite_rl.training.run_monitor import atomic_json
 from .contract import GROUP,REQUEST_BPS
+from satellite_rl.workbench.r7_case_binding import validate_binding
 
 def analyze(manifest_refs,recipe_ref,output):
     from satellite_rl.shared_interface.content import read_wire,verify_self,content_sha
@@ -26,6 +27,7 @@ def analyze(manifest_refs,recipe_ref,output):
         record=read_wire(pin(row['case_ref']).read_bytes());verify_self(record)
         for key in ('case_id','original_mother_id','UTC','source_asset_SHA','actual_role','source_role'):
             if record[key]!=expected[key]:raise ValueError('original scene identity changed')
+        derived=validate_binding(record,expected['actual_role'],expected['source_phase_index'],row,expected)
         with gzip.open(pin(row['raw_ref']),'rt',encoding='utf8') as stream:planes=[json.loads(line) for line in stream]
         metadata=read_json(pin(row['metadata_ref']),{});snapshot=metadata_field(metadata,expected['metadata_snapshot_JSON_pointer'])
         if snapshot['selected_time_utc']!=record['UTC'] or row['metadata_ref']['sha256']!=recipe['source_job_ref']['sha256'] or row['raw_ref']['sha256']!=expected['source_asset_SHA']:raise ValueError('actual full original ancestry')
@@ -34,6 +36,7 @@ def analyze(manifest_refs,recipe_ref,output):
         if record['source'].get('raw_perplane_SHA')!=row['raw_ref']['sha256'] or record['source'].get('metadata_job_SHA')!=row['metadata_ref']['sha256']:raise ValueError('content raw/source SHA')
         if not np.array_equal(record['request_bps_int64'],np.full(len(ids),REQUEST_BPS,dtype='<i8')) or record['total_request_bps_int64']!=len(ids)*REQUEST_BPS:raise ValueError('integer uniform all-plane conservation')
         records[record['case_id']]=record
+        rows[str(i)]={**row,**derived}
     if len(records)!=596:raise ValueError('duplicate mother/case identity')
     registry=dict(schema='R7PublishedParentRegistryV1',case_sha_by_id={k:r['content_sha256'] for k,r in records.items()},layout_shas=[],allocation_shas=[])
     authority=Authority(registry,content_sha(registry))

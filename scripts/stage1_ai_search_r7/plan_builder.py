@@ -38,6 +38,8 @@ def build(commit, phase, inputs, routing=None):
         task=dict(config=cfg,mode=phase,dataset_role=PHASES[phase]['role'],
                   case_indices=[i for i in indices if route[str(i)]==port],executor_port=port,
                   methods=methods,model_inputs=deepcopy(model_inputs),model_identity=model)
+        if phase=='data_train_dev' and 'transport_map_refs_by_port' in inputs:
+            task['model_inputs']['transport_map']=require_ref(inputs['transport_map_refs_by_port'][str(port)])
         p['tasks'][name]=task
     audit(p)
     return p
@@ -64,3 +66,11 @@ def audit(p):
     if sorted(indices)!=target or len(indices)!=len(set(indices)):raise ValueError('each original case exactly once')
     if phase in ('train_setup','train2000') and len(p['tasks'])!=1:raise ValueError('one learner')
     return dict(passed=True,phase=phase,budget=deepcopy(p['budget']),science_calls_here=0)
+
+def data_plan(commit,inputs,routing=None):
+    """The production data phase requires the exact root recipe and transport."""
+    if inputs.get('model_inputs',{}).get('recipe',{}).get('sha256')!=UNIFORM_RECIPE_SHA:raise ValueError('frozen596 root recipe349370 required')
+    maps=inputs.get('transport_map_refs_by_port',{})
+    if set(maps)!=set(map(str,PORTS)):raise ValueError('root pinned independent73/74 source transport maps required')
+    for reference in maps.values():require_ref(reference)
+    return build(commit,'data_train_dev',inputs,routing)

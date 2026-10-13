@@ -6,7 +6,7 @@ import os,sys
 from .storage import read_json,digest,validate_id
 from .coverage_ai_search import pin
 from . import frozen_round_tasks
-from scripts.stage1_ai_search_r7.contract import GROUP,DESIGN_SHA,PORTS,PRIOR,FIRST_PHASES
+from scripts.stage1_ai_search_r7.contract import GROUP,DESIGN_SHA,PORTS,PRIOR,FIRST_PHASES,UNIFORM_RECIPE_SHA
 from scripts.stage1_ai_search_r7.plan_builder import audit,FIELDS
 
 MODES=FIRST_PHASES
@@ -47,6 +47,7 @@ def validate_task(c,p,port):
     phase=p['phase'];datasets=c['config']['datasets'];refs=c['model_inputs']
     if phase=='data_train_dev':
         if datasets or not {'recipe'}<=set(refs):raise ValueError('first build uses raw recipe only')
+        if refs['recipe'].get('sha256')!=UNIFORM_RECIPE_SHA:raise ValueError('exact root596 recipe349370 required')
         from .r7_uniform_data import validate_recipe
         validate_recipe(read_json(pin(refs['recipe']),{}))
     else:
@@ -70,9 +71,9 @@ def validate_admission(p,plan_ref,review_ref):
         if p['phase']=='node2000' and any(refs.get(k)!=gate.get(k+'_ref') for k in ('checkpoint','normalization','initialization_receipt')):raise ValueError('node endpoint exact model/normalization/init chain')
     root=Path(__file__).resolve().parents[3]
     if not p['qualification_refs']:raise ValueError('source/interface qualification required')
-    for ref in p['qualification_refs'].values():
-        q=read_json(pin(ref),{});members=q.get('source_file_sha256',{})
-        if q.get('passed')is not True or q.get('scientific_commit')!=p['scientific_commit'] or q.get('design_sha256')!=DESIGN_SHA or not members or any(digest(root/n)!=s for n,s in members.items()):raise ValueError('actual qualified source changed')
+    if set(p['qualification_refs'])!={'complete_source_interface_bridge'}:raise ValueError('one complete-source bridge preserving original interface qualification required')
+    from .r7_source_bridge import validate_bridge
+    validate_bridge(read_json(pin(p['qualification_refs']['complete_source_interface_bridge']),{}),root,p['scientific_commit'],DESIGN_SHA,p['phase'])
 
 def resource_admission(store,j):
     port=deployment(store);r=read_json(store.archive_root.parent/'ops/resource_route.json',{})
