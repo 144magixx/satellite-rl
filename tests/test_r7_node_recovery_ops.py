@@ -48,6 +48,14 @@ class CompatibilityTests(unittest.TestCase):
         result=original_gate_and_recovery_facts(cases,old,amendment_ref={'sha256':'a'},bound_ref={'sha256':'b'})
         self.assertTrue(result['unchanged_quality_thresholds_met']);self.assertFalse(result['recovery_qualification_passed']);self.assertNotIn('passed',result)
         self.assertFalse(result['future_dispatch_allowed'])
+    def test_original_caller_alias_publishes_null_cost_endpoint(self):
+        caller_costs={method:20. for method in ('AI','RULE','RANDOM','T')}
+        row=dict(case_index=0,costs=caller_costs,cost_components={'input':1.,'AI_parent':8.})
+        preserve_unknown_cost(row,{'sha256':'c'},{'sha256':'o'},[])
+        endpoint=dict(costs_before_publication=caller_costs)
+        self.assertIs(row['costs'],caller_costs)
+        self.assertTrue(all(value is None for value in endpoint['costs_before_publication'].values()))
+        self.assertIn('NOT additive',row['recovery_observed_timing_components_scope'])
 
 class RestrictedEndpointTests(unittest.TestCase):
     def test_outer_allowlist_no_create_or_foreign_resume(self):

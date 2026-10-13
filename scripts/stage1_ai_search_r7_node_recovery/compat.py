@@ -39,8 +39,12 @@ def preserve_unknown_cost(row,contract_ref,operations_source_ref,original_stage_
     """Lost original parent timers are never replaced by reused-child or reread time."""
     if row['case_index']!=0:raise ValueError('only original failed case0 has this cost disposition')
     row['recovery_observed_timing_components']=deepcopy(row['cost_components'])
+    row['recovery_observed_timing_components_scope']='mixed caller measurements plus reused original outer guard wall; NOT additive new epoch cost or reconstructed original cold cost; use durable recovery_parent_timer and independent worker epoch envelope for recovery-only accounting'
     row['cost_components']={key:None for key in row['cost_components']}
-    row['costs']={method:None for method in ('AI','RULE','RANDOM','T')}
+    # The unchanged523 caller retains this same object for its cost endpoint.
+    # Mutate in place so every publication outlet preserves the unknown value.
+    row['costs'].clear()
+    row['costs'].update({method:None for method in ('AI','RULE','RANDOM','T')})
     row['recovery_accounting']=dict(schema='R7NodeOriginalUnknownColdCostDispositionV1',
         contract_ref=contract_ref,operations_source_ref=operations_source_ref,
         original_stage_refs=original_stage_refs,original_case0_complete_cold_costs=None,
