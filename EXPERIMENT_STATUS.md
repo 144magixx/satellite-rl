@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 11:01 S2-F20固定补充已交给持久归档与本地统计流程，完整六法报告仍待。** 独立复审后Root实际启动归档等待器25252/出生1791859134.5225763（v4源码5b316206）、本地统计等待器40344/出生1791860312.44473（97be95e3）；两者当轮出生/命令已实核。前者只GET74等唯一fixed1320完成与原worker科学执行退出后封包、整包/成员核验，后者仅读本地小JSON，等唯一包verified及原归档进程退出后按Root实际SHA-spec运行一次统计；当前均waiting，0统计生产/0新训练。科学执行已退出但PID尚为Z的情形按真实kernel退出码0及锁释放记录，不伪称PID消失，最终停止调度/服务后仍须重新核资源。[持久交接实证](outputs/experiments/s2_fair20_20261012/fixed_addon/persistent_pipeline_actual_handoff.json) · [本地统计实际launch](outputs/experiments/s2_fair20_20261012/fixed_addon/statistics_awaiter_actual_launch.json)。
+
+固定统计源eb83cedb和桥接37608b80已独立复审；每个原NPZ及排序、冻结9ca/fbf逐成员源、全N候选/返回与严格保护都实际验证后才产结果。新增原五法减fixed的20项质量差仅报告后登记、未校正的点态95%区间及日期/长度4时间块敏感性，40母/20000draw/seed73001；原12族主CI与判读只读保留。缓存和统计写新E目录并保8GiB，旧intent/日志/partial不覆；deadline或空间attention先实核是否仍有同出生child，不盲双起。[Root实际统计source批准](outputs/experiments/s2_fair20_20261012/analysis/fixed_offline_source_root_approval.json)。`s2-f20`保持ACTIVE且最新配置已[回读](outputs/experiments/s2_fair20_20261012/followup/fixed_pipeline_active_readback.json)；六法新图、报告人工复核、13任务卷及源模型全档、74释放和通知都未宣称完成。
+
 **2026-10-13 10:25 S2-F20固定基线已真实准入20474，原五法成果保持。** 新唯一任务`fixed4_a2f6f9c1a9ac`通过独立8954工作台发起/准入，worker3004/出生ticks845227105、DQN源包及GPU060b实际匹配；10:25已14/1320，随后首案例Direct/B/control/journal真实闭合，无当前错误。新执行源`9ca04c4ca848b1eaa2995e3ca0088ba952fd9c54`、模块SHA d3c974745f8686ff45fe1cdd3fab8e9504815b100c029ed271eff5cd31ed7914冻结；13项独立检查及R1–R4修复闭合，环境/物理/原完整A+B保持fbf原字节，181源码成员远端SHA通过。原prepare/matrix job整字节、1320顺序场景身份与1760唯一输入成员SHA独立核过，新job SHA b0b3ec9525829ff86c7e5da98e02aa33dfaaea9073e5671e2aadd6e5211a29b5。[补充冻结计划](outputs/experiments/s2_fair20_20261012/fixed_addon/run_plan.json) · [实际启动](outputs/experiments/s2_fair20_20261012/fixed_addon/actual_worker_started.json)。
 
 该任务仅新增一套固定4槽基线的1320 Direct/完整B，不增加学习或调参，原12/12和学习1396608完成状态保持；完整六法统计/新图/报告交付与74归还仍待。8954前端四个真实发起/准入/停止/同ID接续接口已回读，本地仅新74隧道30456/出生1791858330.441517，不恢复18或旧控制进程。归档等待器尚在修复独占/身份/不覆盖/空间闸，未启动生产打包；完成后核原worker出生退出再封包，不重压旧12包。
