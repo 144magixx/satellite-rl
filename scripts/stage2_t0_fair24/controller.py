@@ -13,23 +13,71 @@ def state_snapshot(old_state):
  b=p.read_bytes();j=json.loads(b);return {'exists':True,'raw_sha256':hashlib.sha256(b).hexdigest(),'phase':j.get('phase',j.get('stage')),'release_authorized':False,'meaning':'Computephase/labelscomplete never grants future-owner exclusion'}
 def handoff_valid(value,port):
  return value.get('format')=='s2t24_owner_resource_handoff_v1' and port in value.get('released_ports',[]) and value.get('persistent_exclusion_verified') is True and value.get('active_tasks_by_port',{}).get(str(port))==[] and value.get('future_lane_reserved_by_port',{}).get(str(port)) is False and bool(value.get('coordinator_exclusion_evidence_ref'))
+TERMINAL_FAILURE={'failed','attention_required','cancelled'}
+def resolve(value,details):
+ if isinstance(value,dict) and set(value)=={'task_ref'}:
+  key,*path=value['task_ref'];obj=details[key]
+  for part in path:obj=obj[part]
+  return obj
+ if isinstance(value,dict):return {k:resolve(v,details) for k,v in value.items()}
+ if isinstance(value,list):return [resolve(v,details) for v in value]
+ return value
+
+def tick(state,plan,ports,api=ops.api):
+ details={};waiting=[]
+ for key,task in state['tasks'].items():
+  detail=api(task['executor_port'],'/api/t0compare/task/'+task['run_id']);details[key]=detail;task['status']=detail['status']
+  if detail['status']['stage'] in TERMINAL_FAILURE:
+   state.update(phase='attention_required',attention_task=key);return state
+ for key,task in plan['tasks'].items():
+  port=task['executor_port']
+  if port not in ports:waiting.append(key+':owner_handoff');continue
+  dependencies=task.get('depends_on',[])
+  if any(dep not in details or details[dep]['status']['stage']!='completed' for dep in dependencies):waiting.append(key+':dependencies');continue
+  if key not in state['tasks']:
+   body=resolve(task['body'],details);reply=api(port,'/api/t0compare/submit',body);state['tasks'][key]={'run_id':reply['job']['run_id'],'executor_port':port,'status':reply['status'],'request_id':body['request_id']};state['scientific_submissions']+=1
+   details[key]=api(port,'/api/t0compare/task/'+reply['job']['run_id'])
+  current=state['tasks'][key]
+  if current['status']['stage']=='queued_resources':
+   ref=task.get('admission_template_ref')
+   if not ref:waiting.append(key+':actual_Root_nested_qualification_template_missing');continue
+   proof=api(port,'/api/t0compare/admission-proof',{'run_id':current['run_id'],'template_ref':ref})
+   if proof.get('resource_waiting'):waiting.append(key+':'+','.join(proof['reasons']));continue
+   reply=api(port,'/api/t0compare/admit',{'run_id':current['run_id'],'proof_ref':proof['proof_ref']});current['status']=reply['status']
+ stages=[x['status']['stage'] for x in state['tasks'].values()]
+ state.update(wait_reasons=waiting,phase='computational_complete_archive_report_pending' if len(stages)==len(plan['tasks']) and all(x=='completed' for x in stages) else 'running' if any(x not in ('queued_resources','completed') for x in stages) else 'waiting_dependencies_or_resources')
+ return state
+
 def loop(root,old_state,deadline):
- root=Path(root);root.mkdir(parents=True,exist_ok=True);lock=root/'controller.lock';fd=os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY);state=read(root/'state.json') if (root/'state.json').exists() else {'tasks':{},'attempts':{},'scientific_submissions':0}
+ from satellite_rl.workbench.runtime import process_start_time
+ root=Path(root);root.mkdir(parents=True,exist_ok=True);lock=(root/'controller.lock').open('a+b')
+ if os.name=='nt':
+  import msvcrt
+  lock.seek(0);lock.write(b'0');lock.flush();lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
+ else:
+  import fcntl
+  fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+ state=read(root/'state.json') if (root/'state.json').exists() else {'tasks':{},'attempts':{},'scientific_submissions':0}
  try:
   while time.time()<deadline:
-   old=state_snapshot(old_state);handoff_path=root.parent/'preflight/s1_ai17_resource_handoff.json';handoff=read(handoff_path) if handoff_path.exists() else {};ports=[p for p in ops.PORTS if handoff_valid(handoff,p)];state.update(observed_utc=now(),old_owner_state=old,eligible_handoff_ports=ports,phase='resource_waiting' if not ports else 'handoff_requires_root_live_source_engineering_admission',gpu_idle_is_release=False)
-   # Root supplies actual frozen plan only after source/data/engineering qualification.
+   old=state_snapshot(old_state);handoff_path=root.parent/'preflight/receiver_normalized_owner_release.json';handoff=read(handoff_path) if handoff_path.exists() else {};ports=[p for p in (20418,20424) if handoff_valid(handoff,p)]
+   state.update(observed_utc=now(),old_owner_state=old,eligible_handoff_ports=ports,phase='resource_waiting',gpu_idle_is_release=False,process={'pid':os.getpid(),'birth':process_start_time(os.getpid())})
    plan_path=root/'approved_run_plan.json'
    if ports and plan_path.exists():
     plan=read(plan_path)
-    if plan.get('admitted_by_root') is not True or plan.get('uniform_request_or_explicit_historical_reproduction_authority') is not True:raise ValueError('actual root admission missing')
-    for key,task in plan['tasks'].items():
-     if task['executor_port'] not in ports:continue
-     if key not in state['tasks']:
-      registered=ops.api(task['executor_port'],'/api/t0compare/submit',task['body']);state['tasks'][key]={'run_id':registered['job']['run_id'],'executor_port':task['executor_port'],'status':registered['status'],'request_id':task['body']['request_id']};state['scientific_submissions']+=1
-    state['phase']='registered_resource_holds_waiting_fresh_admission'
-   tmp=root/'state.tmp.json';tmp.write_text(json.dumps(state,indent=2),encoding='utf8');tmp.replace(root/'state.json');time.sleep(45)
- finally:os.close(fd);lock.unlink()
+    if plan.get('admitted_by_root') is not True or plan.get('uniform_request_or_explicit_historical_reproduction_authority') is not True:raise ValueError('actual Root admission missing')
+    plan_sha=hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    if state.get('plan_sha256',plan_sha)!=plan_sha:raise ValueError('persistent plan changed')
+    state['plan_sha256']=plan_sha
+    try:tick(state,plan,ports)
+    except Exception as error:
+     state.setdefault('operational_error_history',[]).append({'at':now(),'type':type(error).__name__,'reason':str(error)})
+     count=state.get('consecutive_transport_failures',0)+1;state.update(consecutive_transport_failures=count,phase='operational_retry' if count<=8 else 'attention_required')
+    else:state['consecutive_transport_failures']=0
+   tmp=root/'state.tmp.json';tmp.write_text(json.dumps(state,indent=2),encoding='utf8');tmp.replace(root/'state.json')
+   if state['phase']=='attention_required':return
+   time.sleep(45)
+ finally:lock.close()
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--execute',action='store_true');p.add_argument('--root',type=Path,default=DEFAULT/'controller');p.add_argument('--old-state',type=Path,default=Path('D:/paper/outputs/experiments/first_stage_ai_search_20261013/round6/control/labels_runtime_deps_02/state.json'));p.add_argument('--deadline-unix',type=float);a=p.parse_args()
  if not a.execute:print(json.dumps({'prepared':True,'remote_calls':0,'SCI_calls':0,'handoff_required':True,'max_workers_plan':'2 perreleasedGPU; onecard3onlyactualengineeringqualification','admission_not_started':True}))

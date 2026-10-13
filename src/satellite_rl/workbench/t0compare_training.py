@@ -416,6 +416,7 @@ def _validation_due(evaluation, progress, env_step):
 
 def _fixed_evaluate(config, agent, directory, group, count, seed_base, env_step, ledger, scene_set=None):
     from satellite_rl.t0_comparison.environment import make_env as WorkbenchEnv
+    if scene_set is None:raise ValueError('S2-T24 requires exact frozen evaluation entities; no anonymous generated scenes')
     files = None
     if scene_set is not None:
         from satellite_rl.workbench.datasets import assert_scene_profile, scene_set_files
@@ -531,9 +532,9 @@ def _training(directory, job, config, ledger, resume):
         for record in scene_sets.values():
             assert_scene_profile(record, config["environment"].get("profile", "china_legacy"))
             scene_set_files(record)
-    supplied_scenes = (scene_set_files(scene_sets["train"]) if "train" in scene_sets else
-                       [(path, _sha256(path)) for path in _scene_files(job["training_scene_path"])]
-                       if job.get("training_scene_path") else [])
+    if set(scene_sets)!={'train','validation'} or len(scene_set_files(scene_sets['train']))!=576 or len(scene_set_files(scene_sets['validation']))!=20:
+        raise ValueError('formal T0 requires exact frozen train576/validation20; no synthetic fallback/test')
+    supplied_scenes = scene_set_files(scene_sets['train'])
     scene_order = SceneOrder(training.get("scene_order", "sequential"),
                              training.get("scene_order_seed", 51001),
                              [digest for _, digest in supplied_scenes])
@@ -625,7 +626,7 @@ def _training(directory, job, config, ledger, resume):
             replay_options = ({"action_mask": mask,
                                "next_action_mask": None if done else env.action_mask()}
                               if mask is not None else {})
-            if getattr(agent, "temporal_enabled", False):
+            if mask is not None:
                 replay_options["actual_action"] = info["actual_action"]
             agent.observe(state, action, reward, next_state, done, **replay_options)
             env_step += 1
@@ -695,9 +696,9 @@ def _training(directory, job, config, ledger, resume):
         ledger.record("reward", env_step, episode_terms)
         episode += 1
         save_progress(scene_order=scene_order.checkpoint_state(episode))
-        if _validation_due(config["evaluation"], progress, env_step):
-            run_validation()
         stopped = (Path(directory) / "stop.request").exists()
+        if not stopped and _validation_due(config["evaluation"], progress, env_step):
+            run_validation()
         if stopped or env_step - last_saved_step >= training["checkpoint_interval"] or env_step >= training["total_steps"]:
             _ensure_finite_agent(agent)
             ledger.flush()
@@ -720,27 +721,16 @@ def _training(directory, job, config, ledger, resume):
             ledger.event("training_stopped", env_step=env_step)
             save_progress("stopped")
             return
-    # Final test is never used to select a model.
-    save_progress("evaluating")
-    test_rows, test_summary = _fixed_evaluate(config, agent, directory, "test",
-                                               config["evaluation"]["test_count"],
-                                               config["evaluation"]["test_seed"], env_step, ledger,
-                                               scene_set=scene_sets.get("test"))
+    # No internal test: the only test evaluation is the separately frozen560matrix.
     export_policy(model_dir / "final", agent, config,
-                  {**provenance, "env_step": env_step})
-    _atomic_json(Path(directory) / "results.json", {"summary": test_summary, "scenes": test_rows,
-                                                    "metadata": {**provenance, "group": "test", "run_id": job["run_id"],
-                                                                 "git_commit": job["git_commit"],
-                                                                 "config_hash": config_hash(config),
-                                                                 "action_mode": config["evaluation"]["action_mode"],
-                                                                 "repeats": config["evaluation"]["repeats"],
-                                                                 "actual_scene_count": config["evaluation"]["test_count"],
-                                                                 "repeated_actions_are_not_independent_scenes": True,
-                                                                 "model_selection": "fixed_budget_final"}})
+                  {**provenance, "env_step": env_step, "selection": "150000_endpoint_only"})
+    _atomic_json(Path(directory) / "results.json", {"env_step":env_step,"no_internal_test":True,
+                  "test_rollouts":0,"refinement_calls":0,"selection":"150000_endpoint_only",
+                  "metadata":{**provenance,"run_id":job["run_id"],"config_hash":config_hash(config)}})
     _artifacts(directory, job, final_policy=str(model_dir / "final"), results=str(Path(directory) / "results.json"))
     ledger.event("training_completed", env_step=env_step)
     ledger.flush()
-    save_progress("completed", metrics=test_summary)
+    save_progress("completed", no_internal_test=True)
 
 
 def run_training_job(job_dir, *, resume=False):

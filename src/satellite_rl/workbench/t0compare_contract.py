@@ -6,7 +6,7 @@ from satellite_rl.workbench.config import validate_config as original_validate
 from satellite_rl.t0_comparison.environment import environment_config,summary
 from satellite_rl.t0_comparison.algorithms import validate_contract
 from satellite_rl.t0_comparison.contract import canonical_config
-ALGORITHMS=('sac','ppo','dqn');MODES=('train','matrix');NODES=[0,2000,5000]+list(range(10000,150001,10000))
+ALGORITHMS=('sac','ppo','dqn');MODES=('prepare','train','matrix');NODES=[0,2000,5000]+list(range(10000,150001,10000))
 REPEATS={'sac':3,'ppo':3,'dqn':3,'random':3,'greedy':1,'fixed':1}
 FORBIDDEN={'refine','refinement','power_refine','full_b','full_B','A+B','B','optimizer','sca','sca_si_lp'}
 def fingerprint(v):return hashlib.sha256(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest()
