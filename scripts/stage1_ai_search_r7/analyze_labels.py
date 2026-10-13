@@ -12,7 +12,7 @@ from satellite_rl.workbench.r7_label_guard_audit import audit_chain
 from satellite_rl.workbench.r7_publish import publish_terminal
 from satellite_rl.workbench.r7_postprocess_source import execution_source,new_output
 
-def analyze(manifest_refs,dataset_ref,model_identity,output):
+def analyze(manifest_refs,dataset_ref,model_identity,output,*,recovery_refs=None):
     output=new_output(output);postsource=execution_source()
     from satellite_rl.workbench.r7_uniform_data import load_algorithm_case
     dataset=read_json(pin(dataset_ref),{})
@@ -27,15 +27,38 @@ def analyze(manifest_refs,dataset_ref,model_identity,output):
             if i in cases:raise ValueError('duplicate case owner')
             cases[i]=row
     if sorted(map(int,cases))!=list(range(576)):raise ValueError('all576 labels accounted including failures')
+    from satellite_rl.workbench.r7_failed_label_audit import load_recovery,audit_failed,phase_accounting
+    failures=[i for i in range(576) if read_json(pin(cases[str(i)]),{}).get('schema')=='R7OperationalFailedLabelDispositionV1']
+    recovery=None
+    if failures:
+        if failures!=[295,297] or recovery_refs is None:raise ValueError('two original failures require exact root recovery evidence')
+        recovery=load_recovery(recovery_refs,cases,dataset_ref['sha256'],source_commit)
+    elif recovery_refs is not None:raise ValueError('recovery refs supplied without exact original failed2')
+    calls=dict(prepare=0,T=0,D5=0);known_cost_seconds=0.;failed_accounting={}
+    partition_calls={name:dict(prepare=0,T=0,D5=0) for name in ('original147','failed2','resumed139','uninterrupted73')}
     results=[];qualified=[];typed_teachers={};typed_directory=Path(output).with_name(Path(output).stem+'_typed_teachers')
     for i in range(576):
-        audit_began=time.monotonic();ref=cases[str(i)];pin_tree(ref);row=read_json(pin(ref),{});ident=row['identity'];layout_audits={}
+        audit_began=time.monotonic();ref=cases[str(i)];row=read_json(pin(ref),{});ident=row['identity'];layout_audits={}
+        if i in failures:
+            checked,cost=audit_failed(row,i,dataset['cases'][i],dataset_ref,recovery)
+            for name in calls:
+                calls[name]+=cost['actual_calls'][name];partition_calls['failed2'][name]+=cost['actual_calls'][name]
+            results.append(checked);typed_teachers[str(i)]=None;failed_accounting[str(i)]=cost
+            atomic_json(typed_directory/str(i)/'failed_original_accounting.json',dict(original_disposition_ref=ref,
+                        independent_postprocess_audit_seconds=time.monotonic()-audit_began,failed_case_actual_label_wall_seconds=None,
+                        accounting=cost,no_normal_label_or_guard_fabricated=True,no_original_attempt_retried=True,
+                        original_algorithm_source_epoch=source_commit,**postsource))
+            continue
+        pin_tree(ref)
         if row['source_commit']!=source_commit or row['input_case_index']!=i or ident['role']!='train' or ident['profile']!='uniform21600000' or row.get('source_dataset_sha256')!=dataset_ref['sha256'] or row.get('core_sha256')!='9f187e4cd8122a6fce415b590d0ab0a385724b7d840cc88dd874e34ea936aea5':raise ValueError('original train identity and frozen core')
         for guard in row['guard_refs']:pin_tree(guard)
         endpoint=read_json(pin(ref['cost_endpoint_ref']),{})
         values=endpoint['components'].values()
         if endpoint['raw_ref']['sha256']!=ref['sha256'] or endpoint['identity']!=ident or any(not isinstance(x,(int,float)) or not math.isfinite(x) or x<0 for x in values) or not math.isclose(sum(endpoint['components'].values()),endpoint['complete_offline_label_seconds'],rel_tol=1e-12,abs_tol=1e-9):raise ValueError('independent exact cost endpoint')
         closure=audit_chain(row)
+        partition='uninterrupted73' if i%2==0 else ('original147' if i<295 else 'resumed139')
+        for name in calls:
+            calls[name]+=closure['actual_calls'][name];partition_calls[partition][name]+=closure['actual_calls'][name]
         if row.get('cost_closed')is not closure['closed'] or endpoint.get('cost_closed')is not closure['closed'] or row.get('actual_calls')!=closure['actual_calls']:raise ValueError('producer cost/call closure differs from original guard/request/caps proof')
         source=dataset['cases'][i]
         if source['case_ref']!=row['shared_case_ref']:raise ValueError('original root case source changed')
@@ -59,6 +82,7 @@ def analyze(manifest_refs,dataset_ref,model_identity,output):
             exact=audit_exact_proposal(read_asset(assets[2]['proposal_ref']),assets[1]['result'],ident,row['core_sha256'],row['producer_sha256'])
         if checked!=row['label_audit'] or exact!=row['proposal_audit']:raise ValueError('producer audit differs from independent replay')
         independent_audit_seconds=time.monotonic()-audit_began;typed_teachers[str(i)]=None;publication_seconds=0.
+        known_cost_seconds+=endpoint['complete_offline_label_seconds']
         if closure['closed'] and 'T' in layout_audits:
             publication_began=time.monotonic()
             published=publish_terminal(record,source['case_ref'],dataset['authority_ref'],assets[1]['result']['layout'],assets[0]['result'],layout_audits['T'],
@@ -80,6 +104,14 @@ def analyze(manifest_refs,dataset_ref,model_identity,output):
                                      scientific_commit=source_commit,source_dataset_sha256=dataset_ref['sha256'],manifest_refs=manifest_refs,
                                      typed_teacher_layouts=typed_teachers,original_T_labels_unchanged=True,typed_layout_publication_is_separate_postprocessing=True,new_prepare_T_D5_PHY_calls=0)
     result.update(original_algorithm_source_epoch=source_commit,**postsource)
+    if recovery is not None:
+        if partition_calls['original147']!=dict(prepare=147,T=147,D5=147) or partition_calls['failed2']!=dict(prepare=2,T=1,D5=0) or partition_calls['resumed139']['prepare']!=139 or partition_calls['uninterrupted73']['prepare']!=288:
+            raise ValueError('independent original147+failed2+resumed139 and original73 call accounting differs')
+        result.update(recovery_refs=recovery_refs,failed_original_accounting=failed_accounting,
+                      label_phase_cost_accounting={**phase_accounting(calls,failures),
+                                                   'partition_actual_calls':partition_calls,
+                                                   'known_recorded_label_cost_partial_seconds':known_cost_seconds,
+                                                   'known_partial_not_whole_phase_total':True})
     atomic_json(output,result)
     table=Path(output).with_name('qualified_train.json')
     atomic_json(table,dict(schema='R7QualifiedTrainManifestV1',role='train',source_dataset_sha256=dataset_ref['sha256'],

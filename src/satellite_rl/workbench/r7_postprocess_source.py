@@ -16,7 +16,9 @@ def execution_source():
     if len(epoch)!=40:raise ValueError('actual postprocess source epoch')
     names=['scripts/stage1_ai_search_r7/analyze_node.py','scripts/stage1_ai_search_r7/analyze_labels.py','scripts/stage1_ai_search_r7/label_audit.py',
            'src/satellite_rl/workbench/r7_publish.py','src/satellite_rl/workbench/r7_postprocess_source.py','src/satellite_rl/workbench/r7_node_audit.py',
-           'scripts/stage1_ai_search_r4/audit.py','scripts/stage1_ai_search_r5/audit.py']
+           'scripts/stage1_ai_search_r4/audit.py','scripts/stage1_ai_search_r5/audit.py',
+           'src/satellite_rl/workbench/r7_failed_label_audit.py','src/satellite_rl/workbench/r7_label_guard_audit.py',
+           'src/satellite_rl/workbench/r7_case_binding.py','src/satellite_rl/workbench/r6_io.py']
     names+=['src/satellite_rl/shared_interface/'+p.name for p in (root/'src/satellite_rl/shared_interface').glob('*.py')]
     return dict(postprocess_source_epoch=epoch,actual_postprocess_source_file_sha256={name:digest(root/name) for name in names},
                 original_algorithm_source_is_separately_retained=True)
