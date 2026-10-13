@@ -1,8 +1,8 @@
 """Fresh same-ID worker loading original523 science and an additive audited parent adapter."""
 import argparse,contextvars,json,os,sys,time
 from pathlib import Path
-from .contracts import RUN_ID,SCIENCE,CORE_SHA,atomic,digest,read,validate,process_identity,fresh_resource
-from .compat import audit_baseline,preserve_unknown_cost
+from .contracts import RUN_ID,SCIENCE,CORE_SHA,atomic,digest,pin,read,validate,process_identity,fresh_resource
+from .compat import audit_baseline,preserve_unknown_cost,current_status
 
 def install_node_hooks(contract,contract_ref,operations_ref,ops_directory):
     """Only parent audit/timing hooks; child algorithm modules remain original523."""
@@ -98,10 +98,14 @@ def main():
     receipt.update(actual_worker=process_identity(os.getpid()),actual_scientific_node_module=str(Path(r7_node.__file__).resolve()),original_job_ref=contract['original_job_ref'],original_config_ref=contract['original_config_ref'])
     if Path(r7_node.__file__).resolve()!=source/'src/satellite_rl/workbench/r7_node.py':raise ValueError('actual science import must originate in original frozen523')
     atomic(ops/'actual_worker_hooks.json',receipt)
+    original_status_bytes=pin(contract['original_status_ref']).read_bytes();status_backup=ops/'original_status.json'
+    with status_backup.open('xb') as stream:stream.write(original_status_bytes);stream.flush();os.fsync(stream.fileno())
+    if digest(status_backup)!=contract['original_status_ref']['sha256']:raise ValueError('original status backup must preserve exact bytes')
     original_atomic=r7_runner.atomic_json
     protected={'failure.json','runtime_v3_identity.json','worker_deadline_preflight.json'}
     def preserve_original_epoch(path,value):
         path=Path(path)
+        if path==directory/'status.json':current_status(value,contract['original_failure_ref'])
         if path.parent==directory and path.name in protected:
             if path.name=='runtime_v3_identity.json' and json.loads(path.read_bytes())!=value:raise ValueError('original runtime identity changed')
             return original_atomic(ops/('recovery_'+path.name),value)
@@ -111,7 +115,8 @@ def main():
     atomic(ops/'worker_epoch_started.json',dict(actual_worker=worker_identity,monotonic_started=began,worker_birth_lower_CLOCK_BOOTTIME_seconds=birth_lower,SC_CLK_TCK=ticks,contract_ref=contract_ref,original_job_unchanged=True))
     try:r7_runner.run_job(directory,resume=False)
     finally:
-        atomic(ops/'worker_epoch_exit.json',dict(observed_parent_epoch_seconds_after_hooks=time.monotonic()-began,worker_enclosing_spend_upper_bound_seconds=time.clock_gettime(time.CLOCK_BOOTTIME)-birth_lower,
+        atomic(ops/'worker_epoch_exit.json',dict(observed_parent_epoch_seconds_after_hooks=time.monotonic()-began,provisional_elapsed_to_finally_seconds=time.clock_gettime(time.CLOCK_BOOTTIME)-birth_lower,
+            complete_recovery_worker_upper_bound_seconds=None,external_sameboot_exit_observation_required=True,
             enclosing_bound_includes_module_startup_and_hook_preflight=True,upper_bound_is_not_exact_method_latency=True,original_failure_epoch_seconds=None,
             bound_scope='provisional birth_lower through finally sample; excludes subsequent final receipt IO/digest and interpreter exit; not a complete worker exit bound',
             provisional_until_finally_sample=True,worker_exit_bound_closed=False,requires_external_sameboot_gone_postflight=True,

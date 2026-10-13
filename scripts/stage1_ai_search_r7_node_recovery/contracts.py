@@ -71,6 +71,9 @@ def validate(contract_ref,review_ref,*,gone=True):
         for observation in [*contract['original_processes'],contract['old9016_process']]:require_gone(observation)
     directory=Path(contract['original_job_ref']['path']).parent
     if directory/'job.json'!=Path(contract['original_job_ref']['path']) or directory/'config.json'!=Path(contract['original_config_ref']['path']):raise ValueError('exact original job/config location')
+    if contract['original_status_ref']['path']!=str(directory/'status.json'):raise ValueError('exact original status location required')
+    original_status=read(contract['original_status_ref'])
+    if original_status.get('stage')!='failed':raise ValueError('sole original failed phase status required before recovery')
     if (directory/'case_index.json').exists():raise ValueError('original failure contract expects no completed case index; no replay contract')
     protected=[directory/name for name in ('failure.json','launch.json','runtime_v3_identity.json','worker_deadline_preflight.json')]
     protected += [path for path in (directory/'bundles'/'0').rglob('*') if path.is_file()]

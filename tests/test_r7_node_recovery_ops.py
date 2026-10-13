@@ -2,7 +2,7 @@
 import contextlib,copy,importlib.util,json,sys,tempfile,types,unittest
 from pathlib import Path
 from unittest.mock import Mock,patch
-from scripts.stage1_ai_search_r7_node_recovery.compat import baseline_view,audit_baseline,FULL_FIELDS,preserve_unknown_cost
+from scripts.stage1_ai_search_r7_node_recovery.compat import baseline_view,audit_baseline,FULL_FIELDS,preserve_unknown_cost,current_status
 from scripts.stage1_ai_search_r7_node_recovery import contracts,server
 from scripts.stage1_ai_search_r7_node_recovery.qualification import original_gate_and_recovery_facts
 from scripts.stage1_ai_search_r7_node_recovery.bootstrap import install_node_hooks
@@ -56,6 +56,13 @@ class CompatibilityTests(unittest.TestCase):
         self.assertIs(row['costs'],caller_costs)
         self.assertTrue(all(value is None for value in endpoint['costs_before_publication'].values()))
         self.assertIn('NOT additive',row['recovery_observed_timing_components_scope'])
+    def test_current_success_status_does_not_keep_prior_failure_error(self):
+        ref={'sha256':'original-failure'}
+        for stage in ('running','completed'):
+            value=dict(stage=stage,error='old historical error');current_status(value,ref)
+            self.assertNotIn('error',value);self.assertEqual(value['original_failure_ref'],ref)
+        failed=dict(stage='failed',error='new actual failure');current_status(failed,ref)
+        self.assertEqual(failed['error'],'new actual failure')
 
 class RestrictedEndpointTests(unittest.TestCase):
     def test_outer_allowlist_no_create_or_foreign_resume(self):

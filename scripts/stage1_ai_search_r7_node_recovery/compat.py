@@ -53,3 +53,9 @@ def preserve_unknown_cost(row,contract_ref,operations_source_ref,original_stage_
         original_spent_calls=dict(prepare=1,T=0,D5=2),new_epoch_calls=dict(prepare=0,T=1,D5=1),
         strict_speed_claims=False)
     return row['costs']
+
+def current_status(value,original_failure_ref):
+    """Mutable operational status describes this worker; immutable old failure remains linked."""
+    if value.get('stage') in ('running','completed'):value.pop('error',None)
+    value['original_failure_ref']=original_failure_ref
+    return value
