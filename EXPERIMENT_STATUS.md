@@ -1,5 +1,13 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-13 18:15 S1-AI17-R5报告17根验收完成，原P0未过；R6方案22v2已准入并行实现，科学训练仍0。** R5四任务均completed42/42，原ID分别为`p0_ai_search_r5_20261013_172829_ea5fd1d3`、`172834_57a66b7b`、`172838_22729e74`、`172842_a5196414`（后三同前缀），终态二次GET及worker退出证据闭合。冻结科学`b7ed79fc…`、合同`3555fdc7…`，新168解码、0prepare/T/训练/MILP/新valtest；工程8fixture共10D5及3进程stub另账，94检查通过。7738原文件约1.873GB逐SHA核验；完整双端分支归档正在进行，不以采集完成冒充交付完成。
+
+[报告17](docs/第一阶段/实验报告/17_锚点域成员修复与同输入对照.md)与五PNG/PDF已根通读、逐图目视及10图SHA复核。逐景独立重算G0=true、P0=false：EXACT24/24，OWNER10为12/24、JOINT10为14/24，均未达各18；质量机会8/9，48配对净增21、损失0，可变N与非floor异宽去重24景。两类成功各17却N实际改变各15，不混称。原R5后续768标签/2000–6000训练停止，原失败不改；尚无AI贡献。新增guard691.924814秒与终点4.650037秒，168独立冷方法1682.174905秒含重复历史费用；旧unknown仍保留。[根门槛验收](outputs/experiments/first_stage_ai_search_20261013/round5/analysis/root_gate_acceptance.json) · [图文验收](outputs/experiments/first_stage_ai_search_20261013/round5/analysis/report17_root_acceptance.json) · [原始入口](outputs/experiments/first_stage_ai_search_20261013/round5/analysis/p0_location.json)。
+
+[新方案22](docs/第一阶段/方案/22_冻结修复器下的直接监督学习试点.md)v2单独研究真实模型预测能否进入固定D5可用域；不是原人工扰动门槛补救。合同SHA`74246c2f…`、方案`1f9634c4…`，原v1字节保留；200-query启用/飞机锚点/归属网络，实际宽度由原b7 D5包络确定。固定seed51001、SciPy1.14.1、全局batch16损失及确定数据序/断点，768原训练候选先过692合格/154非平凡/6母可变能力门槛；单模型2000节点包含在6000上限、累计活动8小时，独立验证80/test160依序封闭。全阶段上限1088prepare/1008T/1800D，禁止新P0、额外种子/超参或热改D5。[根设计准入](outputs/experiments/first_stage_ai_search_20261013/design/round6_root_design_acceptance.json)。
+
+新隔离树`C:/Users/Admin/.codex/worktrees/stage1-ai22/paper`、分支`codex/stage1-ai22`自b7；两个GPT-6.1 Sol分别实现模型/特征/损失和工作台/标签流水线，Astra已完成设计。尚未源冻结、工程数值资格或正式提交；启动前重新核四端API/进程出生/GPU/DQN/包路径与唯一归属，不把旧空闲记录当当前准入。最终要求全部飞机覆盖、唯一归属、请求守恒、N≤200及逐束可变宽度保持，不引入业务满足/PHY/SI等阶段外指标。
+
 **2026-10-13 16:39 S1-AI17-R5方案21v2已根准入，三路Sol并行实现；P0正式调用仍0。** [方案21](docs/第一阶段/方案/21_锚点域内归属修复与单模型验证.md)及合同SHA`3555fdc7…`、方案SHA`4a37d4e6…`保留v1原字节，经独立可行性与根复核，选全飞机锚点域的D5：几何先筛、EVICT128成员撤回、INSERT256补全、Q0上尾/CV保护，保持512proposal/8refit/2048n/5秒名义预算。遮蔽分数不读取；D4薄adapter、原T双来源、真实role、EVICT容差与母级零值/缺失统计均预先澄清。[根设计准入](outputs/experiments/first_stage_ai_search_20261013/design/round5_root_design_acceptance.json)。
 
 P0精确24景复用原R4已核成功prepare/T，新增D5五法120及D4同域OWNER10/JOINT10共48，总168解码、0newprepare/teacher/训练/valtest；原D4另72行仅历史参照。493引用逐SHA闭合，首三case专取成功prepare_retry、原unknown不复用。[P0登记](outputs/experiments/first_stage_ai_search_20261013/round5/source/p0_reference_registry.json)。新树C:/Users/Admin/.codex/worktrees/stage1-ai21/paper、分支codex/stage1-ai21自d859，core/ops/audit三6.1Sol分别实现；最多8固定fixture/24D5由core唯一记账，未预算额外prepare/T工程search。最终source/资格/精确工作台plan仍需根核后发起。
