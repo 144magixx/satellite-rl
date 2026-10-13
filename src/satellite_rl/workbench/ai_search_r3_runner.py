@@ -10,6 +10,10 @@ from .ai_search_r2_runner import resource_guard
 from .geoload_runner import exclusive_lock
 from . import coverage_ai_search_r3 as policy,frozen_round_tasks
 
+def oracle_label_argument(descriptor):
+ """The core's unavailable-label branch expects None, never a typed error dict."""
+ return descriptor if descriptor.get('status')=='label_available' else None
+
 def method_order(index):
  base=list(policy.METHODS[:-1]);shift=index%len(base);order=base[shift:]+base[:shift];order.insert(order.index('REF20')+1,'ORACLE_RESTRICT');return order
 
@@ -98,7 +102,7 @@ def run_job(directory,resume=False):
       else:
        label=None
        if method=='ORACLE_RESTRICT':
-        begin=time.perf_counter();label=build_teacher_label(p,ref_record or {});label_path=directory/'labels'/(key+'.json');atomic_json(label_path,clean_json(label));label_seconds=time.perf_counter()-begin
+        begin=time.perf_counter();descriptor=build_teacher_label(p,ref_record or {});label_path=directory/'labels'/(key+'.json');atomic_json(label_path,clean_json(descriptor));label_seconds=time.perf_counter()-begin;label=oracle_label_argument(descriptor)
        method_dir=directory/'methods'/key
        shared=p.ledger['witness']['seconds'] if method=='WITNESS' else p.ledger['seconds'];deadline=time.monotonic()+max(0,30-(prepared['result']['public_input_seconds']+shared)) if method!='REF20' else None
        stop=lambda:stopped() or (deadline is not None and time.monotonic()>=deadline)
