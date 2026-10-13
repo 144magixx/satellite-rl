@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-14 S2-L25可变布局/逐束宽度适配：独立分支代码与通俗方案已准备，待用户审核，不启动训练。** 基于6cbe413的`codex/stage2-layout-width-v25`复用S1方案23共享case/layout/allocation及球面Gaussian PHY，新增真实N状态、宽度/增益/干扰关系、频率联合掩码与规则功率、严格权重协议、同实际分配的S3导数接续。根53项非训练回归52过、1项既存R6隔离导入路径失败；N1/3/9/200合成213步骤全链路通过、S2/S3容量一致、优化器更新0。实现子任务小型模型更新核验是工程检查，科学训练/评价0，不称学习成果。旧权重保持原路径，新结构明确拒绝直接加载。
+
+本组拟两学习组各150000/seed51001、同布局规则基线和后续功率对照，均仅建议；尚无正式任务ID或科学权重，真实S1布局发布、科学工作台/前端/完整恢复未准入。**用户最新要求先审核批准方案，随后实时核远端任务/API/进程归属、GPU/显存/CPU；确认无冲突或可安全并行才训练。** 本轮不接管S1-R7或S2-T24、不读取封存考核、不占用或调度远端。入口：[通俗方案25](docs/第二阶段/方案/25_可变布局与逐束宽度的T-SAC适配方案.md) · [工程核验07](docs/工程文档/07_第二阶段可变布局适配核验.md) · [工程原始证据](outputs/verification/layout_resource_v25/)。
+
 **2026-10-13 23:12 S1-AI17-R7统一请求数据任务已真实启动；随后根API核两端各170/298，合计340/596。** 数据执行源13702ff（主目录已集成ab27bed），独审11项针对检查通过并关闭原五项源缺口；仅准入data_train_dev。正式[根签数据图](outputs/experiments/first_stage_ai_search_20261013/round7/deployment_01/root_final/root_signed_data_graph_before_dispatch.json)绑定698实际源码、原6496共享接口资格、596逐机祖先与真实DQN/CUDA/资源。原远端祖先路径不可用，本地原字节逐SHA迁入；两端正式transport共同指73内容地址副本，74冗余暂存如实保留，recipe349370未改。工作台9014/9015独立，旧服务与18/24借出不动。
 
 两原ID为73 `r7_data_train_dev_20261013_231244_2a70c504`、74 `r7_data_train_dev_20261013_231251_217dd691`，worker58070/61197在[根首个实时API回执](outputs/experiments/first_stage_ai_search_20261013/round7/preflight/data_actual_first_ROOT.json)均存活、error为空。每端2个独立CPU case，父串行合并账本与4GiB总护栏；controller17500/出生1791904357.554806有限12小时，spec d55c52b1、plan d73933d0，状态见[原控制器](outputs/experiments/first_stage_ai_search_20261013/round7/control/data_01/state.json)。只构建576训练＋20开发统一21.6Mbps输入，prepare/T/D5/科学模型更新均0；完成后只读全量独审与新case authority，再独立准入标签，不自动扩阶段。未来训练/node源f4仍在修CUDA初始化顺序与上游dataset绑定，已保存失败审查，不影响冻结137的数据阶段、不热改正在运行源码。
