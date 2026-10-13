@@ -19,7 +19,7 @@ if not repo.is_relative_to(pathlib.Path({i['root']!r}).resolve()):raise ValueErr
 actual=subprocess.run(['git','-C',str(repo),'rev-parse','HEAD'],capture_output=True,text=True,check=True).stdout.strip()
 if actual!={commit!r}:raise ValueError('actual route repo commit changed')
 sys.path.insert(0,str(repo/'src'))
-from satellite_rl.workbench.ai_search_resources import observe
+from satellite_rl.workbench.r6_resources import observe
 from satellite_rl.training.run_monitor import atomic_json
 raw=observe({i['archive']!r});record={{'group':{ops.GROUP!r},'ssh_port':{port},'scientific_commit':{commit!r},'observed_utc':raw['observed_utc'],'gpu_uuid':raw['gpu'].split(',')[0].strip(),'ready':not raw['foreign_workers'],'observation':raw}}
 atomic_json(pathlib.Path({i['ops']!r})/'resource_route.json',record);print(json.dumps(record))

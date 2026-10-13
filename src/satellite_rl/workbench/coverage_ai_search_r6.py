@@ -49,7 +49,7 @@ def validate_admission(p,plan_ref,review_ref):
   if not members or any(digest(base/name)!=sha for name,sha in members.items()):raise ValueError("qualified source members changed")
 
 def resource_admission(store,j):
- from .ai_search_resources import observe
+ from .r6_resources import observe
  from datetime import datetime,timezone
  port=deployment(store);r=read_json(store.archive_root.parent/"ops/resource_route.json",{})
  age=(datetime.now(timezone.utc)-datetime.fromisoformat(r.get("observed_utc","1970-01-01T00:00:00+00:00"))).total_seconds()
