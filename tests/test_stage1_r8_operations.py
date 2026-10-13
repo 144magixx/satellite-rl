@@ -25,6 +25,12 @@ class Operations(unittest.TestCase):
    value=self.registration(Path(tmp));value['archive_root']+='wrong'
    with patch.object(deadline,'read',return_value=value):
     with self.assertRaises(ValueError):deadline.boundary(dict(archive_root=tmp,deadline_registration_ref={}),'worker')
+ def test_new_child_refused_only_within20seconds_deadline(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);plan=dict(archive_root=tmp,deadline_registration_ref={})
+   with patch.object(deadline,'read',return_value=self.registration(root)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-19):
+    with self.assertRaises(deadline.Paused):deadline.before_start(plan,'local_before_intent')
+   with patch.object(deadline,'read',return_value=self.registration(root)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-21):self.assertTrue(deadline.before_start(plan,'D5_before_intent')['passed'])
  def endpoint(self,root):
   e=server.Endpoint.__new__(server.Endpoint);e.root=root;e.plan_ref=dict(path='plan',sha256='p');e.review_ref=dict(path='review',sha256='r');e.plan=dict(run_id='r8_pilot_mock',request_id='exact',archive_root=str(root));e.path='/api/ai-search-r8/tasks/r8_pilot_mock';return e
  def test_wrong_post_body_or_old_endpoint_never_spawns(self):

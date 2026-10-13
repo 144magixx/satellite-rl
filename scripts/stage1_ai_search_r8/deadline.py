@@ -4,6 +4,12 @@ from pathlib import Path
 from .contracts import DEADLINE,read,atomic,identity,GROUP
 
 class Paused(RuntimeError):pass
+def before_start(plan,point,hard_seconds=15,startup_margin_seconds=5):
+ admission=boundary(plan,point)
+ if DEADLINE-time.time()<hard_seconds+startup_margin_seconds:
+  atomic(Path(plan['archive_root'])/'pause_state.json',dict(group=GROUP,paused=True,requires_explicit_human_continue=True,point=point,reason='insufficient_time_for_new_child_hard_guard_plus5seconds_startup',deadline_unix_seconds=DEADLINE))
+  raise Paused('safe boundary before new child; insufficient deadline margin')
+ return admission
 def boundary(plan,point):
  registration=read(plan['deadline_registration_ref'])
  if registration.get('root_accepted')is not True or registration.get('archive_root')!=plan['archive_root'] or registration.get('group')!=GROUP or registration.get('deadline_unix_seconds')!=DEADLINE:raise ValueError('registered own archive boundary required')

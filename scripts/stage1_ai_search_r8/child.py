@@ -3,7 +3,7 @@ import argparse,os,sys,time
 from pathlib import Path
 import numpy as np
 from .contracts import read,pin,atomic,digest
-from .deadline import boundary,bind_parent
+from .deadline import boundary,bind_parent,Paused
 
 def execute(req,directory):
  bind_parent('R8_PARENT_PID');plan=read(req['plan_ref']);boundary(plan,'child_before_inputs')
@@ -14,6 +14,7 @@ def execute(req,directory):
  case=plan['cases'][req['case_index']];refs=case['refs'];began=time.monotonic()
  with np.load(pin(refs['original_scene']),allow_pickle=False) as z:scene=Scene(z['positions'],z['demands'],tuple(map(str,z['aircraft_ids'])),str(z['profile']))
  prepared=PreparedCase.from_dict(scene,read_asset(refs['original_prepared_Wenv'])['result'])
+ atomic(Path(directory)/'input_timer.json',dict(observed_input_seconds=time.monotonic()-began,scope='original scene and prepared read, Scene/PreparedCase reconstruction',includes_prior_imports=False))
  if prepared.identity!=case['identity']:raise ValueError('full original case/prepared identity')
  if req['stage']=='local':
   import satellite_rl.coverage
@@ -28,16 +29,18 @@ def execute(req,directory):
   if req['arm']=='A':provenance['owner_array_sha256']=read_asset(refs['AI_envelope'])['valid_aircraft_pointer_owner_tensor_refs_and_SHAs']['sha256']['owner']
   def stopped():
    try:boundary(plan,'local_candidate_boundary');return False
-   except Exception:return True
+   except Paused:return True
   value=core.local_transfer(prepared,owner,arm=req['arm'],provenance=provenance,state_path=Path(req['state_path']),stop_callback=stopped,resume_admission=req.get('resume_admission'))
  else:
   boundary(plan,'before_D5_algorithm')
-  proposal=read_asset(req['proposal_ref'])
+  proposal=read_asset(req['proposal_container_ref'])['proposal']
   if proposal['provenance']['source_method']!='EXACT' or proposal['case_identity']!=case['identity']:raise ValueError('EXACT compatibility with actual full R8 identity')
   result=decode_groups(prepared,proposal,time_limit=5.)
-  value=dict(status='completed',result=result,actual_arm=req['arm'],identity=case['identity'],actual_D5_calls=1,new_model_calls=0,unchanged_decoder_source=plan['original_source_manifest_ref'],outer_proposal_ref=req['proposal_ref'])
+  value=dict(status='completed',result=result,actual_arm=req['arm'],identity=case['identity'],actual_D5_calls=1,new_model_calls=0,unchanged_decoder_source=plan['original_source_manifest_ref'],outer_proposal_container_ref=req['proposal_container_ref'])
  value.update(operational_input_and_stage_seconds=time.monotonic()-began,original_input_refs=refs,actual_arm=req['arm'],actual_stage=req['stage'])
- asset=write_asset(Path(directory)/'stage_output.json.gz',value);atomic(Path(directory)/'stage_output.json',dict(asset_ref=asset));return asset
+ publish_started=time.monotonic();asset=write_asset(Path(directory)/'stage_output.json.gz',value);atomic(Path(directory)/'stage_output.json',dict(asset_ref=asset));atomic(Path(directory)/'publication_timer.json',dict(observed_publish_seconds=time.monotonic()-publish_started,scope='canonical gzip asset and small asset pointer',timer_receipt_IO_additional=True));return asset
 def main():
- p=argparse.ArgumentParser();p.add_argument('--request',required=True);p.add_argument('--directory',required=True);a=p.parse_args();execute(read(dict(path=a.request,sha256=digest(a.request))),a.directory)
+ began=time.monotonic();p=argparse.ArgumentParser();p.add_argument('--request',required=True);p.add_argument('--directory',required=True);a=p.parse_args()
+ try:execute(read(dict(path=a.request,sha256=digest(a.request))),a.directory)
+ finally:atomic(Path(a.directory)/'child_epoch_finally.json',dict(observed_seconds_since_main=time.monotonic()-began,excludes_prior_module_imports=True,provisional_until_finally_sample=True,complete_child_exit_bound_closed=False,excludes_this_receipt_IO_and_interpreter_exit=True))
 if __name__=='__main__':main()
