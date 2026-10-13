@@ -251,6 +251,14 @@ class Scheduler:
 
     def _launch(self, job, status):
         directory = self.store.job_dir(job["run_id"])
+        if job.get("experiment_id") == "S1-AI17-R3":
+            try:
+                from . import coverage_ai_search_r3, frozen_round_tasks
+                frozen_round_tasks.verify(self.store,job,coverage_ai_search_r3)
+                observation=coverage_ai_search_r3.resource_admission(self.store,job)
+                atomic_json(directory/"resource_before_launch.json",observation)
+            except Exception as error:
+                self._status(directory,status,stage="queued",queue_reason=str(error));return
         if job.get("experiment_id") == "S1-AI17-R2":
             try:
                 from . import coverage_ai_search_r2, frozen_round_tasks
@@ -367,6 +375,11 @@ class Scheduler:
                expected_repair_commit=None):
         with self.lock:
             candidate = read_json(self.store.job_dir(run_id) / "job.json", {})
+            if candidate.get("experiment_id") == "S1-AI17-R3":
+                if any(v is not None for v in (source_repair,repair_validation_path,repair_validation_sha256,expected_origin_commit,expected_repair_commit)):
+                    raise ValueError("R3 resumes original frozen source only")
+                from . import coverage_ai_search_r3,frozen_round_tasks
+                return frozen_round_tasks.resume(self,run_id,coverage_ai_search_r3)
             if candidate.get("experiment_id") == "S1-AI17-R2":
                 if any(v is not None for v in (source_repair,repair_validation_path,repair_validation_sha256,expected_origin_commit,expected_repair_commit)):
                     raise ValueError("R2 resumes original frozen source only")

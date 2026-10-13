@@ -1,0 +1,594 @@
+{
+  "schema": "s1_ai17_round3_candidate_count_construction_v2",
+  "group": "S1-AI17-R3",
+  "status": "proposal_pending_root_scientific_engineering_review_and_source_freeze",
+  "date": "2026-10-13",
+  "single_method": "supervised_candidate_center_width_count_prediction_then_shared_integer_completion",
+  "seed": 51001,
+  "not_reused": [
+    "R2_eight_slot_ranker_training",
+    "free_strong_parent_input",
+    "R1_diagnostic_labels_relabelled_as_new_teacher"
+  ],
+  "boundaries": {
+    "required": [
+      "all_input_aircraft_geometry_covered",
+      "unique_integral_ownership",
+      "request_conservation",
+      "actual_nonempty_N<=min200_n",
+      "per_beam_variable_width"
+    ],
+    "forbidden_targets_features_labels": [
+      "PHY",
+      "served_demand",
+      "satisfaction",
+      "QoS",
+      "SI",
+      "SGM",
+      "downstream_policy_outcome"
+    ],
+    "geometry": "existing_europe_GEO_ground_projection_and_visibility",
+    "full_width_menu_deg": [
+      0.3,
+      0.5,
+      1.0
+    ],
+    "envelope": "after_shared_assignment_polish_only; fixed_centers_and_members; between0.3_and_selected_menu; no_continuous_global_optimum_claim",
+    "zero_total_request": "geometry_only_quality_metrics_undefined_training_label_ineligible_record_all"
+  },
+  "data": {
+    "train_source": "original_pinned_Jan08_Jan09_576_mothers",
+    "train_mothers": 192,
+    "train_selection": "UTC_sorted_index_floor(k*575/191)_k0to191; freeze_actualIDs_before_results",
+    "profiles": [
+      "base",
+      "one_hotspot",
+      "two_hotspots",
+      "edge_heavy"
+    ],
+    "profile_rules": "G16_position_ID_total_requested_demand_preserving_rules",
+    "train_cases": 768,
+    "development_source": "Jan12_original20_mothers80cases",
+    "development_pilot_mother_indices": [
+      0,
+      4,
+      8,
+      11,
+      15,
+      19
+    ],
+    "development_pilot_cases": 24,
+    "development_extension_cases": 56,
+    "no_repeat_pilot": true,
+    "validation": {
+      "dates": [
+        "2024-02-17",
+        "2024-02-18"
+      ],
+      "mothers": 20,
+      "cases": 80,
+      "sha256": "f64258ba9dbb257c0107537e2839a6f28eaf27f8a75851106c1be7d61f8802e5"
+    },
+    "test": {
+      "dates": [
+        "2024-02-19",
+        "2024-02-20"
+      ],
+      "mothers": 40,
+      "cases": 160,
+      "sha256": "1c289338eebd3b6e9d7d26fe307d6001381d667d9fa12092b453e2500e791b98",
+      "algorithm_access": "after_fixed_final_model_and_validation_admission_only"
+    },
+    "ref_registry": "outputs/experiments/first_stage_ai_search_20261013/source/new_validation_test_refs.json",
+    "train_source_sha256": "7bc2b1f8fdd583e136621e3d25bf8aed371fa72e8d4a399f21f4ed3cd27655af",
+    "development_source_sha256": "9929e31c2ecd7adca912deeb16ad58abd6bd97d7cb2c631fc53cb4a2c57e6b5b"
+  },
+  "witness": {
+    "algorithm": "streaming_smallest_stable_ID_uncovered_aircraft_center_then_assign_all_currently_uncovered_geometrically_covered_aircraft",
+    "attempt_widths_order": [
+      0.5,
+      1.0
+    ],
+    "max_beams_per_attempt": 200,
+    "second_attempt": "from_raw_input_only_if0.5_did_not_find_complete_witness",
+    "not_legacy_NxN_initializer": true,
+    "failure": "bounded_witness_not_found_preserve_case; not_infeasibility_certificate",
+    "resource_Ncap": "min(200,n,ceil(1.25*Nw))",
+    "resource_menu_Omega_cap": "Nw*2*pi*(1-cos(radians(witness_full_width)/2))",
+    "note": "input_defined_R3_caps_not_R2_N0_Omega0; no_cross_round_same_resource_claim_without_intersection_slice"
+  },
+  "candidate_domain": {
+    "max_centers": 512,
+    "center_order": [
+      "witness_centers",
+      "visible_mean_ray_ground_intersection_per_witness_ownership_group",
+      "top64_requested_demand_aircraft_positions",
+      "farthest_point_aircraft_positions_until_cap_or_exhausted"
+    ],
+    "farthest_rule": "maximize_minimum_satellite_ray_angle_to_existing_centers; stable_aircraftID_ties",
+    "dedup": "exact_float64_lat_lon_tuple; merge_origin_flags; no_result_dependent_rounding",
+    "max_high_request_points": 64,
+    "copies_per_center_width": 2,
+    "max_beam_slots": 3072,
+    "same_center_different_width_mutual_exclusion": false,
+    "same_center_single_beam_restriction": false,
+    "finite_domain_limit": "at_most2_copies_per_menu_width_not_a_physical_limit; projection_and_quality_gate_required",
+    "coverage": "float64_actual_satellite_ray_distance; fullwidth_halfangle; same_center_copies_share_geometry",
+    "zero_cover_option": "fixed_inactive; count_positive_logits_masked",
+    "mandatory_reduced_domain": "all_widths_and_both_copies_at_witness_centers",
+    "extra_slot_budget_M": "min(Ncap,number_of_nonwitness_available_slots)",
+    "teacher_center_leakage_forbidden": true,
+    "cache_fields": [
+      "scene_sha",
+      "witness_layout",
+      "witness_width",
+      "Nw",
+      "Ncap",
+      "menu_Omega_cap",
+      "candidate_centers",
+      "origin_flags",
+      "slot_IDs",
+      "coverage_bitsets_or_sparse_equivalent",
+      "content_sha"
+    ],
+    "pool_geometry_raypair_cap": "1424*n+262144",
+    "preparation_nominal_seconds": 10,
+    "additional_ledger": [
+      "ray_constructions",
+      "mean_input_counts",
+      "sort_work",
+      "peak_memory",
+      "cache_hits",
+      "actual_seconds"
+    ],
+    "public_vs_model_cost": "raw_witness_centers_coverage_shared; full34Dfeatures_knn_and_network_only_charged_to_AI; WITNESS_does_not_pay_unused_full_pool_or_neural_graph_cost",
+    "preparation_failure": "deadline_partial_pool_not_complete; shared_typed_failed_pool_artifact_cost_reason; unknown_crash_no_silent_repeat"
+  },
+  "model": {
+    "name": "candidate_width_count_graph_network_v1",
+    "input_scope": "raw_input_derived_center_features_only_no_parent_or_solution_labels",
+    "center_features_dim": 34,
+    "feature_groups": {
+      "relative_mean_unit_ray_components_div_1degree_radians": 3,
+      "origin_flags_witness_mean_highrequest_fps": 4,
+      "per_width_six_features_times_three": 18,
+      "global_nine_features": 9
+    },
+    "per_width_features": [
+      "covered_aircraft_fraction",
+      "covered_requested_share",
+      "max_single_aircraft_request_share",
+      "mean_angle_div_halfwidth",
+      "max_angle_div_halfwidth",
+      "positive_request_fraction_among_covered"
+    ],
+    "global_features": [
+      "log1p_aircraft_count",
+      "log1p_total_request_Mbps",
+      "Nw_div200",
+      "Ncap_div200",
+      "Omega_cap_div200Omega1degree",
+      "max_aircraft_request_share",
+      "aircraft_request_CV",
+      "witness_width_div1degree",
+      "center_count_div512"
+    ],
+    "undefined": "empty_coverage_stats0_with_explicit_masks; zero_total_request_separate",
+    "input_normalization": "training_input_mean_std_only_clamp_std1e-8_constant_columns0; checkpoint_pinned",
+    "encoder": [
+      34,
+      128,
+      128
+    ],
+    "activation": "ReLU",
+    "neighbor_graph": "directed8_nearest_distinct_centers_by_satellite_ray; stable_candidateID_ties; masked_if_less8",
+    "message_layers": 2,
+    "message_layer": "concat(self,mean_neighbor)->Linear256_128_ReLU_Linear128_128; ReLU(self+message)",
+    "readout": "concat(local128,global_masked_mean128,global_masked_max128)->Linear384_128_ReLU_Linear128_9",
+    "outputs": "three_independent_categorical_count_heads_{0,1,2}_for_widths0.3_0.5_1.0",
+    "parameter_count": 170249,
+    "dropout": 0,
+    "identity_or_position_index_embedding": false,
+    "permutation_equivariance_check_required": true,
+    "AI_score": "copy0=P(count>=1); copy1=P(count=2)",
+    "selection": "mandatory_domain_plus_topM_nonwitness_slots; stableID_ties_copy0_before1",
+    "full_domain_case": "if_nonwitness_count<=M_no_effective_selection; may_skip_AI_forward_by_fixed_rule_and_record_no_selection_opportunity",
+    "final_decision_owner": "shared_integer_completion_selects_actual_N_menu_width_and_aircraft_assignment; model_is_candidate_filter_not_final_feasible_layout",
+    "zero_cover_logit_mask": "finite_negative1e9_for_positive_counts_no_0log0_NaN; finite_gradient_G0"
+  },
+  "methods": {
+    "WITNESS": "streaming_witness_then_common_fixed_center_polish_and_envelope_no_MILP_no_unneeded_full_pool_fee",
+    "RULE": "mandatory_plus_M_ranked_nonwitness_slots_by_covered_request_share/(slot_menu_Omega/Omega_cap); copies_prefix_order; stableID_ties",
+    "RANDOM": "mandatory_plus_sameM_nonwitness_slots; stable_caseID_seed51001_random_priority; pairwise_copy0_priority>=copy1; no_best_of_many",
+    "FULL": "all_common_finite_candidates_then_same_regular_completion",
+    "AI": "learned_count_tail_probabilities_select_sameM_then_same_regular_completion",
+    "REF20": "full_domain_longer_two_stage_teacher_reference_not_equal_runtime_budget_baseline",
+    "ORACLE_RESTRICT": "development_only_with_valid_REF_label; teacher_selected_nonwitness_slots_then_RULE_padding_sameM; missing_label=label_unavailable_no2second_MIP_no_silent_RULE_substitution; not_best_M_subset_or_time_optimum"
+  },
+  "integer_model": {
+    "backend": "highspy1.15.1_native_HiGHS_only",
+    "warm_start_x0_supported": false,
+    "new_solver_package_installation": {
+      "package": "highspy",
+      "version": "1.15.1",
+      "isolated_group_vendor": true,
+      "pin_platform_wheel_SHA256": true,
+      "no_shared_DQN_replacement": true,
+      "no_deps_preserve_numpy": true,
+      "metadata": "https://pypi.org/project/highspy/1.15.1/",
+      "interface": "https://ergo-code.github.io/HiGHS/stable/interfaces/python/",
+      "actual_API_start_checks": "within_existing12_toy_MILP_budget"
+    },
+    "fallback_witness_external_to_solver": true,
+    "variables": {
+      "y_b": "binary_slot_activation",
+      "x_ib": "binary_ownership_on_legal_aircraft_slot_edges",
+      "z": "continuous_peak_requested_share",
+      "a_b": "continuous_L1_auxiliary_only_teacher_stage2"
+    },
+    "request_scale": "lambda_i=d_i/D",
+    "constraints": [
+      "sum_b x_ib=1_each_aircraft",
+      "x_ib<=y_b",
+      "y_b<=sum_i x_ib_nonempty",
+      "sum_b y_b<=Ncap",
+      "sum_b (Omega_b/Omega_cap)*y_b<=1",
+      "L_b=sum_i lambda_i*x_ib<=z",
+      "same_center_width_copy1_y<=copy0_y",
+      "same_center_width_copy0_load>=copy1_load_symmetry_only"
+    ],
+    "primary_objective": "min_z_exact_linear_minmax_formulation_in_finite_domain_only",
+    "not_exact_objectives": [
+      "top10",
+      "CV",
+      "continuous_center_or_width_global_optimum"
+    ],
+    "max_legal_edge_binary_variables": 1000000,
+    "native_case_RSS_limit_bytes": 2147483648,
+    "scale_protection": "record_guard_return_common_witness_without_deleting_edges_or_claiming_optimized_result",
+    "regular": {
+      "solver_time_limit_seconds": 2,
+      "node_limit": 2000,
+      "mip_rel_gap": 0.001,
+      "presolve": true,
+      "native_process_watchdog_seconds": 5
+    },
+    "reference_stage1": {
+      "solver_time_limit_seconds": 12,
+      "node_limit": 20000,
+      "mip_rel_gap": 0.001
+    },
+    "reference_stage2": {
+      "requires_valid_stage1": true,
+      "solver_time_limit_seconds": 8,
+      "node_limit": 10000,
+      "mip_rel_gap": 0.001,
+      "constraint": "z<=actual_stage1_peak_share+1e-8",
+      "objective": "min_sum_b a_b; a_b>=L_b-y_b/Ncap_and_a_b>=-L_b+y_b/Ncap",
+      "meaning": "L1_balance_proxy_at_Ncap_not_exact_CV_or_top10"
+    },
+    "reference_total_watchdog_seconds": 30,
+    "integrality_acceptance_tolerance": 1e-06,
+    "acceptance": "decode_complete_unique_ownership_then_independent_geometry_resource_conservation_audit; invalid_solver_output_preserved_rejected_not_clipped_to_success",
+    "solver_metadata": [
+      "status",
+      "message",
+      "fun",
+      "mip_gap",
+      "mip_dual_bound",
+      "mip_node_count",
+      "native_elapsed",
+      "wall_elapsed",
+      "watchdog",
+      "fallback_reason",
+      "highspy_version",
+      "native_library_version",
+      "wheel_sha256",
+      "start_set_status",
+      "start_native_log_ref",
+      "start_independent_audit",
+      "native_threads_option",
+      "native_bound_certificate",
+      "solution_same_as_W"
+    ],
+    "threads": "native_threads=1_option_readback_and_actual_evidence; CPU_affinity_only_additional_not_substitute_or_singlethread_proof",
+    "native_start": {
+      "regular_and_reference_stage1": "full_feasible_W_y_x_z_same_for_all_methods; W_also_external_fallback",
+      "reference_stage2": "valid_stage1_assignment_plus_exact_L1_auxiliary_values",
+      "acceptance": "setSolution_status_not_incumbent_proof; native_log_feasibility_acceptance_plus_independent_assignment_constraint_audit_required",
+      "no_backend_fallback": true
+    },
+    "native_options": {
+      "threads": 1,
+      "random_seed": 51001,
+      "time_limit": "unchanged2_or12_or8",
+      "mip_max_nodes": "unchanged2000_or20000_or10000",
+      "mip_rel_gap": 0.001,
+      "presolve": "on"
+    },
+    "valid_reference_definition": "independent_audit_and_native_feasible_result; injected_W_only_without_verified_gap_certificate_is_label_unavailable; W_equal_result_with_native_bound_certificate_meeting_frozen_gap_valid_as_certified_start_not_new_solution",
+    "scipy_public_x0_supported": false,
+    "native_full_primal_start_required": true
+  },
+  "postprocessing": {
+    "initial_choice": "best_valid_solver_output_or_common_witness_by_raw_peak_tail_CV_then_N_Omega; retain_sources",
+    "assignment_polish": {
+      "center_and_menu_fixed": true,
+      "max_proposals": 512,
+      "passes": 2,
+      "nominal_seconds": 0.25,
+      "order": "source_beams_by_desc_load_then_stableID; owned_aircraft_by_desc_request_then_ID; legal_destination_beams_by_asc_load_then_ID",
+      "accept": "strict_lex_raw_peak_tail_CV_under_frozen_tolerance",
+      "no_last_aircraft_transfer": true
+    },
+    "continuous_envelope": "minimum_valid_fullwidth_at_fixed_center_and_members; floor0.3_ceiling_selected_menu; outside_original_menu_upper_reject",
+    "menu_Omega_vs_actual_Omega": "both_saved; selection_constraint_uses_menu_upper_budget; final_envelope_is_conservative_reduction_not_extra_free_reoptimization",
+    "whole_candidate_validator": "float64_all_aircraft_assigned_ray_with_visibility_unique_nonempty_conservation_width_bounds",
+    "geometry_tolerance": 1e-14,
+    "demand_rtol": 1e-12,
+    "demand_atol": 1e-06,
+    "metric_abs_tolerances": {
+      "N": 0,
+      "solid_angle_sum_sr": 1e-12,
+      "maxload": 1e-06,
+      "top10_mean": 1e-06,
+      "CV": 1e-09
+    },
+    "metric_relative_tolerance_non_N": 1e-12
+  },
+  "cost_contract": {
+    "regular_pipeline_nominal_guard_seconds": 30,
+    "regular_target_restricted_time_tau_seconds": 30,
+    "full_stages": [
+      "raw_input_read",
+      "streaming_witness",
+      "candidate_geometry",
+      "selection_or_model_features_graph_GPU_forward",
+      "MILP_matrix_build",
+      "native_process_start_and_solve",
+      "assignment_polish",
+      "envelope",
+      "independent_validation",
+      "publication"
+    ],
+    "cost_reuse": "shared_required_stage_physically_once_allowed; every_method_comparable_bill_adds_full_measured_required_cost_not_fraction; actual_execution_ledger_separate; model_only_work_not_charged_other_methods",
+    "new_hardware": "same_case_methods_on_same_physical_lane; fresh_shared_stage_cost; no_old_hardware_times_summed_as_cold_baseline",
+    "cold_vs_warm_network": "both_reported; GPU_synchronize_for_forward_time",
+    "same_quality_target_cost": "actual_complete_result_publication; no_unobserved_first_MIP_incumbent_time_interpolation",
+    "failed_target": "max(30,actual_spent_seconds) for_restricted_cost; actual_cost_also_reported",
+    "unknown_work": "persist_start_before_native_call; preserve_unknown_spend; no_silent_repeat_or_zero_fill",
+    "strict_total_wall_bound_claim": false,
+    "offline_cost": "teacher_generation_and_training_separate_with_amortization; pretrained_strong_reference_not_free"
+  },
+  "development": {
+    "methods_before_training": [
+      "WITNESS",
+      "RULE",
+      "RANDOM",
+      "FULL",
+      "REF20",
+      "ORACLE_RESTRICT"
+    ],
+    "pilot_results_max": 144,
+    "extension_results_max": 336,
+    "total_results_before_training_max": 480,
+    "post_training_AI_development_cases": 80,
+    "cold_comparison": "all_new_R3_runs_from_original_inputs; R2_reference_used_quality_only",
+    "projection_audit": "same_aircraft_groups_of_existing_resource_eligible_R2_known_layouts_to_finite_slots; minimum_menu_Omega_bipartite_matching; record_unmatched_groups_copy_limit_and_resource_gap; no_teacher_centers_added",
+    "R2_resource_limit": "R3_caps_differ; R2_points_are_external_anchors_only; strict_crossround_quality_requires_intersection_caps; do_not_rewrite_R2_gates",
+    "external_reference_choice": {
+      "candidates": [
+        "R2_common_parent",
+        "R2_D0_final_primary",
+        "R2_D1_final_primary"
+      ],
+      "filter": "same_case_audited_valid_N<=R3Ncap_actualOmega<=R3menuOmegaCap",
+      "lex_order": [
+        "raw_maxload",
+        "top10_mean",
+        "CV",
+        "N",
+        "actual_Omega"
+      ],
+      "ties": "metric_tolerance_then_fixed_parent_D0_D1_then_layoutSHA",
+      "no_arbitrary_full_archive_pick": true
+    }
+  },
+  "pretraining_gates": {
+    "G0": "all_prespecified_development_cases_get_valid_witness; correct_source_roles_counts_copy_coexistence_integer_ownership_menu_envelope_budget_fallback_CUDA_update; failures_preserved",
+    "G1_eligible_external_reference": "at_least90percent_of_prespecified_cases_have_R2_reference_feasible_under_R3_caps_else_insufficient_evidence",
+    "G1_domain_quality": "REF20_on_at_least90percent_of_resource_eligible_reference_cases_has_peak<=1.02reference_and_tail_CV<=1.05reference; report_all_projection_failures; no_global_feasible_domain_claim",
+    "G2_quality": "ORACLE_RESTRICT_beats_best_peak_of_RULE_RANDOM_FULL_by>=1percent_with_tail_CV<=1.02_of_that_baseline_on>=6of24pilot_or20of80full_cases",
+    "G2_efficiency": "using_REF20_target_peak<=1.01_and_tail_CV<=1.02; ORACLE_success_rate_not_lower_than_each_RULE_RANDOM_FULL_and_restricted_mean_full_publication_time_reduced>=20percent_against_each; all_case_denominator",
+    "G2_logic": "quality_OR_efficiency; oracle_is_offline_opportunity_only",
+    "extension_admission": "pilot_G0_G1_G2_pass_then_only_remaining56",
+    "teacher_training_admission": "full80_G0_G1_G2_pass_then768_training_teacher_cases; no_automatic_cap_or_seed_expansion",
+    "G2_quality_baseline_choice": "RULE_RANDOM_FULL_by_peak_tail_CV_then_fixed_method_order_RULE_RANDOM_FULL_with_frozen_tolerance",
+    "G2_quality_missing": "any_required_method_without_legal_published_final_on_prespecified_positive_case=>quality_branch_failure; valid_W_fallback_uses_actual_metrics; ORACLE_label_unavailable_not_dropped",
+    "G2_efficiency_missing": "REF_without_valid_native_result_or_certified_start=>target_undefined_and_efficiency_branch_failure; no_zero_target_or_uncertified_W_lowering"
+  },
+  "teacher": {
+    "cases": 768,
+    "calls_per_case_max": 3,
+    "runs": [
+      "RULE_regular",
+      "REF_stage1",
+      "REF_stage2_if_valid_stage1"
+    ],
+    "nominal_solver_seconds_per_case": 22,
+    "nominal_solver_seconds_total": 16896,
+    "solutions_for_labels": "at_most2_unique_valid_nonfallback_REF_layouts; peak_within1percent_best_REF_peak_and_tail_CV_within2percent_lex_best_REF_point",
+    "physical_dedup": "ignore_teacher_beam_or_copy_number_permutation; compare_menu_center_and_owned_aircraft_groups",
+    "label": "per_center_per_width_activation_count0_1_2; mean_onehot_over_accepted_unique_REF_solutions",
+    "continuous_width_not_label_menu": "preserve_selected_menu_identity_then_envelope_values_separately",
+    "minimum_nonfallback_label_cases": 692,
+    "minimum_nontrivial_restriction_cases": 154,
+    "nontrivial": "accepted_teacher_activates_nonwitness_slot_and_at_least_one_of_its_selected_nonwitness_slots_is_missing_from_RULE_sameM_domain",
+    "failure": "no_training_if_gates_fail; no_resampling_mothers_or_negative_zero_fill_for_censored_labels",
+    "logs": "original_solution_assignment_menu_counts_solver_bounds_status_costs_data_pool_sourceSHA; rebuild_MILP_from_pinned_input_builder_not_duplicate_sparse_matrices",
+    "valid_reference": "native_valid_reference_definition; unoptimized_start_only_not_new_REF_label; certified_start_marked_if_meets_gap"
+  },
+  "training": {
+    "models": 1,
+    "from_scratch": true,
+    "seed": 51001,
+    "effective_updates": 6000,
+    "effective_batch_cases": 16,
+    "microbatch_cases": 4,
+    "gradient_accumulation": 4,
+    "sample_draws_at_full_budget": 96000,
+    "precision": "FP32_no_AMP",
+    "optimizer": "AdamW",
+    "learning_rate": 0.0003,
+    "weight_decay": 0.0001,
+    "gradient_clip_norm": 1,
+    "dropout": 0,
+    "loss": "weighted_soft_target_categorical_CE_over3_count_heads_and_valid_centers; normalize_by_total_target_weight",
+    "count_class_weights": [
+      0.1,
+      1.0,
+      1.0
+    ],
+    "checkpoint_updates": [
+      1500,
+      3000,
+      4500,
+      6000
+    ],
+    "primary_model_update": 6000,
+    "validation_checkpoint_selection": false,
+    "test_checkpoint_selection": false,
+    "resume": "atomic_full_latest_model_optimizer_RNG_sampler_and_update_WAL; retain_four_diagnostic_nodes; no6000permanent_checkpoint_copies; actual_unknown_failed_replay_work_separate",
+    "CUDA_required": true,
+    "CPU_training_fallback": false
+  },
+  "evaluation": {
+    "intermediate_validation": {
+      "updates": [
+        1500,
+        3000,
+        4500
+      ],
+      "cases_each": 80,
+      "total_extra_cases": 240,
+      "mode": "asynchronous_pinned_workbench_diagnostic_not_strict_timing"
+    },
+    "final_validation": {
+      "cases": 80,
+      "methods": [
+        "WITNESS",
+        "RULE",
+        "RANDOM",
+        "FULL",
+        "AI",
+        "REF20"
+      ],
+      "rows": 480,
+      "AI80_is_update6000_node": true
+    },
+    "test": {
+      "cases": 160,
+      "methods": [
+        "WITNESS",
+        "RULE",
+        "RANDOM",
+        "FULL",
+        "AI",
+        "REF20"
+      ],
+      "rows": 960
+    },
+    "validation_admission": "fixed6000_model_provenance_geometry_valid_and_either_quality_or_efficiency_point_estimate_thresholds_pass_against_each_RULE_RANDOM_FULL; otherwise_keep_test_locked",
+    "quality_branch": "mean_per_case_relative_peak_gain>=1percent_against_each_RULE_RANDOM_FULL; mean_tail_and_CV_relative_worsening_each<=2percent; disclose_tolerated_tradeoff_not_full_Pareto_dominance",
+    "efficiency_branch": "REF20_target_peak<=1.01ref_tail_CV<=1.02ref; AI_success_rate_not_lower_and_restricted_mean_complete_pipeline_time_reduction>=20percent_against_each_RULE_RANDOM_FULL",
+    "test_uncertainty": {
+      "unit": "mother",
+      "within_mother": "equal_four_profile_means",
+      "strata": "date",
+      "bootstrap_draws": 10000,
+      "seed": 51001,
+      "family": "3quality_plus3efficiency_contrasts",
+      "correction": "Bonferroni_simultaneous_intervals_family_alpha0.05",
+      "require_advantage_lower_bound_positive": true
+    },
+    "target_first_time_limit": "only_complete_published_pipeline_return_time_known; native_first_incumbent_unobserved_not_invented",
+    "full_report": "raw_validity_failures_fallbacks_N_menuOmega_actualOmega_peak_tail_CV_percase_mother_coverage_of_selected_domain_model_vs_solver_contributions_and_all_costs",
+    "quality_missing_policy": "any_required_method_missing_legal_final_on_prespecified_positive_case_fails_quality_branch; valid_W_fallback_remains_real_metrics",
+    "reference_missing_policy": "undefined_REF_target_fails_efficiency_branch_no_zero_fill_or_uncertified_W_target",
+    "relative_zero_metric": "zero_reference_CV_or_tail_uses_absolute_nonworsening_tolerance_no_arbitrary_epsilon_advantage"
+  },
+  "total_budgets": {
+    "development_solver_calls_max": 480,
+    "teacher_solver_calls_max": 2304,
+    "intermediate_validation_solver_calls_max": 240,
+    "final_validation_solver_calls_max": 480,
+    "test_solver_calls_max": 960,
+    "post_training_development_AI_solver_calls_max": 80,
+    "all_solver_calls_max": 4544,
+    "regular_solver_calls_max": 2368,
+    "reference_problems_max": 1088,
+    "nominal_solver_seconds_max": 26496,
+    "all_stage_node_limit_sum_max": 37376000,
+    "not_in_solver_seconds": "input_candidate_feature_inference_matrix_build_native_start_polish_validation_IO_training_archival_overrun; all_recorded_separately",
+    "engineering_separate": {
+      "toy_MILP_calls_max": 12,
+      "synthetic_CUDA_updates_max": 4
+    },
+    "unused_budget": "not_transferable_to_other_methods_seeds_or_unregistered_tuning"
+  },
+  "execution": {
+    "worktree": "C:/Users/Admin/.codex/worktrees/stage1-ai19/paper",
+    "branch": "codex/stage1-ai19",
+    "module_proposal": "satellite_rl.coverage.ai_search_r3",
+    "remote_subdir": "s1_ai19/{port}",
+    "ports": [
+      20418,
+      20424,
+      20473
+    ],
+    "port20474": "not_admitted_no_resource_return_proof",
+    "workbench_ports_proposed": [
+      8990,
+      8991,
+      8992
+    ],
+    "api_proposed": "/api/ai-search-r3/tasks",
+    "modes": [
+      "prepare_candidates",
+      "development_gate",
+      "teacher",
+      "train",
+      "diagnostic_validation",
+      "evaluate"
+    ],
+    "teacher_case_workers_per_lane": 2,
+    "memory_throttling": "may_reduce_to1_with_actual_resource_record_no_algorithm_change",
+    "native_CPU_threads": 1,
+    "training": "one_DQN_CUDA_lane_other_lanes_useful_teacher_baseline_or_diagnostic_work",
+    "formal_timing": "one_case_at_a_time_per_physical_lane_all_methods_interleaved_no_training_contention; fresh_UUID_package_interpreter_sourcepins_after_reboot",
+    "all_formal_science_via_workbench": true,
+    "source_freeze": "root_review_G0_and_exact_code_data_config_refs_before_each_stage; no_hot_change_R1_R2"
+  },
+  "outputs": {
+    "base": "outputs/experiments/first_stage_ai_search_20261013/round3",
+    "models": "models/runs/new_unique_R3_run_seed51001",
+    "storage": "one_scene_pool_geometry_blob_percase_shared_refs_compact_solver_solutions_counts_and_costs; no_duplicate_full_MILP_matrix_permethod",
+    "min_free_disk_bytes": 8589934592,
+    "deliverables": [
+      "frozen_plan_and_taskIDs",
+      "raw_scene_candidate_teacher_modelSHA",
+      "all_solver_failures_and_fallbacks",
+      "training_loss_and_four_actual_nodes",
+      "percase_mother_tables",
+      "N_width_resource_quality_cost_curves",
+      "projection_limits",
+      "full_local_remote_archive"
+    ],
+    "shared_status_indexes": "root_owner"
+  },
+  "previous_version": {
+    "path": "round3_design_v1_before_native_warmstart.json",
+    "sha256": "2d4fdd2803537c440ce8bfd9f646f58abd222c86263b614b0448bc6096bf15e6"
+  },
+  "revision": "native_HiGHS_warmstart_and_prespecified_statistics_clarification"
+}

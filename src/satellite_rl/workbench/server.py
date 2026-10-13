@@ -75,7 +75,10 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(self.rfile.read(length))
                     if not isinstance(body, dict):
                         raise ValueError("请求须为JSON对象")
-                if parts[1:2] == ["ai-search-r2"]:
+                if parts[1:2] == ["ai-search-r3"]:
+                    from .coverage_ai_search_r3 import api as r3_api
+                    self._json(r3_api(self.server.application, method, parts[2:], body))
+                elif parts[1:2] == ["ai-search-r2"]:
                     from .coverage_ai_search_r2 import api as r2_api
                     self._json(r2_api(self.server.application, method, parts[2:], body))
                 elif parts[1:2] == ["ai-search"]:
@@ -99,7 +102,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(self.server.application.api(method, parts[1:], query, body))
             elif method == "GET":
                 root = Path(__file__).parent / "static"
-                page = ("ai_search_r2.html" if parsed.path in ("/ai-search-r2", "/ai-search-r2/") else
+                page = ("ai_search_r3.html" if parsed.path in ("/ai-search-r3", "/ai-search-r3/") else
+                        "ai_search_r2.html" if parsed.path in ("/ai-search-r2", "/ai-search-r2/") else
                         "ai_search.html" if parsed.path in ("/ai-search", "/ai-search/") else
                         "fair20.html" if parsed.path in ("/fair20", "/fair20/") else (parsed.path.lstrip("/") or "index.html"))
                 path = inside(root / page, root)
