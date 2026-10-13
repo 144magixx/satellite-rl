@@ -18,6 +18,7 @@ def proc(pid):
  p=Path('/proc')/str(pid)
  try:
   raw=(p/'stat').read_text();s=raw[raw.rfind(')')+2:].split()
+  if s[0] in ('Z','X'):return dict(birth=int(s[19]),state=s[0])
   return dict(birth=int(s[19]),state=s[0],cmdline_sha256=sha(p/'cmdline'),cmdline=[v.decode() for v in (p/'cmdline').read_bytes().split(b'\0') if v],pythonpath=dict(v.split(b'=',1) for v in (p/'environ').read_bytes().split(b'\0') if b'=' in v).get(b'PYTHONPATH',b'').decode())
  except (FileNotFoundError,ProcessLookupError):return None
 boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
@@ -25,9 +26,11 @@ need(boot==plan['old_service']['boot_id'],'boot changed: new root service admiss
 archive=Path(plan['archive_root']);directory=archive/'outputs/workbench/jobs'/plan['run_id']
 need(plan['ssh_port']==20474 and plan['api_port']==9015 and plan['run_id']=='r7_labels_20261013_234807_312cdce7','only original74 endpoint')
 need(str(archive)=='/home/u2024110224/first_stage_satellite_rl/s1_ai17/20474/round7/archive','original74 archive only')
-old=plan['old_service'];actual=proc(old['pid'])
-need(actual is not None and all(actual[k]==old[k] for k in ('birth','cmdline','cmdline_sha256','pythonpath')),'old service PID/birth/command/PYTHONPATH changed')
-need(actual['state'] not in ('Z','X'),'old service not live')
+old=plan['old_service'];actual=proc(old['pid']);start_only=plan.get('termination_mode')=='already_TERMed_old_service_gone_start_only'
+if start_only:need(actual is None or (actual['state'] in ('Z','X') and actual['birth']==old['birth']),'old service has not exited; no second TERM')
+else:
+ need(actual is not None and all(actual[k]==old[k] for k in ('birth','cmdline','cmdline_sha256','pythonpath')),'old service PID/birth/command/PYTHONPATH changed')
+ need(actual['state'] not in ('Z','X'),'old service not live')
 def listeners():
  result=[]
  for table in ('/proc/net/tcp','/proc/net/tcp6'):
@@ -35,8 +38,11 @@ def listeners():
    f=line.split()
    if int(f[1].split(':')[-1],16)==9015 and f[3]=='0A':result.append(f[9])
  return result
-inodes=listeners();fds=[os.readlink(p) for p in (Path('/proc')/str(old['pid'])/'fd').iterdir()]
-need(len(inodes)==1 and 'socket:['+inodes[0]+']' in fds,'9015 listener ownership changed')
+inodes=listeners()
+if start_only:need(not inodes,'9015 already occupied; no new endpoint')
+else:
+ fds=[os.readlink(p) for p in (Path('/proc')/str(old['pid'])/'fd').iterdir()]
+ need(len(inodes)==1 and 'socket:['+inodes[0]+']' in fds,'9015 listener ownership changed')
 for ref in plan['unchanged_refs'].values():pin(ref)
 job=json.loads((directory/'job.json').read_text());status=json.loads((directory/'status.json').read_text())
 need(status['stage']=='failed' and status['completed_cases']==147,'original failed147 endpoint required')
@@ -87,6 +93,7 @@ if opsdir.exists():
  need(plan.get('reuse_staged_only') is True,'existing operations epoch requires explicit stage-only recovery')
  pin(plan['previous_staged_preflight_ref'])
  expected={str(Path(item['ref']['path']).relative_to(opsdir)) for item in payload['assets'].values() if Path(item['ref']['path']).is_relative_to(opsdir)}|{'deployment.lock','deployment_preflight.json'}
+ for prior in plan.get('additional_staged_preflight_refs',[]):pin(prior);expected.add(str(Path(prior['path']).relative_to(opsdir)))
  need({str(p.relative_to(opsdir)) for p in opsdir.rglob('*') if p.is_file()}==expected,'staged-only directory has unexpected launch/receipt/new records')
  previous=json.loads(pin(plan['previous_staged_preflight_ref']).read_text())
  need(previous['actual_POST']==0 and previous['actual_new_science_calls']==0 and previous['plan_sha256']==plan['previous_stage_only_plan_sha256'],'original stage-only attempt differs')
@@ -109,11 +116,13 @@ preflight.open('x').write(json.dumps(record,indent=2)+'\n')
 for ref in plan['unchanged_refs'].values():pin(ref)
 def same_old():
  state=proc(old['pid']);return state is not None and all(state[k]==old[k] for k in ('birth','cmdline','cmdline_sha256','pythonpath'))
-need(same_old(),'old service identity changed before stop')
-if plan.get('termination_mode')=='fresh_exact_PID_TERM':
+if start_only:
+ state=proc(old['pid']);need(state is None or (state['state'] in ('Z','X') and state['birth']==old['birth']),'old service unexpectedly live before new server')
+elif plan.get('termination_mode')=='fresh_exact_PID_TERM':
  need(same_old() and Path('/proc/sys/kernel/random/boot_id').read_text().strip()==old['boot_id'],'fresh PID/birth/cmd/PYTHONPATH/boot differs before TERM')
  os.kill(old['pid'],signal.SIGTERM)
 else:
+ need(same_old(),'old service identity changed before stop')
  need(hasattr(os,'pidfd_open') and hasattr(signal,'pidfd_send_signal'),'race-safe pidfd signal unavailable')
  pidfd=os.pidfd_open(old['pid']);need(same_old(),'PID reuse before stop');signal.pidfd_send_signal(pidfd,signal.SIGTERM);os.close(pidfd)
 deadline=time.monotonic()+10
