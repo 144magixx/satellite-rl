@@ -3,7 +3,7 @@ import argparse,sys,json,importlib.util
 from pathlib import Path
 
 def install_hooks(app,contract_ref,review_ref,ops):
-    from satellite_rl.workbench import coverage_ai_search_r7 as policy,runtime
+    from satellite_rl.workbench import coverage_ai_search_r7 as policy,runtime,server
     from satellite_rl.workbench.coverage_ai_search import pin
     metadata=dict(contract_ref=contract_ref,root_review_ref=review_ref)
     original_api=policy.api;original_popen=runtime.subprocess.Popen
@@ -14,8 +14,28 @@ def install_hooks(app,contract_ref,review_ref,ops):
         if method=='POST':raise ValueError('this operational server only accepts the original74 same-ID recovery')
         return original_api(application,method,parts,body)
     policy.api=api
+    # HTTP outer boundary covers direct specialized routes as well as the
+    # generic Application.api fallback, which the policy hook alone misses.
+    from urllib.parse import urlsplit
+    original_post=server.Handler.do_POST
+    def do_post(handler):
+        if urlsplit(handler.path).path!='/api/ai-search-r7/tasks/'+ops.RUN+'/resume':
+            handler._json({'error':'operational server only accepts original74 same-ID resume'},403);return
+        return original_post(handler)
+    server.Handler.do_POST=do_post
+    original_app_api=app.api
+    def app_api(method,*args,**kwargs):
+        if method=='POST':raise ValueError('generic or foreign-group POST denied by operational server')
+        return original_app_api(method,*args,**kwargs)
+    app.api=app_api
+    class RecoveryStoreView:
+        def __init__(self,original):self.original=original
+        def __getattr__(self,name):return getattr(self.original,name)
+        def jobs(self):return [row for row in self.original.jobs() if row[0]['run_id']==ops.RUN]
+    app.scheduler.store=RecoveryStoreView(app.scheduler.store)
     def popen(command,*args,**kwargs):
         tokens=list(command)
+        original_recovery_directory=None;launch_contract=None
         if 'satellite_rl.workbench.runner' in tokens and '--job-dir' in tokens:
             directory=Path(tokens[tokens.index('--job-dir')+1])
             if directory.name!=ops.RUN:raise ValueError('operational server refuses another science task')
@@ -24,7 +44,17 @@ def install_hooks(app,contract_ref,review_ref,ops):
             if not sidecar.is_file() or json.loads(sidecar.read_text())!=metadata:raise ValueError('same-ID operations sidecar missing')
             replacement=[tokens[0],'-B','-u',str(pin(contract['operations_source_refs']['bootstrap'])),'--mode','worker','--job-dir',str(directory),'--contract',contract_ref['path'],'--contract-sha256',contract_ref['sha256'],'--review',review_ref['path'],'--review-sha256',review_ref['sha256']]
             command[:]=replacement
-        return original_popen(command,*args,**kwargs)
+            original_recovery_directory=directory;launch_contract=contract
+        child=original_popen(command,*args,**kwargs)
+        if original_recovery_directory is not None:
+            from satellite_rl.training.run_monitor import atomic_json
+            from satellite_rl.workbench.r5_stage_guard import birth
+            atomic_json(original_recovery_directory/'actual_operations_launch.json',dict(run_id=ops.RUN,scientific_source_commit=ops.SCIENCE,
+                        operational_commit=launch_contract['operational_commit'],operations_source_refs=launch_contract['operations_source_refs'],
+                        contract_ref=contract_ref,root_review_ref=review_ref,actual_command=list(command),pid=child.pid,
+                        proc_birth_ticks=birth(child.pid),birth_kind='proc_start_ticks',boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                        composite_external_operations_bootstrap=True,generic_runtime_identity_frozen_source_is_incomplete_description=True))
+        return child
     runtime.subprocess.Popen=popen
 
 def main():

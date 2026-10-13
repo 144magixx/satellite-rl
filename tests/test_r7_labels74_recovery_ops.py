@@ -34,6 +34,13 @@ class NarrowProcExit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);pid=root/'42';(pid/'task'/'42').mkdir(parents=True);(pid/'status').write_text('VmRSS: 123 kB\n');(pid/'task'/'42'/'children').write_text('')
             self.assertEqual(ops.rss_tree(42,root,page_size=4096),123*1024)
+    def test_proc_tick_birth_is_not_treated_as_unix_seconds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/'sys/kernel/random').mkdir(parents=True);(root/'sys/kernel/random/boot_id').write_text('boot-original');(root/'42').mkdir()
+            fields=['R']+['0']*18+['123456'];(root/'42'/'stat').write_text('42 (worker) '+' '.join(fields))
+            obs=dict(pid=42,birth=123456,birth_kind='proc_start_ticks',boot_id='boot-original')
+            self.assertTrue(ops.original_process_alive(obs,root));self.assertFalse(ops.original_process_alive(dict(obs,birth=123457),root));self.assertFalse(ops.original_process_alive(dict(obs,boot_id='other-boot'),root))
+            with self.assertRaises(ValueError):ops.original_process_alive(dict(pid=42,birth=123456),root)
 
 class SameIDSidecar(unittest.TestCase):
     def test_original_job_config_owner_bytes_and_idempotent_resume_preserved(self):
@@ -51,5 +58,22 @@ class SameIDSidecar(unittest.TestCase):
             self.assertEqual((root/'owner.json').read_bytes(),before_owner);self.assertEqual(read_json(directory/'operations_recovery.json'),metadata)
     def test_remaining_exact139_and_failed2_never_return_to_queue(self):
         self.assertEqual(len(ops.REMAINING),139);self.assertEqual(ops.REMAINING,list(range(299,576,2)));self.assertFalse(set(ops.FAILED)&set(ops.REMAINING));self.assertFalse(set(range(1,295,2))&set(ops.REMAINING))
+
+class ServerBoundary(unittest.TestCase):
+    def test_outer_HTTP_generic_POST_and_scheduler_foreign_jobs_denied(self):
+        from scripts.stage1_ai_search_r7.recovery_server import install_hooks
+        from satellite_rl.workbench import coverage_ai_search_r7 as policy,runtime,server
+        from unittest.mock import MagicMock
+        store=SimpleNamespace(jobs=lambda:[({'run_id':ops.RUN},{'stage':'failed'}),({'run_id':'foreign_group'},{'stage':'queued'})])
+        app=SimpleNamespace(api=MagicMock(return_value='originalGET'),scheduler=SimpleNamespace(store=store),store=store)
+        meta={'contract_ref':{'path':'c','sha256':'a'*64},'root_review_ref':{'path':'r','sha256':'b'*64}}
+        with patch.object(policy,'api',MagicMock(return_value='originalGET')),patch.object(runtime.subprocess,'Popen'),patch.object(server.Handler,'do_POST',MagicMock()) as original:
+            install_hooks(app,meta['contract_ref'],meta['root_review_ref'],ops)
+            self.assertEqual(app.api('GET',[]),'originalGET')
+            with self.assertRaises(ValueError):app.api('POST',['runs'],{})
+            for path in ('/api/runs','/api/fair20/tasks','/api/power-refinement/tasks','/api/ai-search-r7/tasks'):
+                handler=SimpleNamespace(path=path,_json=MagicMock());server.Handler.do_POST(handler);handler._json.assert_called_once();original.assert_not_called()
+            handler=SimpleNamespace(path='/api/ai-search-r7/tasks/'+ops.RUN+'/resume',_json=MagicMock());server.Handler.do_POST(handler);original.assert_called_once_with(handler)
+            self.assertEqual([j['run_id'] for j,s in app.scheduler.store.jobs()],[ops.RUN]);self.assertEqual(len(app.store.jobs()),2)
 
 if __name__=='__main__':unittest.main()

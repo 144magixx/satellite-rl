@@ -16,6 +16,19 @@ def gone_or_zombie(root):
         raw=(root/'stat').read_text();return raw[raw.rfind(')')+2:].split()[0] in ('Z','X')
     except (FileNotFoundError,ProcessLookupError):return True
 
+def original_process_alive(observation,proc=Path('/proc')):
+    kind=observation.get('birth_kind')
+    if kind not in ('proc_start_ticks','unix_boot_seconds') or not observation.get('boot_id'):raise ValueError('explicit original PID birth units and boot_id required')
+    current_boot=(Path(proc)/'sys/kernel/random/boot_id').read_text().strip()
+    if current_boot!=observation['boot_id']:return False
+    if kind=='unix_boot_seconds':
+        from .runtime import pid_alive
+        return pid_alive(observation['pid'],observation['birth'])
+    try:
+        raw=(Path(proc)/str(observation['pid'])/'stat').read_text();parts=raw[raw.rfind(')')+2:].split()
+        return int(parts[19])==observation['birth'] and parts[0] not in ('Z','X')
+    except (FileNotFoundError,ProcessLookupError):return False
+
 def rss_tree(pid,proc=Path('/proc'),page_size=None,samples=None):
     """Same kernel RSS meaning/caps; only confirmed proc exit ESRCH is ignored."""
     page_size=page_size or os.sysconf('SC_PAGE_SIZE');queue=[pid];seen=set();total=0
@@ -80,7 +93,7 @@ def resume(app,body):
         actual=observe(app.store.archive_root)
         if actual['foreign_workers']:raise ValueError('foreign science owner present')
         for observation in contract['original_pid_births']:
-            if pid_alive(observation['pid'],observation['birth']):raise ValueError('original owned child still alive')
+            if original_process_alive(observation):raise ValueError('original owned child still alive')
         history=directory/'operations_recovery_history'/contract['repair_id']
         if history.exists():raise ValueError('original operation attempt already exists without published metadata; no blind replay')
         history.mkdir(parents=True)
@@ -106,7 +119,9 @@ def install_worker(job,metadata,directory):
         pin(old['result_ref']);pin(old['result_ref']['cost_endpoint_ref'])
     for i in FAILED:
         if str(i) in index:continue
-        entry=contract['failed_cases'][str(i)];target=directory/'operations_recovery_history'/contract['repair_id']/'failed_cases'/str(i);target.mkdir(parents=True,exist_ok=True)
+        entry=contract['failed_cases'][str(i)]
+        for reference in entry['evidence_refs'].values():pin(reference)
+        target=directory/'operations_recovery_history'/contract['repair_id']/'failed_cases'/str(i);target.mkdir(parents=True,exist_ok=True)
         disposition=dict(schema='R7OperationalFailedLabelDispositionV1',run_id=RUN,input_case_index=i,identity=entry['identity'],
                          scientific_commit=SCIENCE,qualified=False,nontrivial=False,capability=False,cost_closed=False,status='infrastructure_interrupted',
                          original_attempts_retried=False,known_unknown_accounting=entry['accounting'],original_evidence_refs=entry['evidence_refs'],

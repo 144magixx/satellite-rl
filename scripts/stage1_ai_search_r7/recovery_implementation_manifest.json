@@ -5,17 +5,17 @@
   "scientific_snapshot_members": 698,
   "original_run_id": "r7_labels_20261013_234807_312cdce7",
   "scope": "only74 sameID residual139; preserve147 complete; failed2 originaldenominator",
-  "pure_tests": 6,
+  "pure_tests": 8,
   "AST_files": 4,
   "new_science_calls": 0,
   "POST_resume_calls": 0,
   "service_orworker_deployment_calls": 0,
   "changes_to_original_scientific_files": 0,
   "source_file_sha256": {
-    "src/satellite_rl/workbench/r7_recovery_ops.py": "c70135b46d3cf8f80b90d9b329a9bd0dab997531deda5bc82305cb6ca56f5cfc",
+    "src/satellite_rl/workbench/r7_recovery_ops.py": "69089d86fba1d64d8051fbb2783cd4219ebc42189544951135fc08f96b444a97",
     "scripts/stage1_ai_search_r7/recovery_bootstrap.py": "a163f28b5dcbf4b3dbf7b8cfc4868f9cb46ab6da854629a4139e8a7b8827b5c1",
-    "scripts/stage1_ai_search_r7/recovery_server.py": "2417754648f2768c8f4d5d85a3b89a21494d02f41bd0a212992b1eacf0cebb38",
-    "scripts/stage1_ai_search_r7/recovery_contract.py": "7954e206d91c5c40096f12958f917ce960b6d593bd8de168e55e505aa9d963cc"
+    "scripts/stage1_ai_search_r7/recovery_server.py": "94161cc1d67529435120054b898ef640323697df7f7b3c0d0cb9c14bbdfbe88e",
+    "scripts/stage1_ai_search_r7/recovery_contract.py": "01ae5d8e8b242fb5437ca6f141045473329ed925b1336667adabeb03cbad2ea7"
   },
   "physical_recovery_slots": {
     "prepare": 139,
@@ -35,5 +35,13 @@
     "root opssource+contract+addendum acceptance",
     "root once exactsameID resume only",
     "new independent failure-aware postprocessor before labelgate"
+  ],
+  "prior_failed_scope_source_commit": "c096024185e5f6702a743666dcc7610d1e6fb757",
+  "fixes": [
+    "HTTPdoPOST outerexactroute allowlist + genericApplicationPOSTrefuse",
+    "schedulerstore view onlyoriginalRUN; appGET originalstore retained",
+    "failed evidence refs allpinned atworker",
+    "explicit PIDbirthkind+bootID; procticks compareactualstat notunix API",
+    "actual_operations_launch sidecar actualcmd/source3SHAs/opscommit+137; genericfrozen_source field explicitlyincomplete"
   ]
 }

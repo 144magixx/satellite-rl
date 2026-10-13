@@ -7,6 +7,7 @@ def build(operational_commit,original_job,refs,failed_cases,original_pid_births)
     required={'original_job_ref','original_case_index_ref','original_owner_ref','accounting_addendum_ref','module','bootstrap','server'}
     if set(refs)!=required or any(not ref.get('path') or len(ref.get('sha256',''))!=64 for ref in refs.values()):raise ValueError('actual root-pinned original/source/addendum refs')
     if set(failed_cases)!=set(map(str,FAILED)):raise ValueError('exact original2 failed dispositions')
+    if any(o.get('birth_kind') not in ('proc_start_ticks','unix_boot_seconds') or not o.get('boot_id') for o in original_pid_births):raise ValueError('PID birth units and originalboot_id required')
     return dict(schema='R7Labels74OperationalRecoveryV1',repair_id='labels74_proc_exit_esrch_recovery01',run_id=RUN,
                 request_id=original_job['request_id'],scientific_commit=SCIENCE,operational_commit=operational_commit,
                 original_job=deepcopy(original_job),original_job_ref=refs['original_job_ref'],original_case_index_ref=refs['original_case_index_ref'],original_owner_ref=refs['original_owner_ref'],
