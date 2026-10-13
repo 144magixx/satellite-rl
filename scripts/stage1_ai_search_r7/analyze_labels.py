@@ -10,8 +10,10 @@ from .label_audit import audit_bundle,audit_exact_proposal,gate
 from .contract import GROUP
 from satellite_rl.workbench.r7_label_guard_audit import audit_chain
 from satellite_rl.workbench.r7_publish import publish_terminal
+from satellite_rl.workbench.r7_postprocess_source import execution_source,new_output
 
 def analyze(manifest_refs,dataset_ref,model_identity,output):
+    output=new_output(output);postsource=execution_source()
     from satellite_rl.workbench.r7_uniform_data import load_algorithm_case
     dataset=read_json(pin(dataset_ref),{})
     if dataset.get('schema')!='R7UniformDatasetV1' or dataset.get('role')!='train' or dataset.get('count')!=576:raise ValueError('new train576 dataset')
@@ -58,14 +60,17 @@ def analyze(manifest_refs,dataset_ref,model_identity,output):
         if checked!=row['label_audit'] or exact!=row['proposal_audit']:raise ValueError('producer audit differs from independent replay')
         independent_audit_seconds=time.monotonic()-audit_began;typed_teachers[str(i)]=None;publication_seconds=0.
         if closure['closed'] and 'T' in layout_audits:
+            publication_began=time.monotonic()
             published=publish_terminal(record,source['case_ref'],dataset['authority_ref'],assets[1]['result']['layout'],assets[0]['result'],layout_audits['T'],
                                        dict(original_T_terminal_asset_SHA=row['original_T_terminal_ref'],original_label_row_SHA=ref,original_label_cost_endpoint_SHA=ref['cost_endpoint_ref'],original_prepared_asset_SHA=row['prepared_ref']),
-                                       typed_directory/str(i)/'T','T')
-            typed_teachers[str(i)]=published;publication_seconds=published['charged_seconds']
+                                       typed_directory/str(i)/'T','T',postprocess_source=postsource,original_algorithm_source_epoch=source_commit)
+            typed_teachers[str(i)]=published;publication_seconds=time.monotonic()-publication_began
         atomic_json(typed_directory/str(i)/'complete_offline_label_cost.json',dict(original_label_cost_endpoint_ref=ref['cost_endpoint_ref'],
                     original_complete_offline_label_seconds=endpoint['complete_offline_label_seconds'],independent_postprocess_audit_seconds=independent_audit_seconds,
                     typed_T_conversion_validation_publication_seconds=publication_seconds,complete_offline_label_with_actual_typed_T_seconds=endpoint['complete_offline_label_seconds']+independent_audit_seconds+publication_seconds,
-                    label_origin_remains_original_T=True,new_prepare_T_D5_or_PHY_calls=0))
+                    label_origin_remains_original_T=True,new_prepare_T_D5_or_PHY_calls=0,
+                    caller_whole_publisher_elapsed_includes_internal_final_IO_hash_read=True,final_this_endpoint_IO_separate_metadata=True,
+                    original_algorithm_source_epoch=source_commit,**postsource))
         results.append(checked)
         if checked['qualified']:
             qualified.append(dict(case_index=i,case_id=ident['case_id'],input_sha=ident['input_sha256'],role='train',identity=ident,
@@ -74,8 +79,9 @@ def analyze(manifest_refs,dataset_ref,model_identity,output):
     result=gate(results);result.update(group=GROUP,phase='labels',model_identity=model_identity,
                                      scientific_commit=source_commit,source_dataset_sha256=dataset_ref['sha256'],manifest_refs=manifest_refs,
                                      typed_teacher_layouts=typed_teachers,original_T_labels_unchanged=True,typed_layout_publication_is_separate_postprocessing=True,new_prepare_T_D5_PHY_calls=0)
+    result.update(original_algorithm_source_epoch=source_commit,**postsource)
     atomic_json(output,result)
     table=Path(output).with_name('qualified_train.json')
     atomic_json(table,dict(schema='R7QualifiedTrainManifestV1',role='train',source_dataset_sha256=dataset_ref['sha256'],
-                           labels_gate_sha256=digest(output),qualified_cases=qualified,only_original_T_labels=True))
+                           labels_gate_sha256=digest(output),qualified_cases=qualified,only_original_T_labels=True,original_algorithm_source_epoch=source_commit,**postsource))
     return result

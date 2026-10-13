@@ -29,7 +29,7 @@ def shared_layout(case,authority,layout,prepared,audit,source_and_cost_shas):
     validate_layout(case,record,authority,geometry_check=False,published=False)
     return record
 
-def publish_terminal(case,case_ref,authority_ref,layout,prepared,geometry_audit,source_and_cost_refs,directory,method):
+def publish_terminal(case,case_ref,authority_ref,layout,prepared,geometry_audit,source_and_cost_refs,directory,method,*,postprocess_source=None,original_algorithm_source_epoch=None):
     """Actual independently audited S1 terminal -> immutable wire + registry.
 
     Uses the already executed geometry audit, with no additional geometry/PHY
@@ -40,6 +40,10 @@ def publish_terminal(case,case_ref,authority_ref,layout,prepared,geometry_audit,
     from satellite_rl.shared_interface.contracts import Authority
     from scripts.stage1_ai_search_r4.audit import canonical_sha
     began=time.monotonic();directory=Path(directory)
+    if postprocess_source is None:
+        from .r7_postprocess_source import execution_source
+        postprocess_source=execution_source()
+    if original_algorithm_source_epoch is None:raise ValueError('original algorithm source epoch must remain explicit')
     if directory.exists():raise ValueError('immutable publication target already exists; preserve original attempt')
     directory.mkdir(parents=True)
     original_case=read_wire(pin(case_ref).read_bytes())
@@ -48,7 +52,8 @@ def publish_terminal(case,case_ref,authority_ref,layout,prepared,geometry_audit,
     if geometry_audit.get('valid')is not True:raise ValueError('invalid/unavailable terminal cannot publish a layout')
     if geometry_audit.get('parent_case_SHA')!=case['content_sha256'] or geometry_audit.get('layout_sha256')!=canonical_sha(layout):raise ValueError('already executed geometry audit does not bind this exact case/layout')
     for reference in source_and_cost_refs.values():pin(reference)
-    audit={**geometry_audit,'schema':'R7BoundIndependentLayoutAuditV1','method':method}
+    audit={**geometry_audit,'schema':'R7BoundIndependentLayoutAuditV1','method':method,
+           'original_algorithm_source_epoch':original_algorithm_source_epoch,**postprocess_source}
     audit_path=directory/'independent_layout_audit.json';atomic_json(audit_path,audit)
     shas={key:reference['sha256'] for key,reference in source_and_cost_refs.items()};shas['audit_SHA']=digest(audit_path)
     record=shared_layout(case,authority,layout,prepared,audit,shas)
@@ -65,13 +70,15 @@ def publish_terminal(case,case_ref,authority_ref,layout,prepared,geometry_audit,
                     source_and_cost_refs=source_and_cost_refs,reader='satellite_rl.shared_interface.stages.UniformStage2Input.from_wire',
                     N=record['N'],beam_ids=record['beam_ids'],total_request_bps_int64=case['total_request_bps_int64'],
                     original_layout_used=True,new_decoder_calls=0,new_geometry_calls=0,new_PHY_calls=0)
+    descriptor.update(original_algorithm_source_epoch=original_algorithm_source_epoch,**postprocess_source)
     descriptor_path=directory/'s1_terminal.json';atomic_json(descriptor_path,descriptor)
     cost_path=directory/'publication_cost.json';atomic_json(cost_path,dict(method=method,publication_ref=dict(path=str(descriptor_path),sha256=digest(descriptor_path)),
-        conversion_validation_wire_registry_descriptor_seconds=time.monotonic()-began,charged_to_this_method_complete_cost=True,
-        same_cost_rule_all_methods=True,final_cost_receipt_IO_separate_metadata=True))
+        conversion_validation_wire_registry_descriptor_seconds=time.monotonic()-began,requires_caller_whole_function_elapsed_for_complete_cost=True,
+        same_cost_rule_all_methods=True,inner_measurement_ends_before_cost_receipt_write=True,
+        original_algorithm_source_epoch=original_algorithm_source_epoch,**postprocess_source))
     return dict(publication_ref=dict(path=str(descriptor_path),sha256=digest(descriptor_path)),cost_ref=dict(path=str(cost_path),sha256=digest(cost_path)),
                 layout_ref=layout_ref,layout_content_SHA=record['content_sha256'],authority_ref=registry_ref,
-                charged_seconds=read_json(cost_path,{})['conversion_validation_wire_registry_descriptor_seconds'])
+                inner_descriptor_through_seconds=read_json(cost_path,{})['conversion_validation_wire_registry_descriptor_seconds'])
 
 def read_for_stage2(publication_ref,physics_config):
     """Real new S2 consumption path; coefficient/capacity methods are not called."""

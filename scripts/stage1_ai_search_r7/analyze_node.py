@@ -13,8 +13,10 @@ from .contract import GROUP
 from satellite_rl.workbench.r7_node_guard_audit import audit_preparation_teacher,audit_method_proof,audit_costs
 from satellite_rl.workbench.r7_case_binding import validate_binding
 from satellite_rl.workbench.r7_publish import publish_terminal
+from satellite_rl.workbench.r7_postprocess_source import execution_source,new_output
 
 def analyze(manifest_refs,dataset_ref,checkpoint_ref,model_identity,output):
+    output=new_output(output);postsource=execution_source()
     dataset=read_json(pin(dataset_ref),{});cases={};commit=None
     if dataset.get('schema')!='R7UniformDatasetV1' or dataset.get('role')!='development' or dataset.get('count')!=20:raise ValueError('root frozen development20 dataset')
     for ref in manifest_refs:
@@ -74,17 +76,21 @@ def analyze(manifest_refs,dataset_ref,checkpoint_ref,model_identity,output):
         common_audit_seconds=max(0.,time.monotonic()-common_audit_started-sum(method_audit_seconds.values()))
         typed_layouts[str(i)]={m:None for m in ('AI','RULE','RANDOM','T')};publication_seconds={m:0. for m in typed_layouts[str(i)]}
         for method,(legacy_layout,geometry_audit,terminal_ref) in publish_candidates.items():
+            publication_began=time.monotonic()
             publication=publish_terminal(record,source['case_ref'],dataset['authority_ref'],legacy_layout,prepared,geometry_audit,
                                          dict(original_terminal_asset_SHA=terminal_ref,original_node_row_SHA=ref,original_node_cost_endpoint_SHA=ref['cost_endpoint_ref'],original_prepared_asset_SHA=row['prepared_ref']),
-                                         typed_directory/str(i)/method,method)
-            typed_layouts[str(i)][method]=publication;publication_seconds[method]=publication['charged_seconds']
+                                         typed_directory/str(i)/method,method,postprocess_source=postsource,original_algorithm_source_epoch=commit)
+            typed_layouts[str(i)][method]=publication;publication_seconds[method]=time.monotonic()-publication_began
         complete_costs={m:(v+extra+common_audit_seconds+method_audit_seconds[m]+publication_seconds[m] if v is not None else None) for m,v in costs.items()}
         atomic_json(typed_directory/str(i)/'complete_method_costs.json',dict(case_index=i,original_node_cost_endpoint_ref=ref['cost_endpoint_ref'],original_complete_costs=costs,
                     common_row_publication_seconds=extra,common_independent_read_audit_seconds_each_method=common_audit_seconds,method_audit_seconds=method_audit_seconds,
-                    typed_layout_conversion_validation_publication_seconds=publication_seconds,complete_method_costs=complete_costs,same_rule_all_four_methods=True,new_geometry_search_or_PHY_calls=0))
+                    typed_layout_conversion_validation_publication_seconds=publication_seconds,complete_method_costs=complete_costs,same_rule_all_four_methods=True,new_geometry_search_or_PHY_calls=0,
+                    caller_whole_publisher_elapsed_includes_internal_final_IO_hash_read=True,final_this_endpoint_IO_separate_metadata=True,
+                    original_algorithm_source_epoch=commit,**postsource))
         independent.append(dict(case_index=i,methods=methods,costs=complete_costs,
                                 teacher_identity_and_cost_closed=teacher_closed,total_request=record['total_request_bps_int64']))
     gate=node_gate(independent);gate.update(group=GROUP,model_identity=model_identity,checkpoint_sha256=checkpoint_ref['sha256'],
                                          manifest_refs=manifest_refs,dataset_ref=dataset_ref,scientific_commit=commit,science_updates=0,
                                          typed_layouts=typed_layouts,typed_publication_is_postprocessing=True,original_layouts_used=True,new_decoder_or_PHY_calls=0)
+    gate.update(original_algorithm_source_epoch=commit,**postsource)
     atomic_json(output,gate);return gate
