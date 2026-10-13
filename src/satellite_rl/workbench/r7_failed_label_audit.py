@@ -1,5 +1,5 @@
 """Read-only, root-bound accounting of the two original labels74 failures."""
-from pathlib import Path
+from pathlib import Path,PurePosixPath
 from .coverage_ai_search import pin
 from .storage import read_json
 from .r6_io import read_asset
@@ -42,6 +42,15 @@ def load_recovery(refs,cases,dataset_sha,source_commit):
         raise ValueError('original sameID owner')
     if refs['original_index_archive_ref']['sha256']!=c['original_case_index_ref']['sha256']:
         raise ValueError('original147 archive SHA differs; current mutable index is not original evidence')
+    job_path=PurePosixPath(c['original_job_ref']['path'])
+    archived_path=PurePosixPath(refs['original_index_archive_ref']['path'])
+    mutable_path=PurePosixPath(c['original_case_index_ref']['path'])
+    repair_id=c.get('repair_id')
+    if repair_id!='labels74_proc_exit_esrch_recovery01' or not job_path.is_absolute() or job_path.name!='job.json' or any('..' in p.parts for p in (job_path,archived_path,mutable_path)):
+        raise ValueError('original recovery job/history paths required')
+    expected_archive=job_path.parent/'operations_recovery_history'/repair_id/'case_index.json'
+    if mutable_path!=job_path.parent/'case_index.json' or archived_path==mutable_path or archived_path!=expected_archive:
+        raise ValueError('original147 index must be the separate same-job recovery history copy, never current mutable path')
     old=json_ref(refs['original_index_archive_ref'])
     if sorted(map(int,old))!=PRESERVED:raise ValueError('original index must contain exactly147')
     for i in PRESERVED:

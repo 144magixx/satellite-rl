@@ -25,17 +25,20 @@
   "targets": "only original individually source/cost-closed T; failed2 excluded",
   "cost_contract": "unknown actual wall=null; unknown work conservatively charged at frozen authorized cap; phase exact total/speed/amortization unavailable",
   "source_file_sha256": {
-    "src/satellite_rl/workbench/r7_failed_label_audit.py": "43fae77f84820d1ef5f16d0898c46c7e79327a9ee798241131c9951b6137a69e",
+    "src/satellite_rl/workbench/r7_failed_label_audit.py": "65048f7c0996167bf3d48f3b067c2e70ed5a0fc3df6c747edb4f31006bc23c7d",
     "scripts/stage1_ai_search_r7/analyze_labels.py": "c648f30f93a7157482937a33c29a165eb6f67e94b96214a147fd06ae401a5ce4",
     "src/satellite_rl/workbench/r7_postprocess_source.py": "c45f65a7886f5dbc964945fb97b010afcb403f1a8c34cd617d88abb82085e2e9",
-    "tests/test_r7_failed_label_audit.py": "c752b4679b2f10b6e3d4db611f7a72fc13d2ef3ed36da30a5bf8c40a6194e43e"
+    "tests/test_r7_failed_label_audit.py": "55711c7f2409eddbf14af6cb23fa0c8ad587fe9e3a0f354a1f4b06b307b8141a"
   },
   "tests": {
     "final_targeted_tests": 5,
     "passed": 5,
     "initial_four_then_added_one_reran_five": true,
-    "total_pure_test_invocations": 9,
-    "AST_files": 4
+    "total_pure_test_invocations": 10,
+    "AST_files": 4,
+    "new_archive_path_test_invocations": 1,
+    "new_archive_path_test_passed": 1,
+    "new_archive_path_cases": "positive actual same-job history; negative current mutable, foreign-job history, wrong-repair history"
   },
   "actual_calls": {
     "W": 0,
@@ -61,5 +64,14 @@
     "root exact final recovery contract/review and archived147 index transport",
     "root new/empty independent output and actual source admission",
     "final576 label evidence read-only audit; no scientific rerun"
-  ]
+  ],
+  "patch_base_commit": "bc5e3bea74b96d14c86135743c27c980a6630bae",
+  "archive_path_guard": "exact original_job_ref parent/operations_recovery_history/labels74_proc_exit_esrch_recovery01/case_index.json; current mutable path explicitly rejected; original SHA equality still required",
+  "operational_control_requirement": {
+    "pause_if_training_incomplete_at": "2026-10-14T07:00:00+08:00",
+    "resume_requires_explicit_user_continue": true,
+    "root_phase_dispatch_and_postprocess_wiring_must_preserve_cutoff": true,
+    "this_readonly_patch_does_not_launch_or_pause_workers": true,
+    "currently_no_pause_executed": true
+  }
 }

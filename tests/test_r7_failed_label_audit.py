@@ -7,11 +7,13 @@ from scripts.stage1_ai_search_r7.label_audit import gate
 
 def context_fixture():
     refs={k:dict(path=k,sha256=(str(i)*64)) for i,k in enumerate(('contract_ref','root_review_ref','accounting_acceptance_ref','original_index_archive_ref'),1)}
-    c=dict(schema='R7Labels74OperationalRecoveryV1',run_id=f.RUN,scientific_commit=f.SCIENCE,operational_commit='a'*40,
+    archived='/original/job/operations_recovery_history/labels74_proc_exit_esrch_recovery01/case_index.json'
+    refs['original_index_archive_ref']['path']=archived
+    c=dict(schema='R7Labels74OperationalRecoveryV1',run_id=f.RUN,scientific_commit=f.SCIENCE,operational_commit='a'*40,repair_id='labels74_proc_exit_esrch_recovery01',
            preserved_case_indices=f.PRESERVED,failed_case_indices=list(f.FAILED),remaining_case_indices=f.REMAINING,
            failed_cases={'295':{},'297':{}},new_stage_attempts_max=dict(prepare=139,T=139,D5=139),repeat_original_attempts=False,label_denominator=576,
-           accounting_addendum_ref=dict(path='addendum',sha256=f.ADDENDUM),original_job_ref=dict(path='job',sha256='j'*64),
-           original_owner_ref=dict(path='owner',sha256='o'*64),operations_source_refs={},original_case_index_ref=dict(path='mutable_index',sha256=refs['original_index_archive_ref']['sha256']))
+           accounting_addendum_ref=dict(path='addendum',sha256=f.ADDENDUM),original_job_ref=dict(path='/original/job/job.json',sha256='j'*64),
+           original_owner_ref=dict(path='owner',sha256='o'*64),operations_source_refs={},original_case_index_ref=dict(path='/original/job/case_index.json',sha256=refs['original_index_archive_ref']['sha256']))
     job=dict(run_id=f.RUN,case_indices=list(range(1,576,2)),request_hash='r'*64,original_task_contract=dict(config=dict(datasets=dict(train=dict(sha256='d'*64)))))
     c['original_job']=job
     cases={str(i):dict(path='label'+str(i),sha256='l'*64) for i in range(576)}
@@ -19,11 +21,19 @@ def context_fixture():
     objects={'contract_ref':c,'root_review_ref':dict(passed=True,run_id=f.RUN,contract_sha256=refs['contract_ref']['sha256'],operational_commit='a'*40),
              'accounting_acceptance_ref':dict(passed=True,run_id=f.RUN,source_commit=f.SCIENCE,addendum_ref=dict(sha256=f.ADDENDUM)),
              'addendum':dict(fixed_original_partition=dict(published_indices=f.PRESERVED,partial_unavailable_indices=list(f.FAILED),never_spawned_remaining_indices=f.REMAINING)),
-             'job':job,'owner':dict(run_id=f.RUN,request_hash='r'*64,job_sha256='j'*64),'original_index_archive_ref':old}
+             '/original/job/job.json':job,'owner':dict(run_id=f.RUN,request_hash='r'*64,job_sha256='j'*64),archived:old}
     objects.update({v['path']:dict(case_index=i,mode='labels',parent_job_sha256='j'*64,result_ref=cases[str(i)]) for i,v in ((i,old[str(i)]) for i in f.PRESERVED)})
     return refs,cases,objects
 
 class FailureAccounting(unittest.TestCase):
+    def test_archived_index_path_binds_actual_same_job_history_not_mutable(self):
+        refs,cases,objects=context_fixture()
+        with patch.object(f,'json_ref',side_effect=lambda r:objects[r['path']]),patch.object(f,'pin'):
+            self.assertEqual(f.load_recovery(refs,cases,'d'*64,f.SCIENCE)['contract']['repair_id'],'labels74_proc_exit_esrch_recovery01')
+            for path in ('/original/job/case_index.json','/other/job/operations_recovery_history/labels74_proc_exit_esrch_recovery01/case_index.json','/original/job/operations_recovery_history/wrong/case_index.json'):
+                refs['original_index_archive_ref']['path']=path
+                with self.assertRaisesRegex(ValueError,'separate same-job recovery history'):f.load_recovery(refs,cases,'d'*64,f.SCIENCE)
+
     def test_archived147_exact_refs_partition_and_root_acceptance(self):
         refs,cases,objects=context_fixture()
         with patch.object(f,'json_ref',side_effect=lambda r:objects[r['path']]),patch.object(f,'pin'):
