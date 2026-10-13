@@ -328,6 +328,14 @@ class Scheduler:
                 self._status(directory,status,stage="failed",attention_required=True,
                              error="冻结运行时扩展校验失败："+str(error))
                 return
+        if job.get("experiment_id") == "S1-AI17-R4-B0" and job.get("operations_repair"):
+            try:
+                from .r4_monitor_repair import execution_command
+                command = execution_command(job, directory, self.python)
+            except Exception as error:
+                self._status(directory, status, stage="failed", attention_required=True,
+                             error="R4 operations repair source rejected: " + str(error))
+                return
         env = dict(os.environ)
         env["PYTHONPATH"] = str(Path(job["source_root"]) / "src")
         # Only SI-priority refinement jobs may use their frozen, isolated
