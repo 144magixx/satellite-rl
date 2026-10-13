@@ -68,6 +68,14 @@ def validate_admission(p,plan_ref,review_ref):
     if p['phase']=='node2000' and gate.get('updates')!=2000:raise ValueError('fixed2000 endpoint')
     for task in p['tasks'].values():
         refs=task['model_inputs']
+        if p['phase']=='train_setup':
+            from .r7_train_binding import INPUT_KEYS
+            if not set(INPUT_KEYS)<=set(refs) or refs['labels_gate']!=p['prerequisite_gate_ref']:raise ValueError('complete original setup inputs and exact labels gate')
+        if p['phase']=='train2000':
+            from .r7_train_binding import validate_setup
+            setup_ref=refs.get('train_setup_endpoint')
+            if setup_ref!=gate.get('train_setup_endpoint_ref'):raise ValueError('root prerequisite is not this exact train_setup endpoint')
+            validate_setup(read_json(pin(setup_ref),{}),setup_ref,refs,p['model_identity'],task['executor_port'],task['case_indices'],task['config']['datasets']['train'])
         if p['phase']=='node2000' and any(refs.get(k)!=gate.get(k+'_ref') for k in ('checkpoint','normalization','initialization_receipt')):raise ValueError('node endpoint exact model/normalization/init chain')
     root=Path(__file__).resolve().parents[3]
     if not p['qualification_refs']:raise ValueError('source/interface qualification required')

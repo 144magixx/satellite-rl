@@ -18,6 +18,11 @@ def train(job,config,directory):
  from satellite_rl.coverage.ai_search_r6.features import FeatureStats,record_sha
  from satellite_rl.coverage.ai_search_r6.learning import CaseSampler,TrainingSession
  setup_began=time.monotonic();directory=Path(directory);model_directory=Path(job["model_dir"]);model_directory.mkdir(parents=True,exist_ok=True);refs=job["model_inputs"];plan=signed_json(job["references"]["plan"]);manifest,rows=qualified_rows(refs["qualified"],refs["labels_gate"]);initial=signed_json(refs["initialization_receipt"])
+ from .r7_train_binding import validate_setup,validate_owner
+ setup_ref=refs['train_setup_endpoint'];setup_endpoint=signed_json(setup_ref)
+ gate=signed_json(plan['prerequisite_gate_ref'])
+ if gate.get('phase')!='train_setup' or gate.get('passed')is not True or gate.get('model_identity')!=job['model_identity'] or gate.get('train_setup_endpoint_ref')!=setup_ref:raise ValueError('actual plan prerequisite exact original setup endpoint')
+ complete_setup_charge=validate_setup(setup_endpoint,setup_ref,refs,job['model_identity'],job['executor_port'],job['case_indices'],config['datasets']['train'])
  if initial.get("passed")is not True or not initial.get("model_initial_state_SHA") or not initial.get("model_graph_source_SHA") or not initial.get("feature_graph_source_SHA"):raise ValueError("root accepted engineering initialization qualification")
  runtime=signed_json({'path':str(directory/'runtime_v3_identity.json'),'sha256':digest(directory/'runtime_v3_identity.json')})
  if runtime!=initial['training_runtime_identity']:raise ValueError('qualification/training/resume actual GPU/library/runtime identity differs')
@@ -29,14 +34,16 @@ def train(job,config,directory):
  if supply_endpoint['cache_ref']!=refs['feature_cache'] or supply_endpoint['normalization_ref']!=refs['normalization'] or supply_endpoint['qualified_ref']!=refs['qualified']:raise ValueError('complete supply endpoint exact source refs')
  endpoint_charge=supply_endpoint['charged_supply_seconds_including_publication']
  if not isinstance(endpoint_charge,(int,float)) or not 0<=supply_charge<=endpoint_charge:raise ValueError('complete supply charge missing')
- supply_charge=float(endpoint_charge)
+ if complete_setup_charge<endpoint_charge or setup_endpoint['runtime_identity']!=runtime:raise ValueError('complete setup clock/runtime origin differs')
+ supply_charge=float(complete_setup_charge)
  if [r["case_index"] for r in rows]!=job["case_indices"]:raise ValueError("qualified indices exact signed plan")
  if refs["initial_state"]["sha256"]!=initial["model_initial_state_file_SHA"]:raise ValueError("original unupdated initialization")
- provenance={"model_identity":job["model_identity"],"qualified_table_sha":record_sha(rows),"normalization_SHA":stats.sha,"model_initial_state_SHA":initial["model_initial_state_SHA"],"model_initial_state_file_SHA":refs["initial_state"]["sha256"],**model_sources,"model_scientific_source_commit":initial["model_scientific_source_commit"],"training_seed":51001,"runtime_profile_SHA":runtime["runtime_profile_SHA"],"training_runtime_identity_SHA":record_sha(runtime)}
+ provenance={"model_identity":job["model_identity"],"qualified_table_sha":record_sha(rows),"normalization_SHA":stats.sha,"model_initial_state_SHA":initial["model_initial_state_SHA"],"model_initial_state_file_SHA":refs["initial_state"]["sha256"],**model_sources,"model_scientific_source_commit":initial["model_scientific_source_commit"],"training_seed":51001,"runtime_profile_SHA":runtime["runtime_profile_SHA"],"training_runtime_identity_SHA":record_sha(runtime),"train_setup_endpoint_SHA":setup_ref['sha256'],"setup_training_refs_SHA":record_sha(setup_endpoint['training_refs']),"setup_activity_origin_SHA":record_sha(setup_endpoint['activity_origin'])}
  start=config["training"]["start_update"];end=config["training"]["end_update"]
  owner_root=MODEL_OWNER_ROOT;owner_root.mkdir(parents=True,exist_ok=True);owner_key=record_sha(job["model_identity"]);owner_path=owner_root/(owner_key+".json")
  with exclusive_lock(owner_root/(owner_key+".lock")):
   owner=read_json(owner_path,{})
+  validate_owner(owner,setup_endpoint,setup_ref)
   if owner.get("executor_port") is not None and owner.get("executor_port")!=job["executor_port"]:raise ValueError("single model GPU owner changed")
   if owner and owner.get("model_identity")!=job["model_identity"]:raise ValueError("another model owns global budget")
   owner=owner or {"model_identity":job["model_identity"],"executor_port":job["executor_port"],"science_updates_reserved":0,"last_completed_update":0,"initial_state_ref":refs["initial_state"]};owner.setdefault("science_updates_reserved",0);owner.setdefault("last_completed_update",0);owner["executor_port"]=job["executor_port"]

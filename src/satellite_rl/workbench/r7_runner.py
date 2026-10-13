@@ -22,6 +22,8 @@ def run_job(directory,resume=False):
                 from .r7_parallel import parallel_cases
                 result=parallel_cases(job,config,directory);completed=len(result['cases'])
             else:
+                import time
+                setup_began=time.monotonic()
                 from satellite_rl.coverage.ai_search_r6.runtime_v3 import configure_v3_runtime
                 runtime=configure_v3_runtime();atomic_json(directory/'runtime_v3_identity.json',runtime)
                 if mode=='train_setup':
@@ -37,6 +39,10 @@ def run_job(directory,resume=False):
                         if owner.get('supply_run_id',job['run_id'])!=job['run_id']:raise ValueError('original supply one owner; no regeneration')
                         owner.update(model_identity=job['model_identity'],supply_run_id=job['run_id'],supply_executor_port=job['executor_port'],qualified_ref=refs['qualified']);atomic_json(owner_path,owner)
                         prepare(refs['qualified'],refs['labels_gate'],directory/'supply',initial['feature_graph_source_SHA'])
+                        from .r7_train_binding import publish_setup
+                        endpoint,setup_ref=publish_setup(job,config,directory,setup_began,runtime,owner)
+                        atomic_json(owner_path,owner)
+                        atomic_json(directory/'artifacts.json',dict(train_setup_endpoint=setup_ref))
                     completed=len(job['case_indices'])
                 elif mode=='train2000':
                     from .r7_model_train import train

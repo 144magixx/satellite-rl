@@ -9,7 +9,7 @@ CAPS={'preparation':20,'teacher':45,'decoder':15}
 
 def finite_nonnegative(value):return type(value) in (int,float) and math.isfinite(value) and value>=0
 
-def audit_stage(guard_ref,request_ref,started_ref,wal_ref,guard_receipt_ref,*,stage,identity,scene_ref,source_sha,producer_sha,dataset_sha,asset_ref,prepared_ref=None,teacher_ref=None):
+def audit_stage(guard_ref,request_ref,started_ref,wal_ref,guard_receipt_ref,*,stage,identity,scene_ref,source_sha,producer_sha,dataset_sha,asset_ref,prepared_ref=None,teacher_ref=None,phase_role='train',phase_stage='labels'):
     if stage not in CAPS:raise ValueError('registered label stage required')
     refs=(guard_ref,request_ref,started_ref,wal_ref,guard_receipt_ref)
     for ref in refs:pin(ref)
@@ -21,7 +21,7 @@ def audit_stage(guard_ref,request_ref,started_ref,wal_ref,guard_receipt_ref,*,st
     if stage=='decoder':expected['teacher_ref']=teacher_ref
     if request!=expected or started.get('request_sha256')!=request_ref['sha256'] or digest(pin(request_ref))!=request_ref['sha256'] or started.get('science_call_reserved')is not True:raise ValueError('original stage request/case/source/reservation differs')
     phase=request['phase_manifest']
-    if phase.get('stage')!='labels' or phase.get('role')!='train' or phase.get('admitted')is not True or phase.get('dataset_sha256')!=dataset_sha or phase.get('identity_sha256')!=identity['identity_sha256'] or phase.get('cases',{}).get(identity['case_id'])!=identity:raise ValueError('original label phase capability')
+    if (phase_role,phase_stage) not in (('train','labels'),('development','development')) or identity['role']!=phase_role or phase.get('stage')!=phase_stage or phase.get('role')!=phase_role or phase.get('admitted')is not True or phase.get('dataset_sha256')!=dataset_sha or phase.get('identity_sha256')!=identity['identity_sha256'] or phase.get('cases',{}).get(identity['case_id'])!=identity:raise ValueError('original stage phase capability')
     if wal.get('hard_seconds')!=CAPS[stage] or wal.get('owned_parent_children_rss_bytes')!=2147483648 or wal.get('status')!='child_started':raise ValueError('original stage hard caps/WAL state')
     command=wal.get('command',[])
     if len(command)!=9 or command[1:5]!=['-B','-u','-m','satellite_rl.workbench.r7_stage'] or command[5]!='--request' or command[6]!=request_ref['path'] or command[7]!='--directory' or command[8]!=str(Path(request_ref['path']).parent):raise ValueError('original exact guarded command/paths')

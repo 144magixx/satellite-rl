@@ -24,5 +24,6 @@ def main():
  prepared=PreparedCase.from_dict(scene,read_asset(request['prepared_ref'])['result'])
  if prepared.identity!=request['identity'] or prepared.source_sha256!=request['original_prepared_source_sha256']:raise ValueError('original prepared source unchanged')
  proposal=read_asset(request['proposal_ref']);started=time.monotonic();result=decode_groups(prepared,proposal,time_limit=5.)
- asset=write_asset(directory/'stage_output.json.gz',{'identity':request['identity'],'result':result,'nominal_D5_algorithm_seconds':time.monotonic()-started,'full_D5_child_seconds':time.monotonic()-began,'actual_D5_calls':1,'original_prepared_source_sha256':prepared.source_sha256,'immutable_b7_decoder_source_SHA':request['b7_decoder_source_SHA']});atomic_json(directory/'stage_output.json',{'asset_ref':asset})
+ from .r5_stage_guard import birth
+ asset=write_asset(directory/'stage_output.json.gz',{'identity':request['identity'],'owning_AI_process_pid':os.getppid(),'owning_AI_process_birth':birth(os.getppid()),'result':result,'nominal_D5_algorithm_seconds':time.monotonic()-started,'full_D5_child_seconds':time.monotonic()-began,'actual_D5_calls':1,'original_prepared_source_sha256':prepared.source_sha256,'immutable_b7_decoder_source_SHA':request['b7_decoder_source_SHA']});atomic_json(directory/'stage_output.json',{'asset_ref':asset})
 if __name__=='__main__':main()
