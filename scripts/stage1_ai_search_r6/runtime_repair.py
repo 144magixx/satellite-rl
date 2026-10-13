@@ -20,9 +20,12 @@ def draft(evidence,original_review,operational_commit,output):
         job=read(evidence/str(port)/'job.json')
         if job['run_id']!=run or job['scientific_commit']!=SCIENCE:raise ValueError('original archived ID/source')
         tasks[run]=dict(stable_job_sha256=stable_job_sha(job),config_sha256=sha(evidence/str(port)/'config.json'),snapshot_manifest_sha256=job['source_manifest_sha256'],executor_port=port)
-    remote_review=ops.BASE+'/source/round6/operations_repair/runtime_deps_01/'+sha(original_review)+'.json'
-    value=dict(schema='R6RuntimeScriptDependencyAdmissionV1',group=ops.GROUP,passed=False,science_commit=SCIENCE,
+    remote_review=ops.BASE+'/source/round6/operations_repair/runtime_deps_02/'+sha(original_review)+'.json'
+    adapter_names=('src/satellite_rl/workbench/r6_runtime_dependency.py','src/satellite_rl/workbench/r6_runtime_bootstrap.py')
+    value=dict(schema='R6RuntimeScriptDependencyAdmissionV2',group=ops.GROUP,passed=False,science_commit=SCIENCE,
         operational_service_commit=operational_commit,tasks=tasks,script_file_sha256=scripts,
+        previous_operational_service_commit='124f57d2a5646f64253985a02cf23b77e197158f',
+        validation_adapter_source_file_sha256={name:sha(SOURCE/name)for name in adapter_names},
         original_source_review_ref=dict(path=remote_review,sha256=sha(original_review)),
         source_review_local_path=str(Path(original_review).resolve()),authority='requires exact root runtime repair approval before passed=true or deployment',
         no_scientific_source_changes=True,no_new_IDs=True,no_algorithm_replay=True)
@@ -35,10 +38,11 @@ def _remote(port,code):
 
 def check_idle(port,contract,terminate=False):
     i=ops.instance(port);target=TARGETS[port];bound=contract['tasks'][target]
+    previous=contract['previous_operational_service_commit']
     code=f'''import json,pathlib,hashlib,urllib.request,subprocess,signal,os,time,shutil
 root=pathlib.Path({i['root']!r});service_path=root/'ops/service.json';service=json.loads(service_path.read_text());proc=pathlib.Path('/proc')/str(service['pid']);raw=(proc/'stat').read_text();birth=int(raw[raw.rfind(')')+2:].split()[19]);command=(proc/'cmdline').read_bytes().replace(b'\\0',b' ').decode()
-assert service['source_commit']=={SCIENCE!r} and birth==service['birth_ticks'] and str(root/'archive') in command and 'satellite_rl.workbench.server' in command and '--port {i['api_port']}' in command
-assert str((proc/'cwd').resolve())==service['source_root'] and subprocess.check_output(['git','-C',service['source_root'],'rev-parse','HEAD']).decode().strip()=={SCIENCE!r}
+assert service['source_commit']=={previous!r} and birth==service['birth_ticks'] and str(root/'archive') in command and 'satellite_rl.workbench.server' in command and '--port {i['api_port']}' in command
+assert str((proc/'cwd').resolve())==service['source_root'] and subprocess.check_output(['git','-C',service['source_root'],'rev-parse','HEAD']).decode().strip()=={previous!r}
 with urllib.request.urlopen('http://127.0.0.1:{i['api_port']}/api/ai-search-r6/tasks',timeout=5) as r:tasks=json.load(r)['tasks']
 assert len(tasks)==1 and tasks[0]['job']['run_id']=={target!r} and tasks[0]['status']['stage']=='interrupted' and tasks[0]['status']['completed_cases']==0
 d=root/'archive/outputs/workbench/jobs'/{target!r};job=json.loads((d/'job.json').read_text());stable={{k:v for k,v in job.items() if k not in ('resume','resume_attempt')}}
@@ -55,7 +59,7 @@ for p in pathlib.Path('/proc').iterdir():
 assert not workers
 record={{'service':service,'birth_ticks':birth,'command':command,'actual_task':{target!r},'status':'interrupted','workers':workers,'new_science_calls':0}}
 if {terminate!r}:
- backup=root/'operations_repair/runtime_deps_01';backup.mkdir(parents=True,exist_ok=True);original=backup/'service_7bb_original.json'
+ backup=root/'operations_repair/runtime_deps_02';backup.mkdir(parents=True,exist_ok=True);original=backup/{('service_'+previous+'_original.json')!r}
  if original.exists():assert original.read_bytes()==service_path.read_bytes()
  else:shutil.copy2(service_path,original)
  assert int((proc/'stat').read_text().split(')')[-1].split()[19])==birth
@@ -79,12 +83,12 @@ def install_idle(contract_path,repair_review,operational_source_review,output):
     atomic_json(folder/'four_original_jobs_idle.json',checked)
     original=Path(contract['source_review_local_path'])
     if sha(original)!=contract['original_source_review_ref']['sha256']:raise ValueError('original source review bytes changed')
-    contract_target=ops.BASE+'/source/round6/operations_repair/runtime_deps_01/'+sha(contract_path)+'.json'
+    contract_target=ops.BASE+'/source/round6/operations_repair/runtime_deps_02/'+sha(contract_path)+'.json'
     uploads=[ops.upload(original,contract['original_source_review_ref']['path'],20418),ops.upload(contract_path,contract_target,20418)]
     ref=dict(path=contract_target,sha256=sha(contract_path))
     for port in TARGETS:
         target=ops.instance(port)['ops']+'/runtime_dependency_admission_ref.json'
-        _remote(port,f"import pathlib,json;from satellite_rl.training.run_monitor import atomic_json;atomic_json(pathlib.Path({target!r}),{ref!r});print(json.dumps({{'installed_metadata_only':True}}))")
+        _remote(port,f"import pathlib,json,shutil;from satellite_rl.training.run_monitor import atomic_json;p=pathlib.Path({target!r});backup=p.parent.parent/'operations_repair/runtime_deps_02/runtime_dependency_admission_ref_124_original.json';backup.parent.mkdir(parents=True,exist_ok=True);assert not backup.exists() or backup.read_bytes()==p.read_bytes();shutil.copy2(p,backup);atomic_json(p,{ref!r});print(json.dumps({{'installed_metadata_only':True}}))")
     with ThreadPoolExecutor(4) as pool:stopped=dict(zip(map(str,TARGETS),pool.map(lambda p:check_idle(p,contract,True),TARGETS)))
     atomic_json(folder/'four_original_services_stopped.json',stopped)
     deployment=deploy(commit,operational_source_review)
