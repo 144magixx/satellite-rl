@@ -1,9 +1,15 @@
 """Native bounded local or unchanged original D5 child; no model or teacher import."""
-import argparse,os,sys,time
+import argparse,os,sys,time,gzip,json
 from pathlib import Path
 import numpy as np
 from .contracts import read,pin,atomic,digest,validate_imported_core
 from .deadline import boundary,bind_parent,Paused
+
+def read_qualified_envelope(reference):
+ """A qualified minimal compressed ref needs no fabricated typed-asset metadata."""
+ with gzip.open(pin(reference),'rb') as stream:raw=stream.read(268435456+1)
+ if len(raw)>268435456:raise ValueError('qualified original envelope exceeds 256MiB read bound')
+ return json.loads(raw)
 
 def execute(req,directory):
  bind_parent('R8_PARENT_PID');plan=read(req['plan_ref']);boundary(plan,'child_before_inputs')
@@ -29,7 +35,7 @@ def execute(req,directory):
   if req['arm']=='A':
    with np.load(pin(refs['actual_model_outputs_NPZ']),allow_pickle=False) as z:owner=z['owner'].copy()
   provenance=dict(design_sha256=plan['design_ref']['sha256'],actual_arm=req['arm'],source_epoch=plan['scientific_commit'],adapter_source_SHA=core_ref['sha256'],case_identity=case['identity'],checkpoint_sha256=plan['checkpoint_ref']['sha256'],source_refs={key:refs[key] for key in ('shared_case','original_scene','original_prepared_Wenv','AI_envelope','actual_model_outputs_NPZ','R7_RULE_final','R7_T_final')})
-  if req['arm']=='A':provenance['owner_array_sha256']=read_asset(refs['AI_envelope'])['valid_aircraft_pointer_owner_tensor_refs_and_SHAs']['sha256']['owner']
+  if req['arm']=='A':provenance['owner_array_sha256']=read_qualified_envelope(refs['AI_envelope'])['valid_aircraft_pointer_owner_tensor_refs_and_SHAs']['sha256']['owner']
   def stopped():
    try:boundary(plan,'local_candidate_boundary');return False
    except Paused:return True
