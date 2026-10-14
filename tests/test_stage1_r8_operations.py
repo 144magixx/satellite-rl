@@ -30,7 +30,8 @@ class Operations(unittest.TestCase):
    root=Path(tmp);plan=dict(archive_root=tmp,deadline_registration_ref={})
    with patch.object(deadline,'read',return_value=self.registration(root)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-19),patch.object(deadline,'storage_boundary',return_value={}):
     with self.assertRaises(deadline.Paused):deadline.before_start(plan,'local_before_intent')
-   with patch.object(deadline,'read',return_value=self.registration(root)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-21),patch.object(deadline,'storage_boundary',return_value={}):self.assertTrue(deadline.before_start(plan,'D5_before_intent')['passed'])
+   fresh=root/'fresh_before_stop';fresh.mkdir();fresh_plan=dict(archive_root=str(fresh),deadline_registration_ref={})
+   with patch.object(deadline,'read',return_value=self.registration(fresh)),patch.object(deadline,'identity',return_value=None),patch.object(deadline.time,'time',return_value=contracts.DEADLINE-21),patch.object(deadline,'storage_boundary',return_value={}):self.assertTrue(deadline.before_start(fresh_plan,'D5_before_intent')['passed'])
  def sources(self):
   root=Path(contracts.__file__).resolve().parents[2];files={}
   for name in contracts.OPS_FILES:

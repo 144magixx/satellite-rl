@@ -54,6 +54,24 @@ def storage_inventory(p):
   if '/round8' not in Path(path).resolve().as_posix():raise ValueError('additional growth must be own R8 directory')
  if not isinstance(inventory.get('fixed_other_owned_bytes'),int) or inventory['fixed_other_owned_bytes']<0:raise ValueError('explicit immutable source/meta bytes outside growth roots')
  return inventory
+def resume_epoch(p,root_review=None):
+ """Only this signed human-continue epoch can exempt historical cutoff/holds."""
+ if 'human_resume_authority_ref' not in p and 'human_resume_epoch_ref' not in p:return None
+ if not p.get('human_resume_authority_ref') or not p.get('human_resume_epoch_ref') or not p.get('operations_recovery'):raise ValueError('complete exact human resume overlay required')
+ authority=read(p['human_resume_authority_ref']);epoch=read(p['human_resume_epoch_ref'])
+ if p['human_resume_authority_ref']['sha256']!='75098fdbe450e37d6865955b98f09188f39d95788a843ca0ae01844fc1f1956b' or authority.get('schema')!='S1AI17ExplicitHumanContinueAuthorityV1' or authority.get('root_accepted')is not True or authority.get('human_authorization')is not True or authority.get('current_round')!=GROUP or authority.get('run_id')!=p['run_id'] or authority.get('user_message_verbatim')!='继续' or authority.get('first_observed_utc')!='2026-10-14T00:10:43Z' or authority.get('new_cutoff_utc')is not None or authority.get('current_remaining_actual_calls')!=dict(local=59,D5=59,W=0,T=0,forward=0,updates=0):raise ValueError('sole explicit post0700 human authority')
+ if epoch.get('schema')!='R8ExplicitHumanResumeEpochContractV1' or epoch.get('root_accepted')is not True or epoch.get('human_resume_authority_ref')!=p['human_resume_authority_ref'] or epoch.get('group')!=GROUP or any(epoch.get(k)!=p[k] for k in ('run_id','request_id','archive_root')) or epoch.get('epoch_root')!=p['operations_recovery']['epoch_root'] or epoch.get('source_epoch')!=p.get('operations_commit') or epoch.get('superseded_deadline_unix_seconds')!=DEADLINE or epoch.get('new_deadline_unix_seconds')is not None:raise ValueError('sole bound operational resume epoch')
+ if not isinstance(epoch.get('execution_epoch_id'),str) or not epoch['execution_epoch_id'] or not epoch.get('watched_pause_paths') or not isinstance(epoch.get('historical_hold_exemptions'),list):raise ValueError('explicit single epoch and bounded marker inventory')
+ if epoch.get('same_id_recovery_contract_ref')!=p['operations_recovery']['contract_ref'] or epoch.get('original_deadline_registration_ref')!=p['deadline_registration_ref']:raise ValueError('sameID recovery/original registration binding')
+ recovery=read(p['operations_recovery']['contract_ref'])
+ if epoch['original_plan_ref']!=recovery['original_plan_ref'] or epoch['original_slot_index_ref']!=recovery['original_slot_index_ref'] or epoch['original_failed_status_ref']!=recovery['original_failed_status_ref']:raise ValueError('original immutable plan/status/G references')
+ for key in ('original_pause_contract_ref','root_0700_pause_receipt_ref','old_guard_retirement_receipt_ref'):pin(epoch[key])
+ if epoch['root_0700_pause_receipt_ref']['sha256']!=authority['prior_pause_ref']['sha256']:raise ValueError('original verified0700pause receipt')
+ retired=read(epoch['old_guard_retirement_receipt_ref'])
+ if retired.get('all_owned_obsolete_controllers_ended')is not True or retired.get('group_scope')!='S1-AI17 only73/74':raise ValueError('old deadline controllers must be retired or freshly absent')
+ review=root_review if root_review is not None else read(p['operations_recovery']['root_review_ref'])
+ if review.get('passed')is not True or review.get('execution_authorized')is not True or review.get('human_resume_authority_ref')!=p['human_resume_authority_ref'] or review.get('human_resume_epoch_ref')!=p['human_resume_epoch_ref']:raise ValueError('root exact authority+epoch runtime binding')
+ return epoch
 def validate(plan_ref,review_ref):
  p=read(plan_ref);r=read(review_ref)
  if p.get('schema')!='R8ExactCachedOwnerPilotPlanV1' or p.get('group')!=GROUP or p.get('executor_port') not in (20473,20474):raise ValueError('own exact R8 plan/route')
@@ -82,6 +100,7 @@ def validate(plan_ref,review_ref):
  if registration.get('group')!=GROUP or registration.get('archive_root')!=p['archive_root'] or registration.get('deadline_unix_seconds')!=DEADLINE or registration.get('registered_modes')!=['r8_pilot','r8_local','r8_D5'] or registration.get('passed')is not True or registration.get('root_accepted')is not True:raise ValueError('own deadline modes/archive must be registered')
  if p.get('scientific_new_calls')!=dict(local=60,D5=60,W=0,T=0,forward=0,updates=0):raise ValueError('no hidden old train or extra scientific calls')
  if not registration.get('shared_pause_paths') or not any(path.endswith('/control/user_pause_20261014_0700.json') for path in registration['shared_pause_paths']):raise ValueError('original shared human pause contract must be included')
+ resume_epoch(p,root_review=r)
  return p
 def fresh_route(plan):
  route=read(plan['actual_resource_route_ref']);age=time.time()-route['observed_unix_seconds']
