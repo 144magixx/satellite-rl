@@ -209,12 +209,21 @@ def confirmation_behavior(path, terminals):
     return list(counts.values())
 
 
-def figures(out, mothers, contrasts, development, training, step_bins):
+def figures(out, mothers, contrasts, development, training, step_bins, only=None):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     plt.rcParams.update({'font.size': 10, 'axes.spines.top': False, 'axes.spines.right': False})
+    colors = dict(zip(GROUPS, ('#1f77b4', '#ff7f0e', '#2ca02c', '#d62728')))
+    def training_axis(ax):
+        ticks = list(range(0, 140001, 20000)) + [150000]
+        ax.set_xticks(ticks, ['0'] + [str(n // 1000) + 'k' for n in ticks[1:]])
+        ax.tick_params(axis='x', labelsize=8, labelrotation=35)
+        ax.set_xlim(0, 150000)
     def save(fig, name):
+        if only is not None and name not in only:
+            plt.close(fig)
+            return
         fig.tight_layout()
         fig.savefig(out / (name + '.png'), dpi=180)
         fig.savefig(out / (name + '.pdf'))
@@ -246,7 +255,9 @@ def figures(out, mothers, contrasts, development, training, step_bins):
         if not all('time_' + key in r for r in mothers):
             continue
         vals = np.array([np.mean([r['time_' + key] for r in mothers if r['method'] == g]) for g in METHODS])
-        ax.bar(METHODS, vals, bottom=bottom, label=key)
+        labels = dict(input_and_reset_s='Input/reset', mask_s='Mask', inference_s='Policy',
+                      environment_s='Environment/state', terminal_s='Terminal/export')
+        ax.bar(METHODS, vals, bottom=bottom, label=labels[key])
         bottom += vals
     ax.set_ylabel('Algorithm seconds incl. terminal (when recorded)')
     ax.legend(fontsize=8)
@@ -255,10 +266,11 @@ def figures(out, mothers, contrasts, development, training, step_bins):
     for g in GROUPS:
         for ax, metric in zip(axes[0], ('SI_mean', 'SGM')):
             rows = [r for r in development if r['method'] == g]
-            ax.plot([r['node'] for r in rows], [r[metric] for r in rows], label=g)
+            ax.plot([r['node'] for r in rows], [r[metric] for r in rows], label=g, color=colors[g])
             ax.set_xlabel('Training interactions (fixed endpoint 150000)')
             ax.set_ylabel('Development ' + metric)
             ax.legend()
+            training_axis(ax)
     lookup = {(r['method'], r['node']): r for r in development}
     for a, b in CONTRASTS:
         nodes = [n for n in NODES if (a, n) in lookup and (b, n) in lookup]
@@ -268,30 +280,36 @@ def figures(out, mothers, contrasts, development, training, step_bins):
             ax.set_ylabel('Development paired ' + metric + ' difference')
             ax.set_xlabel('Training interactions')
             ax.legend(fontsize=8)
+            training_axis(ax)
     save(fig, '05_development_curve')
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
     for g in GROUPS:
         rows = [r for r in training if r['method'] == g]
         for ax, metric in zip(axes, ('SI_mean', 'SGM')):
-            ax.plot([r['env_step'] for r in rows], [r[metric] for r in rows], linewidth=.6, alpha=.65, label=g)
+            ax.plot([r['env_step'] for r in rows], [r[metric] for r in rows], linewidth=.6, alpha=.65, label=g, color=colors[g])
             ax.set_xlabel('Training interactions')
             ax.set_ylabel('Training episode ' + metric)
             ax.legend()
+            training_axis(ax)
     save(fig, '06_training_raw_curve')
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     for g in GROUPS:
         rows = [r for r in training if r['method'] == g]
-        axes[0].plot([r['env_step'] for r in rows], [r['episode_return'] for r in rows], linewidth=.6, label=g)
+        axes[0].plot([r['env_step'] for r in rows], [r['episode_return'] for r in rows], linewidth=.6, label=g, color=colors[g])
         bins = [r for r in step_bins if r['method'] == g]
         for key, style in (('actor_loss', '-'), ('critic_1_loss', '--'), ('critic_2_loss', ':')):
             selected = [r for r in bins if r.get(key + '_count', 0)]
-            axes[1].plot([r['bin_start'] for r in selected], [r[key + '_sum'] / r[key + '_count'] for r in selected],
-                         linestyle=style, linewidth=.8, label=g + ' ' + key)
+            ax = axes[1] if key == 'actor_loss' else axes[2]
+            style = '--' if key == 'critic_2_loss' else '-'
+            ax.plot([r['bin_start'] for r in selected], [r[key + '_sum'] / r[key + '_count'] for r in selected],
+                    linestyle=style, linewidth=1., color=colors[g], label=g + (' Q1' if key == 'critic_1_loss' else ' Q2' if key == 'critic_2_loss' else ''))
     axes[0].set_ylabel('Raw episode return (diagnostic only)')
-    axes[1].set_ylabel('Learning loss: mean in 1000-interaction bins')
+    axes[1].set_ylabel('Actor loss (1000-interaction mean)')
+    axes[2].set_ylabel('Critic loss (1000-interaction mean)')
     for ax in axes:
         ax.set_xlabel('Training interactions')
-        ax.legend(fontsize=7)
+        ax.legend(fontsize=7, ncol=2)
+        training_axis(ax)
     save(fig, '07_reward_learning_diagnostics')
 
 
