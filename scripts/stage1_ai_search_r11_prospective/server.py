@@ -1,7 +1,7 @@
 """One exact new Gh task, one start intent; no queue/retry/control reexecution."""
 import argparse,ctypes,json,os,signal,subprocess,sys,threading,time
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler,HTTPServer
 from scripts.stage1_ai_search_r10 import contracts as c
 from scripts.stage1_ai_search_r10.control import exclusive_lock
 from .contracts import validate,check_pause,fresh_route
@@ -19,6 +19,7 @@ class Endpoint:
   if path==self.path+'/stop':c.immutable(self.root/'stop.request',dict(user_pause=True,run_id=self.plan['run_id'],actual_service=c.identity(os.getpid())));return dict(stop_requested=True)
   if path!=self.path+'/start':raise ValueError('single Gh start endpoint; no resume/retrain/queue')
   p=validate(self.plan_ref,self.review_ref);check_pause(p,'API_before_Gh_start');fresh_route(p)
+  if threading.get_native_id()!=os.getpid():raise RuntimeError('worker spawn requires persistent service main native thread')
   with exclusive_lock(self.root/'submission.lock'):
    if (self.root/'submission_intent.json').exists():raise ValueError('submitted/unknown start intent; never replay')
    check_pause(p,'before_Gh_intent');fresh_route(p);intent=c.immutable(self.root/'submission_intent.json',dict(request=expected,actual_service=c.identity(os.getpid()),design_ref=p['design_ref'],unknown_never_replayed=True))
@@ -44,6 +45,7 @@ class Endpoint:
 def main():
  a=argparse.ArgumentParser();a.add_argument('--plan',required=True);a.add_argument('--plan-sha256',required=True);a.add_argument('--review',required=True);a.add_argument('--review-sha256',required=True);a.add_argument('--port',required=True,type=int);v=a.parse_args()
  if v.port not in (9050,9051):raise ValueError('fresh same-group9050/9051 only')
+ if threading.get_native_id()!=os.getpid():raise RuntimeError('HTTPServer must serve on persistent main native thread')
  endpoint=Endpoint(dict(path=v.plan,sha256=v.plan_sha256),dict(path=v.review,sha256=v.review_sha256))
  if v.port!=endpoint.plan['workbench_port']:raise ValueError('exact root workbench port')
  with exclusive_lock(endpoint.root/'service.lock'):
@@ -61,5 +63,5 @@ def main():
     except Exception as e:raw=json.dumps(dict(error=str(e),automatic_retry=False)).encode();self.send_response(409)
     self.send_header('Content-Length',str(len(raw)));self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(raw)
    do_GET=dispatch;do_POST=dispatch;do_DELETE=dispatch;do_PUT=dispatch
-  ThreadingHTTPServer(('127.0.0.1',v.port),Handler).serve_forever()
+  HTTPServer(('127.0.0.1',v.port),Handler).serve_forever()
 if __name__=='__main__':main()

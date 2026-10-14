@@ -24,7 +24,7 @@ def run(plan_ref,review_ref):
   command=[DQN,'-B','-u','-m','scripts.stage1_ai_search_r11_prospective.controller','--plan',plan_ref['path'],'--plan-sha256',plan_ref['sha256'],'--review',review_ref['path'],'--review-sha256',review_ref['sha256'],'--execute']
   os.environ['PYTHONPATH']=p['source_repo']
   try:
-   receipt=run_process(command,root/'charged_lane','lane',stop=stop,life=life,hard_seconds=2400,helper_token='scripts.stage1_ai_search_r11_prospective.controller')
+   receipt=run_process(command,root/'charged_lane','lane',stop=stop,life=life,hard_seconds=p['outer_hard_seconds'],helper_token='scripts.stage1_ai_search_r11_prospective.controller')
    Watchdog(boottime()+2,boottime)
    postflight()
   finally:observer.close()
