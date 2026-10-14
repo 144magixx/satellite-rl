@@ -1,5 +1,6 @@
 """R11 Gh SSP: R10 deterministic solver with convex histogram marginal arcs.
 No scene generation, native processes, files or scientific execution at import.
+Bigint counters cover explicit cost arithmetic, not all index/capacity/limb work.
 """
 import copy
 from ..ai_search_r10.flow import Ledger, ResourceUnknown, _Heap
@@ -30,7 +31,7 @@ anchors are pinned, and duplicate anchor identities are irrelevant to this API.
         for j in range(b):
             if type(adjacency[i][j]) is not bool:
                 raise ValueError('explicit boolean adjacency')
-            if adjacency[i][j] and (type(costs[i][j]) is not int or costs[i][j] < 0):
+            if adjacency[i][j] and (type(costs[i][j]) is not int or not 0 <= costs[i][j] <= n*250001+1+250001):
                 raise ValueError('eligible costs are nonnegative Python integers')
     def observe(value):
         if type(value) is not int:raise TypeError('Python exact integer')
@@ -49,6 +50,7 @@ anchors are pinned, and duplicate anchor identities are irrelevant to this API.
     def edge(u, v, cap, cost):
         observe(cost)
         ledger.tick('graph_arc_initialization_writes', 2)
+        ledger.tick('bigint_negations')
         e = [v, len(graph[v]), cap, cost]
         graph[u].append(e)
         graph[v].append([u, len(graph[u])-1, 0, -cost])
@@ -114,12 +116,13 @@ anchors are pinned, and duplicate anchor identities are irrelevant to this API.
                 v, _, capacity, cost = arc
                 if capacity == 0:
                     continue
-                reduced = observe(cost+potential[u]-potential[v])
                 ledger.tick('bigint_additions_subtractions',2)
+                interim = observe(cost+potential[u])
+                reduced = observe(interim-potential[v])
                 if reduced < 0:
                     raise AssertionError('negative reachable reduced cost')
-                candidate = observe(distance+reduced)
                 ledger.tick('bigint_additions_subtractions')
+                candidate = observe(distance+reduced)
                 if dist[v] is None or candidate < dist[v]:
                     if settled[v]:
                         raise AssertionError('settled node strictly improved')
@@ -138,9 +141,10 @@ anchors are pinned, and duplicate anchor identities are irrelevant to this API.
                     capacity+=original_capacity
                     if arc[2]!=0:raise AssertionError('reachable cut residual capacity')
             if capacity!=delivered or capacity>=n:raise AssertionError('finite cut certificate')
+            ledger.scan('cut_certificate_ID_and_mask_output',n*b+n+b)
             certificate=dict(reachable_nodes=reachable,forward_cut=cut,cut_capacity=capacity,
                 required=n,node_order=dict(aircraft_ids=[aids[i] for i in ai],beam_ids=[bids[j] for j in bj]),
-                adjacency=copy.deepcopy(adjacency),q=q,N=b)
+                adjacency=[[adjacency[i][j] for j in bj] for i in ai],q=q,N=b)
             row = dict(status='graph_infeasible', feasible=False,certificate=certificate,
                        potentials=[str(x) for x in potential],distances=[None if x is None else str(x) for x in dist], delivered=delivered,
                        required=n, total_cost=str(total_cost), assignment=None,
@@ -151,8 +155,8 @@ anchors are pinned, and duplicate anchor identities are irrelevant to this API.
         ledger.tick('full_vector_node_visits', nodes)
         for v in range(nodes):
             if dist[v] is not None:
-                potential[v] = observe(potential[v]+dist[v])
                 ledger.tick('bigint_additions_subtractions')
+                potential[v] = observe(potential[v]+dist[v])
         chain, seen, v = [], {sink}, sink
         while v != source:
             if prev[v] is None:
@@ -176,9 +180,9 @@ anchors are pinned, and duplicate anchor identities are irrelevant to this API.
             ledger.tick('augmentation_capacity_writes', 2)
             arc[2] -= 1
             graph[arc[0]][arc[1]][2] += 1
+            ledger.tick('bigint_additions_subtractions',2)
             total_cost = observe(total_cost+arc[3])
             cycle_cost = observe(cycle_cost+arc[3])
-            ledger.tick('bigint_additions_subtractions',2)
             active['observed_augmentation_cost']=str(cycle_cost)
         delivered += 1
         active.update(delivered=delivered,last_completed_total_cost=str(total_cost),augmentation_in_progress=False)
@@ -212,13 +216,13 @@ anchors are pinned, and duplicate anchor identities are irrelevant to this API.
             raise AssertionError('strict convex cheapest marginal prefix')
     secondary=0
     for i,j in enumerate(owners):
-        secondary=observe(secondary+costs[i][j])
         ledger.tick('bigint_additions_subtractions')
+        secondary=observe(secondary+costs[i][j])
     ledger.scan('histogram_final_count_objective',b)
     histogram=0
     for count in counts:
-        histogram=observe(histogram+powers[count])
         ledger.tick('bigint_additions_subtractions')
+        histogram=observe(histogram+powers[count])
     ledger.tick('bigint_subtractions')
     ledger.tick('bigint_multiplications')
     ledger.tick('bigint_additions_subtractions')
