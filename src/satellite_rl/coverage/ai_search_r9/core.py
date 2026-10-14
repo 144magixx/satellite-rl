@@ -53,21 +53,23 @@ def quality(counts,widths):
 def audit(scene,layout,ncap,omegacap,ledger,audit_reserved=False):
     """Full scene stable IDs/anchors, exact coverage/envelope/request audit."""
     n=len(scene.aircraft_ids);ids=layout['beam_ids'];anchors=layout['anchor_aircraft_ids'];b=len(ids)
+    ledger.scan('audit_ID_values_and_unique_sets',2*n+3*b)
     centers=np.asarray(layout['centers'],np.float64);widths=np.asarray(layout['widths_deg'],np.float64);owners=np.asarray(layout['assignment'])
     require(all(isinstance(x,str) and x for x in list(scene.aircraft_ids)+list(ids)+list(anchors)) and len(set(scene.aircraft_ids))==n,'original stable string IDs without coercion')
     require(1<=b<=min(200,n,ncap) and len(set(ids))==b and len(anchors)==b,'actual nonempty N/unique IDs')
     require(centers.shape==(b,2) and widths.shape==(b,) and owners.shape==(n,) and np.isfinite(centers).all() and np.isfinite(widths).all() and np.isfinite(owners).all(),'full shapes finite')
     require(np.all((widths>=.3)&(widths<=1)) and np.equal(owners,np.floor(owners)).all() and np.all((owners>=0)&(owners<b)),'fullwidth/integer complete ownership')
-    planeindex={aid:i for i,aid in enumerate(scene.aircraft_ids)};require(all(a in planeindex for a in anchors),'actual aircraft anchor IDs')
+    ledger.scan('audit_plane_index',n);ledger.scan('audit_anchor_ID_lookup',b);planeindex={aid:i for i,aid in enumerate(scene.aircraft_ids)};require(all(a in planeindex for a in anchors),'actual aircraft anchor IDs')
     anchorindex=[planeindex[a] for a in anchors];require(np.array_equal(centers,scene.positions[anchorindex]),'actual center to original anchor projection')
-    owners=owners.astype(np.int64);counts=np.bincount(owners,minlength=b);require(np.all(counts>0),'nonempty groups')
+    ledger.scan('audit_owner_validation_and_bincount',n);owners=owners.astype(np.int64);counts=np.bincount(owners,minlength=b);require(np.all(counts>0),'nonempty groups')
     require(np.asarray(scene.demands).shape==(n,) and np.all(np.asarray(scene.demands)==REQUEST),'all original uniform requests')
     ledger.pairs(n,audit=audit_reserved);chord=np.sum((scene.rays-scene.rays[anchorindex][owners])**2,axis=1)
     require(np.all(chord<=4*np.sin(np.deg2rad(widths[owners]/2)/2)**2+1e-14),'all original aircraft geometric coverage')
     for j in range(b):
+        ledger.scan('audit_group_owner_mask',n);ledger.scan('audit_group_maximum_chord',int(counts[j]))
         required=max(.3,float(np.nextafter(np.rad2deg(4*np.arcsin(min(math.sqrt(float(chord[owners==j].max()))/2,1.))),np.inf)))
         require(math.isclose(float(widths[j]),required,rel_tol=0,abs_tol=1e-12),'original minimum fullwidth envelope')
-    ledger.tick('cached_member_scans',n);ledger.tick('scan_input_count',n+b+n*b);ledger.tick('sort_input_count',b)
+    ledger.tick('cached_member_scans',n);ledger.scan('audit_uniform_requests',n);ledger.scan('audit_count_quality_and_Omega',b);ledger.sort('audit_top10_load_order',b)
     metrics=quality(counts,widths);require(metrics['actual_Omega']<=omegacap+1e-12,'whole scene original Omega cap')
     require(metrics['total_request']==n*REQUEST,'integer whole-plane request conservation')
     return metrics
@@ -100,20 +102,21 @@ def select_origin(scene,prepared,rule,teacher=None):
             if eligible:candidates.append(('T',layout,metrics))
         else:eligibility.append(dict(source='T',eligible=False,reason='original_T_unavailable'))
     else:eligibility.append(dict(source='T',eligible=False,reason='original_T_absent'))
-    tag,layout,metrics=min(candidates,key=lambda x:objective(x[2])+(x[0],))
+    ledger.scan('origin_eligible_source_lex_min',len(candidates));tag,layout,metrics=min(candidates,key=lambda x:objective(x[2])+(x[0],))
     return dict(identity=copy.deepcopy(identity),layout=layout,metrics=metrics,RULE_layout=rulelayout,RULE_metrics=rulemetrics,source=tag,eligibility=eligibility,Ncap=prepared.Ncap,Omega_cap=prepared.Omega_cap,layout_SHA=digest(layout),RULE_layout_SHA=digest(rulelayout),common_ledger=ledger.record(),observed_selection_seconds=time.monotonic()-began)
 
 def build_pool(scene,origin):
     began=time.monotonic();n=len(scene.aircraft_ids);ledger=CommonLedger(n,origin['common_ledger']);layout=origin['layout'];owners=np.asarray(layout['assignment'],np.int64);widths=np.asarray(layout['widths_deg']);ids=layout['beam_ids'];b=len(ids);counts=np.bincount(owners,minlength=b);pindex={aid:i for i,aid in enumerate(scene.aircraft_ids)};rays=scene.rays[[pindex[aid] for aid in layout['anchor_aircraft_ids']]]
+    ledger.scan('pool_owner_bincount',n);ledger.scan('pool_plane_index',n);ledger.scan('pool_anchor_ray_gather',b)
     matrix=np.zeros((b,b),np.float64)
     for i in range(b-1):values=angles(rays[i],rays[i+1:],ledger);matrix[i,i+1:]=values;matrix[i+1:,i]=values
-    ranks=sorted(range(b),key=lambda j:(-int(counts[j]),ids[j]))[:8];ledger.tick('sort_input_count',2*b);ledger.tick('scan_input_count',n);descriptors=[];allcounts=sorted(map(int,counts),reverse=True);rankcount=allcounts[math.ceil(.1*b)-1]
+    ledger.sort('pool_source_rank',b);ledger.sort('pool_global_occupancy_rank',b);ranks=sorted(range(b),key=lambda j:(-int(counts[j]),ids[j]))[:8];descriptors=[];allcounts=sorted(map(int,counts),reverse=True);rankcount=allcounts[math.ceil(.1*b)-1]
     for sb in ranks:
-        other=[j for j in range(b) if j!=sb];partner=min(other,key=lambda j:(matrix[sb,j],ids[j])) if other else None;ledger.tick('scan_input_count',len(other))
+        ledger.scan('pool_partner_domain',b);other=[j for j in range(b) if j!=sb];ledger.scan('pool_nearest_partner',len(other));partner=min(other,key=lambda j:(matrix[sb,j],ids[j])) if other else None
         for action,oldk,k in ACTIONS:
             region=[sb] if oldk==1 else [sb]+([partner] if partner is not None else [])
             members=np.flatnonzero(np.isin(owners,region));outside=[j for j in range(b) if j not in region];m=len(members);newN=b-oldk+k;outsidepeak=max((int(counts[j]) for j in outside),default=0);outsideomega=omega(widths[outside]);loweromega=outsideomega+k*omega([.3]);lowerpeak=max(outsidepeak,(m+k-1)//k)
-            ledger.tick('scan_input_count',n+3*b);ledger.tick('sort_input_count',m)
+            ledger.scan('pool_region_mask',n);ledger.scan('pool_flat_region_members',n);ledger.scan('pool_outside_beam_domain',b);ledger.scan('pool_outside_peak_and_Omega',2*len(outside));ledger.scan('pool_region_Omega',len(region));ledger.scan('pool_region_member_ID_gather',m);ledger.sort('pool_region_member_ID_order',m)
             reasons=[]
             if oldk==2 and partner is None:reasons.append('missing_partner')
             if m<k:reasons.append('members_below_target')
@@ -142,15 +145,16 @@ def method_order(pool,method,scores=None):
     return [d['position'] for d in sorted(descriptors,key=key)]
 
 def choose_anchors(scene,member_ids,k,ledger):
+    ledger.scan('anchor_plane_index',len(scene.aircraft_ids));ledger.sort('anchor_member_ID_order',len(member_ids));ledger.scan('anchor_member_ray_gather',len(member_ids));ledger.scan('anchor_mean_ray_sum',len(member_ids))
     pindex={aid:i for i,aid in enumerate(scene.aircraft_ids)};ids=tuple(sorted(member_ids));rays=scene.rays[[pindex[aid] for aid in ids]];mean=np.sum(rays,axis=0,dtype=np.float64);norm=float(np.linalg.norm(mean));ledger.tick('mean_input_count',len(ids))
     if norm<1e-12:return None
-    ledger.tick('anchor_selection_passes');v=angles(rays,mean/norm,ledger);meanidx=min(range(len(ids)),key=lambda i:(float(v[i]),ids[i]))
+    ledger.tick('anchor_selection_passes');v=angles(rays,mean/norm,ledger);ledger.scan('anchor_mean_argmin',len(ids));meanidx=min(range(len(ids)),key=lambda i:(float(v[i]),ids[i]))
     if k==1:return [ids[meanidx]]
-    ledger.tick('anchor_selection_passes');v=angles(rays,rays[meanidx],ledger);first=min(range(len(ids)),key=lambda i:(-float(v[i]),ids[i]))
-    ledger.tick('anchor_selection_passes');remaining=[i for i in range(len(ids)) if i!=first];v=angles(rays[remaining],rays[first],ledger);second=min(range(len(remaining)),key=lambda j:(-float(v[j]),ids[remaining[j]]));second=remaining[second];selected=[first,second]
+    ledger.tick('anchor_selection_passes');v=angles(rays,rays[meanidx],ledger);ledger.scan('anchor_first_argmax',len(ids));first=min(range(len(ids)),key=lambda i:(-float(v[i]),ids[i]))
+    ledger.tick('anchor_selection_passes');ledger.scan('anchor_second_domain',len(ids));remaining=[i for i in range(len(ids)) if i!=first];v=angles(rays[remaining],rays[first],ledger);ledger.scan('anchor_second_argmax',len(remaining));second=min(range(len(remaining)),key=lambda j:(-float(v[j]),ids[remaining[j]]));second=remaining[second];selected=[first,second]
     if k==3:
-        ledger.tick('anchor_selection_passes');remaining=[i for i in range(len(ids)) if i not in selected];v=angles(rays[remaining,None,:],rays[None,selected,:],ledger);third=min(range(len(remaining)),key=lambda j:(-float(v[j].min()),ids[remaining[j]]));selected.append(remaining[third])
-    return sorted(ids[i] for i in selected)
+        ledger.tick('anchor_selection_passes');ledger.scan('anchor_third_domain',len(ids));remaining=[i for i in range(len(ids)) if i not in selected];v=angles(rays[remaining,None,:],rays[None,selected,:],ledger);ledger.scan('anchor_nearest_selected_min',2*len(remaining));ledger.scan('anchor_third_argmax',len(remaining));third=min(range(len(remaining)),key=lambda j:(-float(v[j].min()),ids[remaining[j]]));selected.append(remaining[third])
+    ledger.sort('anchor_final_target_ID_order',len(selected));return sorted(ids[i] for i in selected)
 
 def evaluate_candidate(scene,origin,descriptor):
     """Exactly one independent descriptor attempt; missing resources propagate."""
@@ -161,21 +165,22 @@ def evaluate_candidate(scene,origin,descriptor):
     if not descriptor['structurally_eligible']:return finish('known_unavailable',descriptor['unavailable_reasons'])
     result['kernel_entered']=True;member_ids=descriptor['member_ids'];k=descriptor['target_k'];anchors=choose_anchors(scene,member_ids,k,ledger)
     if anchors is None:return finish('rejected','degenerate_mean_ray')
-    pindex={aid:i for i,aid in enumerate(scene.aircraft_ids)};members=[pindex[aid] for aid in member_ids];anchorindex=[pindex[aid] for aid in anchors];ledger.pairs(len(members)*k);d2=np.sum((scene.rays[members,None,:]-scene.rays[None,anchorindex,:])**2,axis=-1);adjacency=(d2<=4*np.sin(np.deg2rad(.5)/2)**2+1e-14).tolist();matching=minimum_capacity(tuple(member_ids),tuple(anchors),adjacency,ledger)
+    ledger.scan('candidate_plane_index',n);ledger.scan('candidate_member_anchor_index_gather',len(member_ids)+len(anchors));pindex={aid:i for i,aid in enumerate(scene.aircraft_ids)};members=[pindex[aid] for aid in member_ids];anchorindex=[pindex[aid] for aid in anchors];ledger.pairs(len(members)*k);d2=np.sum((scene.rays[members,None,:]-scene.rays[None,anchorindex,:])**2,axis=-1);ledger.scan('candidate_adjacency_entries',len(members)*k);adjacency=(d2<=4*np.sin(np.deg2rad(.5)/2)**2+1e-14).tolist();matching=minimum_capacity(tuple(member_ids),tuple(anchors),adjacency,ledger)
     result.update(selected_anchor_ids=anchors,adjacency_edges=int(np.count_nonzero(adjacency)),flow_capacity=matching['capacity'] if matching else None)
     if matching is None:return finish('rejected','fixed_anchor_capacity_infeasible')
     localowners=np.asarray(matching['assignment'],np.int64);newwidths=[]
     for j in range(k):
+        ledger.scan('candidate_group_owner_mask',len(members));ledger.scan('candidate_group_width_max',int(np.count_nonzero(localowners==j)))
         required=float(np.rad2deg(4*np.arcsin(min(math.sqrt(float(d2[localowners==j,j].max()))/2,1.))));width=max(.3,float(np.nextafter(required,np.inf)));ledger.tick('cached_member_scans',int(np.count_nonzero(localowners==j)))
         if width>1.:return finish('rejected','envelope_over1_conservative_kernel')
         newwidths.append(width)
-    region=set(descriptor['region_beam_ids']);oldids=base['beam_ids'];outside=[j for j,bid in enumerate(oldids) if bid not in region];newids=[json.dumps([origin['identity']['case_id'],'R9',position,aid],ensure_ascii=False,separators=(',',':')) for aid in anchors];ids=[oldids[j] for j in outside]+newids;require(len(set(ids))==len(ids),'new stable beam IDs collision')
-    old_to_new={old:j for j,old in enumerate(outside)};owners=np.asarray(base['assignment'],np.int64);newowners=[old_to_new.get(int(owner),-1) for owner in owners]
+    region=set(descriptor['region_beam_ids']);oldids=base['beam_ids'];ledger.scan('candidate_outside_beam_ID_domain',len(oldids));outside=[j for j,bid in enumerate(oldids) if bid not in region];newids=[json.dumps([origin['identity']['case_id'],'R9',position,aid],ensure_ascii=False,separators=(',',':')) for aid in anchors];ids=[oldids[j] for j in outside]+newids;require(len(set(ids))==len(ids),'new stable beam IDs collision')
+    ledger.scan('candidate_outside_index_map',len(outside));ledger.scan('candidate_full_owner_reindex',n);old_to_new={old:j for j,old in enumerate(outside)};owners=np.asarray(base['assignment'],np.int64);newowners=[old_to_new.get(int(owner),-1) for owner in owners]
     for mi,owner in zip(members,localowners):newowners[mi]=len(outside)+int(owner)
     layout=dict(beam_ids=ids,anchor_aircraft_ids=[base['anchor_aircraft_ids'][j] for j in outside]+anchors,centers=[base['centers'][j] for j in outside]+scene.positions[anchorindex].tolist(),widths_deg=[base['widths_deg'][j] for j in outside]+newwidths,assignment=newowners)
     result['raw_layout']=layout
     if omega(layout['widths_deg'])>origin['Omega_cap']+1e-12:return finish('rejected','whole_Omega_cap')
-    metrics=audit(scene,layout,origin['Ncap'],origin['Omega_cap'],ledger,audit_reserved=True);result['raw_metrics']=metrics;ledger.tick('scan_input_count',n+len(members)*k)
+    metrics=audit(scene,layout,origin['Ncap'],origin['Omega_cap'],ledger,audit_reserved=True);result['raw_metrics']=metrics;ledger.scan('candidate_outside_identity_value_audit',n)
     # Stable identity rather than compacted integer ordinal defines outside owner.
     for i,oldowner in enumerate(owners):
         if oldids[int(oldowner)] not in region:

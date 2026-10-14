@@ -18,6 +18,11 @@ class PureR9(unittest.TestCase):
     def test_counter_unknown_not_infeasibility(self):
         l=Ledger(3);l.data['residual_edge_inspections']=1048576
         with self.assertRaises(ResourceUnknown):minimum_capacity(('a','b','c'),('a',),[[True],[True],[True]],l)
+    def test_logical_pass_counters_are_aggregated_exactly(self):
+        l=Ledger(3);minimum_capacity(('a','b','c'),('a',),[[True],[True],[True]],l)
+        for kind in ('scan','sort'):
+            self.assertEqual(l.data[kind+'_input_count'],sum(v['items'] for v in l.data[kind+'_passes'].values()))
+        self.assertIn('flow_remove_pinned_anchors',l.data['scan_passes'])
     def test_common_ledger_cumulative_not_reset(self):
         first=CommonLedger(3);first.pairs(7);second=CommonLedger(3,first.record());second.pairs(2);self.assertEqual(second.data['raypairs'],9)
         second.data['raypairs']=3*3+19900
