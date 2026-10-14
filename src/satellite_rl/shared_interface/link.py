@@ -19,7 +19,39 @@ class LinkCoefficients:
     metadata: dict
 
 
-def build_link_coefficients(layout,allocation,physics_config):
+def prepare_slot_kernel(layout,physics_config):
+    """Allocation-independent physical cache, not an observation channel."""
+    validate_physics(physics_config)
+    rays,distance=directions_and_distance(layout['centres_lat_lon_deg'])
+    squared=np.sum((rays[:,None,:]-rays[None,:,:])**2,axis=-1)
+    angles=2*np.arcsin(np.minimum(np.sqrt(squared)/2,1))
+    gain,_=linear_gain(angles,np.deg2rad(layout['full_width_deg'])[None,:])
+    frequency=physics_config['f0_Hz']+(np.arange(100)+.5)*physics_config['slot_Hz']
+    path=(physics_config['c_m_per_s']/(4*np.pi*distance[:,None]*frequency[None,:]))**2
+    gain.setflags(write=False);path.setflags(write=False)
+    return dict(layout_SHA=layout['content_sha256'],physics_SHA=PHYSICS_SHA,gain=gain,path=path)
+
+
+def raw_slot_coupling(layout, groups, physics_config, receiver_indices=None, transmitter_indices=None, slot_indices=None, kernel=None):
+    """K[receiver, transmitter, slot], per 1 W/slot, without allocations.
+
+    Optional index selections avoid materializing the full N*N*100 tensor.
+    """
+    validate_physics(physics_config)
+    N=len(layout['beam_ids']);groups=np.asarray(groups,np.int64)
+    if groups.shape!=(N,) or ((groups<0)|(groups>7)).any():raise ValueError('one actual group per beam')
+    receivers=np.arange(N) if receiver_indices is None else np.asarray(receiver_indices,np.int64)
+    transmitters=np.arange(N) if transmitter_indices is None else np.asarray(transmitter_indices,np.int64)
+    kernel=prepare_slot_kernel(layout,physics_config) if kernel is None else kernel
+    if kernel['layout_SHA']!=layout['content_sha256'] or kernel['physics_SHA']!=PHYSICS_SHA:raise ValueError('physical cache identity')
+    gain=kernel['gain'][np.ix_(receivers,transmitters)]
+    slots=np.arange(100) if slot_indices is None else np.asarray(slot_indices,np.int64)
+    path=kernel['path'][np.ix_(receivers,slots)]
+    eligible=(groups[receivers,None]%2==groups[None,transmitters]%2)&(groups[receivers,None]!=groups[None,transmitters])
+    return gain[:,:,None]*10**(physics_config['rx_gain_dBi']/10)*path[:,None,:]*eligible[:,:,None]
+
+
+def build_link_coefficients(layout,allocation,physics_config,kernel=None):
     validate_physics(physics_config)
     ids=tuple(layout['beam_ids']);N=len(ids);mapping=[allocation['beam_ids'].index(bid) for bid in ids]
     starts=allocation['actual_start_slot'][mapping];counts=allocation['actual_slot_count'][mapping]
@@ -43,7 +75,13 @@ def build_link_coefficients(layout,allocation,physics_config):
     overlap=((groups[owner,None]%2==groups[None,:]%2)&(groups[owner,None]!=groups[None,:])&
              (occupied[:,None]>=starts[None,:])&(occupied[:,None]<starts[None,:]+counts[None,:]))
     interference=np.zeros((len(owner),N),np.float64)
-    interference[:,active]=tx_gain[owner][:,active]*rx_gain*path[:,None]/counts[None,active]
+    kernel=prepare_slot_kernel(layout,physics_config) if kernel is None else kernel
+    # Same allocation-independent primitive as potential relation observations.
+    # Gather occupied rows without retaining a full scene tensor.
+    for receiver in np.unique(owner):
+        rows=np.flatnonzero(owner==receiver)
+        raw=raw_slot_coupling(layout,groups,physics_config,[receiver],np.flatnonzero(active),occupied[rows],kernel)[0]
+        interference[np.ix_(rows,np.flatnonzero(active))]=raw.T/counts[None,active]
     interference*=overlap
     noise=np.full(len(owner),physics_config['k_J_per_K']*physics_config['noise_temperature_K']*physics_config['slot_Hz'])
     arrays=[owner,occupied,signal,interference,noise,powers.copy(),active.copy(),layout['request_bps_by_beam_int64'].copy()]

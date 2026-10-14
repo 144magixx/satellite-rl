@@ -1,0 +1,310 @@
+"""Loopback-only W26 frozen-plan admission and persistent owned workers."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import threading
+from datetime import datetime,timezone
+from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+from urllib.parse import urlparse
+from .logging import atomic_json,content_sha
+from .guard import birth,proc_stat
+
+def now():return datetime.now(timezone.utc).isoformat()
+def read(path):return json.loads(Path(path).read_text(encoding='utf8'))
+def sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def boot_id():
+    if os.name!='nt':return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    import psutil
+    return 'windows-'+str(int(psutil.boot_time()))
+
+def gpu_uuids():
+    result=subprocess.run(['nvidia-smi','--query-gpu=uuid','--format=csv,noheader'],capture_output=True,text=True,check=True,timeout=10)
+    return result.stdout.split()
+
+def alive(record):
+    if record.get('pid') is None or record.get('process_birth') is None or record.get('boot_id')!=boot_id():return False
+    if birth(record['pid'])!=record['process_birth']:return False
+    if os.name!='nt':
+        stat=proc_stat(record['pid'])
+        return stat is not None and stat['state'] not in ('Z','X')
+    import psutil
+    try:return psutil.Process(record['pid']).status() not in (psutil.STATUS_ZOMBIE,psutil.STATUS_DEAD)
+    except psutil.NoSuchProcess:return False
+
+HTML='''<!doctype html><meta charset="utf-8"><title>S2-W26 工作台</title>
+<h1>S2-W26 工作台</h1><p>S00:207 · S10:208 · S01:407 · S11:408</p>
+<div id="tasks"></div><pre id="status"></pre><div id="runs"></div>
+<script>
+async function send(path,body){let r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});alert(JSON.stringify(await r.json()));refresh()}
+async function refresh(){let s=await(await fetch('/api/status')).json();document.querySelector('#status').textContent=JSON.stringify(s,null,2);let t=document.querySelector('#tasks');t.replaceChildren();for(let key of s.task_keys){let b=document.createElement('button');b.textContent='提交 '+key;b.onclick=()=>send('/api/runs',{request_id:key,task_key:key,plan_sha256:s.plan_sha256});t.append(b)}let runs=await(await fetch('/api/runs')).json();let root=document.querySelector('#runs');root.replaceChildren();for(let run of runs){let p=document.createElement('pre');p.textContent=JSON.stringify(run,null,2);p.title='Click for configuration, logs and results';p.onclick=async()=>{p.textContent=JSON.stringify(await(await fetch('/api/runs/'+run.run_id)).json(),null,2)};root.append(p);for(let action of ['stop','resume']){let b=document.createElement('button');b.textContent=action+' '+run.run_id;b.onclick=()=>send('/api/runs/'+run.run_id+'/'+action,{plan_sha256:s.plan_sha256});root.append(b)}}}refresh();setInterval(refresh,5000)
+</script>'''
+
+class Workbench:
+    def __init__(self,root,plan_path,executor_port,max_workers=2):
+        self.root=Path(root).resolve();self.root.mkdir(parents=True,exist_ok=True)
+        self.plan_path=Path(plan_path).resolve();self.plan_sha=sha(self.plan_path);self.plan=read(self.plan_path)
+        self.executor_port=int(executor_port);self.max_workers=int(max_workers)
+        if self.max_workers not in (1,2) or self.executor_port not in (20418,20424):raise ValueError('W26 lane or worker limit')
+        self.lock=threading.RLock();self.children={}
+        self.validate_plan()
+        self.server_lock=self.root/'server_owner.json'
+        owner=dict(pid=os.getpid(),process_birth=birth(os.getpid()),boot_id=boot_id(),created_UTC=now())
+        try:
+            fd=os.open(self.server_lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+        except FileExistsError:
+            if alive(read(self.server_lock)):raise RuntimeError('live workbench already owns lane')
+            self.server_lock.unlink();fd=os.open(self.server_lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+        with os.fdopen(fd,'w',encoding='utf8') as stream:json.dump(owner,stream)
+        (self.root/'runs').mkdir(exist_ok=True);(self.root/'task_owners').mkdir(exist_ok=True)
+        self.reconcile()
+
+    def validate_plan(self):
+        p=self.plan
+        if sha(self.plan_path)!=self.plan_sha:raise ValueError('plan changed since service freeze')
+        if p.get('schema')!='W26AuthorizedPlanV1' or p.get('group')!='S2-W26' or p.get('authorized') is not True:raise ValueError('root authorized W26 plan required')
+        if not re.fullmatch('[0-9a-f]{40}',p.get('source_commit','')):raise ValueError('frozen source commit required')
+        source=Path(p['source_root']).resolve()
+        if not Path(__file__).resolve().is_relative_to(source):raise ValueError('server actual import is not frozen source root')
+        manifest=p['source_manifest']
+        required={x.relative_to(source).as_posix() for folder in ('src','scripts') for x in (source/folder).rglob('*.py')}
+        if not required.issubset(manifest):raise ValueError('complete frozen Python source manifest required')
+        for relative,expected in manifest.items():
+            path=(source/relative).resolve()
+            if not path.is_relative_to(source) or sha(path)!=expected:raise ValueError('source manifest changed: '+relative)
+        if not isinstance(p.get('tasks'),dict) or not p['tasks']:raise ValueError('frozen tasks required')
+        for key,task in p['tasks'].items():
+            if not re.fullmatch('[A-Za-z0-9_-]{1,100}',key) or task['executor_port'] not in (20418,20424) or task['mode'] not in ('download','sourceprep','prepare','engineering','train','evaluate') or not isinstance(task['config'],dict):raise ValueError('frozen task contract')
+            if task['config'].get('executor_port',task['executor_port'])!=task['executor_port']:raise ValueError('frozen config executor mismatch')
+            mode=task['mode'];config=task['config']
+            if mode in ('download','sourceprep','prepare'):
+                if {'training','phase','task_kind'}&set(config):raise ValueError('data mode cannot carry runner selectors')
+            elif mode in ('engineering','train'):
+                training=config.get('training',{});engineering=mode=='engineering'
+                expected_seed=73026 if engineering else 51001
+                if config.get('phase')!=('engineering' if engineering else 'scientific') or config.get('task_kind') is not None:raise ValueError('mode and actual runner phase differ')
+                if training.get('seed')!=expected_seed or training.get('scene_order_seed')!=expected_seed:raise ValueError('mode seed contract')
+                steps=training.get('total_steps')
+                if type(steps)is not int or not (2000<=steps<=2048 if engineering else steps==150000):raise ValueError('mode actual step budget')
+            elif mode=='evaluate':
+                if config.get('task_kind')!='confirmation' or 'training' in config or 'phase' in config:raise ValueError('evaluation must select confirmation only')
+                refs=config.get('terminal_policies',{})
+                if set(refs)!= {'S00','S10','S01','S11'} or any(set(ref)!= {'path','sha256'} for ref in refs.values()):raise ValueError('four frozen terminal policy refs required')
+                unlock=config.get('confirmation_unlock',{})
+                receipt=unlock.get('receipt_ref',{})
+                if set(receipt)!= {'path','sha256'} or sha(receipt['path'])!=receipt['sha256']:raise ValueError('confirmation unlock receipt SHA')
+                unlock_receipt=read(receipt['path'])
+                if unlock_receipt.get('schema')!='W26ConfirmationUnlockV1' or unlock_receipt.get('root_approved') is not True or unlock_receipt.get('terminal_model_SHAs')!={g:ref['sha256'] for g,ref in refs.items()}:raise ValueError('confirmation unlock schema/model locks')
+                manifest_ref=config['confirmation_manifest_ref']
+                if sha(manifest_ref['path'])!=manifest_ref['sha256'] or unlock.get('manifest_SHA')!=manifest_ref['sha256'] or unlock_receipt.get('manifest_SHA')!=manifest_ref['sha256']:raise ValueError('confirmation manifest/unlock binding')
+                confirmation=read(manifest_ref['path'])
+                if confirmation.get('schema')!='W26PublishedDatasetV1' or confirmation.get('root_approved') is not True or confirmation.get('role')!='test' or len(confirmation.get('rows',[]))!=40:raise ValueError('complete confirmation manifest schema')
+        prepare=[t for t in p['tasks'].values() if t['mode']=='prepare']
+        if prepare:
+            all_indices=[]
+            manifests=set()
+            for task in prepare:
+                config=task['config'];indices=config['case_indices']
+                ref=config['manifest_ref'];admission_ref=config['execution_admission_ref']
+                if sha(ref['path'])!=ref['sha256'] or sha(admission_ref['path'])!=admission_ref['sha256']:raise ValueError('prepare root manifest/admission SHA')
+                manifest=read(ref['path']);admission=read(admission_ref['path'])
+                if admission.get('root_approved') is not True or admission.get('manifest_SHA')!=ref['sha256'] or admission.get('remote_port')!=task['executor_port'] or admission.get('case_indices')!=indices:raise ValueError('prepare admission root/shard binding')
+                if config.get('mixed_allowed') is not True and config.get('role') is None:raise ValueError('mixed prepare requires explicit mixed_allowed')
+                rows=manifest['rows']
+                if len(rows)!=636 or any(rows[i]['role'] not in ('train','development','test') or config.get('role',rows[i]['role'])!=rows[i]['role'] for i in indices):raise ValueError('prepare frozen row roles')
+                manifests.add(ref['sha256'])
+                if not isinstance(indices,list) or any(type(i)is not int or not 0<=i<636 for i in indices):raise ValueError('prepare shard indices')
+                all_indices.extend(indices)
+            if len(manifests)!=1:raise ValueError('all prepare shards must share one root manifest SHA')
+            if len(set(all_indices))!=len(all_indices) or sorted(all_indices)!=list(range(636)):raise ValueError('first prepare shards must disjointly cover all636 mothers')
+
+    def validate_admission(self,mode):
+        self.validate_plan()
+        required=['source','resources']+([] if mode in ('download','sourceprep','prepare') else ['data'])+(['engineering'] if mode in ('train','evaluate') else [])
+        for name in required:
+            ref=self.plan['admission_refs'][name]
+            if sha(ref['path'])!=ref['sha256']:raise ValueError('admission SHA: '+name)
+            admission=read(ref['path'])
+            if admission.get('root_approved') is not True or admission.get('passed') is not True or admission.get('experiment_id')!='S2-W26':raise ValueError('root admission not passed: '+name)
+            if admission.get('executor_port') not in (None,self.executor_port):raise ValueError('admission executor mismatch')
+            if name=='source' and admission.get('source_commit')!=self.plan['source_commit']:raise ValueError('admission frozen source mismatch')
+            if name=='resources':
+                stamp=datetime.fromisoformat(admission['checked_UTC'].replace('Z','+00:00'))
+                age=(datetime.now(timezone.utc)-stamp).total_seconds()
+                max_age=admission.get('max_age_seconds',300)
+                if not 0<max_age<=300 or not 0<=age<=max_age:raise ValueError('fresh resource receipt expired')
+                if admission['boot_id']!=boot_id() or admission['gpu_uuid'] not in gpu_uuids():raise ValueError('resource boot/GPU identity mismatch')
+
+    def status_path(self,run_id):
+        if not re.fullmatch('[0-9a-f]{24}',run_id):raise ValueError('run id')
+        return self.root/'runs'/run_id/'status.json'
+
+    def reconcile(self):
+        for run_id,child in list(self.children.items()):
+            if child.poll() is not None:
+                child.wait();del self.children[run_id]
+        for path in (self.root/'runs').glob('*/status.json'):
+            status=read(path)
+            if status['status'] in ('starting','running','stop_requested') and not alive(status):
+                status.update(status='interrupted',last_checked_UTC=now(),reason='worker not alive with recorded birth; no automatic restart')
+                atomic_json(path,status)
+
+    def runs(self):
+        with self.lock:
+            self.reconcile();return [read(p) for p in sorted((self.root/'runs').glob('*/status.json'))]
+
+    def summary(self):
+        return dict(group='S2-W26',executor_port=self.executor_port,plan_sha256=self.plan_sha,source_commit=self.plan['source_commit'],max_workers=self.max_workers,
+            task_keys=[k for k,t in self.plan['tasks'].items() if t['executor_port']==self.executor_port],runs=self.runs())
+
+    def detail(self,run_id):
+        path=self.status_path(run_id);status=read(path)
+        status['configuration']=read(path.parent/'config.json')
+        status['log_files']=[dict(name=p.relative_to(path.parent).as_posix(),bytes=p.stat().st_size) for p in sorted(path.parent.rglob('*')) if p.is_file() and (p.suffix=='.log' or p.name.endswith('.jsonl.gz'))]
+        log=path.parent/'worker.log'
+        if log.exists():
+            with log.open('rb') as stream:
+                stream.seek(max(0,log.stat().st_size-16384));status['worker_log_tail']=stream.read().decode('utf8',errors='replace')
+        return status
+
+    def submit(self,body):
+        with self.lock:
+            if set(body)!= {'request_id','task_key','plan_sha256'} or body['plan_sha256']!=self.plan_sha:raise ValueError('exact frozen submission fields/plan required')
+            task=self.plan['tasks'][body['task_key']]
+            if task['executor_port']!=self.executor_port:raise ValueError('task belongs to another executor')
+            if not isinstance(body['request_id'],str) or not 1<=len(body['request_id'])<=200:raise ValueError('request identity')
+            self.validate_admission(task['mode'])
+            specific={'download':'download_admission_ref','sourceprep':'source_admission_ref','prepare':'execution_admission_ref'}.get(task['mode'])
+            if specific:
+                ref=task['config'][specific]
+                if sha(ref['path'])!=ref['sha256']:raise ValueError('mode admission SHA mismatch')
+                if read(ref['path']).get('remote_port')!=task['executor_port']:raise ValueError('mode admission remote executor mismatch')
+            request_hash=content_sha(body);run_id=request_hash[:24];path=self.status_path(run_id)
+            if path.exists():
+                status=read(path)
+                if status['request_sha256']!=request_hash:raise ValueError('request hash collision')
+                return status
+            owner=self.root/'task_owners'/(body['task_key']+'.json')
+            if owner.exists():raise ValueError('task already has owner; resume original same-ID run')
+            if sum(alive(r) for r in self.runs())>=self.max_workers:raise ValueError('worker capacity full')
+            directory=path.parent;directory.mkdir()
+            config=dict(task['config']);config['run_id']=run_id
+            config['executor_port']=task['executor_port']
+            model_dir=self.root/'models'/run_id
+            if 'model_dir' in config and Path(config['model_dir']).resolve()!=model_dir:raise ValueError('dedicated model directory required')
+            config['model_dir']=str(model_dir)
+            atomic_json(directory/'config.json',config)
+            status=dict(run_id=run_id,task_key=body['task_key'],mode=task['mode'],status='created',request_sha256=request_hash,plan_sha256=self.plan_sha,source_commit=self.plan['source_commit'],created_UTC=now(),progress={},run_dir=str(directory),model_dir=config['model_dir'])
+            atomic_json(directory/'job.json',dict(status=status,source_root=self.plan['source_root'],source_manifest=self.plan['source_manifest'],config_sha256=content_sha(config)))
+            fd=os.open(owner,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
+            with os.fdopen(fd,'w',encoding='utf8') as stream:json.dump(dict(run_id=run_id,request_sha256=request_hash),stream)
+            atomic_json(path,status)
+            return self.launch(run_id)
+
+    def launch(self,run_id):
+        path=self.status_path(run_id);status=read(path);directory=path.parent
+        environment=os.environ.copy();source=Path(self.plan['source_root'])
+        environment['PYTHONPATH']=os.pathsep.join([str(source/'src'),str(source)])
+        command=[sys.executable,'-m','satellite_rl.t0_width.workbench','--worker',str(directory),'--plan',str(self.plan_path),'--executor-port',str(self.executor_port)]
+        with (directory/'worker.log').open('ab') as log:
+            proc=subprocess.Popen(command,cwd=source,env=environment,stdout=log,stderr=subprocess.STDOUT,start_new_session=os.name!='nt')
+        status.update(status='starting',pid=proc.pid,process_birth=birth(proc.pid),boot_id=boot_id(),worker_started_UTC=now())
+        atomic_json(path,status);self.children[run_id]=proc
+        # Worker waits for this parent ownership record before taking updates.
+        return status
+
+    def control(self,run_id,action,body):
+        with self.lock:
+            if body!={'plan_sha256':self.plan_sha}:raise ValueError('control plan identity')
+            path=self.status_path(run_id);status=read(path)
+            if action=='stop':
+                (path.parent/'stop.request').write_text(now(),encoding='utf8')
+                if alive(status):status.update(status='stop_requested')
+                return status
+            if action!='resume':raise ValueError('control action')
+            self.reconcile();status=read(path)
+            if alive(status):raise ValueError('owned worker still alive; refuse second owner')
+            if status['status'] not in ('interrupted','stopped','stopped_during_evaluation'):raise ValueError('run not resumable')
+            if status['mode'] in ('download','sourceprep','prepare'):raise ValueError('data partial spend requires separate root recovery admission; no automatic replay')
+            if not (Path(status['model_dir'])/'current.pt').exists() and not (Path(status['model_dir'])/'previous.pt').exists():raise ValueError('trustworthy checkpoint required')
+            self.validate_admission(status['mode'])
+            if sum(alive(r) for r in self.runs())>=self.max_workers:raise ValueError('worker capacity full')
+            (path.parent/'stop.request').unlink(missing_ok=True)
+            return self.launch(run_id)
+
+    def close(self):
+        if self.server_lock.exists() and read(self.server_lock).get('pid')==os.getpid():self.server_lock.unlink()
+
+def worker(directory,plan_path,executor_port):
+    import time
+    directory=Path(directory);path=directory/'status.json'
+    for _ in range(100):
+        status=read(path)
+        if status.get('pid')==os.getpid() and status.get('process_birth')==birth(os.getpid()) and status.get('boot_id')==boot_id():break
+        time.sleep(.05)
+    else:raise RuntimeError('worker parent birth ownership not recorded')
+    plan=read(plan_path);job=read(directory/'job.json');config=read(directory/'config.json')
+    if sha(plan_path)!=status['plan_sha256'] or content_sha(config)!=job['config_sha256'] or not Path(__file__).resolve().is_relative_to(Path(job['source_root']).resolve()):raise ValueError('worker frozen identity')
+    for relative,expected in job['source_manifest'].items():
+        if sha(Path(job['source_root'])/relative)!=expected:raise ValueError('worker source SHA changed')
+    def progress(value):
+        current=read(path);current.update(status='running',progress=value,last_updated_UTC=now());atomic_json(path,current)
+    stop=lambda:(directory/'stop.request').exists()
+    try:
+        progress({})
+        if status['mode'] in ('download','sourceprep','prepare'):
+            from . import data
+            function={'download':'download_official_sources','sourceprep':'prepare_confirmation_sources','prepare':'prepare_dataset'}[status['mode']]
+            result=getattr(data,function)(config,directory,progress,stop)
+        else:
+            from .runner import run_task
+            result=run_task(config,directory,progress,stop)
+        current=read(path);state=result.get('stage',result.get('status','completed')) if isinstance(result,dict) else 'completed'
+        current.update(status=state,result=result,finished_UTC=now());atomic_json(path,current)
+    except BaseException as exc:
+        current=read(path);current.update(status='failed',error=repr(exc),finished_UTC=now());atomic_json(path,current)
+        raise
+
+def handler(workbench):
+    class Handler(BaseHTTPRequestHandler):
+        def respond(self,value,status=200,html=False):
+            payload=(value if html else json.dumps(value,ensure_ascii=False)).encode('utf8')
+            self.send_response(status);self.send_header('Content-Type','text/html; charset=utf-8' if html else 'application/json; charset=utf-8');self.send_header('Content-Length',str(len(payload)));self.end_headers();self.wfile.write(payload)
+        def do_GET(self):
+            try:
+                path=urlparse(self.path).path
+                if path=='/':return self.respond(HTML,html=True)
+                if path=='/api/status':return self.respond(workbench.summary())
+                if path=='/api/runs':return self.respond(workbench.runs())
+                if path.startswith('/api/runs/'):return self.respond(workbench.detail(path.split('/')[3]))
+                self.respond(dict(error='unknown endpoint'),404)
+            except Exception as exc:self.respond(dict(error=str(exc)),400)
+        def do_POST(self):
+            try:
+                # Loopback API is not writable by browser cross-origin forms.
+                if self.headers.get('Content-Type')!='application/json' or self.headers.get('Origin') not in (None,'http://'+self.headers.get('Host','')):raise ValueError('same-origin JSON required')
+                length=int(self.headers.get('Content-Length','0'))
+                if not 0<length<=16384:raise ValueError('small request body required')
+                body=json.loads(self.rfile.read(length));path=urlparse(self.path).path
+                if path=='/api/runs':return self.respond(workbench.submit(body))
+                parts=path.split('/')
+                if len(parts)==5 and parts[1:3]==['api','runs']:return self.respond(workbench.control(parts[3],parts[4],body))
+                self.respond(dict(error='unknown endpoint'),404)
+            except Exception as exc:self.respond(dict(error=str(exc)),400)
+        def log_message(self,*args):pass
+    return Handler
+
+def main():
+    parser=argparse.ArgumentParser();parser.add_argument('--root');parser.add_argument('--port',type=int);parser.add_argument('--executor-port',type=int,required=True);parser.add_argument('--plan',required=True);parser.add_argument('--max-workers',type=int,default=2);parser.add_argument('--worker')
+    args=parser.parse_args()
+    if args.worker:return worker(args.worker,args.plan,args.executor_port)
+    if args.port not in (9060,9061):raise ValueError('independent W26 loopback port required')
+    workbench=Workbench(args.root,args.plan,args.executor_port,args.max_workers)
+    try:ThreadingHTTPServer(('127.0.0.1',args.port),handler(workbench)).serve_forever()
+    finally:workbench.close()
+
+if __name__=='__main__':main()
