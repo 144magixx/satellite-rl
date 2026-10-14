@@ -42,7 +42,7 @@ def source_check(p):
 
 def human_epoch(p):
  a=c.read(p['human_resume_authority_ref']);e=c.read(p['human_epoch_ref'])
- if p['human_resume_authority_ref']['sha256']!=c.AUTHORITY_SHA or a.get('user_message_verbatim')!='缂佈呯敾' or a.get('human_authorization')is not True or a.get('root_accepted')is not True:raise ValueError('explicit human continue')
+ if p['human_resume_authority_ref']['sha256']!=c.AUTHORITY_SHA or a.get('user_message_verbatim')!='\u7ee7\u7eed' or a.get('human_authorization')is not True or a.get('root_accepted')is not True:raise ValueError('explicit human continue')
  if e.get('schema')!='R11NewGhHumanEpochV1' or e.get('group')!=GROUP or e.get('root_accepted')is not True or e.get('new_deadline_unix_seconds')is not None:raise ValueError('new R11 epoch')
  if e.get('authority_ref')!=p['human_resume_authority_ref'] or any(e.get(k)!=p[k] for k in ('run_id','request_id','archive_root','execution_epoch_id')):raise ValueError('exact epoch/task binding')
  if not e.get('execution_epoch_id') or not e.get('watched_pause_paths') or not isinstance(e.get('historical_hold_exemptions'),list):raise ValueError('explicit pause inventory')
