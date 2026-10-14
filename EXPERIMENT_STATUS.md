@@ -7,7 +7,7 @@
 
 三端watchdog已留部署回执；06:58请求安全保存，07:00前本组训练/评价/后续调度暂停，只有此后用户明确“继续”可恢复，不代为08:00重启。本地持久pilot controller已从独立ops冻结源`2464743cde38dbf85afd6fa0a55597ce3e7f6afc`启动，PID35980的命令、解释器与创建时间只读实核一致；controller_state为observing_pilots，error.json不存在，stderr仅依赖弃用提示。controller不自动重启worker；scientific源仍为2beeb1ec，不能与ops源混淆。入口：[方案27](docs/第二阶段/方案/27_T-SAC温度与槽功率联合建模自主探索方案.md) · [运行总账](../../paper/outputs/experiments/s2_tsac_search27_20261015/run_manifest.json) · [登记计划](../../paper/outputs/experiments/s2_tsac_search27_20261015/run_plan.json) · [成本](../../paper/outputs/experiments/s2_tsac_search27_20261015/costs/ledger_index.json) · [失败](../../paper/outputs/experiments/s2_tsac_search27_20261015/failures/index.json)。根登记文件为本次提交后的证据汇总，不冒称事前冻结时间；事前方案与实际执行合同均以SHA绑定。
 
-最终矩阵controller已从独立冻结源`4ec00e6abc6229ac9637ad5c01476cbc24f8d6e9`启动，PID596命令/解释器/创建时间独核匹配；748个Git blob SHA及四个审核源码的CRLF/LF归一化映射通过。当前waiting_for_locked_pilot_decision，尚无POST intent、尚未开已知40母矩阵；root audited_recipe已冻结源码/科学与原W26计划/两历史权重/门槛/560或680预算，无需未来人工确认。最晚06:00前新开矩阵，06:58停止新调度并保存、07:00硬暂停；未赶上则等待用户明确继续。截止verifier PID47008按独立验收只读等待核三端退出与断点，不作科学调度。三个源码职责为2bee科学worker、2464743c先导ops、4ec00e6最终controller/已知评价，运行中的2beeworker不变。报告27尚未形成。
+最终矩阵controller已从独立冻结源`4ec00e6abc6229ac9637ad5c01476cbc24f8d6e9`启动，PID596命令/解释器/创建时间独核匹配；748个Git blob SHA及四个审核源码的CRLF/LF归一化映射通过。当前waiting_for_locked_pilot_decision，尚无POST intent、尚未开已知40母矩阵；root audited_recipe已冻结源码/科学与原W26计划/两历史权重/门槛/560或680预算，无需未来人工确认。最晚06:00前新开矩阵，06:58停止新调度并保存、07:00硬暂停；未赶上则等待用户明确继续。截止verifier PID47008按独立验收只读等待核三端退出与断点，不作科学调度。三个源码职责为2bee科学worker、2464743c先导ops、4ec00e6最终controller/已知评价，运行中的2beeworker不变。本轮正式报告尚未形成。
 <!-- W27_CURRENT_END -->
 
 
