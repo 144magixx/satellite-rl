@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-14 S1-AI17-R11四例工程启动在运输参数入口失败，尚无原生求解。** 核心／runner／外guard源码已分别独审，73实际DQN、原714＋29新源码、3份历史暂停代次及新暂停路径、共享NFS空间均通过；29源码及41最终输入已落地。唯一launch运输调用因内嵌脚本遗漏`sys`导入，在读取JSON参数时exit1，未到目录／intent／Popen；根实际SFTP确认launch／control／output三目录均不存在。四次solver及67枚举仍0，失败耗时未知保留，不记0成本、不自动重试。正独审零入口证据并修新运输版本；原最终元数据不覆盖，过期route须新路径后同逻辑任务接续。[失败原件与实际路径核验](outputs/experiments/first_stage_ai_search_20261013/round11/toy_actual_01/launch_metadata_failure_01.json) · [当前清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)。R10结案保持，12景科学尚未提交。
+
 **2026-10-14 S1-AI17已转入R11准备；R10完整交付闭合，不再运行其科学／collector／归档任务。** R10负结果9／1、报告23、三图及所选规范E／远端主包均已根验；最后8叶712886B状态补充与主包索引保持，两端再次逐SHA核验，旧pending快照保留、不随下一轮追补。[最终元数据接受](outputs/experiments/first_stage_ai_search_20261013/round10/archive_closure_01/root_final_metadata_acceptance.json) · [最终规范回执](outputs/experiments/first_stage_ai_search_20261013/round10/archive_closure_01/final_R10_archive_closure_with_supplement.json)。全历史T0祖先未闭合及预览清理策略拒绝仍明确保留。
 
 [方案28](docs/第一阶段/方案/28_固定覆盖图上的峰值直方图目标机制试验.md)的唯一新臂Gh已通过独立数学可实现性审核并[根接受](outputs/experiments/first_stage_ai_search_20261013/round11/root_mathematical_design_acceptance.json)，核心与运维候选源码也已独审。它固定原R10的12母／common／中心／N菜单／q，只将目标改为最高负载优先的精确整数直方图；新36槽、最多26流，不训练模型、不重跑旧对照。当前4个固定抽象图（4次solve＋67向量）尚未执行，正式实际source／输入／工作台／资源资格未通过，不可提交科学任务。原2³⁰读取、300秒／2GiB与新3母优于Gr且3母优于强顺序门槛不松。[R11动态清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)为后继入口；只用73／74，18／24不动。
