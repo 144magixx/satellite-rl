@@ -174,7 +174,7 @@ class R9Operations(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);child=self.mock_child(root,exitcode=0);closed=Mock()
    def spawn(*args,**kw):c.immutable(root/'stage_output.json',{'mock':True});return child
-   with patch.object(guard,'identity',return_value=OWNER),patch.object(guard.os,'getpgid',return_value=12345,create=True):r=guard.run_stage(['mock'],root,'common',stop=lambda:None,popen=spawn,terminate=closed)
+   with patch.object(guard,'identity',return_value=OWNER),patch.object(guard.os,'getpgid',return_value=12345,create=True):r=guard.run_stage(['mock'],root,'common',stop=lambda:None,popen=spawn,terminate=closed,memory=lambda pid:0)
    self.assertEqual(r['status'],'completed');closed.assert_called_once_with(child,OWNER)
  def test_subtree_after_leader_exit_kills_exact_member_not_PGID(self):
   child=SimpleNamespace(pid=12345,poll=lambda:0);grandchild=dict(OWNER,pid=12346,birth_ticks=12)
@@ -206,4 +206,19 @@ class R9Operations(unittest.TestCase):
    p={'source_files':{},'original_source_manifest_ref':{'path':str(source/'manifest.json'),'sha256':'mock'}}
    with patch.object(c,'read',return_value={'files':{}}),patch.dict(sys.modules,{'satellite_rl':bad}):
     with self.assertRaises(ValueError):c.imported_check(p)
+ def test_short_child_completed_output_still_fails_hard_deadline(self):
+  for stage,limit in [('RULE',15),('D5',15),('common',30),('pool',60)]:
+   with tempfile.TemporaryDirectory() as tmp:
+    root=Path(tmp);child=self.mock_child(root,exitcode=0);ticks=iter([0,limit+.01])
+    def spawn(*args,**kw):c.immutable(root/'stage_output.json',{'mock':True});return child
+    with patch.object(guard,'identity',return_value=OWNER),patch.object(guard.os,'getpgid',return_value=12345,create=True):
+     with self.assertRaises(RuntimeError):guard.run_stage(['mock'],root,stage,stop=lambda:None,popen=spawn,terminate=Mock(),memory=lambda pid:0,clock=lambda:next(ticks))
+    r=json.loads((root/'guard_receipt.json').read_bytes());self.assertEqual(r['status'],'partial_unknown');self.assertEqual(r['reason'],'hard_time_guard')
+ def test_short_child_without_owner_is_unknown_even_success_output(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);child=self.mock_child(root,exitcode=0);closed=Mock()
+   def spawn(*args,**kw):c.immutable(root/'stage_output.json',{'mock':True});return child
+   with patch.object(guard,'identity',side_effect=[OWNER,None]):
+    with self.assertRaises(RuntimeError):guard.run_stage(['mock'],root,'pool',stop=lambda:None,popen=spawn,terminate=closed,memory=lambda pid:0)
+   closed.assert_not_called();r=json.loads((root/'guard_receipt.json').read_bytes());self.assertEqual(r['status'],'partial_unknown');self.assertFalse(r['subtree_exit_verified']);self.assertIsNone(r['actual_child'])
 if __name__=='__main__':unittest.main()

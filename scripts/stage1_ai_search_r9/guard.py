@@ -57,30 +57,40 @@ def run_stage(command,directory,stage,*,stop,limits=None,popen=subprocess.Popen,
  folder=Path(directory);folder.mkdir(parents=True,exist_ok=True);wal=folder/'stage.wal.json';out=folder/'stage_output.json';receipt=folder/'guard_receipt.json'
  if wal.exists() or receipt.exists() or out.exists():raise ValueError('existing/unknown stage; read-only reuse requires separate root admission, never auto replay')
  began=clock();record=dict(stage=stage,status='intent_before_spawn',command=command,hard_seconds=limits[stage],rss_bytes_max=2147483648,actual_parent=identity(os.getpid()),unknown_never_replayed=True)
- immutable(wal,record);child=None;owner=None;reason=None;error=None;caught=None;peak=0
+ immutable(wal,record);child=None;owner=None;reason=None;error=None;caught=None;peak=0;subtree_closed=False;final_observation_error=None
  try:
   stop()
   env=dict(os.environ,R9_PARENT_PID=str(os.getpid()),PYTHONDONTWRITEBYTECODE='1')
   with (folder/'stage.log').open('ab',buffering=0) as log:
    child=popen(command,stdout=log,stderr=subprocess.STDOUT,stdin=subprocess.DEVNULL,start_new_session=True,env=env)
    owner=identity(child.pid)
-   if owner is None and child.poll()is None:raise RuntimeError('live child identity unknown')
+   if owner is None:raise RuntimeError('child birth/boot identity unavailable; completed exit cannot close unknown descendants')
    if owner and os.getpgid(child.pid)!=child.pid:raise RuntimeError('own new stage PGID required')
    record.update(status='native_started',actual_child=owner);atomic(wal,record)
    while child.poll()is None:
     stop();peak=max(peak,memory(os.getpid()))
     if clock()-began>=limits[stage]:reason='hard_time_guard'
     elif peak>2147483648:reason='parent_children_RSS_guard'
-    if reason:terminate(child,owner);break
+    if reason:terminate(child,owner);subtree_closed=True;break
     sleep(.05)
-   if reason is None and owner is not None:terminate(child,owner)
+   if reason is None and owner is not None:terminate(child,owner);subtree_closed=True
  except BaseException as e:
   caught=e;error=type(e).__name__+': '+str(e);reason=reason or 'pause_or_interface_failure'
-  if child is not None and child.poll()is None:terminate(child,owner)
+  if child is not None and owner is not None:terminate(child,owner);subtree_closed=True
  finally:
+  # A very short child may exit before the first monitor poll. Completion is
+  # subject to the same final operational limits and owner/subtree proof.
+  try:
+   peak=max(peak,memory(os.getpid()))
+   if reason is None:stop()
+  except BaseException as e:
+   final_observation_error=type(e).__name__+': '+str(e);reason=reason or 'final_observer_failure'
+   if caught is None:caught=e
   elapsed=clock()-began
-  completed=child is not None and child.poll()==0 and reason is None and out.is_file()
-  result=dict(status='completed' if completed else 'partial_unknown',stage=stage,reason=reason or (None if completed else 'native_error_or_no_output'),error=error,actual_stage_wall_seconds=elapsed,peak_parent_children_rss_bytes=peak,actual_child=owner,exit_code=child.poll() if child else None,output_ref=dict(path=str(out),sha256=digest(out)) if out.is_file() else None,algorithm_spend_exact=None,automatic_retry=False,nested_timers_not_additive=True)
+  if reason is None and elapsed>=limits[stage]:reason='hard_time_guard'
+  if reason is None and peak>2147483648:reason='parent_children_RSS_guard'
+  completed=child is not None and child.poll()==0 and reason is None and owner is not None and subtree_closed and out.is_file()
+  result=dict(status='completed' if completed else 'partial_unknown',stage=stage,reason=reason or (None if completed else 'native_error_or_no_output'),error=error,final_observation_error=final_observation_error,actual_stage_wall_seconds=elapsed,peak_parent_children_rss_bytes=peak,peak_RSS_is_sampled=True,actual_child=owner,subtree_exit_verified=subtree_closed,exit_code=child.poll() if child else None,output_ref=dict(path=str(out),sha256=digest(out)) if out.is_file() else None,algorithm_spend_exact=None,automatic_retry=False,nested_timers_not_additive=True)
   immutable(receipt,result)
  if not completed:
   if isinstance(caught,Paused):raise caught
