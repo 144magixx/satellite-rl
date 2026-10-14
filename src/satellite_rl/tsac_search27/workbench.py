@@ -26,7 +26,9 @@ def validate_task(task):
     if task['mode'] not in ('engineering', 'science', 'known_evaluation'):
         raise ValueError('unknown mode')
     if task['mode'] == 'known_evaluation':
-        raise ValueError('known matrix evaluator requires separate locked matrix implementation')
+        from .known_evaluation import validate_lock
+        validate_lock(c)
+        return
     engineering = task['mode'] == 'engineering'
     if c.get('variant') not in ('B','E','LP') or c.get('group') != 'S10':
         raise ValueError('variant/schema mismatch')
@@ -67,11 +69,13 @@ class Workbench:
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', key):
                 raise ValueError('invalid task key')
             validate_task(task)
+            if task['mode']=='known_evaluation' and task['config'].get('evaluation_source_commit')!=p['source_commit']:
+                raise ValueError('known evaluation actual frozen Git source mismatch')
 
     def admission(self, task, dispatch_epoch=None, resource_ref=None):
         self.validate_plan(); c=task['config']
         self.gate.validate(dispatch_epoch or c['rootpauseepoch'])
-        names = ['source','resources','data'] + (['engineering'] if task['mode']=='science' else [])
+        names = ['source','resources','data'] + (['engineering'] if task['mode'] in ('science','known_evaluation') else [])
         for name in names:
             r = read_json_ref(resource_ref if name=='resources' and resource_ref is not None else self.plan['admission_refs'][name])
             if r.get('root_approved') is not True or r.get('passed') is not True or r.get('experiment_id') != 'S2-W27':
@@ -160,11 +164,15 @@ def worker(args):
         w.gate.register_worker(epoch,owner, continuation=(dict(run_dir=str(d), config=c, receipt_ref=job['continuation_ref']) if job.get('continuation_ref') else None))
         atomic_json(d/'owner.json',owner)
         atomic_json(d/'dispatch_intent.json',dict(job,stage='registered',owner=owner))
-        from .runner import run_task
+        if task['mode']=='known_evaluation':
+            from .known_evaluation import run_known_task as run_task
+        else:
+            from .runner import run_task
         def progress(value): atomic_json(d/'status.json',value)
         try:
-            run_task(c,d,progress,lambda: (d/'stop.json').exists() or w.gate.stop_requested(epoch),
-                     continuation_ref=job.get('continuation_ref'))
+            stop=lambda: (d/'stop.json').exists() or w.gate.stop_requested(epoch)
+            if task['mode']=='known_evaluation': run_task(c,d,progress,stop)
+            else: run_task(c,d,progress,stop,continuation_ref=job.get('continuation_ref'))
         except BaseException as e:
             progress({'stage':'failed','error':repr(e)}); raise
 

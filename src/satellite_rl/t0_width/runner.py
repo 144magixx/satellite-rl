@@ -143,6 +143,8 @@ def evaluate_cases(agent, records, group, *, loader=None, env_factory=None, seed
                 timing = dict(input_and_reset_s=time.perf_counter() - started, mask_s=0.,
                               inference_s=0., environment_s=0.)
                 done = False
+                resumed_from_WAL = False
+                prior_algorithm_s = 0.
                 index = 0
                 step_rows = []
                 wal_identity = dict(node=node, group=group, phase=phase, cursor=cursor,
@@ -155,6 +157,8 @@ def evaluate_cases(agent, records, group, *, loader=None, env_factory=None, seed
                         env.load_state_dict(saved["environment"])
                         state = saved["observation"]
                         timing = saved["timing"]
+                        resumed_from_WAL = True
+                        prior_algorithm_s = sum(timing.values())
                         step_rows = saved["step_rows"]
                         index = len(step_rows)
                         done = saved["done"]
@@ -164,6 +168,8 @@ def evaluate_cases(agent, records, group, *, loader=None, env_factory=None, seed
                     else:
                         raise ValueError("Evaluation WAL identity mismatch")
                 while not done:
+                    if stop_requested is not None and stop_requested():
+                        return rows, False  # Preserve committed per-step WAL for exact same repeat.
                     if wal_path is not None:
                         _atomic_torch(wal_path, dict(identity=wal_identity, stage="intent",
                                       environment=env.state_dict(), observation=state, timing=timing,
@@ -202,6 +208,9 @@ def evaluate_cases(agent, records, group, *, loader=None, env_factory=None, seed
                 timing["terminal_s"] = terminal_finished - terminal_started
                 timing["algorithm_with_terminal_s"] = timing["total_s"] + timing["terminal_s"]
                 timing["wall_to_terminal_s"] = terminal_finished - started
+                timing["resumed_from_WAL"] = resumed_from_WAL
+                timing["previous_algorithm_s"] = prior_algorithm_s
+                timing["wall_to_terminal_scope"] = "current_invocation_including_restore"
                 rows.append(row)
                 if logs is not None:
                     for step_row in step_rows:

@@ -12,6 +12,8 @@ def validate_training_admission(config):
             or gate.get('qualified_counts') != {'train': 576, 'development': 20}
             or not gate.get('logical_dataset_identity')):
         raise ValueError('W27 exact train/development root admission required')
+    if config.get('data_manifest_sha') != gate['logical_dataset_identity']:
+        raise ValueError('config logical dataset identity differs from admitted ordered partitions')
     for role, key, count in [('train', 'train_cases', 576), ('development', 'dev_cases', 20)]:
         ref = config[role + '_manifest_ref']
         if gate['partition_manifest_SHAs'].get(role) != ref['sha256']:
