@@ -1,5 +1,5 @@
 """Native safety guard with durable reservations; unknown attempts never replay."""
-import os,signal,subprocess,time
+import errno,os,signal,subprocess,time
 from pathlib import Path
 from .contracts import atomic,immutable,identity,same_process,digest,read
 from .control import Paused
@@ -13,13 +13,17 @@ def rss_tree(pid):
   try:
    total+=int((proc/'statm').read_text().split()[1])*page
    for thread in (proc/'task').iterdir():pending.extend(map(int,(thread/'children').read_text().split()))
-  except FileNotFoundError:continue
+  except OSError as e:
+   if e.errno in (errno.ENOENT,errno.ESRCH):continue
+   raise
  return total
 def group_members(expected):
  """One fresh session is owned only by this admitted leader birth+boot."""
  if expected is None:raise RuntimeError('missing owner identity')
  boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
  if boot!=expected['boot_id']:raise RuntimeError('boot changed; no PID kills')
+ leader=identity(expected['pid'])
+ if leader is not None and not same_process(expected,leader):raise RuntimeError('old session leader PID reused; refuse entire group')
  result=[]
  for proc in Path('/proc').iterdir():
   if not proc.name.isdigit():continue
@@ -27,12 +31,13 @@ def group_members(expected):
   if current is None:continue
   try:raw=(proc/'stat').read_text();f=raw[raw.rfind(')')+2:].split()
   except OSError as e:
-   import errno
    if e.errno in (errno.ENOENT,errno.ESRCH):continue
    raise
   if int(f[2])==expected['pid'] and int(f[3])==expected['pid']:
    if int(f[19])!=current['birth_ticks'] or current['birth_ticks']<expected['birth_ticks']:raise RuntimeError('session member generation changed')
    if current['state']!='Z':result.append(current)
+ leader=identity(expected['pid'])
+ if leader is not None and not same_process(expected,leader):raise RuntimeError('session leader PID reused during observation; refuse entire group')
  return result
 def terminate_owned(child,expected):
  live=child.poll()is None

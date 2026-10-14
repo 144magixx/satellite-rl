@@ -221,4 +221,23 @@ class R9Operations(unittest.TestCase):
    with patch.object(guard,'identity',side_effect=[OWNER,None]):
     with self.assertRaises(RuntimeError):guard.run_stage(['mock'],root,'pool',stop=lambda:None,popen=spawn,terminate=closed,memory=lambda pid:0)
    closed.assert_not_called();r=json.loads((root/'guard_receipt.json').read_bytes());self.assertEqual(r['status'],'partial_unknown');self.assertFalse(r['subtree_exit_verified']);self.assertIsNone(r['actual_child'])
+ def test_rss_statm_disappearance_only_ENOENT_ESRCH(self):
+  for code in (errno.ENOENT,errno.ESRCH,errno.EACCES):
+   proc=Mock();statm=Mock();statm.read_text.side_effect=OSError(code,'mock statm');proc.__truediv__=Mock(return_value=statm);base=Mock();base.__truediv__=Mock(return_value=proc)
+   with patch.object(guard,'Path',return_value=base),patch.object(guard.os,'sysconf',return_value=4096,create=True):
+    if code in (errno.ENOENT,errno.ESRCH):self.assertEqual(guard.rss_tree(12345),0)
+    else:
+     with self.assertRaises(OSError):guard.rss_tree(12345)
+ def test_rss_thread_children_ESRCH_keeps_observed_RSS(self):
+  proc=Mock();statm=Mock();statm.read_text.return_value='9 2 0';children=Mock();children.read_text.side_effect=OSError(errno.ESRCH,'mock thread gone');thread=Mock();thread.__truediv__=Mock(return_value=children);task=Mock();task.iterdir.return_value=[thread];proc.__truediv__=Mock(side_effect=lambda name:statm if name=='statm' else task);base=Mock();base.__truediv__=Mock(return_value=proc)
+  with patch.object(guard,'Path',return_value=base),patch.object(guard.os,'sysconf',return_value=4096,create=True):self.assertEqual(guard.rss_tree(12345),8192)
+ def test_group_session_leader_reused_refuses_enumeration(self):
+  boot=Mock();boot.read_text.return_value='mockboot';newleader=dict(OWNER,birth_ticks=999)
+  with patch.object(guard,'Path',return_value=boot),patch.object(guard,'identity',return_value=newleader):
+   with self.assertRaisesRegex(RuntimeError,'leader PID reused'):guard.group_members(OWNER)
+  boot.iterdir.assert_not_called()
+ def test_group_session_leader_reused_during_observation_refuses_members(self):
+  proc=Mock();proc.read_text.return_value='mockboot';proc.iterdir.return_value=[];newleader=dict(OWNER,birth_ticks=999)
+  with patch.object(guard,'Path',return_value=proc),patch.object(guard,'identity',side_effect=[None,newleader]):
+   with self.assertRaisesRegex(RuntimeError,'reused during observation'):guard.group_members(OWNER)
 if __name__=='__main__':unittest.main()
