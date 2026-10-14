@@ -28,6 +28,28 @@ class CoreMockTests(unittest.TestCase):
         self.assertGreater(weight,4*250001)
         with self.assertRaises(ValueError):edge_cost(.6,.3,False,4,'Gd')
 
+    def test_SHC_action_tail_is_original_string_not_menu_ordinal(self):
+        actions=[core.ACTIONS[i][0] for i in (2,1,3)]
+        descriptors=[dict(action=a,rank=[3,-1,10,.001,'source','partner',a]) for a in actions]
+        ordered=core._ordered_descriptors(descriptors,'SH-C',{},Ledger(1))
+        self.assertEqual([d['action'] for d in ordered],[core.ACTIONS[i][0] for i in (3,1,2)])
+
+    def test_metric_qualification_preserves_source_and_allows_root_numeric_protocol(self):
+        source=dict(N=2,maxload=43200000,total_request=86400000,top10_mean=43200000.,CV=.1,actual_Omega=.00004)
+        initial=copy.deepcopy(source)
+        recomputed=copy.deepcopy(source)
+        recomputed['CV']=float(np.nextafter(source['CV'],np.inf))
+        recomputed['top10_mean']=float(np.nextafter(source['top10_mean'],np.inf))
+        # Cos cancellation can exceed four Omega ULPs while well below 1e-12sr.
+        recomputed['actual_Omega']+=5e-13
+        core.qualify_metrics(recomputed,source)
+        self.assertEqual(source,initial)
+        for key,value in [('CV',.1000001),('top10_mean',43200001.),('actual_Omega',.000040000002),('N',3)]:
+            bad=copy.deepcopy(recomputed)
+            bad[key]=value
+            with self.assertRaises(core.InterfaceError if hasattr(core,'InterfaceError') else ValueError):
+                core.qualify_metrics(bad,source)
+
     def test_physical_state_ordinal_permutation_invariant(self):
         scene=SimpleNamespace(aircraft_ids=('d','a','c','b'))
         a=dict(beam_ids=['z','a'],anchor_aircraft_ids=['a','b'],centers=[[1.,2.],[3.,4.]],widths_deg=[.3,.4],assignment=[0,0,1,1])
@@ -106,6 +128,15 @@ class CoreMockTests(unittest.TestCase):
         self.assertEqual(caught.exception.partial_result['selected']['terminal'],{'version':1})
         self.assertEqual(caught.exception.partial_ledger['flow_queries'],1)
         self.assertFalse(caught.exception.partial_result['complete'])
+
+    def test_engineering_unknown_reason_predicate_never_accepts_pause(self):
+        from satellite_rl.coverage.ai_search_r10.engineering_runner import _expected_residual_cap_stop
+        ledger=Ledger(1)
+        ledger.data.update(flow_queries=1,graph_arc_initialization_writes=10,heap_pushes_plus_pops=2)
+        self.assertTrue(_expected_residual_cap_stop(core.ResourceUnknown('residual_edge_inspections_cap'),ledger))
+        self.assertFalse(_expected_residual_cap_stop(core.ResourceUnknown('external_guard_or_pause'),ledger))
+        ledger.data['heap_pushes_plus_pops']=0
+        self.assertFalse(_expected_residual_cap_stop(core.ResourceUnknown('residual_edge_inspections_cap'),ledger))
 
     def test_rejected_kernel_keeps_raw_local_matching(self):
         scene=SimpleNamespace(aircraft_ids=('a','b'),rays=np.array([[1.,0.,0.]]*2),positions=np.array([[50.,13.],[50.,13.]]))

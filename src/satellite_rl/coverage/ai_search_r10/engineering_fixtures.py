@@ -66,3 +66,24 @@ def exact_specs():
              'no graph_infeasible result is fabricated; actual graph writes/heap operations before stop retained',
              'exact persisted common B remains sole legal fallback; no retry or second solve']),
     ]
+
+
+def execution_plan():
+    """Prospective exact call limits, no engineering call on construction."""
+    return dict(schema='R10EightSyntheticEngineeringPlanV2',fixture_count=8,
+        common_calls=8,scene_constructions=8,global_solver_entries_max=5,
+        local_kernel_entries_expected=3,inner_R9_flow_entries_expected_max=7,
+        total_flow_entries_expected_max=12,model_RULE_D5_T_W_calls=0,
+        generic_S2_kernel_safety_guard=32,
+        expectation_note='f3 has one physical2beam2to2 region; minimal counts3/2 and floor widths retain exact raw objective, so no commit and only one unique eligible attempt. Production S2 retains its generic32 safety ceiling; that ceiling is not observed work or an expected32 calls.',
+        fixture_limits=[
+            dict(fixture_id=1,common=1,arms=['Gd'],global_flows=1,local_kernels=0,inner_R9_flows=0),
+            dict(fixture_id=2,common=1,arms=['Gr'],global_flows=1,local_kernels=0,inner_R9_flows=0),
+            dict(fixture_id=3,common=1,arms=['Gd','S2'],global_flows=1,local_kernels=1,inner_R9_flows=3,generic_S2_kernel_safety_guard=32),
+            dict(fixture_id=4,common=1,arms=['Gd'],global_flows=0,local_kernels=0,inner_R9_flows=0),
+            dict(fixture_id=5,common=1,arms=['Gd'],global_flows=1,local_kernels=0,inner_R9_flows=0),
+            dict(fixture_id=6,common=1,arms=[],global_flows=0,local_kernels=1,inner_R9_flows=1,literal_algebra_probes=1,pool_builds=1),
+            dict(fixture_id=7,common=1,arms=[],global_flows=0,local_kernels=1,inner_R9_flows=3,pool_builds=2),
+            dict(fixture_id=8,common=1,arms=[],global_flows=1,local_kernels=0,inner_R9_flows=0,residual_cap=0),
+        ],
+        interpretation='Literal plan only. Separate root source/spec admission is required to call runner. No retry or input/expected-outcome edits after results.')

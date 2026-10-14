@@ -54,6 +54,25 @@ def static_digest(scene):
         rays=np.asarray(scene.rays).tolist(),demands=np.asarray(scene.demands).tolist(),input_sha256=scene.input_sha256))
 
 
+def qualify_metrics(recomputed,source):
+    """Result-before qualification tolerance only; source metrics stay intact.
+
+    Root protocol: discrete values exact, top10/CV within four ULPs, and Omega
+    within 1e-12sr to accommodate cancellation in the frozen cos expression.
+    Scientific protection/hit/selection rules are unchanged.
+    """
+    for key in ('N','maxload','total_request'):
+        require(type(source[key]) is int and recomputed[key]==source[key],
+                'source exact discrete metric '+key)
+    for key in ('top10_mean','CV','actual_Omega'):
+        a,b=recomputed[key],source[key]
+        require(isinstance(a,(int,float)) and isinstance(b,(int,float)) and
+                math.isfinite(a) and math.isfinite(b) and a>=0 and b>=0,
+                'finite nonnegative source float metric '+key)
+        tolerance=(1e-12 if key=='actual_Omega' else 4*max(math.ulp(a),math.ulp(b)))
+        require(abs(a-b)<=tolerance,'source recomputed metric qualification '+key)
+
+
 def prepare_common(scene, origin, *, original_index=None, stop=None):
     """Qualify an already audited saved R9 best terminal, never regenerate it.
 
@@ -70,7 +89,7 @@ def prepare_common(scene, origin, *, original_index=None, stop=None):
     ledger=Ledger(n,stop=stop)
     layout=copy.deepcopy(origin['layout'])
     metrics=audit(scene,layout,origin['Ncap'],origin['Omega_cap'],ledger)
-    require(metrics==origin['metrics'], 'recomputed saved B metrics exactly equal')
+    qualify_metrics(metrics,origin['metrics'])
     owners=np.asarray(layout['assignment'],np.int64)
     b=len(layout['beam_ids'])
     counts=np.bincount(owners,minlength=b)
@@ -149,6 +168,7 @@ def prepare_common(scene, origin, *, original_index=None, stop=None):
         identity=copy.deepcopy(origin['identity']),origin=copy.deepcopy(origin),
         n=n,q=maximum-1,M=maximum,maximum_source_count=int(np.count_nonzero(counts==maximum)),
         added_center_prefix=prefix,unavailable_peak_sources=unavailable,N_slots=slots,
+        recomputed_B_qualification_metrics=metrics,
         all_anchor_ids=allanchors,distances_deg=distances.tolist(),adjacency=eligible.tolist(),
         common_ledger=ledger.record(),observed_common_seconds=time.monotonic()-began,
         new_RULE_D5_T_W_model_calls=0)
@@ -316,12 +336,16 @@ def _pool(scene,common,current,method,ledger):
             descriptor['descriptor_SHA']=digest(descriptor)
             descriptors.append(descriptor)
             ledger.tick('descriptors_generated')
+    return _ordered_descriptors(descriptors,method,dict(zip(ids,map(int,counts))),ledger)
+
+
+def _ordered_descriptors(descriptors,method,counts_by_id,ledger):
     if method=='S2':
-        counts_by_id=dict(zip(ids,map(int,counts)))
-        descriptors=ledger.ordered(descriptors,lambda d:(-counts_by_id[d['source_beam_id']],d['source_beam_id']),'sequential_descriptor_order')
-    else:
-        descriptors=ledger.ordered(descriptors,lambda d:tuple(d['rank']),'sequential_descriptor_order')
-    return descriptors
+        return ledger.ordered(descriptors,lambda d:(-counts_by_id[d['source_beam_id']],d['source_beam_id']),'sequential_descriptor_order')
+    # Root result-before clarification: action_code is the original complete
+    # ACTIONS string under Python Unicode lexical order, never an ordinal.
+    require(all(type(d['action']) is str and d['rank'][-1]==d['action'] for d in descriptors),'original action string tail key')
+    return ledger.ordered(descriptors,lambda d:tuple(d['rank']),'sequential_descriptor_order')
 
 
 def _kernel_body(scene,common,current,descriptor,outer,observations):
