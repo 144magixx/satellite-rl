@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-15 S1-AI17-R12在执行前拦下方案29的结构性缺陷，方案30已获结果前设计接受；尚无新工程或科学计算。** 静态证明表明：只联合并列最重束时，同束数动作不改变人数分布，其后加束与直接加束产生同一道问题，不能证明两步选择超过同范围贪心。这是设计否决，不是实验负结果；[原方案停止记录](outputs/experiments/first_stage_ai_search_20261013/round12/design_static_review_01/root_v1_static_design_stop.json)保留原文、代码准备和费用。[方案30](docs/第一阶段/方案/30_邻域余量支持的两步波束重构试点.md)加入一个接触且负载较低的邻束，并以整数人数和排列不变的精确键比较新状态；原12训练母、72核／576流和全部科学门槛不变，模型／训练／heldout仍0。新设计消除了原证明前提，尚未证明实际收益。
+
+[v2根设计接受](outputs/experiments/first_stage_ai_search_20261013/round12/root_prospective_design_acceptance_v2.json)b0230267只允许源码和输入准备。Sol分别修改核心及运行／独立审核程序；旧强顺序摘要没有整数人数，正定位已保存的最终归属供精确比较，不能从CV反推或重跑旧算法。新代码、有限工程和真实现场资格未闭合，不得启动；73／74暂停守卫已只读核为存活，07:00截止与暂停后须人类明确继续保持。[当前清单](outputs/experiments/first_stage_ai_search_20261013/round12/run_manifest.json)优先于下列历史进度。
+
 **2026-10-15 S1-AI17-R11报告、三图及所选双端规范归档已闭合；当前转入R12代码准备，尚未开始新实验。** [报告24](docs/第一阶段/实验报告/24_峰值直方图机制试验与不完整审核记录.md)最终字节573c1091已在证书／出版合同双端校验后发布，[实际出版回执](outputs/experiments/first_stage_ai_search_20261013/round11/archive_final_01/publication_receipt.json)db01ad38为closed，[最终签收](outputs/experiments/first_stage_ai_search_20261013/round11/archive_final_01/root_final_selected_archive_acceptance.json)52c3c706保存主包、补充及恢复入口。主包1238个新对象、补充35个新对象均逐成员双端核验，既有共享依赖只引用；最初流式压缩兼容失败和旧01残件完整保留。R11科学结论仍是3条部分摘要、9景未审、母6工程unknown，不判算法通过或有效负结果；禁止再跑本轮科学、reader、标量或归档重扫。完整历史T0原始596祖先仍未闭合。
 
 [方案29](docs/第一阶段/方案/29_联合瓶颈结构动作与两步价值试点.md)及[R12结果前设计接受](outputs/experiments/first_stage_ai_search_20261013/round12/root_prospective_design_acceptance_v1.json)已登记：检验联合瓶颈区域与两步结构选择是否留下超过强规则、最佳固定序列及单步的收益空间，最多72新内核／576内部流，首阶段模型、训练和heldout预算均0，旧关闭额度不转移。GPT-6.1 Sol两路在既有受管工作树分别准备新核心与运行／独立审核代码，保护旧10项R11修改；核心已报告8项纯检查通过、非零间隔8飞机工程样例待独审，reader／工作台仍在补齐。实际GEO、flow、远端提交与工程调用均0，不能把源码准备当实际运行。[当前R12清单](outputs/experiments/first_stage_ai_search_20261013/round12/run_manifest.json)是后继入口；07:00新暂停、每机21.6 Mbps及三阶段一致性继续优先。
