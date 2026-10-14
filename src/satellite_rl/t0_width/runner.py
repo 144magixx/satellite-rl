@@ -106,8 +106,9 @@ def _terminal(env, identity, **fields):
     value = dict(identity=identity, metrics=env.metrics(), beams=beams, **fields)
     allocation = env.export_allocation()
     value["allocation_SHA"] = allocation.get("content_sha256")
-    value["allocation_parent_SHA"] = allocation.get("parent_layout_sha256", identity.get("layout_SHA"))
-    value["allocation"] = allocation
+    value["allocation_parent_SHA"] = allocation.get("parent_layout_SHA", identity.get("layout_SHA"))
+    from satellite_rl.shared_interface.content import wire_bytes
+    value["allocation_wire"] = json.loads(wire_bytes(allocation))
     return value
 
 

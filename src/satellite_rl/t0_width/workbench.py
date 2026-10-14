@@ -16,7 +16,11 @@ from .guard import birth,proc_stat
 
 def now():return datetime.now(timezone.utc).isoformat()
 def read(path):return json.loads(Path(path).read_text(encoding='utf8'))
-def sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def sha(path):
+    value=hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for block in iter(lambda:stream.read(1024*1024),b''):value.update(block)
+    return value.hexdigest()
 def boot_id():
     if os.name!='nt':return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     import psutil
@@ -78,11 +82,12 @@ class Workbench:
             if not path.is_relative_to(source) or sha(path)!=expected:raise ValueError('source manifest changed: '+relative)
         if not isinstance(p.get('tasks'),dict) or not p['tasks']:raise ValueError('frozen tasks required')
         for key,task in p['tasks'].items():
-            if not re.fullmatch('[A-Za-z0-9_-]{1,100}',key) or task['executor_port'] not in (20418,20424) or task['mode'] not in ('download','sourceprep','prepare','engineering','train','evaluate') or not isinstance(task['config'],dict):raise ValueError('frozen task contract')
+            if not re.fullmatch('[A-Za-z0-9_-]{1,100}',key) or task['executor_port'] not in (20418,20424) or task['mode'] not in ('download','sourceprep','prepare','audit','engineering','train','evaluate') or not isinstance(task['config'],dict):raise ValueError('frozen task contract')
             if task['config'].get('executor_port',task['executor_port'])!=task['executor_port']:raise ValueError('frozen config executor mismatch')
             mode=task['mode'];config=task['config']
-            if mode in ('download','sourceprep','prepare'):
+            if mode in ('download','sourceprep','prepare','audit'):
                 if {'training','phase','task_kind'}&set(config):raise ValueError('data mode cannot carry runner selectors')
+                if mode=='audit':self.validate_audit_task(task)
             elif mode in ('engineering','train'):
                 training=config.get('training',{});engineering=mode=='engineering'
                 expected_seed=73026 if engineering else 51001
@@ -124,7 +129,7 @@ class Workbench:
 
     def validate_admission(self,mode):
         self.validate_plan()
-        required=['source','resources']+([] if mode in ('download','sourceprep','prepare') else ['data'])+(['engineering'] if mode in ('train','evaluate') else [])
+        required=['source','resources']+([] if mode in ('download','sourceprep','prepare','audit') else ['data'])+(['engineering'] if mode in ('train','evaluate') else [])
         for name in required:
             ref=self.plan['admission_refs'][name]
             if sha(ref['path'])!=ref['sha256']:raise ValueError('admission SHA: '+name)
@@ -138,6 +143,23 @@ class Workbench:
                 max_age=admission.get('max_age_seconds',300)
                 if not 0<max_age<=300 or not 0<=age<=max_age:raise ValueError('fresh resource receipt expired')
                 if admission['boot_id']!=boot_id() or admission['gpu_uuid'] not in gpu_uuids():raise ValueError('resource boot/GPU identity mismatch')
+
+    def validate_audit_task(self,task):
+        config=task['config'];ref=config['audit_admission_ref']
+        if sha(ref['path'])!=ref['sha256']:raise ValueError('audit admission SHA')
+        receipt=read(ref['path']);port=task['executor_port']
+        if (receipt.get('schema')!='W26DataAuditExecutionAdmissionV1' or receipt.get('root_approved') is not True):raise ValueError('root publication audit admission')
+        ports=[receipt[k] for k in ('remote_port','executor_port') if k in receipt]
+        if not ports or any(value!=port for value in ports) or config['executor_port']!=port:raise ValueError('publication audit executor mismatch')
+        if receipt.get('source_commit')!=self.plan['source_commit'] or config['source_commit']!=self.plan['source_commit']:raise ValueError('publication audit source commit')
+        manifest_ref=config['prepare_manifest_ref'];shards=config['shard_index_refs']
+        if sha(manifest_ref['path'])!=manifest_ref['sha256'] or receipt.get('manifest_SHA')!=manifest_ref['sha256']:raise ValueError('publication audit manifest SHA binding')
+        if len(shards)!=4 or len({ref['sha256'] for ref in shards})!=4 or receipt.get('shard_index_SHAs')!=[ref['sha256'] for ref in shards]:raise ValueError('four exact publication audit shard refs')
+        for ref in shards:
+            if sha(ref['path'])!=ref['sha256']:raise ValueError('publication audit shard SHA')
+        if receipt.get('max_layout_checks')!=636 or receipt.get('expected_counts')!=dict(train=576,development=20,test=40) or receipt.get('expected_native_imports')!=594 or receipt.get('expected_new_prepare')!=42:raise ValueError('bounded publication audit636 contract')
+        if not re.fullmatch('[0-9a-f]{64}',receipt.get('core_SHA','')):raise ValueError('publication audit frozen core SHA')
+        if 'case_indices' in config:raise ValueError('publication audit consumes full frozen shard graph only')
 
     def status_path(self,run_id):
         if not re.fullmatch('[0-9a-f]{24}',run_id):raise ValueError('run id')
@@ -194,7 +216,7 @@ class Workbench:
             directory=path.parent;directory.mkdir()
             config=dict(task['config']);config['run_id']=run_id
             config['executor_port']=task['executor_port']
-            model_dir=self.root/'models'/run_id
+            model_dir=self.root/'models'/'runs'/run_id
             if 'model_dir' in config and Path(config['model_dir']).resolve()!=model_dir:raise ValueError('dedicated model directory required')
             config['model_dir']=str(model_dir)
             atomic_json(directory/'config.json',config)
@@ -205,17 +227,86 @@ class Workbench:
             atomic_json(path,status)
             return self.launch(run_id)
 
-    def launch(self,run_id):
+    def launch(self,run_id,*,source_root=None,plan_path=None,control_source_commit=None):
         path=self.status_path(run_id);status=read(path);directory=path.parent
-        environment=os.environ.copy();source=Path(self.plan['source_root'])
+        environment=os.environ.copy();source=Path(source_root or self.plan['source_root'])
         environment['PYTHONPATH']=os.pathsep.join([str(source/'src'),str(source)])
-        command=[sys.executable,'-m','satellite_rl.t0_width.workbench','--worker',str(directory),'--plan',str(self.plan_path),'--executor-port',str(self.executor_port)]
+        command=[sys.executable,'-m','satellite_rl.t0_width.workbench','--worker',str(directory),'--plan',str(plan_path or self.plan_path),'--executor-port',str(self.executor_port)]
         with (directory/'worker.log').open('ab') as log:
             proc=subprocess.Popen(command,cwd=source,env=environment,stdout=log,stderr=subprocess.STDOUT,start_new_session=os.name!='nt')
         status.update(status='starting',pid=proc.pid,process_birth=birth(proc.pid),boot_id=boot_id(),worker_started_UTC=now())
+        for obsolete in ('error','finished_UTC','reason'):
+            status.pop(obsolete,None)
+        if control_source_commit:status['control_source_commit']=control_source_commit
         atomic_json(path,status);self.children[run_id]=proc
         # Worker waits for this parent ownership record before taking updates.
         return status
+
+    def recover_download(self,run_id,body):
+        """Reuse two fully verified original bytes through the original worker.
+
+        No generic budget recovery, URL substitution, or new download is allowed.
+        """
+        with self.lock:
+            if set(body)!= {'plan_sha256','recovery_admission_ref'} or body['plan_sha256']!=self.plan_sha:raise ValueError('download recovery control identity')
+            path=self.status_path(run_id);status=read(path);directory=path.parent
+            if status['mode']!='download' or status['status'] not in ('failed','interrupted'):raise ValueError('only failed/interrupted original download recovery')
+            if alive(status):raise ValueError('original download worker remains alive')
+            self.validate_admission('download')
+            ref=body['recovery_admission_ref']
+            if set(ref)!= {'path','sha256'} or sha(ref['path'])!=ref['sha256']:raise ValueError('download recovery receipt SHA')
+            receipt=read(ref['path'])
+            if (receipt.get('schema')!='W26DownloadTransportRecoveryV1' or receipt.get('root_approved') is not True or receipt.get('passed') is not True or receipt.get('experiment_id')!='S2-W26' or receipt.get('executor_port')!=self.executor_port or receipt.get('run_id')!=run_id):raise ValueError('root download recovery scope')
+            job_path=directory/'job.json';config_path=directory/'config.json'
+            if sha(job_path)!=receipt['original_job_SHA']:raise ValueError('original job SHA mismatch')
+            job=read(job_path);config=read(config_path)
+            if content_sha(config)!=receipt['original_config_SHA'] or job['config_sha256']!=receipt['original_config_SHA']:raise ValueError('original config SHA mismatch')
+            original_status=job['status']
+            if any(original_status.get(k)!=status.get(k) for k in ('run_id','task_key','mode','request_sha256','plan_sha256')) or status['request_sha256'][:24]!=run_id:raise ValueError('original run/request identity mismatch')
+            original_plan_ref=receipt['original_plan_ref']
+            if sha(original_plan_ref['path'])!=original_plan_ref['sha256'] or original_plan_ref['sha256']!=status['plan_sha256']:raise ValueError('original frozen plan SHA mismatch')
+            original_plan=read(original_plan_ref['path']);original_task=original_plan['tasks'][status['task_key']]
+            if original_task['mode']!='download' or original_task['executor_port']!=self.executor_port or any(config.get(k)!=v for k,v in original_task['config'].items()):raise ValueError('original frozen download task differs')
+            source=Path(job['source_root']).resolve()
+            if str(source)!=str(Path(original_plan['source_root']).resolve()) or job['source_manifest']!=original_plan['source_manifest']:raise ValueError('original worker source scope mismatch')
+            for relative,expected in job['source_manifest'].items():
+                member=(source/relative).resolve()
+                if not member.is_relative_to(source) or sha(member)!=expected:raise ValueError('original source manifest changed')
+            original_admission_ref=config['download_admission_ref']
+            if sha(original_admission_ref['path'])!=original_admission_ref['sha256']:raise ValueError('original source admission changed')
+            original_admission=read(original_admission_ref['path'])
+            if original_admission.get('schema')!='W26OfficialDownloadAdmissionV1' or original_admission.get('root_approved') is not True or original_admission.get('remote_port')!=self.executor_port:raise ValueError('original source provenance admission')
+            assets=original_admission['assets'];canonical=receipt['canonical_assets']
+            if len(assets)!=2 or len(canonical)!=2 or len({a['date'] for a in assets})!=2:raise ValueError('exact original two assets required')
+            transport_ref=receipt['transport_receipt_ref']
+            if sha(transport_ref['path'])!=transport_ref['sha256']:raise ValueError('transport receipt SHA')
+            transport=read(transport_ref['path'])
+            if transport.get('schema')!='W26OfficialTransportReceiptV1' or len(transport.get('assets',[]))!=2:raise ValueError('official transport provenance schema')
+            canonical_directory=Path(original_admission['canonical_directory']).resolve()
+            expected_paths={str(canonical_directory/(asset['date']+'.tar')) for asset in assets}
+            if {str(Path(a['path']).resolve()) for a in canonical}!=expected_paths:raise ValueError('canonical assets differ from original paths')
+            for asset in assets:
+                final=canonical_directory/(asset['date']+'.tar')
+                record=next(a for a in canonical if Path(a['path']).resolve()==final)
+                if set(record)!= {'path','bytes','sha256'} or record['bytes']!=asset['release_asset_bytes'] or final.stat().st_size!=record['bytes'] or sha(final)!=record['sha256']:raise ValueError('complete canonical bytes/hash mismatch')
+                provenance=next((a for a in transport['assets'] if Path(a['path']).resolve()==final),None)
+                if provenance is None or any(provenance.get(k)!=v for k,v in dict(path=str(final),bytes=record['bytes'],sha256=record['sha256'],source_url=asset['source_url'],release_asset_id=asset['release_asset_id'],date=asset['date']).items()):raise ValueError('official transport asset identity mismatch')
+                pinned=asset.get('release_asset_SHA')==record['sha256']
+                owner=canonical_directory/(asset['date']+'.owner.json')
+                expected_owner=dict(request_id=config['request_id'],source_admission_SHA=original_admission_ref['sha256'],source_url=asset['source_url'],release_asset_id=asset['release_asset_id'],release_asset_bytes=asset['release_asset_bytes'])
+                if not pinned and (not owner.exists() or read(owner)!=expected_owner):raise ValueError('original canonical owner/source provenance mismatch')
+                if asset.get('release_asset_SHA') and not pinned:raise ValueError('original root pinned asset SHA differs')
+            if sum(alive(r) for r in self.runs())>=self.max_workers:raise ValueError('worker capacity full')
+            log=directory/'worker.log'
+            if log.exists() and log.stat().st_size>1024*1024:raise ValueError('large original log requires root bounded evidence archive')
+            history=directory/'recovery_history'/ref['sha256'];history.mkdir(parents=True,exist_ok=False)
+            atomic_json(history/'original_status.json',status)
+            archived_log=history/'original_worker.log'
+            if log.exists():archived_log.write_bytes(log.read_bytes())
+            history_record=dict(recovery_admission_ref=ref,original_status_SHA=sha(history/'original_status.json'),worker_log_ref=dict(path=str(archived_log),bytes=archived_log.stat().st_size,sha256=sha(archived_log)) if archived_log.exists() else None,control_source_commit=self.plan['source_commit'],recorded_UTC=now())
+            atomic_json(history/'recovery_admission.json',receipt)
+            atomic_json(history/'index.json',history_record)
+            return self.launch(run_id,source_root=str(source),plan_path=original_plan_ref['path'],control_source_commit=self.plan['source_commit'])
 
     def control(self,run_id,action,body):
         with self.lock:
@@ -229,7 +320,7 @@ class Workbench:
             self.reconcile();status=read(path)
             if alive(status):raise ValueError('owned worker still alive; refuse second owner')
             if status['status'] not in ('interrupted','stopped','stopped_during_evaluation'):raise ValueError('run not resumable')
-            if status['mode'] in ('download','sourceprep','prepare'):raise ValueError('data partial spend requires separate root recovery admission; no automatic replay')
+            if status['mode'] in ('download','sourceprep','prepare','audit'):raise ValueError('data partial spend requires separate root recovery admission; no automatic replay')
             if not (Path(status['model_dir'])/'current.pt').exists() and not (Path(status['model_dir'])/'previous.pt').exists():raise ValueError('trustworthy checkpoint required')
             self.validate_admission(status['mode'])
             if sum(alive(r) for r in self.runs())>=self.max_workers:raise ValueError('worker capacity full')
@@ -256,7 +347,10 @@ def worker(directory,plan_path,executor_port):
     stop=lambda:(directory/'stop.request').exists()
     try:
         progress({})
-        if status['mode'] in ('download','sourceprep','prepare'):
+        if status['mode']=='audit':
+            from .publication import audit_prepared_dataset
+            result=audit_prepared_dataset(config,directory,progress,stop)
+        elif status['mode'] in ('download','sourceprep','prepare'):
             from . import data
             function={'download':'download_official_sources','sourceprep':'prepare_confirmation_sources','prepare':'prepare_dataset'}[status['mode']]
             result=getattr(data,function)(config,directory,progress,stop)
@@ -292,7 +386,9 @@ def handler(workbench):
                 body=json.loads(self.rfile.read(length));path=urlparse(self.path).path
                 if path=='/api/runs':return self.respond(workbench.submit(body))
                 parts=path.split('/')
-                if len(parts)==5 and parts[1:3]==['api','runs']:return self.respond(workbench.control(parts[3],parts[4],body))
+                if len(parts)==5 and parts[1:3]==['api','runs']:
+                    if parts[4]=='recover-download':return self.respond(workbench.recover_download(parts[3],body))
+                    return self.respond(workbench.control(parts[3],parts[4],body))
                 self.respond(dict(error='unknown endpoint'),404)
             except Exception as exc:self.respond(dict(error=str(exc)),400)
         def log_message(self,*args):pass

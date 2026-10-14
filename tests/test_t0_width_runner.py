@@ -12,7 +12,7 @@ from satellite_rl.shared_interface.stages import UniformStage2Input
 from satellite_rl.shared_interface.spherical_gaussian import PHYSICS
 from satellite_rl.t0_width.agent import WidthAgent,build_config
 from satellite_rl.t0_width.environment import T0WidthEnv
-from satellite_rl.t0_width.runner import run_task,evaluate_cases,rng_state,restore_rng,seed_all,RecoveryAccountingRequired
+from satellite_rl.t0_width.runner import run_task,evaluate_cases,rng_state,restore_rng,seed_all,RecoveryAccountingRequired,_terminal
 from satellite_rl.t0_width.logging import EvidenceLogs
 
 
@@ -36,6 +36,25 @@ def read_rows(path):
 class RunnerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):torch.set_num_threads(1)
+
+    def test_terminal_allocation_typed_wire_roundtrip_without_optimizer(self):
+        from satellite_rl.shared_interface.content import read_wire,content_sha
+        obj=object_recipe(dict(id='terminal-wire',N=2,expected={},widths_rule='[.3,.5,1.0][i%3]'))
+        stage=UniformStage2Input(obj['case'],obj['layout'],Authority(obj['authority_registry'],obj['authority_registry_sha']),PHYSICS)
+        env=T0WidthEnv(stage,'S00');env.step([3,1,2]);env.step([7,2,4])
+        expected=env.export_allocation()
+        row=_terminal(env,dict(layout_SHA=stage.layout['content_sha256']),phase='synthetic_engineering')
+        self.assertNotIn('allocation',row)
+        self.assertEqual(row['allocation_parent_SHA'],expected['parent_layout_SHA'])
+        self.assertEqual(set(row['beams'][0]),{'beam_id','demand_bps','capacity_bps','SI','SGM'})
+        with tempfile.TemporaryDirectory() as temp:
+            logs=EvidenceLogs(temp);logs.append('episodes',row);logs.close()
+            saved=read_rows(Path(temp)/'episodes.jsonl.gz')[0]
+            restored=read_wire(json.dumps(saved['allocation_wire']))
+        self.assertEqual(restored['content_sha256'],expected['content_sha256'])
+        self.assertEqual(content_sha(restored),expected['content_sha256'])
+        for name in ['actual_start_slot','actual_slot_count','actual_whole_beam_power_w']:
+            np.testing.assert_array_equal(restored[name],expected[name])
 
     def test_mid_episode_resume_identical_next_action_update_and_evidence(self):
         with tempfile.TemporaryDirectory() as td:

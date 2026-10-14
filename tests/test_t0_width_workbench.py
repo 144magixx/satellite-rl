@@ -28,6 +28,7 @@ class WorkbenchTests(unittest.TestCase):
         with patch.object(self.workbench,'launch',side_effect=self.fake_launch):
             first=self.workbench.submit(self.request());second=self.workbench.submit(self.request())
             self.assertEqual(first['run_id'],second['run_id'])
+            self.assertEqual(Path(first['model_dir']),self.workbench.root/'models'/'runs'/first['run_id'])
             request=self.request();request['request_id']='two'
             with self.assertRaisesRegex(ValueError,'owner'):self.workbench.submit(request)
         request=self.request();request['task_key']='B'
@@ -101,6 +102,31 @@ class WorkbenchTests(unittest.TestCase):
 
     def test_data_mode_cannot_select_runner(self):
         self.workbench.plan['tasks']['B']['config']['task_kind']='confirmation'
+        with self.assertRaisesRegex(ValueError,'runner selectors'):self.workbench.validate_plan()
+
+    def test_launch_clears_archived_failure_fields(self):
+        from unittest.mock import Mock
+        with patch.object(self.workbench,'launch',side_effect=self.fake_launch):status=self.workbench.submit(self.request())
+        status.update(status='failed',error='old failure',finished_UTC=now(),reason='old reason')
+        atomic_json(self.workbench.status_path(status['run_id']),status)
+        fake=Mock(pid=99999999)
+        with patch('satellite_rl.t0_width.workbench.subprocess.Popen',return_value=fake),patch('satellite_rl.t0_width.workbench.birth',return_value=123):
+            fresh=self.workbench.launch(status['run_id'])
+        self.assertEqual(fresh['status'],'starting')
+        for name in ('error','finished_UTC','reason'):self.assertNotIn(name,fresh)
+
+    def test_audit_is_data_mode_and_cannot_select_training(self):
+        manifest=self.root/'preparemanifest.json';atomic_json(manifest,dict(frozen=True))
+        manifest_ref=dict(path=str(manifest),sha256=sha(manifest));shards=[]
+        for i in range(4):
+            path=self.root/('shard'+str(i)+'.json');atomic_json(path,dict(index=i));shards.append(dict(path=str(path),sha256=sha(path)))
+        admission=self.root/'audit.json';atomic_json(admission,dict(schema='W26DataAuditExecutionAdmissionV1',root_approved=True,passed=True,experiment_id='S2-W26',remote_port=20418,source_commit='a'*40,manifest_SHA=manifest_ref['sha256'],shard_index_SHAs=[ref['sha256'] for ref in shards],expected_native_imports=594,expected_new_prepare=42,max_layout_checks=636,expected_counts=dict(train=576,development=20,test=40),core_SHA='9'*64))
+        config=dict(prepare_manifest_ref=manifest_ref,shard_index_refs=shards,audit_admission_ref=dict(path=str(admission),sha256=sha(admission)),source_commit='a'*40,executor_port=20418)
+        self.workbench.plan['tasks']['audit']=dict(mode='audit',executor_port=20418,config=config)
+        self.workbench.validate_plan()
+        (self.root/'data.json').unlink()
+        self.workbench.validate_admission('audit')
+        config['training']={}
         with self.assertRaisesRegex(ValueError,'runner selectors'):self.workbench.validate_plan()
 
     def test_mode_remote_executor_exact(self):
