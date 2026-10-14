@@ -42,7 +42,8 @@ def build_config(group, device="cpu", phase="scientific"):
                           update_every=1, gradient_steps=1, gradient_clip=10,
                           checkpoint_interval=10000, device=device)
     c["evaluation"].update(validation_count=20, test_count=40, action_mode="stochastic", repeats=3,
-                           interval_steps=10000, extra_steps=[0, 2000, 5000])
+                           interval_steps=10000, extra_steps=[0, 2000, 5000],
+                           validation_seed=274000, test_seed=275000)
     return c
 
 
