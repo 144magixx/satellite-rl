@@ -1,5 +1,6 @@
 """Pure integer/arithmetic/metadata tests; never run geometry fixtures/model."""
 import ast,copy,unittest
+from unittest.mock import patch
 from pathlib import Path
 from satellite_rl.coverage.ai_search_r9.flow import Ledger,ResourceUnknown,minimum_capacity
 from satellite_rl.coverage.ai_search_r9.core import protected,objective,method_order,best_terminal,CommonLedger,select_origin,InterfaceError,mechanism_gate,MECHANISM_INDICES,digest
@@ -23,6 +24,14 @@ class PureR9(unittest.TestCase):
         for kind in ('scan','sort'):
             self.assertEqual(l.data[kind+'_input_count'],sum(v['items'] for v in l.data[kind+'_passes'].values()))
         self.assertIn('flow_remove_pinned_anchors',l.data['scan_passes'])
+    def test_partial_exception_keeps_only_observed_candidate_fields(self):
+        from satellite_rl.coverage.ai_search_r9.core import evaluate_candidate
+        def fail(scene,origin,descriptor,observed):
+            observed['ledger']=Ledger(3);observed['result']=dict(position=2,kernel_entered=True,status='known_unavailable',terminal={'not_published':True},metrics={'not_published':True},raw_layout={'actual':'partial'})
+            raise InterfaceError('synthetic audit failure')
+        with patch('satellite_rl.coverage.ai_search_r9.core._evaluate_candidate_body',side_effect=fail):
+            with self.assertRaises(InterfaceError) as captured:evaluate_candidate(None,None,None)
+        self.assertEqual(captured.exception.partial_result,dict(position=2,kernel_entered=True,raw_layout={'actual':'partial'}));self.assertNotIn('status',captured.exception.partial_result)
     def test_common_ledger_cumulative_not_reset(self):
         first=CommonLedger(3);first.pairs(7);second=CommonLedger(3,first.record());second.pairs(2);self.assertEqual(second.data['raypairs'],9)
         second.data['raypairs']=3*3+19900

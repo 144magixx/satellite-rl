@@ -44,9 +44,12 @@ def run_one(spec):
     selected=[d for d in pool['descriptors'] if d['source_beam_id']==spec['select_source_beam_id'] and d['action']==spec['select_action']]
     if len(selected)!=1:raise AssertionError('one exact descriptor')
     result=evaluate_candidate(scene,origin,selected[0])
-    if result['status']!=spec['expected_status']:raise AssertionError((spec['fixture_id'],result['status'],result['reason']))
-    if spec['fixture_id']==5 and result['reason']!='fixed_anchor_capacity_infeasible':raise AssertionError('declared infeasible fixed adjacency')
-    if spec['fixture_id']==6 and result['reason']!='whole_Omega_cap':raise AssertionError('declared Omega rejection')
-    if spec['fixture_id']==7 and selected[0]['global_peak_lower_count']!=10:raise AssertionError('outside global lower bound')
-    if spec['fixture_id']==8 and result['selected_anchor_ids']!=spec['aircraft_ids'][:3]:raise AssertionError('exact coincident stable-ID anchor ties')
-    return dict(fixture_id=spec['fixture_id'],origin=origin,pool=pool,result=result,new_RULE_D5_W_T_model_calls=0,actual_candidate_slots=1)
+    actual=dict(fixture_id=spec['fixture_id'],origin=origin,pool=pool,result=result,new_RULE_D5_W_T_model_calls=0,actual_candidate_slots=1)
+    try:
+        if result['status']!=spec['expected_status']:raise AssertionError((spec['fixture_id'],result['status'],result['reason']))
+        if spec['fixture_id']==5 and result['reason']!='fixed_anchor_capacity_infeasible':raise AssertionError('declared infeasible fixed adjacency')
+        if spec['fixture_id']==6 and result['reason']!='whole_Omega_cap':raise AssertionError('declared Omega rejection')
+        if spec['fixture_id']==7 and selected[0]['global_peak_lower_count']!=10:raise AssertionError('outside global lower bound')
+        if spec['fixture_id']==8 and result['selected_anchor_ids']!=spec['aircraft_ids'][:3]:raise AssertionError('exact coincident stable-ID anchor ties')
+    except Exception as error:error.actual_result=actual;raise
+    return actual

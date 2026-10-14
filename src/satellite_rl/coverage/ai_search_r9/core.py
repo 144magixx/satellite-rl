@@ -156,9 +156,9 @@ def choose_anchors(scene,member_ids,k,ledger):
         ledger.tick('anchor_selection_passes');ledger.scan('anchor_third_domain',len(ids));remaining=[i for i in range(len(ids)) if i not in selected];v=angles(rays[remaining,None,:],rays[None,selected,:],ledger);ledger.scan('anchor_nearest_selected_min',2*len(remaining));ledger.scan('anchor_third_argmax',len(remaining));third=min(range(len(remaining)),key=lambda j:(-float(v[j].min()),ids[remaining[j]]));selected.append(remaining[third])
     ledger.sort('anchor_final_target_ID_order',len(selected));return sorted(ids[i] for i in selected)
 
-def evaluate_candidate(scene,origin,descriptor):
+def _evaluate_candidate_body(scene,origin,descriptor,observations):
     """Exactly one independent descriptor attempt; missing resources propagate."""
-    began=time.monotonic();n=len(scene.aircraft_ids);ledger=Ledger(n);position=descriptor['position'];base=copy.deepcopy(origin['layout']);original_SHA=digest(origin['layout']);result=dict(position=position,descriptor_SHA=descriptor['descriptor_SHA'],extracted=True,kernel_entered=False,status='known_unavailable',reason=descriptor['unavailable_reasons'],terminal=base,metrics=copy.deepcopy(origin['metrics']),raw_layout=None,raw_metrics=None,origin_SHA=original_SHA)
+    began=time.monotonic();n=len(scene.aircraft_ids);ledger=Ledger(n);observations['ledger']=ledger;position=descriptor['position'];base=copy.deepcopy(origin['layout']);original_SHA=digest(origin['layout']);result=dict(position=position,descriptor_SHA=descriptor['descriptor_SHA'],extracted=True,kernel_entered=False,status='known_unavailable',reason=descriptor['unavailable_reasons'],terminal=base,metrics=copy.deepcopy(origin['metrics']),raw_layout=None,raw_metrics=None,origin_SHA=original_SHA);observations['result']=result
     def finish(status,reason):
         require(digest(origin['layout'])==original_SHA,'independent origin was modified')
         result.update(status=status,reason=reason,ledger=ledger.record(),observed_candidate_seconds=time.monotonic()-began);return result
@@ -191,6 +191,17 @@ def evaluate_candidate(scene,origin,descriptor):
     result.update(terminal=layout,metrics=metrics,new_beam_lineage=dict(removed_region_beam_ids=list(descriptor['region_beam_ids']),new_ids=newids))
     return finish('admissible','strict_raw_objective_improvement')
 
+def evaluate_candidate(scene,origin,descriptor):
+    """Preserve observed partial state for every failure, never a fake terminal."""
+    observations={}
+    try:return _evaluate_candidate_body(scene,origin,descriptor,observations)
+    except Exception as error:
+        if 'ledger' in observations:error.partial_ledger=observations['ledger'].record()
+        observed=observations.get('result',{})
+        keys=('position','descriptor_SHA','extracted','kernel_entered','origin_SHA','selected_anchor_ids','adjacency_edges','flow_capacity','raw_layout','raw_metrics')
+        error.partial_result=copy.deepcopy({k:observed[k] for k in keys if k in observed and observed[k] is not None})
+        raise
+
 def best_terminal(origin,results):
     best=dict(position=-1,terminal=copy.deepcopy(origin['layout']),metrics=copy.deepcopy(origin['metrics']),status='incumbent')
     for result in results:
@@ -210,7 +221,7 @@ def evaluate_pool(scene,origin,pool,positions=None,stop=None):
         try:
             if stop is not None and stop():raise ResourceUnknown('native_or_user_pause_boundary')
             results.append(evaluate_candidate(scene,origin,pool['descriptors'][position]))
-        except ResourceUnknown as error:
+        except Exception as error:
             error.completed_results=results;error.incomplete_position=position;error.remaining_positions=positions[len(results):];raise
     return dict(complete=True,results=results,selected=best_terminal(origin,results),descriptor_extractions=len(results),kernel_entries=sum(x['kernel_entered'] for x in results),new_RULE_D5_T_W_model_calls=0)
 
