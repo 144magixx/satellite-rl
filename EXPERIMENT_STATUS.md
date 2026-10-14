@@ -1,5 +1,11 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-14 S1-AI17-R10正式两端已按原计划启动后因状态文件并发写入中断，全部原代次现已退出，正在同ID有界恢复准备。** final02每端唯一HTTP200，73的controller/service/worker为24458/24474/24480，74为27987/28003/28009，实际bootstrap/source/输入/三旧hold和新pause均已核；最初final01仅发生跨端新文件短暂不可见，停在controller/POST前，随后新增双端SHA到位读屏障并重新fresh签发，没有科学重放。此次两端同一根因是outer与worker都写固定storage_latest.json.tmp；73在case0的S2启动阶段失败，74在完成4母后outer失败，不是数学方法无效或科学门槛失败。
+
+原540份原件（73:102／324310B，74:438／1303100B）全部SHA闭合。已完common5、方法23，可复用原字节；另43个从未启动阶段及1个S2入口前失败，剩common7／方法37。原生29次、算法entry28次。独审依据入口exclusive/fsync先于唯一core调用、完整目录和无源删除路径，证实73 S2尚未进入算法；原guard的algorithm_spend_exact=null不倒写，原1.6233237385749817秒实耗保留，恢复该槽最多298.376676261425秒。原outer精确退出费用未知，按同boot保守界扣后73/74新outer上限10548.42580656521／10548.100674968213秒，不能与嵌套native重复相加。[原始双端收集](outputs/experiments/first_stage_ai_search_20261013/round10/scientific_preparation_01/actual_scientific_collection_01/actual_both_terminal_original_collection_receipt.json) · [独立原件/复用/零入口审核](outputs/experiments/first_stage_ai_search_20261013/round10/recovery_independent_review_01/independent_original_reuse_and_zero_entry_review.json) · [72阶段与剩余图](outputs/experiments/first_stage_ai_search_20261013/round10/recovery_preparation_01/original_stage_reuse_and_remaining_map.json)。
+
+core3e608、原ops0fc及所有已完点保持冻结；Astra制定不看质量的运维恢复合同，Sol准备独立存储观察和唯一临时文件发布修复及必要纯并发验证。未恢复/重发POST，不重跑已完common/方法或原8工程，不增加算法候选、模型、种子或考核读取。此为技术中断，非新用户暂停；08:10明确继续授权有效，新暂停仍优先。原12×5与3/3科学门槛不变，尚无完整效果结论，报告23为pending。
+
 **2026-10-14 S1-AI17-R10唯一8例工程已真实完成并通过原数组核验，正在准备两端12景×5法正式比较；科学调用仍0。** 73端原ID r10_engineering8_20261014_20473_01仅执行一次，实际8 Scene／8 common、5全景流、3局部内核及7内部旧流，全部符合事前预期；79原件124451B逐SHA核验。8个原生子阶段exit0，driver21001正常wait0，launcher21000与登记子孙的原代次全部/proc不存在；launcher确切内核退出码无法追溯，保持null，不冒充观测0。整体launcher观察32.762243秒、采样RSS435986432B；同boot外部退场保守界149.766739秒，不与嵌套子阶段计时相加。
 
 根单次运行已独审reader，PID41652、原生0.765秒／exit0／采样67.4MB；独立重建36条射线、326覆盖对、14布局和24描述，全部ID／请求／非空／N／宽度Ω／source／计数与八项预期通过，求解器重跑0。工程验证包括非自归属锚点、计数与Hall不可行区分、Ω／外扩边界拒绝、seen谱系和资源unknown，不代表真实场景或AI效果。[根实际工程接受](outputs/experiments/first_stage_ai_search_20261013/round10/engineering_actual_acceptance_01/root_actual8_acceptance.json) · [完整只读审核结果](outputs/experiments/first_stage_ai_search_20261013/round10/engineering_actual_acceptance_01/actual8_saved_array_reader_result.json)。下一步按原12训练母固定6+6分到73／74，各母五方法串行；原108匹配槽／768局部候选及300秒／2GiB等有限门槛不变，新科学epoch／工作台／即时资源／唯一POST仍须根准入。18/24不动，无新模型训练。
