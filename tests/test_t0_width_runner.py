@@ -135,6 +135,13 @@ class RunnerTests(unittest.TestCase):
         torch.testing.assert_close(state['torch'],after['torch'],rtol=0,atol=0)
         again,_=evaluate_cases(agent,[{}],'S00',loader=fixture,env_factory=T0WidthEnv,repeats=1)
         self.assertEqual(rows[0]['beams'],again[0]['beams'])
+        self.assertEqual(rows[0]['allocation_SHA'],again[0]['allocation_SHA'])
+        timing=rows[0]['timing']
+        self.assertEqual(timing['total_s'],sum(timing[key] for key in
+                         ('input_and_reset_s','mask_s','inference_s','environment_s')))
+        self.assertGreaterEqual(timing['terminal_s'],0)
+        self.assertEqual(timing['algorithm_with_terminal_s'],timing['total_s']+timing['terminal_s'])
+        self.assertGreaterEqual(timing['wall_to_terminal_s'],timing['algorithm_with_terminal_s'])
         self.assertEqual(agent.update_step,0)
 
     def test_failed_identity_and_short_engineering_rejected(self):

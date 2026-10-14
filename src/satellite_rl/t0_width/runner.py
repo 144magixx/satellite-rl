@@ -193,8 +193,15 @@ def evaluate_cases(agent, records, group, *, loader=None, env_factory=None, seed
                         _atomic_torch(wal_path, dict(identity=wal_identity, stage="committed", environment=env.state_dict(),
                                       observation=state, timing=timing, step_rows=step_rows, done=done, rng=rng_state()))
                 timing["total_s"] = sum(timing.values())
+                terminal_started = time.perf_counter()
                 row = _terminal(env, identity, phase=phase, node=node, mother=actual_mother,
                                 repeat=actual_repeat, action_seed=action_seed, timing=timing)
+                terminal_finished = time.perf_counter()
+                # Preserve historical total_s; these metadata-only fields include
+                # terminal metrics/export without changing actions or RNG state.
+                timing["terminal_s"] = terminal_finished - terminal_started
+                timing["algorithm_with_terminal_s"] = timing["total_s"] + timing["terminal_s"]
+                timing["wall_to_terminal_s"] = terminal_finished - started
                 rows.append(row)
                 if logs is not None:
                     for step_row in step_rows:
