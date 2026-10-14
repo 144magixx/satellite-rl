@@ -1,4 +1,6 @@
 import gzip
+import io
+import random
 import json
 from pathlib import Path
 import tempfile
@@ -36,6 +38,35 @@ def read_rows(path):
 class RunnerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):torch.set_num_threads(1)
+
+    def test_cpu_rng_checkpoint_reproduces_all_next_draws(self):
+        before=rng_state()
+        try:
+            seed_all(73026);checkpoint=rng_state()
+            expected=(random.random(),np.random.random(),torch.rand(7))
+            seed_all(3);restore_rng(checkpoint)
+            actual=(random.random(),np.random.random(),torch.rand(7))
+            self.assertEqual(expected[:2],actual[:2])
+            torch.testing.assert_close(expected[2],actual[2],rtol=0,atol=0)
+        finally:restore_rng(before)
+
+    @unittest.skipUnless(torch.cuda.is_available(),'requires actual CUDA device for map_location regression')
+    def test_cuda_mapped_rng_checkpoint_restores_cpu_and_all_cuda_generators(self):
+        before=rng_state()
+        try:
+            seed_all(73026);saved=rng_state();buffer=io.BytesIO();torch.save(saved,buffer)
+            expected_cpu=torch.rand(7)
+            expected_cuda=[torch.rand(7,device=f'cuda:{index}').cpu() for index in range(torch.cuda.device_count())]
+            expected_python=random.random();expected_numpy=np.random.random()
+            seed_all(4);buffer.seek(0)
+            loaded=torch.load(buffer,map_location='cuda:0',weights_only=False)
+            self.assertEqual(loaded['torch'].device.type,'cuda')
+            self.assertTrue(all(state.device.type=='cuda' for state in loaded['cuda']))
+            restore_rng(loaded)
+            torch.testing.assert_close(torch.rand(7),expected_cpu,rtol=0,atol=0)
+            for index,expected in enumerate(expected_cuda):torch.testing.assert_close(torch.rand(7,device=f'cuda:{index}').cpu(),expected,rtol=0,atol=0)
+            self.assertEqual(random.random(),expected_python);self.assertEqual(np.random.random(),expected_numpy)
+        finally:restore_rng(before)
 
     def test_terminal_allocation_typed_wire_roundtrip_without_optimizer(self):
         from satellite_rl.shared_interface.content import read_wire,content_sha

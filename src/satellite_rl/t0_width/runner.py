@@ -39,7 +39,9 @@ def restore_rng(value):
     np.random.set_state(value["numpy"])
     torch.set_rng_state(value["torch"].cpu())
     if value["cuda"] is not None:
-        torch.cuda.set_rng_state_all(value["cuda"])
+        # map_location=agent.device also remaps RNG byte tensors to CUDA.
+        # Both CPU and CUDA generator setters require host ByteTensor state.
+        torch.cuda.set_rng_state_all([state.cpu() for state in value["cuda"]])
 
 
 @contextmanager

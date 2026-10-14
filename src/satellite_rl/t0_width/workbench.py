@@ -40,6 +40,74 @@ def alive(record):
     try:return psutil.Process(record['pid']).status() not in (psutil.STATUS_ZOMBIE,psutil.STATUS_DEAD)
     except psutil.NoSuchProcess:return False
 
+S11_RECOVERY_RUN_ID='3b234d68cb1d39cdb076320d'
+S11_RECOVERY_CURRENT_SHA='9222777e51c822177b9c5791d1da705d0cdf40d572c599023dda701a8a5253bb'
+
+def validate_engineering_source_recovery(directory,receipt_ref,new_plan_ref,executor_port,*,allow_current_worker=False):
+    """Exact S11/962 source-only repair; no replay or checkpoint fallback."""
+    directory=Path(directory)
+    if sha(receipt_ref['path'])!=receipt_ref['sha256']:raise ValueError('root source recovery receipt SHA')
+    r=read(receipt_ref['path']);status=read(directory/'status.json');job=read(directory/'job.json');config=read(directory/'config.json')
+    if (r.get('schema')!='W26EngineeringSourceRecoveryV1'or r.get('root_approved')is not True or r.get('passed')is not True
+            or r.get('experiment_id')!='S2-W26'or r.get('run_id')!=S11_RECOVERY_RUN_ID
+            or status['run_id']!=S11_RECOVERY_RUN_ID or r.get('executor_port')!=executor_port or executor_port!=20424
+            or config.get('phase')!='engineering'or config.get('group')!='S11'
+            or config['training']['total_steps']!=2048 or config['training']['seed']!=73026 or r.get('env_step')!=962):
+        raise ValueError('only exact S11 engineering962 source recovery admitted')
+    if allow_current_worker:
+        if status.get('pid')!=os.getpid()or status.get('process_birth')!=birth(os.getpid())or status.get('boot_id')!=boot_id():
+            raise ValueError('migration validation belongs only to actual owned new worker')
+    elif alive(status):raise ValueError('original S11 worker remains alive')
+    if (sha(directory/'job.json')!=r['original_job_SHA'] or sha(directory/'config.json')!=r['original_config_file_SHA']
+            or content_sha(config)!=r['original_config_content_SHA'] or job['config_sha256']!=r['original_config_content_SHA']):
+        raise ValueError('original immutable job/config differs')
+    original_plan_ref=r['original_plan_ref']
+    if sha(original_plan_ref['path'])!=original_plan_ref['sha256'] or original_plan_ref['sha256']!=job['status']['plan_sha256']:
+        raise ValueError('original frozen plan differs')
+    old_plan=read(original_plan_ref['path'])
+    if job['source_manifest']!=old_plan['source_manifest']or job['source_root']!=old_plan['source_root']:
+        raise ValueError('original source ancestry differs')
+    for key in ('run_id','task_key','mode','request_sha256','plan_sha256','source_commit'):
+        if status.get(key)!=job['status'].get(key):raise ValueError('original run/request identity differs')
+    if r['original_source_commit']!=job['status']['source_commit']:raise ValueError('original source commit differs')
+    for relative,expected in job['source_manifest'].items():
+        p=(Path(job['source_root'])/relative).resolve()
+        if not p.is_relative_to(Path(job['source_root']).resolve())or sha(p)!=expected:raise ValueError('original source bytes changed')
+    if sha(new_plan_ref['path'])!=new_plan_ref['sha256']or r['new_plan_ref']!=new_plan_ref:
+        raise ValueError('new root serving plan differs')
+    new_plan=read(new_plan_ref['path']);source=Path(r['new_source_root']).resolve()
+    if (new_plan.get('authorized')is not True or new_plan['source_commit']!=r['new_source_commit']
+            or Path(new_plan['source_root']).resolve()!=source or new_plan['source_manifest']!=r['new_source_manifest']):
+        raise ValueError('new frozen source/manifest/plan differs')
+    required={p.relative_to(source).as_posix()for folder in ('src','scripts')for p in (source/folder).rglob('*.py')}
+    if not required or not required.issubset(r['new_source_manifest']):raise ValueError('new complete Python source closure required')
+    for relative,expected in r['new_source_manifest'].items():
+        p=(source/relative).resolve()
+        if not p.is_relative_to(source)or sha(p)!=expected:raise ValueError('new frozen source bytes differ')
+    current=Path(config['model_dir'])/'current.pt'
+    if r['current_ref']['path']!=str(current)or r['current_ref']['sha256']!=S11_RECOVERY_CURRENT_SHA or sha(current)!=S11_RECOVERY_CURRENT_SHA:
+        raise ValueError('exact current962 checkpoint required; no fallback')
+    import torch
+    saved=torch.load(current,map_location='cpu',weights_only=False)
+    needed={'version','config_sha','agent','progress','scene_rng','rng','current_case','environment','observation','log_offsets'}
+    if not needed.issubset(saved)or saved['version']!='W26ResumeV1'or saved['config_sha']!=content_sha(config)or saved['progress']['env_step']!=962:
+        raise ValueError('complete current962 state/config required')
+    wal_ref=r['decision_wal_ref']
+    if wal_ref['path']!=str(directory/'training_decision_wal.pt')or sha(wal_ref['path'])!=wal_ref['sha256']:
+        raise ValueError('exact original committed decision WAL required')
+    wal=torch.load(wal_ref['path'],map_location='cpu',weights_only=False)
+    if wal.get('stage')!='committed'or wal.get('env_step')!=962 or wal.get('config_sha')!=content_sha(config)or wal.get('log_offsets')!=saved['log_offsets']:
+        raise ValueError('only committed962/no new or unknown spend recovery allowed')
+    if set(saved['log_offsets'])!={'steps','episodes','evaluations'}or set(r['log_refs'])!=set(saved['log_offsets']):
+        raise ValueError('complete evidence offsets required')
+    for name,offset in saved['log_offsets'].items():
+        path=directory/'logs'/(name+'.jsonl.gz');ref=r['log_refs'][name]
+        actual=path.stat().st_size if path.exists()else 0
+        if actual!=offset or ref.get('bytes')!=offset or ref['path']!=str(path):raise ValueError('unique evidence suffix or offset mismatch; no replay')
+        if offset and sha(path)!=ref['sha256']:raise ValueError('actual checkpoint evidence prefix differs')
+        if not offset and ref['sha256']!=hashlib.sha256(b'').hexdigest():raise ValueError('empty evidence SHA differs')
+    return r
+
 HTML='''<!doctype html><meta charset="utf-8"><title>S2-W26 工作台</title>
 <h1>S2-W26 工作台</h1><p>S00:207 · S10:208 · S01:407 · S11:408</p>
 <div id="tasks"></div><pre id="status"></pre><div id="runs"></div>
@@ -330,6 +398,26 @@ class Workbench:
     def close(self):
         if self.server_lock.exists() and read(self.server_lock).get('pid')==os.getpid():self.server_lock.unlink()
 
+    def recover_engineering_source(self,run_id,body):
+        with self.lock:
+            if set(body)!={'plan_sha256','recovery_admission_ref'}or body['plan_sha256']!=self.plan_sha or run_id!=S11_RECOVERY_RUN_ID:
+                raise ValueError('exact S11 source recovery control required')
+            self.validate_admission('engineering')
+            path=self.status_path(run_id);status=read(path)
+            if status['status']not in ('needs_root_recovery_accounting','failed','interrupted')or alive(status):
+                raise ValueError('only stopped failed/accounting S11 original worker allowed')
+            if sum(alive(r)for r in self.runs())>=self.max_workers:raise ValueError('worker capacity full')
+            new_plan_ref=dict(path=str(self.plan_path),sha256=self.plan_sha)
+            receipt=validate_engineering_source_recovery(path.parent,body['recovery_admission_ref'],new_plan_ref,self.executor_port)
+            sidecar=path.parent/'source_recoveries'/body['recovery_admission_ref']['sha256']/ 'migration.json'
+            if sidecar.exists():raise ValueError('source recovery epoch already dispatched; no automatic duplicate')
+            migration=dict(schema='W26EngineeringSourceMigrationV1',root_recovery_ref=body['recovery_admission_ref'],
+                           new_plan_ref=new_plan_ref,run_id=run_id,env_step=962,old_job_SHA=receipt['original_job_SHA'])
+            atomic_json(sidecar,migration)
+            status['source_recovery_ref']=dict(path=str(sidecar),sha256=sha(sidecar));atomic_json(path,status)
+            (path.parent/'stop.request').unlink(missing_ok=True)
+            return self.launch(run_id,source_root=receipt['new_source_root'],plan_path=receipt['original_plan_ref']['path'],control_source_commit=receipt['new_source_commit'])
+
 def worker(directory,plan_path,executor_port):
     import time
     directory=Path(directory);path=directory/'status.json'
@@ -339,9 +427,22 @@ def worker(directory,plan_path,executor_port):
         time.sleep(.05)
     else:raise RuntimeError('worker parent birth ownership not recorded')
     plan=read(plan_path);job=read(directory/'job.json');config=read(directory/'config.json')
-    if sha(plan_path)!=status['plan_sha256'] or content_sha(config)!=job['config_sha256'] or not Path(__file__).resolve().is_relative_to(Path(job['source_root']).resolve()):raise ValueError('worker frozen identity')
-    for relative,expected in job['source_manifest'].items():
-        if sha(Path(job['source_root'])/relative)!=expected:raise ValueError('worker source SHA changed')
+    if sha(plan_path)!=status['plan_sha256'] or content_sha(config)!=job['config_sha256']:raise ValueError('worker frozen identity')
+    if status.get('source_recovery_ref'):
+        sidecar_ref=status['source_recovery_ref']
+        if sha(sidecar_ref['path'])!=sidecar_ref['sha256']:raise ValueError('migration sidecar bytes differ')
+        migration=read(sidecar_ref['path'])
+        # This worker itself is intentionally alive; external controller already
+        # proved the old process gone. Revalidate every byte before first step.
+        receipt_ref=migration['root_recovery_ref']
+        # Skip only the current-worker liveness check via an explicit flag.
+        receipt=validate_engineering_source_recovery(directory,receipt_ref,migration['new_plan_ref'],executor_port,allow_current_worker=True)
+        if not Path(__file__).resolve().is_relative_to(Path(receipt['new_source_root']).resolve()):raise ValueError('actual migrated worker source differs')
+        if status.get('control_source_commit')!=receipt['new_source_commit']:raise ValueError('migrated control source commit differs')
+    else:
+        if not Path(__file__).resolve().is_relative_to(Path(job['source_root']).resolve()):raise ValueError('worker actual source mismatch')
+        for relative,expected in job['source_manifest'].items():
+            if sha(Path(job['source_root'])/relative)!=expected:raise ValueError('worker source SHA changed')
     def progress(value):
         current=read(path);current.update(status='running',progress=value,last_updated_UTC=now());atomic_json(path,current)
     stop=lambda:(directory/'stop.request').exists()
@@ -388,6 +489,7 @@ def handler(workbench):
                 parts=path.split('/')
                 if len(parts)==5 and parts[1:3]==['api','runs']:
                     if parts[4]=='recover-download':return self.respond(workbench.recover_download(parts[3],body))
+                    if parts[4]=='recover-engineering-source':return self.respond(workbench.recover_engineering_source(parts[3],body))
                     return self.respond(workbench.control(parts[3],parts[4],body))
                 self.respond(dict(error='unknown endpoint'),404)
             except Exception as exc:self.respond(dict(error=str(exc)),400)
