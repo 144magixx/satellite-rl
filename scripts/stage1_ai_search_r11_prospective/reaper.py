@@ -88,6 +88,9 @@ def run_process(command,directory,stage,*,stop,life,hard_seconds,rss_bytes=21474
     sleep(.02)
  except BaseException as e:error=type(e).__name__+': '+str(e);reason=reason or 'observer_or_pause_failure'
  finally:
+  # Direct wait4 is independent of descendant observation; never lose it to /proc races.
+  try:reap()
+  except BaseException as e:error=(error or '')+'; direct_reap_unknown:'+type(e).__name__+': '+str(e)
   try:
    tree=observe()
    if tree['unknown_live']:raise RuntimeError('unregistered live witness: refuse inferred signal')
@@ -109,7 +112,11 @@ def run_process(command,directory,stage,*,stop,life,hard_seconds,rss_bytes=21474
    if sample_peak is None or sample_peak>rss_bytes:reason=reason or 'final_sampled_parent_children_RSS'
    if parent_highwater+reaped['rusage']['maxrss_bytes']>rss_bytes:reason=reason or 'conservative_parent_plus_child_highwater_RSS'
    if closure_observed>=deadline or reaped['conservative_process_exit_upper_seconds']>=hard_seconds:reason=reason or 'full_native_exit_bound_exceeds_hard_limit'
-  except BaseException as e:error=(error or '')+';closure_unknown:'+type(e).__name__+': '+str(e);closure_observed=clock()
+  except BaseException as e:
+   error=(error or '')+';closure_unknown:'+type(e).__name__+': '+str(e)
+   try:reap()
+   except BaseException as reap_error:error+='; direct_reap_unknown:'+type(reap_error).__name__+': '+str(reap_error)
+   closure_observed=clock()
   observer_publication_started=clock()
   # Only observer IO remains after the closed native tree. It cannot run forever.
   native_end_proved=bool(closed and reaped is not None and reap_ref is not None)
