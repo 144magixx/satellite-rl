@@ -13,6 +13,24 @@ def math_binding():
     return dict(mathematical_design_version=EXECUTION_DESIGN_VERSION,design_ref=dict(sha256=DESIGN_SHA),root_design_acceptance_ref=dict(sha256=DESIGN_ACCEPTANCE_SHA))
 
 class PreparationTests(unittest.TestCase):
+    def test_existing_null_or_malformed_pause_marker_never_absent(self):
+        from .worker import _markers
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'stop.request';plan=dict(watched_pause_paths=[str(path)])
+            self.assertIsNone(_markers(plan)[str(path)])
+            path.write_text('null',encoding='utf8')
+            self.assertIsNotNone(_markers(plan)[str(path)])
+            path.write_text('{',encoding='utf8')
+            with self.assertRaises(ValueError):_markers(plan)
+
+    def test_reader_marker_stops_before_new_callback_without_replay(self):
+        with tempfile.TemporaryDirectory() as temp:
+            journal=Journal(temp);reader=Reader(journal,prior_seconds=10,stop=lambda:True)
+            with self.assertRaisesRegex(Incomplete,'pause'):
+                reader.audit({},source_ref={},input_ref={},parent_cache_SHA='x',static_allowance={},
+                             independent_auditor=lambda *args:self.fail('new GEO callback after stop'))
+            self.assertFalse(journal.has('reader_cursor'));journal.close()
+
     def test_v2_contact_domain_and_not_pruning_diagnostic(self):
         from .region_v2 import select,domain
         counts=[5,5,1,3];ids=['a','b','c','d']

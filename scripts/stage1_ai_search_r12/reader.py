@@ -29,8 +29,9 @@ def historical_infeasible(record):
     return dict(state=NodeState.GRAPH_INFEASIBLE.value,raw_producer_label=label,proof_qualification=proof)
 
 class Reader:
-    def __init__(self, journal, *, clock=time.monotonic, prior_seconds=0.):
+    def __init__(self, journal, *, clock=time.monotonic, prior_seconds=0.,stop=None):
         self.journal, self.clock = journal, clock
+        self.stop=stop
         if not isinstance(prior_seconds,(int,float)) or not 0<=prior_seconds<120:raise Incomplete('original reader prior cost not zeroed/reset')
         self.started = clock()
         if journal.has('reader_budget'):
@@ -42,6 +43,9 @@ class Reader:
             self.budget = dict(rays=0, raypairs=0, layouts=0, seconds=prior_seconds, prior_seconds=prior_seconds,inflight=None)
         self.base_seconds = self.budget['seconds']
 
+    def boundary(self):
+        if self.stop is not None and self.stop():raise Incomplete('cooperative reader pause before new node/GEO')
+
     def _persist_budget(self):
         self.budget['seconds'] = self.base_seconds + self.clock() - self.started
         self.journal.write('reader_budget', self.budget)
@@ -50,6 +54,7 @@ class Reader:
 
     def audit(self, node, *, source_ref, input_ref, parent_cache_SHA,
               static_allowance, independent_auditor):
+        self.boundary()
         if node.get('schema') != SCHEMA or not qualified_complete(node):
             raise Incomplete('missing/shared-schema unknown node')
         proof_semantics(node)
@@ -92,6 +97,7 @@ class Reader:
             self.budget[name] += static_allowance[name]
         self.budget['inflight'] = key
         self._persist_budget()
+        self.boundary()
         parent_key = 'geometry_' + parent_cache_SHA
         cache = self.journal.read(parent_key) if self.journal.has(parent_key) else None
         if cache is not None and cache.get('cache_content_SHA')!=content_sha({k:v for k,v in cache.items() if k!='cache_content_SHA'}):

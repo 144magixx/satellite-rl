@@ -1,6 +1,7 @@
 """Admitted independent full12 collection, no producer numerical imports."""
 import math
 import json
+from datetime import datetime,timezone
 from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
@@ -50,9 +51,11 @@ def controls(origin,tree,saved,origin_exact):
                 F={p:paths[p] for p in ('00','01','10','11')},logical_costs=costs)
 
 def collect(plan,archive):
-    from .worker import pinned,load_case,audited_S_rows
+    from .worker import pinned,load_case,audited_S_rows,_markers
+    from .admission import STOP_NEW
     from .historical_s import audited_selected
-    root=Path(archive);journal=Journal(root/'reader');reader=Reader(journal,prior_seconds=plan['reader_prior_seconds']);rows=[]
+    def stop():return datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(plan).values())
+    root=Path(archive);journal=Journal(root/'reader');reader=Reader(journal,prior_seconds=plan['reader_prior_seconds'],stop=stop);rows=[]
     production=dict(kernels=0,flow_queries=0,raypairs=0,new_rays=0,seconds=0.,aircraft_records=0)
     try:
         control_ref=plan['historical_control_ref']
@@ -62,6 +65,7 @@ def collect(plan,archive):
         from .admission import INDICES
         need([r['original_index'] for r in historical['rows']]==list(INDICES),'complete original oldcontrol12')
         for row_position,case in enumerate(plan['cases']):
+            reader.boundary()
             index=case['original_index'];record=load_case(case['input_adapter_ref'])
             raw=record['scene'];n=len(raw['aircraft_ids'])
             need('rays' not in raw,'IO-only normalization must not precompute rays')
@@ -77,6 +81,7 @@ def collect(plan,archive):
                 need(identity(extracted['source_control_ref'])==identity(control_ref) and extracted['original_index']==index and extracted['original_method']==method,'old control original source content binding')
                 need(extracted['historical_cost_ref']['json_path']==['rows',row_position,'arms',method,'ledger'] and 'ledger' in actual,'old paid cost source retained without replay')
             selected_S=audited_selected(audited_S[index],record)
+            reader.boundary()
             selected_S['exact_evidence']=counts_widths_evidence(selected_S['counts'],selected_S['widths_deg'])
             record['saved_controls'][selected_S['method']]=selected_S
             # Charge ray projection BEFORE execution and persist as an inflight
@@ -95,6 +100,7 @@ def collect(plan,archive):
             else:
                 if reader.budget['inflight'] or reader.budget['rays']+n>4715:raise Incomplete('reader ray budget/inflight')
                 reader.budget['rays']+=n;reader.budget['inflight']=key;reader._persist_budget()
+                reader.boundary()
                 rays=reconstruct_rays(raw['positions'],record['physical_parameters'])
                 scene_data=dict(raw,rays=rays.tolist())
                 checkpoint=dict(schema='R12IndependentSceneGeometryV1',binding=binding,scene=scene_data)
@@ -175,7 +181,7 @@ def collect(plan,archive):
                 contact_pairs=5100 if node['descriptor']['state_SHA'] not in contacts else 0
                 allowance=dict(rays=0,layouts=new_layouts,raypairs=reader_pair_reservation(n,m,
                     new_contact=bool(contact_pairs),new_region=bool(region_pairs),eligible=eligible))
-                auditor=GeometryAuditor(scene,record['origin'],content_sha(record['origin']['identity']),parent)
+                auditor=GeometryAuditor(scene,record['origin'],content_sha(record['origin']['identity']),parent,stop=stop)
                 audit_receipt=reader.audit(node,source_ref=plan['source_manifest_ref'],input_ref=record['source_original_input_ref'],
                     parent_cache_SHA=content_sha(record['origin']['identity']),static_allowance=allowance,independent_auditor=auditor)
                 tree['paths'][path]['exact_evidence']=audit_receipt['result']['terminal_exact']

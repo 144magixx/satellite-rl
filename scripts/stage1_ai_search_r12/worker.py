@@ -54,7 +54,7 @@ def remaining_reader_seconds(plan):
     return 120-prior
 
 def _markers(plan):
-    return {p: (json.loads(Path(p).read_text(encoding='utf8')) if Path(p).exists() else None)
+    return {p: (dict(present=True,value=json.loads(Path(p).read_text(encoding='utf8'))) if Path(p).exists() else None)
             for p in plan['watched_pause_paths']}
 
 def deadline_registration(plan):
@@ -146,6 +146,7 @@ def _child(input_ref, root, plan, expected_parent, expected_n):
     try:
         from .historical_s import audited_selected
         verify_imports(plan)
+        if stop():raise RuntimeError('pause before producer new scene geometry')
         saved_S=audited_selected(audited_S_rows(plan)[value['original_index']],value)
         from satellite_rl.envs.regions import get_profile
         profile=get_profile(value['geometry_profile'])
@@ -156,6 +157,7 @@ def _child(input_ref, root, plan, expected_parent, expected_n):
                     original_source_input_ref=value['source_original_input_ref'],
                     geometry_profile=value['geometry_profile'],physical_parameters=actual))
         ray_began=time.monotonic()
+        if stop():raise RuntimeError('pause before producer ray construction')
         scene['rays']=geometry.satellite_rays_numpy(scene['positions'],profile=value['geometry_profile'])
         journal.write('scene_preparation_completed',dict(new_rays=expected_n,rays=scene['rays'].tolist(),
                     input_ref=input_ref,geometry_profile=value['geometry_profile'],physical_parameters=actual,
@@ -163,6 +165,7 @@ def _child(input_ref, root, plan, expected_parent, expected_n):
                     observed_seconds=time.monotonic()-ray_began))
         scene=SimpleNamespace(**scene)
         tree=explore_tree(scene,value['origin'],persist,stop=stop)
+        if stop():raise RuntimeError('pause before post-tree exact control selection')
         controls=select_controls(value['origin'],tree,saved_S)
         # Canonical full raw nodes already committed by callback; index them
         # instead of serializing all aircraft/owners again in a second tree.
@@ -283,7 +286,7 @@ def run(plan,review,archive):
                     peak_rss=max(peak_rss,_rss(proc.pid,birth));samples+=1
                     if elapsed>=165 or total+elapsed>=2145:reason='native_time_save_margin'
                     elif peak_rss>2147483648:reason='parent_children_RSS_ceiling'
-                    elif datetime.now(timezone.utc)>=STOP_NEW:reason='pause_stop_new_and_save'
+                    elif datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(plan).values()):reason='pause_stop_new_and_save'
                     if reason:break
                     proc.join(timeout=.1)
             finally:
@@ -296,7 +299,7 @@ def run(plan,review,archive):
             if reason or proc.exitcode!=0 or samples<1 or peak_rss<=0 or time.monotonic()-began>180 or total>2160:raise RuntimeError('incomplete native exit/time/RSS; no retry')
         owner.write('production_complete',dict(complete=True,seconds=total,
                     reader_pending=True,scientific_gate_pending=True))
-        if datetime.now(timezone.utc)>=STOP_NEW:raise RuntimeError('pause before reader; no implicit recovery')
+        if datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(plan).values()):raise RuntimeError('pause before reader; no implicit recovery')
         proc=ctx.Process(target=_reader_child,args=(plan,str(output),os.getpid()));began=time.monotonic();proc.start();reason=None;peak_rss=0;samples=0;birth=None
         reader_remaining=remaining_reader_seconds(plan)
         deadline=min(began+reader_remaining,began+(datetime(2026,10,14,23,tzinfo=timezone.utc)-datetime.now(timezone.utc)).total_seconds())
@@ -307,7 +310,7 @@ def run(plan,review,archive):
                 peak_rss=max(peak_rss,_rss(proc.pid,birth));samples+=1
                 if time.monotonic()-began>=reader_remaining-15:reason='reader_original_remaining110s_reap_margin'
                 elif peak_rss>2147483648:reason='reader_RSS2GiB'
-                elif datetime.now(timezone.utc)>=STOP_NEW:reason='pause_before_reader_checkpoint'
+                elif datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(plan).values()):reason='pause_before_reader_checkpoint'
                 if reason:break
                 proc.join(timeout=.1)
         finally:

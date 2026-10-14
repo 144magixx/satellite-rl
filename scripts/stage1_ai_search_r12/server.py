@@ -77,6 +77,8 @@ class Endpoint:
 
     def monitor(self):
         import psutil
+        if datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(self.plan).values()):
+            self.stop_owned('service_cooperative_pause_marker');return
         if self.worker is None:return
         for p in psutil.Process().children(recursive=True):
             try:self.registry[(p.pid,p.create_time())]=dict(pid=p.pid,birth_unix=p.create_time(),boot_id=self.owner['boot_id'])
@@ -90,7 +92,7 @@ class Endpoint:
             except psutil.NoSuchProcess:pass
         self.peak_RSS=max(self.peak_RSS,rss)
         _storage(self.plan['storage_root'])
-        if time.monotonic()-self.started>=2430 or datetime.now(timezone.utc)>=STOP_NEW or self.peak_RSS>2147483648:
+        if time.monotonic()-self.started>=2430 or datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(self.plan).values()) or self.peak_RSS>2147483648:
             self.stop_owned('service_time_pause_or_RSS')
             return
         code=self.worker.poll()

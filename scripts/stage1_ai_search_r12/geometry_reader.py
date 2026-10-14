@@ -60,14 +60,19 @@ def metrics(counts, widths):
                 total_request=int(sum(counts))*21600000)
 
 class GeometryAuditor:
-    def __init__(self, scene, origin, parent_cache_SHA, current=None):
+    def __init__(self, scene, origin, parent_cache_SHA, current=None,stop=None):
         self.scene, self.origin, self.parent_cache_SHA = scene, origin, parent_cache_SHA
         self.current = current or dict(layout=origin['layout'],metrics=origin['metrics'])
+        self.stop=stop
         self.index = {a:i for i,a in enumerate(scene.aircraft_ids)}
         need(len(self.index)==len(scene.aircraft_ids), 'full unique aircraft')
         need(np.all(np.asarray(scene.demands)==21600000), 'all fixed requests')
 
+    def boundary(self):
+        if self.stop is not None and self.stop():raise Incomplete('cooperative independent geometry pause')
+
     def __call__(self, node, cache, allowance):
+        self.boundary()
         cache = cache or dict(schema='R12ReaderGeometryCacheV2',parent_cache_SHA=self.parent_cache_SHA, layouts={},exact={},pairs={},regions={},contacts={})
         need(cache.get('schema')=='R12ReaderGeometryCacheV2','versioned independent geometry cache')
         need(cache.get('parent_cache_SHA')==self.parent_cache_SHA, 'geometry parent binding')
@@ -78,6 +83,7 @@ class GeometryAuditor:
                 return region_matrix[region_lookup[a]][region_lookup[b]]
             key=content_sha(sorted([a,b]))
             if key not in cache['pairs']:
+                self.boundary()
                 cost['raypairs']+=1
                 need(cost['raypairs']<=allowance['raypairs'],'pair reservation before geometry')
                 cache['pairs'][key]=float(np.sum((self.scene.rays[self.index[a]]-self.scene.rays[self.index[b]])**2))
@@ -102,6 +108,7 @@ class GeometryAuditor:
             ai=[self.index[a] for a in anchors]
             need(np.array_equal(np.asarray(layout['centers']),np.asarray(self.scene.positions)[ai]), 'unchanged anchor positions')
             counts=np.bincount(owners,minlength=b);need(np.all(counts>0),'nonempty')
+            self.boundary()
             cost['raypairs']+=n;cost['layouts']+=1
             need(all(cost[k]<=allowance[k] for k in cost), 'prospective allowance before geometry')
             chord=np.sum((self.scene.rays-self.scene.rays[ai][owners])**2,axis=1)
@@ -113,6 +120,7 @@ class GeometryAuditor:
             need(m['actual_Omega']<=self.origin['Omega_cap']+1e-12,'whole Omega')
             need(m['total_request']==n*21600000,'request conservation')
             cache['layouts'][key]=m
+            self.boundary()
             cache['exact'][key]=layout_evidence(layout)
             return m
         current=self.current['layout'];ids=current['beam_ids'];owners=current['assignment']
@@ -134,6 +142,7 @@ class GeometryAuditor:
         contact_key=state
         contact=cache['contacts'].get(contact_key)
         if contact is None:
+            self.boundary()
             total=len(peaks)*len(candidates)
             cost['raypairs']+=total
             need(total<=5100 and cost['raypairs']<=allowance['raypairs'],'shared parent contact allowance before geometry')
@@ -194,6 +203,7 @@ class GeometryAuditor:
             region_key=content_sha([d['state_SHA'],members])
             cache.setdefault('regions',{})
             if region_key not in cache['regions']:
+                self.boundary()
                 cost['raypairs']+=m*m
                 need(cost['raypairs']<=allowance['raypairs'],'full regional matrix allowance before geometry')
                 matrix=np.sum((rays[:,None,:]-rays[None,:,:])**2,axis=-1)
@@ -205,6 +215,7 @@ class GeometryAuditor:
             if norm<1e-12:
                 need(node['state']=='rejected' and node['raw_producer_label']=='degenerate_mean_ray' and node['terminal']==current,'degenerate fallback')
             else:
+                self.boundary()
                 cost['raypairs']+=m
                 need(cost['raypairs']<=allowance['raypairs'],'mean-angle allowance')
                 v=np.rad2deg(2*np.arcsin(np.minimum(np.linalg.norm(rays-mean/norm,axis=1)/2,1)))
