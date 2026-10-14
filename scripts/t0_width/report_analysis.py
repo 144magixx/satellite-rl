@@ -319,6 +319,7 @@ def main():
         beam_rows.extend(dict(method=row['phase'].removeprefix('confirmation_'), mother=row['mother'], repeat=row['repeat'],
                               **beam, **actions[beam['beam_id']]) for beam in row['beams'])
     development, training, step_bins = [], [], []
+    feature_diagnostics = {}
     development_identities = {}
     for g, path in manifest.get('development', {}).items():
         buckets = defaultdict(list)
@@ -350,6 +351,8 @@ def main():
         bins = defaultdict(lambda: defaultdict(float))
         count = 0
         seen_steps = np.zeros(150001, dtype=bool)
+        feature_sums = {key: dict(total=0, zero=0, nonzero=0, max_abs=0., abs_sum=0., abs_ge_1e_minus6=0)
+                        for key in ('out_observation_float32', 'future_in_observation_float32')} if g in ('S01', 'S11') else {}
         for _, row in stream_rows(resolve(path)):
             if row.get('phase') != 'scientific':
                 continue
@@ -357,6 +360,22 @@ def main():
             if type(step) is not int or not 1 <= step <= 150000 or seen_steps[step] or step != count + 1:
                 raise ValueError('duplicate/out-of-range training step')
             seen_steps[step] = True
+            if feature_sums:
+                audit = row.get('relation_audit')
+                if not isinstance(audit, dict):
+                    raise ValueError('relation-enabled training step missing input audit')
+                for key, totals in feature_sums.items():
+                    values = np.asarray(audit[key], dtype=np.float32)
+                    if values.shape != (100,) or not np.isfinite(values).all():
+                        raise ValueError('relation observation audit shape/nonfinite')
+                    absolute = np.abs(values.astype(np.float64))
+                    zeros = int(np.count_nonzero(values == 0))
+                    totals['total'] += values.size
+                    totals['zero'] += zeros
+                    totals['nonzero'] += values.size - zeros
+                    totals['max_abs'] = max(totals['max_abs'], float(absolute.max()))
+                    totals['abs_sum'] += float(absolute.sum())
+                    totals['abs_ge_1e_minus6'] += int(np.count_nonzero(absolute >= 1e-6))
             count += 1
             entry = bins[(row['env_step'] - 1) // 1000]
             entry['count'] += 1
@@ -373,6 +392,10 @@ def main():
                     entry[key + '_count'] += 1
         if count != 150000 or not seen_steps[1:].all():
             raise ValueError('training step count must equal 150000')
+        if feature_sums:
+            for totals in feature_sums.values():
+                totals['mean_abs'] = totals.pop('abs_sum') / totals['total']
+            feature_diagnostics[g] = feature_sums
         step_bins.extend(dict(method=g, bin_start=b * 1000 + 1, **values) for b, values in sorted(bins.items()))
     for name, rows in (('confirmation_repeats', raw), ('confirmation_behavior', behavior), ('confirmation_beams', beam_rows), ('confirmation_mothers', mothers), ('contrasts', contrasts),
                        ('paired_differences', differences), ('development_nodes', development), ('training_episodes', training), ('training_step_bins', step_bins)):
@@ -387,9 +410,17 @@ def main():
             for block in iter(lambda: f.read(1024 * 1024), b''):
                 h.update(block)
         hashes[p] = h.hexdigest()
+    feature_report = dict(schema='W26_state_feature_diagnostics_v1', groups=feature_diagnostics,
+                          threshold_abs=1e-6, threshold_use='descriptive only; not a qualification or performance threshold',
+                          source='pre-action relation_audit in original scientific training steps; FP32 values',
+                          original_step_input_sha256={g: hashes[p] for g, p in manifest.get('steps', {}).items()},
+                          width_observation='not recorded in step audit; no values imputed',
+                          interpretation='Zero or tiny physical relation values do not imply hidden channels were zero-filled. Providing an input channel does not establish that the model effectively used it.')
+    (out / 'state_feature_diagnostics.json').write_text(json.dumps(feature_report, indent=2, ensure_ascii=False, allow_nan=False), encoding='utf8')
     result = dict(schema='W26_readonly_analysis_v1', episodes=len(raw), mother_count=40, methods=summary,
                   contrasts=contrasts, confirmation_behavior=behavior, confirmation_step_audit_complete=bool(behavior),
                   learning_diagnostics='1000-interaction aggregates; original steps retained and SHA referenced; not individual-update raw loss curves',
+                  state_feature_diagnostics='state_feature_diagnostics.json',
                   bootstrap=dict(replicates=10000, seed=73026, interval='percentile95_descriptive', unit='mother_after_repeat_average'),
                   constraint_violations=sum(r['constraint_violations'] for r in raw), incomplete_episodes=sum(not r['complete'] for r in raw),
                   input_sha256=hashes, provenance=manifest.get('provenance', {}), limitations=[
