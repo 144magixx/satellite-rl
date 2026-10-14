@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib
+import gzip
 import io
 import json
 from pathlib import Path
@@ -56,17 +57,37 @@ def publish(local_path,remote_path):
 def package_source(commit,phase):
     folder=LOCAL/'deployment'/phase;folder.mkdir(parents=True,exist_ok=True)
     path=folder/('source_'+commit+'.tar.gz')
-    paths=['src','scripts','pyproject.toml']
-    paths += subprocess.check_output(['git','ls-tree','-r','--name-only',commit,'tests'],cwd=REPO).decode().splitlines()
-    paths=[p for p in paths if not p.startswith('tests/') or p.startswith('tests/test_t0_width')]
-    raw=subprocess.check_output(['git','archive','--format=tar',commit,*paths],cwd=REPO)
-    files={}
-    with tarfile.open(fileobj=io.BytesIO(raw),mode='r:') as incoming:
-        members=[m for m in incoming if m.isfile()]
-        with tarfile.open(path,'w:gz') as target:
-            for member in members:
-                data=incoming.extractfile(member).read();files[member.name]=hashlib.sha256(data).hexdigest()
-                target.addfile(member,io.BytesIO(data))
+    # git archive can apply working-tree EOL conversion. cat-file yields the
+    # actual immutable Git blob bytes on both Windows and Linux.
+    raw_tree=subprocess.check_output(['git','ls-tree','-r','-z',commit,'src','scripts','pyproject.toml','tests'],cwd=REPO)
+    members=[]
+    for entry in raw_tree.split(b'\0'):
+        if not entry:continue
+        header,name=entry.split(b'\t',1);mode,kind,object_id=header.split()
+        name=name.decode('utf-8')
+        if name.startswith('tests/') and not name.startswith('tests/test_t0_width'):continue
+        if kind!=b'blob' or mode not in (b'100644',b'100755'):raise ValueError('only regular tracked source blobs')
+        members.append((name,mode,object_id))
+    output=subprocess.check_output(['git','cat-file','--batch'],input=b'\n'.join(m[2] for m in members)+b'\n',cwd=REPO)
+    blobs={};offset=0
+    for name,mode,expected in members:
+        line_end=output.index(b'\n',offset);oid,kind,size=output[offset:line_end].split();size=int(size)
+        data=output[line_end+1:line_end+1+size];offset=line_end+size+2
+        if oid!=expected or kind!=b'blob' or len(data)!=size:raise ValueError('Git batch blob binding')
+        if hashlib.sha1(b'blob '+str(size).encode()+b'\0'+data).hexdigest().encode()!=oid:raise ValueError('Git blob byte identity')
+        blobs[name]=data
+    if offset!=len(output):raise ValueError('unexpected Git batch tail')
+    files={name:hashlib.sha256(data).hexdigest() for name,data in blobs.items()}
+    if not path.exists():
+        with path.open('wb') as raw_output:
+            with gzip.GzipFile(fileobj=raw_output,filename='',mode='wb',mtime=0) as compressed:
+                with tarfile.open(fileobj=compressed,mode='w') as target:
+                    for name,mode,_ in members:
+                        member=tarfile.TarInfo(name);member.size=len(blobs[name]);member.mode=int(mode,8);member.mtime=0
+                        target.addfile(member,io.BytesIO(blobs[name]))
+    with tarfile.open(path,'r:gz') as archive:
+        actual={member.name:hashlib.sha256(archive.extractfile(member).read()).hexdigest() for member in archive if member.isfile()}
+        if actual!=files:raise ValueError('exact Git blob archive readback differs')
     value=dict(source_commit=commit,files=files,python_manifest={p:s for p,s in files.items() if p.endswith('.py') and p.startswith(('src/','scripts/'))},archive_SHA=digest(path),archive_bytes=path.stat().st_size)
     save_new(folder/'source_members.json',value)
     return path,value

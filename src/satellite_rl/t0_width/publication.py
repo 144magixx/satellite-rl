@@ -5,6 +5,7 @@ Public progress contains counts only. Primitive preparation and all model/PHY
 calls are zero; at most636 independently validated candidate layouts are read.
 """
 import hashlib
+import ast
 import json
 import time
 from pathlib import Path
@@ -16,11 +17,62 @@ from .data import (COUNTS, read_ref, read_json_ref, load_case, validate_manifest
                    file_sha, _json_once)
 
 CORE_SHA='9f187e4cd8122a6fce415b590d0ab0a385724b7d840cc88dd874e34ea936aea5'
+EXPORT_MANIFEST_SHA='4cadf2b8bd60ae4607eadedbd648bfc64918aaf0b98f0c6063297ccc5f1bcc3f'
+EXPORT_SOURCE_COMMIT='4ea97b859c80bac79638115973cdfc255e6ca3ba'
 
 
 def _same_ref(first, second):
     if first.get('path')!=second.get('path') or first.get('sha256')!=second.get('sha256'):
         raise ValueError('exact pinned publication path/SHA differs')
+
+
+def _validate_prepare_source(manifest,config,admission):
+    refs=manifest['source_file_refs']
+    for ref in refs:
+        if file_sha(ref['path'])!=ref['sha256']:
+            raise ValueError('original preparation source member differs')
+    if (not config.get('source_export_qualification_ref')
+            and any(ref['sha256']==CORE_SHA and Path(ref['path']).as_posix().endswith('/coverage/ai_search_r5/core.py')for ref in refs)):
+        return
+    qualification_ref=config.get('source_export_qualification_ref')
+    if (not isinstance(qualification_ref,dict)
+            or admission.get('source_export_qualification_SHA')!=qualification_ref.get('sha256')):
+        raise ValueError('exact original Linux/Git Wenv core bytes or root-pinned export qualification required')
+    receipt=read_json_ref(qualification_ref)
+    if (receipt.get('schema')!='W26SourceExportEquivalenceQualificationV1' or receipt.get('root_approved')is not True
+            or receipt.get('for_prepare_manifest_SHA')!=EXPORT_MANIFEST_SHA
+            or config['prepare_manifest_ref']['sha256']!=EXPORT_MANIFEST_SHA
+            or receipt.get('producing_source_commit')!=EXPORT_SOURCE_COMMIT
+            or manifest.get('execution_source_commit')!=EXPORT_SOURCE_COMMIT
+            or receipt.get('allowed_scope')!='existing_W26_data_only'
+            or receipt.get('core_git_blob_SHA')!=CORE_SHA):
+        raise ValueError('only exact existing4ea/W26 text export qualification is allowed')
+    expected={(r['path'],r['sha256'])for r in refs};seen=set();core_seen=False
+    files=receipt.get('files',[])
+    if not isinstance(files,list)or len(files)!=len(refs):
+        raise ValueError('qualification must cover every actual original source member')
+    for row in files:
+        actual_ref=row['actual_ref'];key=(actual_ref['path'],actual_ref['sha256'])
+        if key not in expected or key in seen:raise ValueError('extra/duplicate/unbound source export member')
+        seen.add(key);actual=read_ref(actual_ref);gitraw=read_ref(row['git_blob_ref'])
+        if actual!=gitraw and actual.replace(b'\r\n',b'\n')!=gitraw:
+            raise ValueError('source export contains changes beyond CRLF to LF')
+        if actual!=gitraw:
+            # The exception is for text export, never binary-byte normalization.
+            actual.decode('utf8');gitraw.decode('utf8')
+        relative=row['relative_path']
+        if (not isinstance(relative,str)or Path(relative).is_absolute()or'..'in Path(relative).parts
+                or not Path(actual_ref['path']).as_posix().endswith('/'+relative)):
+            raise ValueError('original export relative/actual source path differs')
+        if Path(actual_ref['path']).suffix=='.py':
+            before=ast.dump(ast.parse(actual,type_comments=True),include_attributes=False)
+            after=ast.dump(ast.parse(gitraw,type_comments=True),include_attributes=False)
+            if before!=after:raise ValueError('source export Python AST differs')
+        if relative=='src/satellite_rl/coverage/ai_search_r5/core.py':
+            if row['git_blob_ref']['sha256']!=CORE_SHA or not Path(actual_ref['path']).as_posix().endswith('/coverage/ai_search_r5/core.py'):
+                raise ValueError('original Wenv core Git blob is not9f')
+            core_seen=True
+    if seen!=expected or not core_seen:raise ValueError('incomplete original source export closure')
 
 
 def validate_audit_inputs(config):
@@ -41,12 +93,7 @@ def validate_audit_inputs(config):
     expected_native=sum(bool(r.get('native_wenv_admission_ref'))for r in manifest['rows'])
     if expected_native!=594 or admission.get('expected_native_imports')!=594 or admission.get('expected_new_prepare')!=42:
         raise ValueError('native594/new42 frozen accounting differs')
-    for ref in manifest['source_file_refs']:
-        if file_sha(ref['path'])!=ref['sha256']:
-            raise ValueError('original preparation source member differs')
-    if not any(ref['sha256']==CORE_SHA and Path(ref['path']).as_posix().endswith('/coverage/ai_search_r5/core.py')
-               for ref in manifest['source_file_refs']):
-        raise ValueError('exact original Linux/Git Wenv core bytes required in source closure')
+    _validate_prepare_source(manifest,config,admission)
     rows={};native=new=0
     for ref in config['shard_index_refs']:
         shard=read_json_ref(ref)
@@ -243,5 +290,7 @@ def audit_prepared_dataset(config,run_dir,progress=lambda value:None,stop=lambda
         'train_development_descriptive':stats,'candidate_rows_read':636,'independent_layout_checks':layout_checks,'native_imports':594,'new_preparation_calls':0,
         'prior_preparation_actual_new_calls':42,'T_calls':0,'D5_calls':0,'MILP_calls':0,'model_calls':0,
         'audit_wall_seconds':time.monotonic()-began}
+    if config.get('source_export_qualification_ref'):
+        result['source_export_qualification_ref']=config['source_export_qualification_ref']
     _json_once(run_dir/'audit_candidate_summary.json',result)
     return result

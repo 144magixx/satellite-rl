@@ -7,7 +7,8 @@ import unittest
 from satellite_rl.shared_interface.content import wire_bytes, content_sha
 from satellite_rl.shared_interface.stages import make_case
 from satellite_rl.t0_width.data import prepare_binding, prepare_candidate
-from satellite_rl.t0_width.publication import CORE_SHA, audit_one_candidate, validate_audit_inputs
+from satellite_rl.t0_width.publication import (CORE_SHA, audit_one_candidate, validate_audit_inputs,
+    _validate_prepare_source, EXPORT_MANIFEST_SHA, EXPORT_SOURCE_COMMIT)
 
 
 def save(path,value,wire=False):
@@ -17,6 +18,58 @@ def save(path,value,wire=False):
 
 
 class PublicationTests(unittest.TestCase):
+    def export_fixture(self,root,*,semantic_change=False,approved=True):
+        source=Path(__file__).parents[1]/'src/satellite_rl/coverage/ai_search_r5/core.py'
+        gitraw=source.read_bytes().replace(b'\r\n',b'\n')
+        self.assertEqual(hashlib.sha256(gitraw).hexdigest(),CORE_SHA)
+        actual=gitraw.replace(b'\n',b'\r\n')
+        if semantic_change:actual=actual.replace(b'width = max(.3,',b'width = max(.4,')
+        relative='src/satellite_rl/coverage/ai_search_r5/core.py'
+        path=root/relative;path.parent.mkdir(parents=True);path.write_bytes(actual)
+        original=root/'gitblob';original.write_bytes(gitraw)
+        actual_ref={'path':str(path),'sha256':hashlib.sha256(actual).hexdigest()}
+        receipt={'schema':'W26SourceExportEquivalenceQualificationV1','root_approved':approved,
+            'for_prepare_manifest_SHA':EXPORT_MANIFEST_SHA,'producing_source_commit':EXPORT_SOURCE_COMMIT,
+            'allowed_scope':'existing_W26_data_only','core_git_blob_SHA':CORE_SHA,
+            'files':[{'actual_ref':actual_ref,'git_blob_ref':{'path':str(original),'sha256':CORE_SHA},'relative_path':relative}]}
+        qref=save(root/'qualification.json',receipt)
+        manifest={'source_file_refs':[actual_ref],'execution_source_commit':EXPORT_SOURCE_COMMIT}
+        config={'prepare_manifest_ref':{'sha256':EXPORT_MANIFEST_SHA},'source_export_qualification_ref':qref}
+        admission={'source_export_qualification_SHA':qref['sha256']}
+        return manifest,config,admission
+
+    def test_export_exact_crlf_passes_only_with_root_qualification(self):
+        with tempfile.TemporaryDirectory()as folder:
+            _validate_prepare_source(*self.export_fixture(Path(folder)))
+
+    def test_export_semantic_difference_rejected(self):
+        with tempfile.TemporaryDirectory()as folder:
+            with self.assertRaisesRegex(ValueError,'beyond CRLF'):
+                _validate_prepare_source(*self.export_fixture(Path(folder),semantic_change=True))
+
+    def test_export_byte_identical_original_crlf_member_passes(self):
+        with tempfile.TemporaryDirectory()as folder:
+            root=Path(folder);manifest,config,admission=self.export_fixture(root)
+            actual=root/'scripts/original.json';actual.parent.mkdir(parents=True)
+            raw=b'{"original":true}\r\n';actual.write_bytes(raw)
+            original=root/'original_gitblob';original.write_bytes(raw)
+            actual_ref={'path':str(actual),'sha256':hashlib.sha256(raw).hexdigest()}
+            manifest['source_file_refs'].append(actual_ref)
+            path=Path(config['source_export_qualification_ref']['path']);receipt=json.loads(path.read_bytes())
+            receipt['files'].append({'relative_path':'scripts/original.json','actual_ref':actual_ref,
+                'git_blob_ref':{'path':str(original),'sha256':hashlib.sha256(raw).hexdigest()}})
+            qref=save(root/'qualification_with_original_crlf.json',receipt)
+            config['source_export_qualification_ref']=qref;admission['source_export_qualification_SHA']=qref['sha256']
+            _validate_prepare_source(manifest,config,admission)
+
+    def test_export_missing_root_pin_or_unapproved_rejected(self):
+        with tempfile.TemporaryDirectory()as folder:
+            manifest,config,admission=self.export_fixture(Path(folder),approved=False)
+            with self.assertRaisesRegex(ValueError,'root-pinned'):
+                _validate_prepare_source(manifest,config,{})
+            with self.assertRaisesRegex(ValueError,'only exact'):
+                _validate_prepare_source(manifest,config,admission)
+
     def test_independent_exact_candidate_geometry(self):
         with tempfile.TemporaryDirectory()as folder:
             root=Path(folder)
