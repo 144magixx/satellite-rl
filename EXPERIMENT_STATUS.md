@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-15 00:05 S1-AI17定时任务乱码已修复，日常检查改为每小时；10月15日07:00单次暂停及两端独立timer均已落实配置。** 根逐条检查保存文本，实际发现本任务跟进正文在shell回读／写回中出现1913个替换字符，已保留旧原件并通过工具重写短中文。两条新名称为“第一阶段研究进度检查”和“10月15日早上七点暂停研究”，读回替换字符均0；其它17条任务内容／状态未改，主跟进每小时一次、无变化不通知，不代表重新训练。[编码与频率修复回执](outputs/experiments/first_stage_ai_search_20261013/control/automation_text_repair_20261014/verified_after.json)。
+
+新07暂停guard源码／部署CLI已独审（4727d4f1），根实核73／74 UID、boot、DQN和空间后各只启动一个operations-only timer。73为58949／birth858775774／boot25176dc4，74为62607／birth858820189／boot268486b1；launch与timer_started及真实kernel四元身份／完整命令一致，均S、stderr0，当前新pause标记未产生。两timer到UTC10月14日23:00（北京时间10月15日07:00）将持久写本组新hold，不依赖桌面连接；不发信号、不停其它任务。未来任务仍必须单独登记并通过冻结源码的新deadline hook／保存检查，不能把空registry当自动覆盖所有后继。08:00由用户重启，只有新暂停后明确“继续”才恢复。[根实际timer接受](outputs/experiments/first_stage_ai_search_20261013/control/deadline_20261015_0700/root_actual_01/root_actual_timer_acceptance.json)。
+
 **2026-10-14 23:42 S1-AI17已登记新的人类暂停要求：北京时间10月15日07:00暂停，08:00由用户重启；只有此后明确“继续”才恢复。** 这是新截止，旧10月14日08:10继续不豁免它；当前尚未到期，继续原有限工作。新[暂停合同](outputs/experiments/first_stage_ai_search_20261013/control/user_pause_20261015_0700.json)SHA90dd6d81已保存，原文件不覆盖；一次检查s1-ai17-2已设ACTIVE，并按保存创建时间／规则核下一次为10月15日07:00，主15分钟跟进已加入最高优先的新暂停约束。只作用本组73／74，不停18／24及其它组、不代用户重启。operations-only持久timer正在独立准备，部署前不冒称远端已受新timer保护；未来任何任务须先绑定新deadline／协作保存，未覆盖不得准入。
 
 同轮最新reader guard3／native2仍在metadata失败，输出02与原件保留，科学数组／GEO仍0；9个转存别名比较已通过，随后历史dispatch graph内的工作树source local_ref版本与当前版本冲突。已定位旧07图五处、旧ae7图三处，共六个不同旧source版本，全部有已核原始字节；r9仅做完整明确可达历史版本诊断，不继续盲试。新外调用0.8048096秒的费用与独审尚待补齐，不能用旧剩58.5666562直接重新执行；暂无新性能结论。
