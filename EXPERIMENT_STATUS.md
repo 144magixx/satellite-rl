@@ -1,5 +1,7 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-14 S1-AI17-R10报告23、三图与所选科学资产规范双端主归档已根接受，最终handoff仅待小补充。** E／远端NFS各一套，1895新唯一对象／26,108,046原字节，单卷9,843,992字节；根再次流核本地与远端全部新成员SHA一致。3695路径版本别名保留5组原始采集的恢复映射，292共享别名引用已验R9／R7-R8，不重压祖先包；中间报告cc3ed／00b707已精确恢复并核原SHA。[所选归档接受](outputs/experiments/first_stage_ai_search_20261013/round10/archive_closure_01/root_R10_selected_archive_acceptance.json) · [根双端字节核验](outputs/experiments/first_stage_ai_search_20261013/round10/archive_closure_01/root_independent_byte_verification.json) · [完整报告23](docs/第一阶段/实验报告/23_全景容量协调与顺序重构的机制比较.md)。C／D／E同物理盘、73／74同NFS不冒充额外独立备份；全历史T0祖先仍未闭合。render01—04预览清理被自动审批以blocked by policy拒绝，删除未执行、未绕行，原目录保留且不打包，拒绝回执已入档。R10科学分支保持关闭，下一轮方案28仅进入独立数学／源码准备，尚无新科学计算。
+
 **2026-10-14 S1-AI17-R10完整12×5已根验为有效负结果：达到降峰目标9／12，超过强顺序对照仅1／12，未过原3／3合取门槛。** 固定Gr覆盖全景三成本族全部9／1成功，不能据此启动成本族选择器训练；本轮科学分支关闭、剩余上限不转移。实际78全景匹配／768局部内核／3188内部局部流，模型初始化／训练0。保存数组审核已完整覆盖4715飞机、3,487,880射线对、838布局，未重跑求解器；独立指标算术确认原门槛、分母与历史错误均保持。[根科学接受](outputs/experiments/first_stage_ai_search_20261013/round10/science_actual_acceptance_02/root_R10_scientific_gate_acceptance.json) · [独立逐母／逐法／费用统计](outputs/experiments/first_stage_ai_search_20261013/round10/science_independent_statistics_01/independent_actual_metric_gate_cost_review.json)。
 
 十二景平均峰值需求B／Gr／固定N顺序S2／可变N顺序SH-C为271.8／255.6／234.0／230.4 Mbps；SH-C在7景实际改N，发布N为61—106，五法发布宽度0.3—0.999768377°。SH-C平均N为78.9167（B为76.6667），资源与锚点／多步差异须披露，不把均值或本轮观测时间称独立test、全局最优或AI收益。成功审核8.641秒，加原metadata失败0.953秒为9.594秒，内层时间不再叠加；两次plain资格0.718失败／0.797通过另列工程费用，原日志保存。报告23、三图与规范双端归档正在闭合；下一轮仅由Astra设计同图下直接负载目标的单一新数学臂，尚无新执行准入。
