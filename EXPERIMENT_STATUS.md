@@ -3,9 +3,11 @@
 <!-- W27_CURRENT_START -->
 **2026-10-15 S2-W27三臂先导运行、持久controller已启动，尚无正式结果。** W26报告18交付后，按持续自主授权独立比较B（S10/alpha0.01）、E（仅alpha0.003）、LP（槽功率联合Actor与双Q/alpha0.01）。三臂seed51001从头训练，分别20418/20424/20627；冻结science源`2beeb1ec678631403b4a6e821ca2976ea75303c3`，task/run为`train_B_2beeb1ec`、`train_E_2beeb1ec`、`train_LP_2beeb1ec`。每臂50k先导计入150k上限，总cap450k；50k共同开发门尚未判定，候选均失败则三臂50k结案。
 
-正式工程三臂6144交互/147更新及独立守恒核验通过；CPU合成96更新与已撤销的事后64预算错误保留，CUDA微资格实际9更新另账。science01/02/03均提交前失败、科学交互0，原因和成本原件保留。science04独立现场核验（北京时间02:16）B4400交互/2401更新、E4450/2451、LP4100/2101；三worker及三watchdog的实际身份、冻结源码与暂停合同核验通过。02:17:28持久controller回读三臂均到5000交互/3001更新并执行固定5000节点开发评价；这是时点快照，非最终成本。后续现场状态以工作台/逐任务回执为准。复用W26的576训练/20开发母、21.6Mbps/机；已用来设计的40母不再称独立test，仅最终一次锁定复核。训练N45—104、开发N47—98，尚未覆盖>0.5°或N近200。设计Astra、实现核验报告Sol。
+正式工程三臂6144交互/147更新及独立守恒核验通过；CPU合成96更新与已撤销的事后64预算错误保留，CUDA微资格实际9更新另账。science01/02/03均提交前失败、科学交互0，原因和成本原件保留。science04独立现场核验（北京时间02:36:20）B14350交互/12351更新、E14700/12701、LP13600/11601；三worker及三watchdog的实际身份、冻结2bee源码与暂停合同核验通过；这是时点快照，非最终成本。后续现场状态以工作台/逐任务回执为准。复用W26的576训练/20开发母、21.6Mbps/机；已用来设计的40母不再称独立test，仅最终一次锁定复核。训练N45—104、开发N47—98，尚未覆盖>0.5°或N近200。设计Astra、实现核验报告Sol。
 
 三端watchdog已留部署回执；06:58请求安全保存，07:00前本组训练/评价/后续调度暂停，只有此后用户明确“继续”可恢复，不代为08:00重启。本地持久pilot controller已从独立ops冻结源`2464743cde38dbf85afd6fa0a55597ce3e7f6afc`启动，PID35980的命令、解释器与创建时间只读实核一致；controller_state为observing_pilots，error.json不存在，stderr仅依赖弃用提示。controller不自动重启worker；scientific源仍为2beeb1ec，不能与ops源混淆。入口：[方案27](docs/第二阶段/方案/27_T-SAC温度与槽功率联合建模自主探索方案.md) · [运行总账](../../paper/outputs/experiments/s2_tsac_search27_20261015/run_manifest.json) · [登记计划](../../paper/outputs/experiments/s2_tsac_search27_20261015/run_plan.json) · [成本](../../paper/outputs/experiments/s2_tsac_search27_20261015/costs/ledger_index.json) · [失败](../../paper/outputs/experiments/s2_tsac_search27_20261015/failures/index.json)。根登记文件为本次提交后的证据汇总，不冒称事前冻结时间；事前方案与实际执行合同均以SHA绑定。
+
+最终矩阵controller已从独立冻结源`4ec00e6abc6229ac9637ad5c01476cbc24f8d6e9`启动，PID596命令/解释器/创建时间独核匹配；748个Git blob SHA及四个审核源码的CRLF/LF归一化映射通过。当前waiting_for_locked_pilot_decision，尚无POST intent、尚未开已知40母矩阵；root audited_recipe已冻结源码/科学与原W26计划/两历史权重/门槛/560或680预算，无需未来人工确认。最晚06:00前新开矩阵，06:58停止新调度并保存、07:00硬暂停；未赶上则等待用户明确继续。截止verifier PID47008按独立验收只读等待核三端退出与断点，不作科学调度。三个源码职责为2bee科学worker、2464743c先导ops、4ec00e6最终controller/已知评价，运行中的2beeworker不变。报告27尚未形成。
 <!-- W27_CURRENT_END -->
 
 
