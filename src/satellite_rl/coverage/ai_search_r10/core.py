@@ -73,7 +73,7 @@ def qualify_metrics(recomputed,source):
         require(abs(a-b)<=tolerance,'source recomputed metric qualification '+key)
 
 
-def prepare_common(scene, origin, *, original_index=None, stop=None):
+def _prepare_common_body(scene, origin, *, original_index=None, stop=None, observations):
     """Qualify an already audited saved R9 best terminal, never regenerate it.
 
     origin contains identity, layout, metrics, Ncap, Omega_cap, layout_SHA and
@@ -87,6 +87,7 @@ def prepare_common(scene, origin, *, original_index=None, stop=None):
     require(origin['layout_SHA']==digest(origin['layout']), 'saved best-terminal layout SHA')
     n=len(scene.aircraft_ids)
     ledger=Ledger(n,stop=stop)
+    observations['ledger']=ledger
     layout=copy.deepcopy(origin['layout'])
     metrics=audit(scene,layout,origin['Ncap'],origin['Omega_cap'],ledger)
     qualify_metrics(metrics,origin['metrics'])
@@ -123,6 +124,7 @@ def prepare_common(scene, origin, *, original_index=None, stop=None):
             unavailable.append(dict(source_beam_id=layout['beam_ids'][j],reason='no_eligible_member'))
     sources=ledger.ordered(sources,lambda x:(-x[0],x[1]),'common_peak_source_order')
     prefix=[]
+    observations['partial']['observed_added_center_prefix']=prefix
     used_ids=set(original_ids)
     for _,bid,j,candidates in sources:
         chosen=None
@@ -174,6 +176,18 @@ def prepare_common(scene, origin, *, original_index=None, stop=None):
         new_RULE_D5_T_W_model_calls=0)
     common['common_SHA']=digest(common)
     return common
+
+
+def prepare_common(scene,origin,*,original_index=None,stop=None):
+    """Qualify one saved B; interruptions preserve fallback and observed costs."""
+    observations=dict(partial=dict(complete=False,partial_status='unknown',stage='common',
+        origin_SHA=origin.get('layout_SHA'),selected=dict(terminal=copy.deepcopy(origin.get('layout')),
+        metrics=copy.deepcopy(origin.get('metrics')),status='saved_B')))
+    try:return _prepare_common_body(scene,origin,original_index=original_index,stop=stop,observations=observations)
+    except Exception as error:
+        if 'ledger' in observations:error.partial_ledger=observations['ledger'].record()
+        error.partial_result=copy.deepcopy(observations['partial'])
+        raise
 
 
 def _common_valid(scene,common):

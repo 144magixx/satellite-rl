@@ -129,6 +129,19 @@ class CoreMockTests(unittest.TestCase):
         self.assertEqual(caught.exception.partial_ledger['flow_queries'],1)
         self.assertFalse(caught.exception.partial_result['complete'])
 
+    def test_common_interruption_preserves_B_and_observed_cost(self):
+        origin=dict(layout_SHA='saved',layout={'version':0},metrics={'score':0})
+        def interrupted(scene,origin,**kwargs):
+            ledger=Ledger(1)
+            ledger.tick('raypairs',1)
+            kwargs['observations']['ledger']=ledger
+            raise core.ResourceUnknown('pause',ledger)
+        with patch.object(core,'_prepare_common_body',side_effect=interrupted):
+            with self.assertRaises(core.ResourceUnknown) as caught:core.prepare_common(None,origin)
+        self.assertEqual(caught.exception.partial_result['selected']['terminal'],origin['layout'])
+        self.assertEqual(caught.exception.partial_ledger['raypairs'],1)
+        self.assertFalse(caught.exception.partial_result['complete'])
+
     def test_engineering_unknown_reason_predicate_never_accepts_pause(self):
         from satellite_rl.coverage.ai_search_r10.engineering_runner import _expected_residual_cap_stop
         ledger=Ledger(1)
