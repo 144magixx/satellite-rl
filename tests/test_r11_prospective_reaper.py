@@ -73,7 +73,7 @@ class ReaperChecks(unittest.TestCase):
  def test_boot_mismatch_fails(self):
   value,error,files,*_=self.runfake(owner_boot='another');self.assertIsNotNone(error);self.assertNotEqual(files.get('guard_receipt.json',{}).get('status'),'completed')
  def test_unknown_descendant_never_signalled(self):
-  value,error,files,calls,life,*_=self.runfake(unknown=True);self.assertIsNotNone(error);self.assertEqual(life.signals,[]);self.assertNotEqual(files.get('guard_receipt.json',{}).get('status'),'completed')
+  value,error,files,calls,life,*_=self.runfake(unknown=True);self.assertIsNotNone(error);self.assertEqual(life.signals,[]);self.assertNotEqual(files.get('guard_receipt.json',{}).get('status'),'completed');self.assertIs(files['guard_receipt.json']['observer_final_receipt_IO_after_native_closure'],False);self.assertIs(files['guard_receipt.json']['observer_receipt_IO_not_hidden_native_work'],False)
  def test_delayed_collection_does_not_change_saved_bound(self):
   value,error,files,calls,life,clock=self.runfake();before=files['native_reap.json']['conservative_process_exit_upper_seconds'];clock.now+=70;self.assertEqual(before,files['native_reap.json']['conservative_process_exit_upper_seconds'])
  def test_final_sampled_RSS_checked_even_when_fast_reaped(self):

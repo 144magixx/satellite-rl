@@ -11,7 +11,7 @@ from scripts.stage1_ai_search_r10 import contracts as c
 
 def boottime():return time.clock_gettime(time.CLOCK_BOOTTIME)
 def usage_record(u):return dict(user_seconds=u.ru_utime,system_seconds=u.ru_stime,maxrss_bytes=u.ru_maxrss*1024,minor_faults=u.ru_minflt,major_faults=u.ru_majflt,voluntary_context_switches=u.ru_nvcsw,involuntary_context_switches=u.ru_nivcsw)
-def key(m):return(m['pid'],m['birth_ticks'],m['boot_id'],m['uid'])
+def key(m):return(m['pid'],m['birth_ticks'],m['boot_id'])
 
 class Watchdog:
  """No additional child. Parent death kills the bound native tree if IO stalls."""
@@ -112,11 +112,12 @@ def run_process(command,directory,stage,*,stop,life,hard_seconds,rss_bytes=21474
   except BaseException as e:error=(error or '')+';closure_unknown:'+type(e).__name__+': '+str(e);closure_observed=clock()
   observer_publication_started=clock()
   # Only observer IO remains after the closed native tree. It cannot run forever.
-  observer_tail_deadline=min(deadline+observer_tail_seconds,observer_publication_started+observer_tail_seconds)
+  native_end_proved=bool(closed and reaped is not None and reap_ref is not None)
+  observer_tail_deadline=min(deadline+(observer_tail_seconds if native_end_proved else 0),observer_publication_started+observer_tail_seconds)
   watchdog.after_native(observer_tail_deadline)
   completed=reason is None and error is None and closed and reaped is not None and reap_ref is not None and reaped['decoded_exit_code']==0
   if not completed:reason=reason or 'nonzero_or_unknown_native_exit'
-  result=dict(schema='R11ProspectiveNativeGuardReceiptV1',status='completed' if completed else 'partial_unknown',stage=stage,reason=reason,error=error,actual_child=owner,actual_observer=parent,external_timeout_wrapper=None,raw_wait_status=None if reaped is None else reaped['raw_wait_status'],exit_code=None if reaped is None else reaped['decoded_exit_code'],native_reap_ref=reap_ref,charged_start_clock_boottime_seconds=started,absolute_deadline_clock_boottime_seconds=deadline,closure_observed_clock_boottime_seconds=closure_observed,actual_stage_wall_seconds=closure_observed-started,complete_native_exit_upper_seconds=closure_observed-started if closed and reaped is not None else None,hard_seconds=hard_seconds,subtree_exit_verified=closed,postwait_process_observations=tree,registered_descendants=list(registry.values()),peak_parent_children_rss_bytes=sample_peak,RSS_sample_count=sample_count,parent_self_highwater_bytes=parent_highwater,wait4_rusage=None if reaped is None else reaped['rusage'],observer_final_receipt_IO_after_native_closure=True,observer_publication_hard_tail_seconds=observer_tail_seconds,observer_receipt_IO_not_hidden_native_work=True,automatic_retry=False,algorithm_spend_exact=None,nested_timers_not_additive=True)
+  result=dict(schema='R11ProspectiveNativeGuardReceiptV1',status='completed' if completed else 'partial_unknown',stage=stage,reason=reason,error=error,actual_child=owner,actual_observer=parent,external_timeout_wrapper=None,raw_wait_status=None if reaped is None else reaped['raw_wait_status'],exit_code=None if reaped is None else reaped['decoded_exit_code'],native_reap_ref=reap_ref,charged_start_clock_boottime_seconds=started,absolute_deadline_clock_boottime_seconds=deadline,closure_observed_clock_boottime_seconds=closure_observed,actual_stage_wall_seconds=closure_observed-started,complete_native_exit_upper_seconds=closure_observed-started if closed and reaped is not None else None,hard_seconds=hard_seconds,subtree_exit_verified=closed,postwait_process_observations=tree,registered_descendants=list(registry.values()),peak_parent_children_rss_bytes=sample_peak,RSS_sample_count=sample_count,parent_self_highwater_bytes=parent_highwater,wait4_rusage=None if reaped is None else reaped['rusage'],observer_final_receipt_IO_after_native_closure=native_end_proved,observer_publication_hard_tail_seconds=observer_tail_seconds,observer_receipt_IO_not_hidden_native_work=native_end_proved,automatic_retry=False,algorithm_spend_exact=None,nested_timers_not_additive=True)
   out=folder/'stage_output.json'
   result['output_ref']=dict(path=str(out),sha256=c.digest(out)) if out.is_file() else None
   result['guard_ref']=publish(folder/'guard_receipt.json',result)
