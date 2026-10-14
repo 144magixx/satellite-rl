@@ -17,13 +17,13 @@ def rss_tree(pid):
    if e.errno in (errno.ENOENT,errno.ESRCH):continue
    raise
  return total
-def group_members(expected):
+def group_members(expected,known_members=()):
  """One fresh session is owned only by this admitted leader birth+boot."""
  if expected is None:raise RuntimeError('missing owner identity')
  boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
  if boot!=expected['boot_id']:raise RuntimeError('boot changed; no PID kills')
- leader=identity(expected['pid'])
- if leader is not None and not same_process(expected,leader):raise RuntimeError('old session leader PID reused; refuse entire group')
+ first_leader=identity(expected['pid'])
+ if first_leader is not None and not same_process(expected,first_leader):raise RuntimeError('old session leader PID reused; refuse entire group')
  result=[]
  for proc in Path('/proc').iterdir():
   if not proc.name.isdigit():continue
@@ -38,7 +38,16 @@ def group_members(expected):
    if current['state']!='Z':result.append(current)
  leader=identity(expected['pid'])
  if leader is not None and not same_process(expected,leader):raise RuntimeError('session leader PID reused during observation; refuse entire group')
+ if not (same_process(expected,first_leader) and same_process(expected,leader)):
+  # A vanished leader can no longer authenticate a numeric session ID. Only
+  # exact member generations observed while that leader was present qualify.
+  known={(x['pid'],x['birth_ticks'],x['boot_id']) for x in known_members}
+  if any((x['pid'],x['birth_ticks'],x['boot_id']) not in known for x in result):raise RuntimeError('unproven group generation after leader exit; preserve unknown, refuse kill')
  return result
+def observe_owned(child,expected):
+ registry=getattr(child,'_r9_owned_members',{})
+ for member in group_members(expected,registry.values()):registry[(member['pid'],member['birth_ticks'],member['boot_id'])]=member
+ child._r9_owned_members=registry
 def terminate_owned(child,expected):
  live=child.poll()is None
  if live:
@@ -50,10 +59,15 @@ def terminate_owned(child,expected):
    os.killpg(child.pid,signal.SIGKILL);child.wait(timeout=3)
  # The leader can exit before a resistant grandchild. A PGID-only kill based
  # on a vanished leader is forbidden; recheck each surviving exact birth.
- for member in group_members(expected):
-  if same_process(member,identity(member['pid'])):os.kill(member['pid'],signal.SIGKILL)
+ registry=getattr(child,'_r9_owned_members',{});members=group_members(expected,registry.values())
+ for member in [*registry.values(),*members]:
+  current=identity(member['pid'])
+  if same_process(member,current) and current['state']!='Z':
+   try:os.kill(member['pid'],signal.SIGKILL)
+   except OSError as e:
+    if e.errno not in (errno.ENOENT,errno.ESRCH):raise
  deadline=time.monotonic()+3
- while group_members(expected):
+ while group_members(expected,registry.values()) or any(same_process(member,current) and current['state']!='Z' for member in registry.values() if (current:=identity(member['pid'])) is not None):
   if time.monotonic()>=deadline:raise RuntimeError('owned native subtree exit not verified')
   time.sleep(.02)
 def run_stage(command,directory,stage,*,stop,limits=None,popen=subprocess.Popen,clock=time.monotonic,memory=rss_tree,sleep=time.sleep,terminate=terminate_owned):
@@ -71,9 +85,10 @@ def run_stage(command,directory,stage,*,stop,limits=None,popen=subprocess.Popen,
    owner=identity(child.pid)
    if owner is None:raise RuntimeError('child birth/boot identity unavailable; completed exit cannot close unknown descendants')
    if owner and os.getpgid(child.pid)!=child.pid:raise RuntimeError('own new stage PGID required')
+   observe_owned(child,owner)
    record.update(status='native_started',actual_child=owner);atomic(wal,record)
    while child.poll()is None:
-    stop();peak=max(peak,memory(os.getpid()))
+    stop();observe_owned(child,owner);peak=max(peak,memory(os.getpid()))
     if clock()-began>=limits[stage]:reason='hard_time_guard'
     elif peak>2147483648:reason='parent_children_RSS_guard'
     if reason:terminate(child,owner);subtree_closed=True;break

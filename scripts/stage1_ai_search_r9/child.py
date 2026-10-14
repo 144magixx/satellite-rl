@@ -56,13 +56,13 @@ def execute(req,directory):
    selected=core.best_terminal(origin,results)
    value=dict(identity=case['identity'],complete=True,common_ref=req['common_ref'],candidate_refs=index,selected_position=selected['position'],selected_metrics=selected['metrics'],descriptor_extractions=len(results),kernel_entries=sum(x['kernel_entered'] for x in results),new_RULE_D5_T_W_model_calls=0)
   except BaseException as e:
-   atomic(directory/'partial_pool.json',dict(complete=False,completed_candidate_refs=index,incomplete_position=pos,remaining_positions=[d['position'] for d in pool['descriptors'] if pos is None or d['position']>=pos],partial_ledger=getattr(e,'partial_ledger',None),error=type(e).__name__+': '+str(e),uncompleted_are_missing_not_infeasible=True,unclosed_algorithm_cost=None,automatic_retry=False));raise
+   atomic(directory/'partial_pool.json',dict(complete=False,completed_candidate_refs=index,incomplete_position=pos,remaining_positions=[d['position'] for d in pool['descriptors'] if pos is None or d['position']>=pos],partial_result=getattr(e,'partial_result',None),partial_ledger=getattr(e,'partial_ledger',None),error=type(e).__name__+': '+str(e),uncompleted_are_missing_not_infeasible=True,unclosed_algorithm_cost=None,automatic_retry=False));raise
  imported_check(p);publish=time.monotonic();value.update(actual_stage=stage,operational_input_and_stage_seconds=time.monotonic()-began,original_input_refs={k:case[k] for k in ('scene_ref','prepared_ref','shared_case_ref')})
  asset=write_asset(directory/'stage_output.json.gz',value);immutable(directory/'stage_output.json',dict(asset_ref=asset));atomic(directory/'publication_timer.json',dict(observed_seconds=time.monotonic()-publish,nested_in_native_stage_wall=True));return asset
 def main():
  began=time.monotonic();a=argparse.ArgumentParser();a.add_argument('--request',required=True);a.add_argument('--request-sha256',required=True);a.add_argument('--directory',required=True);v=a.parse_args()
  try:execute(read(dict(path=v.request,sha256=v.request_sha256)),v.directory)
  except BaseException as e:
-  atomic(Path(v.directory)/'child_failure.json',dict(error=type(e).__name__+': '+str(e),partial_ledger=getattr(e,'partial_ledger',None),automatic_retry=False));raise
+  atomic(Path(v.directory)/'child_failure.json',dict(error=type(e).__name__+': '+str(e),partial_result=getattr(e,'partial_result',None),partial_ledger=getattr(e,'partial_ledger',None),automatic_retry=False));raise
  finally:atomic(Path(v.directory)/'child_main_finally.json',dict(observed_seconds_since_main=time.monotonic()-began,process_IO=io_snapshot(),includes_this_receipt_IO_and_process_exit=False,complete_exit_cost_closed=False))
 if __name__=='__main__':main()

@@ -7,6 +7,10 @@ from scripts.stage1_ai_search_r9 import contracts as c,control,guard,server,plan
 
 OWNER=dict(pid=12345,birth_ticks=10,state='S',boot_id='mockboot')
 class R9Operations(unittest.TestCase):
+ def setUp(self):
+  # Native lifecycle tests inject process observations; never inspect real
+  # Linux groups or spawn/kill a real process on this Windows qualification.
+  self.observe_patch=patch.object(guard,'observe_owned',return_value=None);self.observe_patch.start();self.addCleanup(self.observe_patch.stop)
  def test_all_operations_syntax_and_cold_imports_no_science(self):
   import ast,importlib
   for name in c.OPS_FILES:
@@ -240,4 +244,12 @@ class R9Operations(unittest.TestCase):
   proc=Mock();proc.read_text.return_value='mockboot';proc.iterdir.return_value=[];newleader=dict(OWNER,birth_ticks=999)
   with patch.object(guard,'Path',return_value=proc),patch.object(guard,'identity',side_effect=[None,newleader]):
    with self.assertRaisesRegex(RuntimeError,'reused during observation'):guard.group_members(OWNER)
+ def group_without_leader(self,known):
+  boot=Mock();boot.read_text.return_value='mockboot';proc=Mock();proc.name='12346';stat=Mock();fields=['S','1','12345','12345']+['0']*15+['12'];stat.read_text.return_value='12346 (mock) '+' '.join(fields);proc.__truediv__=Mock(return_value=stat);base=Mock();base.iterdir.return_value=[proc];member=dict(OWNER,pid=12346,birth_ticks=12)
+  def ident(pid):return None if pid==OWNER['pid'] else member
+  with patch.object(guard,'Path',side_effect=lambda name:boot if str(name).endswith('boot_id') else base),patch.object(guard,'identity',side_effect=ident):return guard.group_members(OWNER,[member] if known else [])
+ def test_vanished_leader_unregistered_same_numeric_group_is_unknown(self):
+  with self.assertRaisesRegex(RuntimeError,'unproven group generation'):self.group_without_leader(False)
+ def test_vanished_leader_only_exact_registered_generation_allowed(self):
+  self.assertEqual(self.group_without_leader(True),[dict(OWNER,pid=12346,birth_ticks=12)])
 if __name__=='__main__':unittest.main()
