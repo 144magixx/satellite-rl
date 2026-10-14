@@ -1,5 +1,5 @@
 """Byte and identity primitives; execution intentionally gated pending frozen design v2."""
-import errno,gzip,hashlib,json,os,time,sys
+import errno,gzip,hashlib,json,os,time,sys,uuid
 from pathlib import Path
 
 GROUP='S1-AI17-R10'
@@ -31,14 +31,23 @@ immutable=lambda path,value:publish(path,value,exclusive=True)
 
 def publish(path,value,exclusive=False):
  p=Path(path);p.parent.mkdir(parents=True,exist_ok=True);raw=(json.dumps(value,ensure_ascii=False,allow_nan=False,indent=2)+'\n').encode()
- target=p if exclusive else p.with_name(p.name+'.tmp')
- with target.open('xb' if exclusive else 'wb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
- if not exclusive:os.replace(target,p)
- if os.name!='nt':
-  fd=os.open(p.parent,os.O_DIRECTORY)
-  try:os.fsync(fd)
-  finally:os.close(fd)
- return dict(path=str(p),sha256=digest(p))
+ target=p if exclusive else p.with_name(p.name+'.'+str(os.getpid())+'.'+uuid.uuid4().hex+'.tmp')
+ mutable_replace_completed=False
+ try:
+  with target.open('xb' if exclusive else 'xb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
+  if not exclusive:os.replace(target,p);mutable_replace_completed=True
+  if os.name!='nt':
+   fd=os.open(p.parent,os.O_DIRECTORY)
+   try:os.fsync(fd)
+   finally:os.close(fd)
+  return dict(path=str(p),sha256=digest(p))
+ except BaseException as error:
+  if not exclusive:
+   try:caller=identity(os.getpid())
+   except BaseException:caller=None
+   error.publication_failure=dict(target=str(p.resolve()),private_temp=str(target.resolve()),caller_pid=os.getpid(),caller_identity=caller,error=type(error).__name__+': '+str(error),cleanup_attempted=False,replace_completed=mutable_replace_completed,private_temp_exists=None,private_temp_policy='preserve_if_present; no cleanup attempted')
+   if hasattr(error,'add_note'):error.add_note(json.dumps(error.publication_failure,ensure_ascii=False))
+  raise
 
 def check_identity(value,expected=None):
  if set(value)!=set(IDENTITY_FIELDS) or any(not isinstance(value[k],str) or not value[k] for k in IDENTITY_FIELDS):raise ValueError('full original eight-field string identity required')
