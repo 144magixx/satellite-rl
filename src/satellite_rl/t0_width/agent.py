@@ -75,10 +75,13 @@ class WidthEncoder(nn.Module):
         # fork_rng ensures input-column additions do not shift common initialization or sampling RNG.
         with torch.random.fork_rng(devices=[]):
             if self.width_visible:
-                torch.manual_seed(seed + 17011)
+                # Seed only the CPU generator used by new Linear columns.
+                # torch.manual_seed also reseeds CUDA, which a CPU-only fork
+                # would not restore and would change the policy sampling RNG.
+                torch.random.default_generator.manual_seed(seed + 17011)
                 self.geo_embed = self._extend(self.geo_embed, 3)
             if self.relation_visible:
-                torch.manual_seed(seed + 29009)
+                torch.random.default_generator.manual_seed(seed + 29009)
                 self.slot_embed = self._extend(self.slot_embed, 40)
         self.last_token_count = 14
 
@@ -135,12 +138,21 @@ class WidthAgent(WorkbenchAgent):
                for k in ("w_throughput", "w_spectrum", "w_shape")):
             raise ValueError("W26 does not add reward shaping")
         super().__init__(config, 207, (100, 10, 10), device=device or config["training"]["device"])
+        cpu_before=torch.get_rng_state().clone()
+        cuda_before=torch.cuda.get_rng_state(self.device).clone() if self.device.type=='cuda' else None
         for index, name in enumerate(("actor", "critic1", "critic2")):
             network = getattr(self, name)
             network.encoder = WidthEncoder(network.encoder, group,
                            self.train["seed"] + 100003 * (index + 1)).to(self.device)
         self.target1 = deepcopy(self.critic1).eval()
         self.target2 = deepcopy(self.critic2).eval()
+        cpu_after=torch.get_rng_state()
+        cuda_after=torch.cuda.get_rng_state(self.device) if self.device.type=='cuda' else None
+        if not torch.equal(cpu_before,cpu_after) or (cuda_before is not None and not torch.equal(cuda_before,cuda_after)):
+            raise RuntimeError('input projection initialization changed action sampling RNG')
+        self.extension_rng=dict(cpu_unchanged=True,cuda_unchanged=None if cuda_before is None else True,
+            cpu_SHA=hashlib.sha256(cpu_after.cpu().numpy().tobytes()).hexdigest(),
+            cuda_SHA=None if cuda_after is None else hashlib.sha256(cuda_after.cpu().numpy().tobytes()).hexdigest())
         # Rebind optimizers to the selected, real input projections.
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=self.train["actor_lr"])
         self.critic1_opt = torch.optim.Adam(self.critic1.parameters(), lr=self.train["critic_lr"])

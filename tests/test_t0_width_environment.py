@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import numpy as np
 from satellite_rl.shared_interface.fixtures import object_recipe
 from satellite_rl.shared_interface.contracts import Authority
@@ -89,5 +90,40 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(legacy_repaired_reward(0,1e8,1e8,0),-1.05)
         expected=-1+1-(1-np.exp(-np.sqrt(2)))**3-.05
         self.assertAlmostEqual(legacy_repaired_reward(2e8,1e8,1e8,.5),expected)
+
+    def test_processing_prefix_reward_reduction_independent_of_storage(self):
+        from satellite_rl.shared_interface.content import seal,content_sha
+        source=fixture(17)
+        permutation=np.asarray([16,1,15,3,13,5,11,7,9,8,6,10,4,12,2,14,0])
+        layout=dict(source.layout)
+        for name in ('beam_ids','source_slot_ids','anchor_aircraft_ids'):layout[name]=[source.layout[name][i] for i in permutation]
+        for name in ('centres_lat_lon_deg','full_width_deg','aircraft_count_by_beam','request_bps_by_beam_int64'):layout[name]=source.layout[name][permutation].copy()
+        layout=seal(layout)
+        registry=dict(schema='R7PublishedParentRegistryV1',case_sha_by_id={source.case['case_id']:source.case['content_sha256']},layout_shas=[layout['content_sha256']],allocation_shas=[])
+        reordered=UniformStage2Input(source.case,layout,Authority(registry,content_sha(registry)),PHYSICS)
+        envs=[T0WidthEnv(source),T0WidthEnv(reordered)]
+        # A fixed nonuniform capacity fixture makes prefix reduction sensitive
+        # to ordering and includes already-served zero rates. No optimizer.
+        ratios=np.asarray([0.,.1,.2,.3,.4,.5,.6,.7,.8,.9,.125,.25,.375,.625,.875,np.nextafter(1.,0.),1.])
+        previous_sums=[0.,0.]
+        for index in range(17):
+            observed=[]
+            prefix=ratios[:index+1]
+            for storage,env in enumerate(envs):
+                rates=np.zeros(env.N,np.float64)
+                rates[env.indices[:index+1]]=prefix*env.demands[env.indices[:index+1]]
+                # Division is repeated exactly as the original numpy routine.
+                expected=float(np.minimum(rates[env.indices[:index+1]]/env.demands[env.indices[:index+1]],1).sum())
+                f,l=np.argwhere(env.action_mask()['frequency_slots'])[0]
+                with patch('satellite_rl.t0_width.environment.capacity_bps',return_value=rates):
+                    _,reward,_,info=env.step([int(f),int(l),0])
+                self.assertEqual(env.total_satisfaction,expected)
+                self.assertEqual(info['satisfaction_increment'],expected-previous_sums[storage])
+                previous_sums[storage]=expected
+                observed.append((env.total_satisfaction,info['satisfaction_increment'],reward))
+            self.assertEqual(observed[0],observed[1])
+        # Exact threshold remains exact: below1 is -1 even by one ULP.
+        self.assertEqual(legacy_repaired_reward(0,1e8,1e8,np.nextafter(1.,0.)),-1.05)
+        self.assertEqual(legacy_repaired_reward(0,1e8,1e8,1.),.95)
 
 if __name__=='__main__':unittest.main()

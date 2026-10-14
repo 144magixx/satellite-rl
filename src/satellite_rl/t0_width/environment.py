@@ -102,7 +102,11 @@ class T0WidthEnv:
             actual_whole_beam_power_w=self.powers,group_by_beam_id=self.stage_input.group_by_beam_id,
             content_sha256='internal_partial_not_published')
         coeff=build_link_coefficients(self.layout,allocation,self.physics,kernel=self.kernel);self.rates=capacity_bps(coeff)
-        satisfaction=float(np.minimum(self.rates/self.demands,1).sum());increment=satisfaction-self.total_satisfaction
+        # Match 85f calculate_total_satisfaction's serviced processing prefix:
+        # layout storage order and extra unprocessed zeros can change float64
+        # reduction roundoff at the exact >=1 reward threshold.
+        processed=self.indices[:self.beam_idx+1]
+        satisfaction=float(np.minimum(self.rates[processed]/self.demands[processed],1).sum());increment=satisfaction-self.total_satisfaction
         reward=legacy_repaired_reward(float(self.rates[c]),float(self.demands[c]),self.beta,increment,0,l+1)
         self.total_satisfaction=satisfaction;self.beam_idx+=1;done=self.beam_idx==self.N
         info=dict(beam_id=bid,requested_action=list(action),actual_action=dict(start=f,count=l+1,power_w=(p+1)*5),rate_bps=float(self.rates[c]),required_rate_bps=float(self.demands[c]),satisfaction_increment=increment,metrics=self.metrics())

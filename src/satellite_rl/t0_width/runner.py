@@ -362,7 +362,8 @@ def run_task(config, run_dir, progress_callback=None, stop_requested=None, *, lo
             return needs_accounting(recoveries or [dict(reason="orphan unique evidence without trustworthy checkpoint")])
         logs = EvidenceLogs(directory / "logs")
     atomic_json(directory / "model_structure.json", dict(schema=agent.schema,
-                parameters=agent.parameter_counts(), resumed=resumed))
+                parameters=agent.parameter_counts(), resumed=resumed,
+                input_projection_initialization_rng=agent.extension_rng))
     session_start = time.perf_counter()
     base_wall = progress["wall_seconds"]
     total = config["training"]["total_steps"]

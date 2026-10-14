@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import torch
 from satellite_rl.agents.workbench_algorithms import WorkbenchAgent
-from satellite_rl.t0_width.agent import WidthAgent, build_config, state_dimension
+from satellite_rl.t0_width.agent import WidthAgent, WidthEncoder, build_config, state_dimension
 from satellite_rl.t0_width.runner import seed_all
 
 
@@ -83,6 +83,16 @@ class WidthAgentTests(unittest.TestCase):
         self.assertFalse(torch.equal(a.actor.encoder.geo_embed.weight[:,:2],b.actor.encoder.geo_embed.weight[:,:2]))
         self.assertFalse(torch.equal(a.actor.encoder.geo_embed.weight[:,2:],b.actor.encoder.geo_embed.weight[:,2:]))
         self.assertFalse(torch.equal(a.actor.encoder.slot_embed.weight[:,20:],b.actor.encoder.slot_embed.weight[:,20:]))
+
+    def test_extra_columns_do_not_reseed_cuda_or_advance_cpu_sampling(self):
+        from unittest.mock import patch
+        seed_all(51001)
+        base=WorkbenchAgent(build_config('S00'),207,(100,10,10),'cpu')
+        before=torch.get_rng_state().clone()
+        with patch('torch.cuda.manual_seed_all') as reseed:
+            WidthEncoder(base.actor.encoder,'S11',73026)
+        reseed.assert_not_called()
+        torch.testing.assert_close(torch.get_rng_state(),before,rtol=0,atol=0)
 
 
 if __name__ == "__main__":unittest.main()
