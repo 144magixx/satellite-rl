@@ -151,6 +151,15 @@ class CoreMockTests(unittest.TestCase):
         ledger.data['heap_pushes_plus_pops']=0
         self.assertFalse(_expected_residual_cap_stop(core.ResourceUnknown('residual_edge_inspections_cap'),ledger))
 
+    def test_saved_engineering_static_is_exact_independent_copy(self):
+        from satellite_rl.coverage.ai_search_r10.engineering_runner import _static_arrays
+        scene=SimpleNamespace(aircraft_ids=('b','a'),positions=np.array([[50.,13.],[50.,13.1]]),
+            rays=np.array([[1.,0.,0.],[.99,.01,0.]]),demands=np.full(2,core.REQUEST,dtype=float),input_sha256='original')
+        saved=_static_arrays(scene)
+        self.assertEqual(core.digest(saved),core.static_digest(scene))
+        scene.rays[0,0]=.5
+        self.assertEqual(saved['rays'][0][0],1.)
+
     def test_rejected_kernel_keeps_raw_local_matching(self):
         scene=SimpleNamespace(aircraft_ids=('a','b'),rays=np.array([[1.,0.,0.]]*2),positions=np.array([[50.,13.],[50.,13.]]))
         layout=dict(beam_ids=['x','y'],anchor_aircraft_ids=['a','b'],centers=scene.positions.tolist(),widths_deg=[.3,.3],assignment=[0,1])

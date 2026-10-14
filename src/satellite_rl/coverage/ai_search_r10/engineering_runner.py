@@ -17,6 +17,12 @@ def _expected_residual_cap_stop(error,ledger):
             ledger.data['graph_arc_initialization_writes']>0 and ledger.data['heap_pushes_plus_pops']>0)
 
 
+def _static_arrays(scene):
+    """Preserve actual source float arrays once; never reconstruct rays later."""
+    return dict(aircraft_ids=list(scene.aircraft_ids),positions=np.asarray(scene.positions).tolist(),
+        rays=np.asarray(scene.rays).tolist(),demands=np.asarray(scene.demands).tolist(),input_sha256=scene.input_sha256)
+
+
 def _create(spec):
     from ..ai_search.core import Scene
     scene=Scene(np.asarray(spec['positions'],np.float64),np.asarray(spec['demands'],np.float64),
@@ -45,6 +51,7 @@ def run_one(spec,*,admitted_spec_sha256,stop=None):
         scene,origin=_create(spec)
         observations['scene_constructions']=1
         observations['origin']=origin
+        observations['static']=_static_arrays(scene)
         observations['common_calls']=1
         common=core.prepare_common(scene,origin,stop=stop)
         observations['common']=common
