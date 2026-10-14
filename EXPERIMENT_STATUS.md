@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-14 23:42 S1-AI17已登记新的人类暂停要求：北京时间10月15日07:00暂停，08:00由用户重启；只有此后明确“继续”才恢复。** 这是新截止，旧10月14日08:10继续不豁免它；当前尚未到期，继续原有限工作。新[暂停合同](outputs/experiments/first_stage_ai_search_20261013/control/user_pause_20261015_0700.json)SHA90dd6d81已保存，原文件不覆盖；一次检查s1-ai17-2已设ACTIVE，并按保存创建时间／规则核下一次为10月15日07:00，主15分钟跟进已加入最高优先的新暂停约束。只作用本组73／74，不停18／24及其它组、不代用户重启。operations-only持久timer正在独立准备，部署前不冒称远端已受新timer保护；未来任何任务须先绑定新deadline／协作保存，未覆盖不得准入。
+
+同轮最新reader guard3／native2仍在metadata失败，输出02与原件保留，科学数组／GEO仍0；9个转存别名比较已通过，随后历史dispatch graph内的工作树source local_ref版本与当前版本冲突。已定位旧07图五处、旧ae7图三处，共六个不同旧source版本，全部有已核原始字节；r9仅做完整明确可达历史版本诊断，不继续盲试。新外调用0.8048096秒的费用与独审尚待补齐，不能用旧剩58.5666562直接重新执行；暂无新性能结论。
+
 **2026-10-14 23:17 S1-AI17-R11首个真实reader进入metadata后退出，尚未读取任何科学数组；累计保守费用1.433344秒，原60秒剩58.566656秒。** 第二次parent guard已实际启动一次native／reader，真实wait exit1，两登记代次均已退出；内guard0.875秒、reader异常前0.718秒均包含在本次完整外部调用1.0258063秒内，不重复加。加前次0.4075375秒，按十进制观测规范累计1.4333438；原receipt记录的内层累计1.2825375与raw浮点值均保留。已检查698次SHA／16.389598MB，但metadata未通过，gzip／科学plain／GEO／布局／整数见证均0，十二行质量仍unknown。[实际费用与原件](outputs/experiments/first_stage_ai_search_20261013/round11/reader_native_metadata_failure_01/root_actual_native_metadata_failure_cost_receipt.json) · [独立范围／费用核验](outputs/experiments/first_stage_ai_search_20261013/round11/independent_reader_review_07/independent_actual_metadata_failure_scope_cost_review.json)。
 
 已定位到旧metadata helper把转存后的远端引用与原D盘引用作完整字典比较：原graph两边SHA／313466B相同、路径不同。一次静态核对已列出九个确切的转存别名对，原04／05／c8源码及失败目录01保留；仅允许显式两端map／SHA／bytes均核的非传递plain-metadata别名等价，不全局忽略路径，也不包装typed／gzip／科学数据或改身份校验。Astra与根已冻结[原额度内的必要续审设计](outputs/experiments/first_stage_ai_search_20261013/round11/reader_pre_native_recovery_design_01/root_metadata_alias_continuation_design_acceptance.json)：下一guard3／native2仅在58.5666562秒内、另用output02，完整数组审仍最多一次；新source／map／config／guard独审和根准入前不重试。原R11十二景计算已结束，11完整＋母6工程unknown分类和complete AND3／3门槛不变。[当前清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)。
