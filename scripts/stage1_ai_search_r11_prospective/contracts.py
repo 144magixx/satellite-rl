@@ -42,7 +42,7 @@ def source_check(p):
 
 def human_epoch(p):
  a=c.read(p['human_resume_authority_ref']);e=c.read(p['human_epoch_ref'])
- if p['human_resume_authority_ref']['sha256']!=c.AUTHORITY_SHA or a.get('user_message_verbatim')!='缁х画' or a.get('human_authorization')is not True or a.get('root_accepted')is not True:raise ValueError('explicit human continue')
+ if p['human_resume_authority_ref']['sha256']!=c.AUTHORITY_SHA or a.get('user_message_verbatim')!='缂佈呯敾' or a.get('human_authorization')is not True or a.get('root_accepted')is not True:raise ValueError('explicit human continue')
  if e.get('schema')!='R11NewGhHumanEpochV1' or e.get('group')!=GROUP or e.get('root_accepted')is not True or e.get('new_deadline_unix_seconds')is not None:raise ValueError('new R11 epoch')
  if e.get('authority_ref')!=p['human_resume_authority_ref'] or any(e.get(k)!=p[k] for k in ('run_id','request_id','archive_root','execution_epoch_id')):raise ValueError('exact epoch/task binding')
  if not e.get('execution_epoch_id') or not e.get('watched_pause_paths') or not isinstance(e.get('historical_hold_exemptions'),list):raise ValueError('explicit pause inventory')
@@ -141,4 +141,14 @@ def validate_recovery_binding(p,r):
  for key in ('original_map_ref','final_inventory_ref'):
   if b[key]['sha256']!=host[key]['sha256']:raise ValueError('wrong complete old inventory')
   c.read(b[key])
+ mapping=c.read(b['original_map_ref'])
+ by_path={row['remote_path']:row for row in mapping['files']}
+ for name in ('root_POST_intent.json','root_POST_response.json','submission_intent.json'):
+  rows=[row for path,row in by_path.items() if path.endswith('/'+name)]
+  if len(rows)!=1:raise ValueError('exact old POST original')
+  expected={key:rows[0][key if key!='path' else 'remote_path'] for key in ('path','sha256','bytes')}
+  if b['prior_POST_refs'].get(name)!=expected:raise ValueError('wrong old POST ref')
+  c.pin(expected)
+ intent=c.read(b['prior_POST_refs']['root_POST_intent.json']);submission=c.read(b['prior_POST_refs']['submission_intent.json']);response=c.read(b['prior_POST_refs']['root_POST_response.json'])
+ if intent.get('plan_ref')!=b['prior_plan_ref'] or intent.get('review_ref')!=b['prior_root_review_ref'] or intent.get('request_id')!=old['request_id'] or submission.get('request')!=dict(plan_ref=b['prior_plan_ref'],root_review_ref=b['prior_root_review_ref'],request_id=old['request_id']) or response.get('HTTP_status')!=200 or response.get('POST_count')!=1 or response['response'].get('POST_replayed')is not False or response['response'].get('exact_run_id')!=old['run_id'] or response['response']['launch_ref']['sha256']!=b['prior_raw_refs']['worker_launch_ref']['sha256']:raise ValueError('original single POST/launch/request chain')
  return old
