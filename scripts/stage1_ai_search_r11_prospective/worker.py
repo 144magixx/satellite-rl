@@ -1,4 +1,4 @@
-"""Six serial Gh stages, each separately reserved; never repeat an unknown intent."""
+"""Five proven-unentered74 Gh stages; preserve case6 unknown and all original results."""
 import argparse,os,sys,time
 from pathlib import Path
 from scripts.stage1_ai_search_r10 import contracts as c
