@@ -208,3 +208,25 @@ def evaluate_pool(scene,origin,pool,positions=None,stop=None):
         except ResourceUnknown as error:
             error.completed_results=results;error.incomplete_position=position;error.remaining_positions=positions[len(results):];raise
     return dict(complete=True,results=results,selected=best_terminal(origin,results),descriptor_extractions=len(results),kernel_entries=sum(x['kernel_entered'] for x in results),new_RULE_D5_T_W_model_calls=0)
+
+MECHANISM_INDICES=(0,6,12,18,24,36,42,48,54,60,72,78)
+
+def mechanism_gate(rows):
+    """M from saved completed pool labels only; no re-execution or model."""
+    require([r['original_index'] for r in rows]==list(MECHANISM_INDICES),'fixed12 mechanism mothers/order')
+    cases=[];fixed=[0]*32;oracle_hits=0;beyond_hits=0
+    for row in rows:
+        origin=row['origin'];pool=row['pool'];batch=row['batch'];ds=pool['descriptors'];results=batch['results']
+        require(batch.get('complete') is True and pool['origin_SHA']==origin['layout_SHA'] and pool['pool_SHA']==digest(ds),'complete pinned shared pool')
+        require(len(ds)<=32 and [d['position'] for d in ds]==list(range(len(ds))) and [r['position'] for r in results]==list(range(len(ds))) and batch['descriptor_extractions']==len(ds),'all original descriptor positions, no gap/subset')
+        require(all(r['status'] in ('known_unavailable','rejected','no_improvement','admissible') and protected(r['metrics'],origin['metrics']) and protected(r['metrics'],origin['RULE_metrics']) for r in results),'all known protected actual terminal outcomes')
+        oracle=best_terminal(origin,results);controls={}
+        for method in ('Hq','HOmega'):
+            order=method_order(pool,method)[:8];controls[method]=best_terminal(origin,[results[i] for i in order])
+        name,reference=min(controls.items(),key=lambda item:objective(item[1]['metrics'])+(item[0],))
+        first=hit(oracle['metrics'],origin['metrics']);beyond=hit(oracle['metrics'],reference['metrics']);oracle_hits+=int(first);beyond_hits+=int(beyond)
+        for position in range(32):
+            if position<len(results):fixed[position]+=int(hit(results[position]['metrics'],origin['metrics']))
+        cases.append(dict(original_index=row['original_index'],oracle_position=oracle['position'],oracle_hit_incumbent=first,oracle_hit_better_H=beyond,reference_method=name,H_prefixes={a:method_order(pool,a)[:8] for a in ('Hq','HOmega')},absent_fixed_positions=list(range(len(ds),32))))
+    difference=oracle_hits-max(fixed)
+    return dict(schema='R9MechanismGateV3',complete_mothers=12,oracle_hit_incumbent=oracle_hits,oracle_hit_better_H=beyond_hits,fixed_position_hits=fixed,oracle_minus_best_fixed_position=difference,passed=oracle_hits>=6 and beyond_hits>=3 and difference>=3,cases=cases,new_kernel_calls=0,new_model_calls=0,automatic_next_stage_allowed=False)

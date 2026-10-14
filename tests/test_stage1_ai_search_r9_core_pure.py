@@ -2,7 +2,7 @@
 import ast,copy,unittest
 from pathlib import Path
 from satellite_rl.coverage.ai_search_r9.flow import Ledger,ResourceUnknown,minimum_capacity
-from satellite_rl.coverage.ai_search_r9.core import protected,objective,method_order,best_terminal,CommonLedger,select_origin,InterfaceError
+from satellite_rl.coverage.ai_search_r9.core import protected,objective,method_order,best_terminal,CommonLedger,select_origin,InterfaceError,mechanism_gate,MECHANISM_INDICES,digest
 from satellite_rl.coverage.ai_search_r9.value_model import FEATURE_NAMES,ARCHITECTURE,strict_pairs,PairSampler
 from satellite_rl.coverage.ai_search_r9.engineering_fixtures import exact_specs
 
@@ -44,5 +44,15 @@ class PureR9(unittest.TestCase):
     def test_model_and_eight_geometry_inputs_frozen_not_executed(self):
         self.assertEqual(ARCHITECTURE,(24,64,32,1));self.assertEqual(len(FEATURE_NAMES),24);specs=exact_specs();self.assertEqual([s['fixture_id'] for s in specs],list(range(1,9)))
         self.assertTrue(all(len(s['aircraft_ids'])==len(s['positions'])==len(s['demands']) for s in specs));self.assertTrue(all(all(isinstance(x,str) for x in s['aircraft_ids']+s['layout']['beam_ids']) for s in specs))
+    def test_mock_M_gate_and_fixed_position_counterexample(self):
+        rows=[]
+        for j,index in enumerate(MECHANISM_INDICES):
+            m=dict(maxload=1000,top10_mean=900,CV=.8,N=10,actual_Omega=.01);origin=dict(layout={},metrics=m,RULE_metrics=m,layout_SHA='same')
+            ds=[dict(position=i,structurally_eligible=True,global_peak_lower_count=i,Omega_lower_bound=i/1000) for i in range(32)];p=dict(case_id='mock',origin_SHA='same',descriptors=ds,pool_SHA=digest(ds));results=[dict(position=i,status='no_improvement',metrics=copy.deepcopy(m),terminal={}) for i in range(32)];results[8+j].update(status='admissible',metrics={**m,'maxload':800,'top10_mean':850,'CV':.7})
+            rows.append(dict(original_index=index,origin=origin,pool=p,batch=dict(complete=True,results=results,descriptor_extractions=32)))
+        self.assertTrue(mechanism_gate(rows)['passed'])
+        for row in rows:
+            results=row['batch']['results'];winner=next(r for r in results if r['status']=='admissible');results[8]['metrics']=winner['metrics'];results[8]['status']='admissible'
+        self.assertFalse(mechanism_gate(rows)['passed'])
 
 if __name__=='__main__':unittest.main()
