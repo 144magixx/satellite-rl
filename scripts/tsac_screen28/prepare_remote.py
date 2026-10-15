@@ -19,8 +19,22 @@ BASE=Path('D:/paper/outputs/experiments/s2_tsac_screen28_20261015')
 REMOTE='/home/u2024110224/second_stage_satellite_rl/s2_w28'
 def read(path):return json.loads(Path(path).read_text(encoding='utf8'))
 
+def isolated_node_configuration(nodes):
+    """Copy configuration in this helper process; preserve W27's live setup."""
+    copied={port:dict(node) for port,node in nodes.items()}
+    copied[20418].update(base=REMOTE,api=9080)
+    return copied
+
+def publish_originals(authority):
+    refs={}
+    for key in ('w27_closure_ref','explicit_continue_ref','gate_contract_ref'):
+        original=authority[key];read_json_ref(original)
+        refs[key]=transport.publish(20418,Path(original['path']),
+            REMOTE+'/admissions/originals/'+key+'_'+original['sha256']+'.json')
+    return refs
+
 INSTALL=r'''
-import pathlib,hashlib,tarfile,json,sys,os,ast,shutil,subprocess
+import pathlib,hashlib,tarfile,json,sys,os,ast,shutil,subprocess,datetime
 root=pathlib.Path(SOURCE);root.mkdir(parents=True,exist_ok=True)
 assert hashlib.sha256(pathlib.Path(ARCHIVE['path']).read_bytes()).hexdigest()==ARCHIVE['sha256']
 with tarfile.open(ARCHIVE['path'],'r:gz') as archive:
@@ -43,6 +57,9 @@ sys.path[:0]=[str(root/'src'),str(root)]
 from satellite_rl.tsac_search27.pause import initialize,Gate
 import satellite_rl.tsac_screen28.backend as backend_module
 assert pathlib.Path(backend_module.__file__).resolve().is_relative_to(root.resolve())
+for ref in ORIGINAL_REFS.values():assert hashlib.sha256(pathlib.Path(ref['path']).read_bytes()).hexdigest()==ref['sha256']
+closure=json.loads(pathlib.Path(ORIGINAL_REFS['w27_closure_ref']['path']).read_text())
+assert closure['root_approved'] is True and closure['formal_report_closed'] is True
 control=pathlib.Path(CONTROL);existed=(control/'state.json').exists()
 spec=dict(experiment_id='S2-W28',node_id='20418',scope_root=SCOPE,uid=os.getuid(),
  soft_UTC='2026-10-14T22:58:00+00:00',hard_UTC='2026-10-14T23:00:00+00:00',contract_SHA=CONTRACT_SHA)
@@ -52,7 +69,8 @@ if existed:
  assert not state['hold'] and state['resumed_contract'] and receipt_id in state['resume_receipt_ids'], 'existing/new hold cannot be bypassed by old continuation'
 else:
  assert state['hold']
- receipt=dict(receipt_id=receipt_id,user_message_reference=CONTINUE_REF,issued_UTC='2026-10-15T00:57:33+00:00',
+ receipt=dict(receipt_id=receipt_id,user_message_reference=CONTINUE_REF,issued_UTC=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+  user_continue_event_UTC='2026-10-15T00:57:33+00:00',
   hold_epoch=state['hold_epoch'],contract_SHA=CONTRACT_SHA,root_attested_user_continue=True)
  gate.resume(receipt)
 gate.validate(gate.snapshot()['epoch'])
@@ -85,6 +103,9 @@ def main():
     if len(commit)!=40 or any(c not in '0123456789abcdef' for c in commit):raise ValueError('exact Git commit required')
     out=Path(args.output);out.mkdir(parents=True,exist_ok=True)
     transport.LOCAL=BASE
+    transport.NODES=isolated_node_configuration(transport.NODES)
+    originals=publish_originals(authority)
+    transport.write_once(out/'published_authority_refs.json',originals)
     archive,members=package(commit)
     frozen=BASE/'control'/('frozen_ops_'+commit[:8]);frozen.mkdir(parents=True,exist_ok=True)
     with tarfile.open(archive,'r:gz') as tar:
@@ -96,7 +117,7 @@ def main():
             else:target.write_bytes(raw)
     archive_ref=transport.publish(20418,archive,REMOTE+'/deployment/'+commit+'/'+archive.name)
     params=dict(SOURCE=REMOTE+'/source/'+commit,ARCHIVE=archive_ref,FILES=members['files'],SCOPE=REMOTE,
-        CONTROL=REMOTE+'/control/epoch_01',CONTRACT_SHA=authority['gate_contract_ref']['sha256'],CONTINUE_REF=authority['explicit_continue_ref'])
+        CONTROL=REMOTE+'/control/epoch_01',CONTRACT_SHA=originals['gate_contract_ref']['sha256'],CONTINUE_REF=originals['explicit_continue_ref'],ORIGINAL_REFS=originals)
     result=transport.remote_python(20418,'\n'.join(k+'='+repr(v) for k,v in params.items())+'\n'+INSTALL,timeout=90)
     transport.write_once(out/'source_gate_preparation.json',result)
     if result['exit_code']:raise ValueError('remote immutable source/Gate preparation failed; preserve evidence and do not replay unknown')
@@ -105,7 +126,7 @@ def main():
         path=Path(args.draft).parent/filename;transport.publish(20418,path,REMOTE+'/contracts/'+filename)
     for task in draft['tasks'].values():
         task.update(source_commit=commit,source_root=params['SOURCE'],source_manifest=members['python_manifest'],
-            rootpauseepoch=witness['gate']['epoch'],runtime_approved=False,root_approved=False,w27_closure_ref=authority['w27_closure_ref'])
+            rootpauseepoch=witness['gate']['epoch'],runtime_approved=False,root_approved=False,w27_closure_ref=originals['w27_closure_ref'])
     draft.update(source_root=params['SOURCE'],runtime_approved=False,root_approved=False)
     transport.write_once(out/'workbench_prepared_draft.json',draft)
     gate=dict(schema='W28SourceAdmissionV1',experiment_id='S2-W28',root_approved=True,passed=True,executor_port=20418,

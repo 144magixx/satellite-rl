@@ -245,5 +245,22 @@ class PureTests(unittest.TestCase):
         binding=pack_environment(env);raw=pickle.dumps(binding,protocol=5)
         self.assertTrue(raw);self.assertEqual(binding['authority_values']['case_by_id'],{'id':'sha'})
         self.assertEqual(FakeEnv.calls,[])
+    def test_preparation_transport_scope_and_remote_original_refs_are_isolated(self):
+        from scripts.tsac_screen28 import prepare_remote as helper
+        old={20418:dict(user='user',python='/pinned/python',base='/old/s2_w27',api=9070)}
+        copied=helper.isolated_node_configuration(old)
+        self.assertEqual(old[20418]['base'],'/old/s2_w27');self.assertEqual(copied[20418]['base'],helper.REMOTE)
+        self.assertEqual(copied[20418]['api'],9080)
+        self.assertEqual(copied[20418]['user'],old[20418]['user']);self.assertEqual(copied[20418]['python'],old[20418]['python'])
+        authority={key:dict(path='D:/canonical/'+key+'.json',sha256='a'*64) for key in ('w27_closure_ref','explicit_continue_ref','gate_contract_ref')}
+        def fake_publish(port,path,destination):
+            self.assertEqual(port,20418);self.assertTrue(destination.startswith(copied[20418]['base']+'/'))
+            return dict(path=destination,sha256='a'*64)
+        with patch.object(helper,'read_json_ref',return_value={}),patch.object(helper.transport,'publish',side_effect=fake_publish) as publish:
+            refs=helper.publish_originals(authority)
+        self.assertEqual(publish.call_count,3)
+        self.assertTrue(all(ref['path'].startswith(helper.REMOTE+'/admissions/originals/') for ref in refs.values()))
+        self.assertIn("issued_UTC=datetime.datetime.now(datetime.timezone.utc).isoformat()",helper.INSTALL)
+        self.assertIn("user_continue_event_UTC='2026-10-15T00:57:33+00:00'",helper.INSTALL)
 
 if __name__=='__main__':unittest.main()
