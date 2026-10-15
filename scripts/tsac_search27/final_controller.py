@@ -26,6 +26,36 @@ from satellite_rl.t0_width.data import read_json_ref
 
 LATEST_START=datetime.fromisoformat('2026-10-14T22:00:00+00:00')
 
+def apply_resume_window(args,science):
+    """Only a SHA-pinned root attestation may replace the expired ops window.
+
+    This does not modify/resume a remote Gate. Root must separately supply the
+    actually resumed Gate epochs in the newly pinned science state.
+    """
+    global LATEST_START,SOFT,HARD
+    if not getattr(args,'resume_authority_ref',None):return
+    authority=read_json_ref(read(args.resume_authority_ref))
+    if (authority.get('schema')!='W27KnownResumeOpsAuthorityV1'
+            or authority.get('root_approved') is not True
+            or authority.get('root_attested_user_continue') is not True
+            or authority.get('experiment_id')!='S2-W27'
+            or authority.get('science_state_SHA')!=r.sha(args.science_state)
+            or authority.get('controller_SHA')!=r.sha(__file__)
+            or authority.get('evaluation_source_commit')!=args.evaluation_commit
+            or authority.get('training_updates')!=0
+            or authority.get('allowed_episode_budgets')!=[560,680]
+            or authority.get('epochs')!=science['epochs']):
+        raise ValueError('explicit root resume ops authority mismatch')
+    times=[datetime.fromisoformat(authority[k]) for k in ('user_continue_UTC','latest_matrix_start_UTC','soft_UTC','hard_UTC')]
+    user,start,soft,hard=times
+    if (any(t.tzinfo is None for t in times) or user<=datetime.fromisoformat('2026-10-14T23:00:00+00:00')
+            or not user<=now()<start<soft<hard or (hard-user).total_seconds()>7200):
+        raise ValueError('resume must be post-pause, current and bounded to two hours')
+    LATEST_START,SOFT,HARD=start,soft,hard
+
+def guard():
+    if now()>=SOFT:raise RuntimeError('authorized ops soft deadline reached')
+
 def now():return datetime.now(timezone.utc)
 def read(p):return json.loads(Path(p).read_text(encoding='utf8'))
 def eval_api(route,body=None):
@@ -146,6 +176,13 @@ def prepare(args,ready,decision,science,out):
     historical_ref=read(args.w26_science_plan_ref)
     if r.sha(args.w26_science_plan)!=historical_ref['sha256']:raise ValueError('local original W26 training plan differs from exact remote reference')
     catalog['inventory_candidates']['HIST']['original_plan_ref']=historical_ref
+    producer=read_json_ref(read(args.history_producer_config_ref))
+    job=read_json_ref(read(args.history_producer_job_ref))
+    if (content_sha(producer)!=catalog['inventory_candidates']['HIST']['config_SHA']
+            or job['config_sha256']!=content_sha(producer)
+            or job['status']['plan_sha256']!=historical_ref['sha256']
+            or job['source_manifest']!=oldplan['source_manifest']):
+        raise ValueError('archived W26 effective producer/config/job mismatch')
     source_manifest=read(args.source_manifest);source_root=args.evaluation_source_root
     sourcecheck=r.remote_python(20418,'import pathlib,hashlib,json\nSOURCE='+repr(source_root)+'\nMANIFEST='+repr(source_manifest)+'''\nfor rel,sha in MANIFEST.items(): assert hashlib.sha256((pathlib.Path(SOURCE)/rel).read_bytes()).hexdigest()==sha
 print(json.dumps(dict(source_bytes_passed=True)))
@@ -153,7 +190,9 @@ print(json.dumps(dict(source_bytes_passed=True)))
     if sourcecheck['exit_code']:raise ValueError('future evaluation source not installed/qualified')
     r.write_once(out/'evaluation_source_observation.json',sourcecheck)
     methods=['B']+passed+['HIST'] if passed else ['B','E','LP','HIST'];inventory={}
-    remote_dir=r.NODES[20418]['base']+'/evaluation_01'
+    epoch=getattr(args,'evaluation_epoch','evaluation_01')
+    if not epoch.startswith('evaluation_') or not epoch.replace('_','').isalnum():raise ValueError('invalid evaluation epoch directory')
+    remote_dir=r.NODES[20418]['base']+'/'+epoch
     for method in methods:
         item=catalog['inventory_candidates'][method]
         if method!='HIST':item.update({k:v for k,v in observations[method].items() if k!='owner'})
@@ -165,6 +204,11 @@ print(json.dumps(dict(source_bytes_passed=True)))
     candidate=build_candidate(ready,decision,science,inventory,evaluation_commit=args.evaluation_commit,executor_port=20418,
         rootpauseepoch=science['epochs']['20418'],run_id='known_'+args.evaluation_commit[:8]+'_'+str(node),decision_ref=decision_ref,
         terminal_lock_ref={'path':remote_dir+'/terminal_lock.json','sha256':'PENDING'},known_manifest_ref=catalog['known_manifest_ref'],w26_unlock=catalog['w26_unlock'])
+    candidate['lock_candidate'].update(soft_UTC=SOFT.isoformat(),hard_UTC=HARD.isoformat())
+    for key,arg in [('historical_producer_config_ref',args.history_producer_config_ref),('historical_producer_job_ref',args.history_producer_job_ref)]:
+        local_ref=read(arg);read_json_ref(local_ref)
+        ref=r.publish(20418,Path(local_ref['path']),remote_dir+'/'+key+'.json')
+        candidate['config'][key]=ref;candidate['lock_candidate'][key]=ref
     r.write_once(out/'candidate.json',candidate)
     return candidate,source_manifest,remote_dir
 
@@ -270,6 +314,7 @@ def execute(args,candidate,manifest,remote_dir,science,out):
 
 def run(args):
     out=Path(args.output);out.mkdir(parents=True,exist_ok=True);science=read(args.science_state)
+    apply_resume_window(args,science)
     pins={name:r.sha(getattr(args,name)) for name in ('science_state','source_manifest','admission_refs','w26_science_plan','w26_science_plan_ref','w26_confirmation_plan')}
     pins.update(controller_SHA=r.sha(__file__),final_matrix_SHA=r.sha(Path(__file__).with_name('final_matrix.py')))
     r.write_once(out/'inputs_SHA.json',pins)
@@ -299,6 +344,10 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('science-state','pilot-output','output','evaluation-commit','evaluation-source-root','source-manifest','admission-refs','w26-science-plan','w26-science-plan-ref','w26-confirmation-plan'):p.add_argument('--'+name,required=True)
     p.add_argument('--history-root',default='D:/paper/models/runs/s2_width26_20261014/65d381d7d092de5b12c52c37')
+    p.add_argument('--history-producer-config-ref',required=True)
+    p.add_argument('--history-producer-job-ref',required=True)
+    p.add_argument('--resume-authority-ref')
+    p.add_argument('--evaluation-epoch',default='evaluation_01')
     p.add_argument('--resource-probe',default=str(r.LOCAL/'control/resource_probe.py'));p.add_argument('--execution-authority-ref');p.add_argument('--execute',action='store_true');args=p.parse_args()
     if args.execute and not args.execution_authority_ref:p.error('--execute requires --execution-authority-ref')
     from satellite_rl.tsac_search27.pause import file_lock

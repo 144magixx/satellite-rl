@@ -72,10 +72,17 @@ class KnownMatrixTests(unittest.TestCase):
                   all_continuation_decisions_locked=True,decision_ref={'path':'decision'},passed_variants=['E'],historical_training_plan_ref={'path':'historyplan'})
         from satellite_rl.t0_width.logging import content_sha
         historical_config=dict(group='S10',source_sha='core9f',data_manifest_sha='historical5d')
-        policies['HIST']['config_SHA']=content_sha(historical_config)
+        producer=dict(historical_config,run_id='oldrun',model_dir='/old/models/oldrun')
+        policies['HIST']['config_SHA']=content_sha(producer)
+        c['historical_training_plan_ref']['sha256']='planSHA'
+        lock['historical_training_plan_ref']=c['historical_training_plan_ref']
+        for key,path in [('historical_producer_config_ref','producer'),('historical_producer_job_ref','job')]:
+            c[key]={'path':path};lock[key]=c[key]
         def read(ref):
             if ref['path']=='lock':return lock
-            if ref['path']=='historyplan':return dict(schema='W26AuthorizedPlanV1',authorized=True,tasks={'history':dict(mode='train',config=historical_config)})
+            if ref['path']=='producer':return producer
+            if ref['path']=='job':return dict(config_sha256=content_sha(producer),status=dict(run_id='oldrun',model_dir='/old/models/oldrun',plan_sha256='planSHA'),source_manifest={},source_root='/source')
+            if ref['path']=='historyplan':return dict(schema='W26AuthorizedPlanV1',authorized=True,source_manifest={},source_root='/source',tasks={'history':dict(mode='train',config=historical_config)})
             return dict(root_approved=True,passed_variants=['E'])
         with patch('satellite_rl.tsac_search27.known_evaluation.read_json_ref',side_effect=read):
             validate_lock(c)

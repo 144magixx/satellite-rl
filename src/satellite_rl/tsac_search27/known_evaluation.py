@@ -53,6 +53,19 @@ def validate_lock(config):
     configs=[task['config'] for task in old['tasks'].values() if task.get('mode')=='train' and task['config'].get('group')=='S10']
     if len(configs)!=1:raise ValueError('original exact history S10 config missing')
     original=configs[0];hist=config['policies']['HIST']
+    producer=read_json_ref(config['historical_producer_config_ref'])
+    job=read_json_ref(config['historical_producer_job_ref'])
+    effective=dict(original,run_id=producer['run_id'],model_dir=producer['model_dir'])
+    if (producer!=effective or job['config_sha256']!=content_sha(producer)
+            or job['status']['run_id']!=producer['run_id']
+            or job['status']['model_dir']!=producer['model_dir']
+            or job['status']['plan_sha256']!=history_ref['sha256']
+            or job['source_manifest']!=old['source_manifest']
+            or job['source_root']!=old['source_root']):
+        raise ValueError('exact original W26 workbench producer derivation differs')
+    for key in ('historical_producer_config_ref','historical_producer_job_ref'):
+        if lock.get(key)!=config[key]:raise ValueError('producer reference not root locked')
+    original=producer
     if (hist['config_SHA']!=content_sha(original) or hist['source_SHA']!=original['source_sha']
             or hist['data_manifest_SHA']!=original['data_manifest_sha']):raise ValueError('history must bind original actual W26 config/source/data')
     return lock,jobs

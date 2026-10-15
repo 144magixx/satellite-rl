@@ -40,6 +40,11 @@ def policy_reference_catalog(science,science_plans,w26_science_plan,w26_confirma
     old=old[0];confirm=[t['config'] for t in w26_confirmation_plan['tasks'].values() if t.get('mode')=='evaluate']
     if len(confirm)!=1:raise ValueError('original W26 confirmation metadata required')
     confirm=confirm[0];old_ref=dict(confirm['terminal_policies']['S10'])
+    # W26 workbench.create injects these fields before hashing/saving policies.
+    # Preserve the original plan; reconstruct its exact effective producer config.
+    from pathlib import PurePosixPath
+    model_dir=PurePosixPath(old_ref['path']).parent
+    old=dict(old,run_id=model_dir.name,model_dir=str(model_dir))
     if node==50000:old_ref=dict(path=old_ref['path'].replace('policy_150000.pt','policy_050000.pt'),sha256='REQUIRE_ACTUAL_FILE_SHA')
     catalog['HIST']=dict(policy_ref=old_ref,schema=old_schema('S10'),config_SHA=content_sha(old),source_SHA=old['source_sha'],
         data_manifest_SHA=old['data_manifest_sha'],env_step=node,group='S10',historical_W26=True,fixed_node_not_best=True,
