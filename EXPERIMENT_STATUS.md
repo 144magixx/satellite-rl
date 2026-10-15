@@ -1,5 +1,13 @@
 # 实验状态与新窗口接手说明
 
+**2026-10-15 S1-AI17-R12已完成十二景审核、报告25、三图及所选规范双端归档；当前进入R13方案31的静态可行性核对，尚未开始新训练。** 方案30的邻域支持两步重构在固定12个已见开发母场景上，对强参照S／Q及一步O1的命中均为0/12；相对最佳固定序列的成功差也为0，原四项AND门槛全部未达。十二景平均峰值：强参照S／Q为228.6 Mbps，O2为248.4 Mbps；本动作集没有证明两步选择学习的增量空间，本轮选择器训练分支关闭。不能据此推断所有AI路线无效、全局最优或独立test泛化。[根科学结案](outputs/experiments/first_stage_ai_search_20261013/round12/root_actual_R12_scientific_closure.json) · [完整独审](outputs/experiments/first_stage_ai_search_20261013/round12/resume_20261015_0858/reader_continuation_review_01/actual_saved_output_review_01/independent_actual_reader_review.json)。
+
+实际生产27核／160次流、4715射线／34988角对，逐母原生回执合计26.36915秒；O2实际非空束数61—105、逐束宽度0.3°—0.999768377°，每机21.6 Mbps与完整飞机/归属/请求守恒保持。0模型初始化、0训练更新、0heldout。首reader存储并发失败与原缓存保留；唯一接续外部6.563秒正常退出、12景审核完整，累计reader4715射线／138215角对／23布局。按事前合同93＋10＋17=120秒保守全额扣账，未用科学槽和审核额度关闭，不再跑R12求解、reader或POST。全部本轮进程已核退出，188＋72原始文件已收存。[累计费用与已核最佳](outputs/experiments/first_stage_ai_search_20261013/analysis/r12_budget_and_best_verified.json) · [三图与原CSV](outputs/experiments/first_stage_ai_search_20261013/round12/report_analysis_01/plot_manifest.json)。
+
+用户08:58明确继续的授权已落实，旧07点暂停文件和失败原件保留，新暂停始终优先；每小时跟进，旧单次07检查保持暂停。既有已核最佳仍引用R10。[报告25](docs/第一阶段/实验报告/25_邻域余量与两步波束重构的机制比较.md)及三图已提交；E与远端规范归档691个唯一对象／9,536,577字节、1186路径映射、13共享依赖已逐成员双端核验，[最终签收](outputs/experiments/first_stage_ai_search_20261013/round12/archive_final_01/root_final_acceptance.json)2ab4bdba与发布回执闭合，旧失败和费用保留。仅所选本轮资产闭合，完整历史T0原始596祖先仍未闭合；73/74共享NFS及C/D/E同物理盘不冒充多份独立备份。
+
+[方案31](docs/第一阶段/方案/31_强顺序重构的安全截断机会与成本可测性.md)拟先用旧SH-C轨迹检验保质提前停止是否超过强固定规则，当前仅设计与源码资格核对，模型／训练／新求解仍0。已有轨迹缺逐前缀墙钟，不能据少算几个核宣称实际加速；[R13当前清单](outputs/experiments/first_stage_ai_search_20261013/round13/run_manifest.json)区分候选预算与执行准入。整体自主研究尚未完成。下列摘要均为历史时点。
+
 **2026-10-15 S1-AI17-R12在执行前拦下方案29的结构性缺陷，方案30已获结果前设计接受；尚无新工程或科学计算。** 静态证明表明：只联合并列最重束时，同束数动作不改变人数分布，其后加束与直接加束产生同一道问题，不能证明两步选择超过同范围贪心。这是设计否决，不是实验负结果；[原方案停止记录](outputs/experiments/first_stage_ai_search_20261013/round12/design_static_review_01/root_v1_static_design_stop.json)保留原文、代码准备和费用。[方案30](docs/第一阶段/方案/30_邻域余量支持的两步波束重构试点.md)加入一个接触且负载较低的邻束，并以整数人数和排列不变的精确键比较新状态；原12训练母、72核／576流和全部科学门槛不变，模型／训练／heldout仍0。新设计消除了原证明前提，尚未证明实际收益。
 
 [v2根设计接受](outputs/experiments/first_stage_ai_search_20261013/round12/root_prospective_design_acceptance_v2.json)b0230267只允许源码和输入准备。Sol分别修改核心及运行／独立审核程序；旧强顺序摘要没有整数人数，正定位已保存的最终归属供精确比较，不能从CV反推或重跑旧算法。新代码、有限工程和真实现场资格未闭合，不得启动；73／74暂停守卫已只读核为存活，07:00截止与暂停后须人类明确继续保持。[当前清单](outputs/experiments/first_stage_ai_search_20261013/round12/run_manifest.json)优先于下列历史进度。
