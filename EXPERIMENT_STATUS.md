@@ -2,7 +2,7 @@
 
 <!-- S1_R13_CURRENT_START -->
 
-**2026-10-15 S1-AI17：R13及报告26已结案；R14的140景数据资格与统一登记完成。布局生成102景成功，第103景在D5解码前因内部控制时限停止，37景未进入；登记进程全部退出，正在准备严格断点资格核验，teacher和模型拟合仍为0。** 原R13在12个已见训练母上分析保质提前停止：最早安全位置合176次，相比逐母事后最佳固定停止规则211次，仅额外省35次／16.5877%，未达20%。五项AND为真／真／真／假／真，关闭原A及条件性B/C后继，不改门槛。此事后包络不能当可部署在线规则，也不证明所有AI停止策略无效。报告26、三图与所选双端规范归档已闭合，[最终签收99325e01](outputs/experiments/first_stage_ai_search_20261013/round13/archive_final_01/root_final_acceptance.json)保留81唯一对象／3,117,310B、164别名及56共享引用；原24份gzip只保归档引用，不再读取或重打包。完整历史T0原始596祖先仍未闭合，既有已核最佳仍引用R10。
+**2026-10-15 S1-AI17：R14的140景数据资格、统一登记和全部B布局前驱已完成并独审；原102景复用，剩38景唯一接续正常结束。当前准备原96训练母的teacher标签计算，teacher实际执行和模型拟合仍为0。** [完整B140根接受011e2ce5](outputs/experiments/first_stage_ai_search_20261013/round14/B38_actual_epoch05/root_full_B140_acceptance.json)与[终态接受565f474b](outputs/experiments/first_stage_ai_search_20261013/round14/B38_actual_epoch05/root_accepted_terminal_closure.json)已落盘；本轮不是AI效果结论，不开放后继训练或Jan15。原R13及报告26已结案：12个已见训练母上最早安全位置合176次，相比逐母事后最佳固定停止规则211次，仅额外省35次／16.5877%，未达20%；五项AND为真／真／真／假／真，关闭原A及条件性B/C，不改门槛。事后包络不能当在线规则，也不证明所有AI停止策略无效。报告26、三图与所选双端归档已闭合，[最终签收99325e01](outputs/experiments/first_stage_ai_search_20261013/round13/archive_final_01/root_final_acceptance.json)保留81唯一对象／3,117,310B、164别名及56共享引用；旧24份gzip不重读或重打包。完整历史T0原始596祖先仍未闭合，已核最佳仍引用R10。
 
 
 
@@ -18,19 +18,25 @@
 
 
 
-工程失败与费用均保留。首工程配置入口错误在任何工程前失败，已按真实证据结为原120控制上界；首数据证明采集因budget文件527,822B超过512KiB退出，部分控制读取量未知且独立120上界保留。唯一必要接续仅把该明确文件上限设为2MiB，总8MiB不增，已成功收存，未重跑数据或科学。当前共享账group=2112.650826969、ops=1993.074239631、B类数据/登记=96.907091405秒，原余group8687.349173031、ops646.925760369、B3503.092908595；audit重叠不再加。[累计账补充](outputs/experiments/first_stage_ai_search_20261013/analysis/r14_data_registry_actual_cost_addendum.json)区分真实时间、保留上界和失败，后续仍须核现场新鲜账。
+工程失败与费用均保留。首工程配置入口错误在任何工程前失败，已按真实证据结为原120控制上界；首数据证明采集因budget文件527,822B超过512KiB退出，部分控制读取量未知且独立120上界保留。唯一必要接续仅把该明确文件上限设为2MiB，总8MiB不增，已成功收存，未重跑数据或科学。进入B布局阶段前的历史账为group2112.650826969、ops1993.074239631、B类数据/登记96.907091405秒；当时余group8687.349173031、ops646.925760369、B3503.092908595。[该时点费用](outputs/experiments/first_stage_ai_search_20261013/analysis/r14_data_registry_actual_cost_addendum.json)保留，不能继续把这些历史余额当当前可用额度。
 
 
 
 原B140只提交过一次，完整父层443.6760817秒后退出；旧本地运行观察为历史时点，不能继续当作存活证据。[实际控制独审a495734c](outputs/experiments/first_stage_ai_search_20261013/round14/independent_review_01/B140_actual_failure_control_review_01.json)及[根接受e0f2bead](outputs/experiments/first_stage_ai_search_20261013/round14/B140_actual_epoch04/root_actual_failure_control_acceptance.json)确认：102景均原生退出0且三态审核与发布引用齐；B:360的W、RULE和投影缓存已保存，实际3.143723899秒，在before_D5停止，D5进入0；其后37景无派发／入口／退出／发布。104个登记身份同boot均已核退出。这是内部控制保存边界，不是新的用户暂停，也不是算法不可行结论；原失败、marker、未知审计精确耗时与预算预约全部保留。一次必要控制采集已完成，不再采集或重放旧入口。
 
-原103任务实际合416.132669607秒，实际控制94.321299670秒可由旧C120完整覆盖；旧C120保留，不叠加嵌套L/P及根外测。当前已采集原账group2885.639772677、ops2233.074239631、B629.896037113、audit145.243831957秒；剩ops406.925760369秒，此时旧失败B120／audit120尚未定向核销。旧B360的audit精确秒数未知，仅可用其完整外测3.143723899秒作已包含费用的保守上界，不填0；该数不是新的免费额度。账本核销与接续均尚未执行，后续以新鲜原账为准。
+原103任务实际合416.132669607秒，实际控制94.321299670秒由旧C120完整覆盖；旧C120保留，不叠加嵌套L/P及根外测。接续前的诊断快照为group2885.639772677、ops2233.074239631、B629.896037113、audit145.243831957秒；此时资格10尚未发生，旧失败B120／audit120尚未核销。B360旧audit精确秒数仍未知，只用旧完整外测3.143723899秒作重叠保守上界，不填0。本次B38已在同一原账按独审链定向分类，旧失败原件不倒改。
 
 [有限38项接续设计](outputs/experiments/first_stage_ai_search_20261013/round14/execution_design_01/root_B38_conditional_design_acceptance.json)只接受源码准备：复用102景，B360严格恢复后只做原D5及三态审核，37景首次执行；不能重做W/RULE或投影缓存。控制组件已独审并[根接受5cf227e1](outputs/experiments/first_stage_ai_search_20261013/round14/B38_operations_preparation_03/root_control_component_acceptance.json)，保留50ms暂停／直接身份检查，将递归清点改为≤1秒或边界触发，并用同一登记锁处理合法child发布窗口；纯模拟通过不等于实际运行。
 
 一次五文件核验已经执行，完整父层2.6293153秒／工具外测2.7046464秒，进程退出0且已回收，但原资格frame为failure、receipt为unknown，不能据退出码宣称成功。三个断点和实际NumPy两源码共2,024,555B已保存并逐SHA核验；末次记账因闭包变量被循环覆盖，将fromnumeric.py读作JSON，错误发生在回调、临时写入和replace之前，没有写坏NumPy或旧预算。原ops10预约保留，不重试核验。[实际失败独审b61479a6](outputs/experiments/first_stage_ai_search_20261013/round14/independent_review_01/B360_qualification_actual_failure_review_01.json) · [完整费用335636cf](outputs/experiments/first_stage_ai_search_20261013/round14/B360_qualification_actual_01/root_actual_failure_cost_receipt.json)。重复读取的128,821B属于源码重建而非运行时计量；错误调用上限8MiB，不能声称每文件一次或全部I/O界已通过。原source通过回执、错误代码、失败和计量缺口全部保留。
 
-已保存五原件经独审，结构／身份／W ledger／RULE和两份实际NumPy源码证据闭合；结构与反射断言曾返回由精确源到达链证明，缺失flags不补造。[根证据接受aebe5067](outputs/experiments/first_stage_ai_search_20261013/round14/B360_qualification_actual_01/root_saved_evidence_acceptance.json)及[Astra计量补记](outputs/experiments/first_stage_ai_search_20261013/round14/execution_design_01/B360_qualification_measurement_gap_addendum.md)仅允许继续准备恢复源码，不把原操作改判成功。当前两路Sol分别准备B360原状态恢复入口及102＋38控制／账项／同包导出接线；cache本体与Scene实际绑定仍未验证，接续提交0。未来仅在原必要B38新begin中精确分类资格ops10且收费不变，旧B/C/audit另行核销；不得新增资格RPC或顺带清除未知项。严格状态无法恢复或一次接续再失败则关闭本轮不完整依赖分支，不改门槛。完整B140尚未通过，teacher／fit／校准／开发评价均未开放。[R14当前清单](outputs/experiments/first_stage_ai_search_20261013/round14/run_manifest.json)优先。
+已保存五原件经独审形成[证据接受aebe5067](outputs/experiments/first_stage_ai_search_20261013/round14/B360_qualification_actual_01/root_saved_evidence_acceptance.json)，[计量缺口](outputs/experiments/first_stage_ai_search_20261013/round14/execution_design_01/B360_qualification_measurement_gap_addendum.md)及原helper失败不改。此后完整接续源03经独审，并在同一载体核真实owner／boot／暂停／空间、旧账转换及SHA屏障后唯一运行。38新任务均raw0，原102引用保持，生成完整B_all140（e674854d／34786B）；B360新outer5.071930459＋旧3.143723899=8.215654358秒，复用旧cache，只接原D5和三态审核。源码实际成功路径、引用、退出与账共同支持恢复；根未重新打开科学数组作质量复算。[实际主审1641a9db](outputs/experiments/first_stage_ai_search_20261013/round14/independent_review_01/B38_actual_review_01.json)核140条request/source/case/exit绑定、142个身份观察无owned live；独立审核累计148个投影case／152054rays／444布局／456162归属角对，包含原8工程，B360未重复投影。
+
+同C导出288成员，原body5,944,142B，各SHA及时间／字节界通过；[运输与终态独审467907b5](outputs/experiments/first_stage_ai_search_20261013/round14/B38_transport_terminal_review_01/transport_terminal_review_01.json)确认完整父层240.099847秒、尾部0.6156168秒，helper／lane／driver退出闭合。新T209.989247698、P35.545215795、L6.213563848秒，按原合同保U15，新group收费290.029445995／ops80.040198296秒，嵌套audit12.540701471不重复加group。原false终态回执保留，根另存accepted版本；只允许下一既有begin消费，不再额外finalize或退款。按已验证转换链推导累计group3068.812942571、ops2323.114437927、B723.029008711、audit40.928257328秒，余ops316.885562073、trajectory3577.330504067、fit60秒；旧cache审计精确时间未知仍用上界。[最新累计账1134fe46](outputs/experiments/first_stage_ai_search_20261013/analysis/r14_complete_B140_cost_addendum.json)不是一次新的远端全账查询，后继还须现场核准。
+
+下一步只准备原96训练母的teacher／full_SHC cap32；原worker数学无改，接口独审通过，真实8工程控制来源已找到。根接受[teacher96准备及同C导出合同440b0f64](outputs/experiments/first_stage_ai_search_20261013/round14/execution_design_01/root_teacher96_preparation_acceptance.json)：289主体＋最多12附属，标签明确属于训练证据，实际执行前须给出序列化上界并独审；不把B导出合同直接套用。teacher／fit／校准／开发实际均0；仅当新完整源码、真实输入和现场余额等合格才可逐阶段推进，不保证316.886秒控制余额覆盖全链，不增加预算。[当前清单](outputs/experiments/first_stage_ai_search_20261013/round14/run_manifest.json)优先。
+
+本轮清理自有未执行pack_FALSE及metadata_FALSE.tar的操作被自动执行策略在CreateProcess前拒绝，只有“blocked by policy”泛化原因、无命令执行；[cleanup_hold原件](outputs/experiments/first_stage_ai_search_20261013/round14/B38_operations_integration_01/cleanup_policy_hold_01.json)保留绝对路径。已保留该副本并使用新准备目录，未重试删除；旧其它清理hold不变。
 
 
 用户10月15日08:58明确继续原件与旧暂停均保留，新暂停优先；旧七点单次检查保持暂停，每小时跟进。73／74仅候选资源，18／24及其它组不接管；73／74同NFS、C／D／E同物理盘不同分区，不冒充独立备份。统一请求、最终可变非空N≤200和逐束宽度、S1不含PHY/SI/SGM的边界继续执行，整体研究尚未结案。
