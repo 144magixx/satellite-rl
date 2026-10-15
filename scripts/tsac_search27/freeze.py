@@ -3,14 +3,14 @@ import gzip,hashlib,io,json,subprocess,tarfile
 from concurrent.futures import ThreadPoolExecutor
 from . import remote_ops as r
 
-def package(commit):
+def package(commit,*,test_prefixes=('tests/test_tsac_search27','tests/test_t0_width')):
  folder=r.LOCAL/'deployment'/commit;folder.mkdir(parents=True,exist_ok=True)
  tree=subprocess.check_output(['git','ls-tree','-r','-z',commit,'src','scripts','pyproject.toml','tests'],cwd=r.REPO)
  members=[]
  for entry in tree.split(b'\0'):
   if not entry:continue
   header,name=entry.split(b'\t',1);mode,kind,oid=header.split();name=name.decode()
-  if name.startswith('tests/')and not name.startswith(('tests/test_tsac_search27','tests/test_t0_width')):continue
+  if name.startswith('tests/')and not name.startswith(tuple(test_prefixes)):continue
   if kind!=b'blob'or mode not in(b'100644',b'100755'):raise ValueError('regular Git blobs only')
   members.append((name,mode,oid))
  output=subprocess.check_output(['git','cat-file','--batch'],input=b'\n'.join(x[2]for x in members)+b'\n',cwd=r.REPO)

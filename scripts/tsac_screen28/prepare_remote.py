@@ -17,6 +17,7 @@ from satellite_rl.t0_width.logging import content_sha
 
 BASE=Path('D:/paper/outputs/experiments/s2_tsac_screen28_20261015')
 REMOTE='/home/u2024110224/second_stage_satellite_rl/s2_w28'
+TEST_PREFIXES=('tests/test_tsac_search27','tests/test_t0_width','tests/test_tsac_screen28')
 def read(path):return json.loads(Path(path).read_text(encoding='utf8'))
 
 def isolated_node_configuration(nodes):
@@ -106,7 +107,8 @@ def main():
     transport.NODES=isolated_node_configuration(transport.NODES)
     originals=publish_originals(authority)
     transport.write_once(out/'published_authority_refs.json',originals)
-    archive,members=package(commit)
+    archive,members=package(commit,test_prefixes=TEST_PREFIXES)
+    if 'tests/test_tsac_screen28_pure.py' not in members['files']:raise ValueError('W28 pure test source absent from exact source capsule')
     frozen=BASE/'control'/('frozen_ops_'+commit[:8]);frozen.mkdir(parents=True,exist_ok=True)
     with tarfile.open(archive,'r:gz') as tar:
         for member in tar:
