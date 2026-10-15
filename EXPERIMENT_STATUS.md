@@ -1,5 +1,13 @@
 # 实验状态与新窗口接手说明
 
+<!-- S1_R13_CURRENT_START -->
+**2026-10-15 S1-AI17-R13已完成唯一轨迹分析、报告26、三图与所选规范双端归档；当前转入R14方案32候选的源码、数据与预算预检。** 9/12母场景存在至少提前8次历史求解调用而保留完整SH-C终点质量的机会；但最早安全位置合计176次，相比“每母事后选择最佳固定停止规则”的211次，仅额外省35次／16.5877%，低于预先冻结20%。五项AND条件为真／真／真／假／真，按有效有限负结果关闭本轮A，不释放条件性B计时或C训练，不改变阈值。本比较使用事后强规则包络，不能冒充可直接部署的在线基线，也不证明所有AI停止策略无效。[根实际结案](outputs/experiments/first_stage_ai_search_20261013/round13/root_actual_stage_A_closure.json) · [独审](outputs/experiments/first_stage_ai_search_20261013/round13/independent_review_01/actual_stage_A_review_01/independent_actual_stage_A_review.json)。
+
+实际只读取原24份gzip（压缩4,956,465B、解码20,307,672B），形成396个前缀位置，其中仅87个母内不同布局、309重复。384是旧方法记录，新增求解／GEO／模型／训练／heldout均0。完整根准入至退出2.844秒是本次分析耗时，不是规划加速；原120秒未用117.156秒关闭。正式进程及子进程均已核退出。[当前清单](outputs/experiments/first_stage_ai_search_20261013/round13/run_manifest.json) · [累计费用与最佳已核方案](outputs/experiments/first_stage_ai_search_20261013/analysis/r13_budget_and_best_verified.json)。统一21.6 Mbps、完整飞机身份/归属/请求、实际可变非空N≤200与逐束宽度保持；既有已核最佳仍引用R10。[报告26](docs/第一阶段/实验报告/26_强顺序重构的保质截断机会分析.md)及三图已提交；本地E与远端规范归档81个唯一对象／3,117,310B、164别名、56共享引用已核，[最终签收](outputs/experiments/first_stage_ai_search_20261013/round13/archive_final_01/root_final_acceptance.json)99325e01和发布回执闭合。旧24份gzip只保留已验归档引用，没有再次读取或重打包；完整历史T0原始596祖先仍未闭合。
+
+[方案32候选](docs/第一阶段/方案/32_给定合法布局的可部署停止规则学习候选.md)改问“一个实际训练的小树能否优于训练集锁定的强因果规则”，不把R13失败改判。拟96训练／24校准／20锁定开发共140母全部披露历史暴露，独立确认0，Jan15历史test不打开；140个合法B尚未生成／验收。当前只准源码与既有元数据预检，候选一次fit、348条轨迹及预算尚未正式准入，不能据方案启动训练。[R14当前清单](outputs/experiments/first_stage_ai_search_20261013/round14/run_manifest.json)是后继入口。整体自主研究继续。
+<!-- S1_R13_CURRENT_END -->
+
 **2026-10-15 S1-AI17-R12已完成十二景审核、报告25、三图及所选规范双端归档；当前进入R13方案31的静态可行性核对，尚未开始新训练。** 方案30的邻域支持两步重构在固定12个已见开发母场景上，对强参照S／Q及一步O1的命中均为0/12；相对最佳固定序列的成功差也为0，原四项AND门槛全部未达。十二景平均峰值：强参照S／Q为228.6 Mbps，O2为248.4 Mbps；本动作集没有证明两步选择学习的增量空间，本轮选择器训练分支关闭。不能据此推断所有AI路线无效、全局最优或独立test泛化。[根科学结案](outputs/experiments/first_stage_ai_search_20261013/round12/root_actual_R12_scientific_closure.json) · [完整独审](outputs/experiments/first_stage_ai_search_20261013/round12/resume_20261015_0858/reader_continuation_review_01/actual_saved_output_review_01/independent_actual_reader_review.json)。
 
 实际生产27核／160次流、4715射线／34988角对，逐母原生回执合计26.36915秒；O2实际非空束数61—105、逐束宽度0.3°—0.999768377°，每机21.6 Mbps与完整飞机/归属/请求守恒保持。0模型初始化、0训练更新、0heldout。首reader存储并发失败与原缓存保留；唯一接续外部6.563秒正常退出、12景审核完整，累计reader4715射线／138215角对／23布局。按事前合同93＋10＋17=120秒保守全额扣账，未用科学槽和审核额度关闭，不再跑R12求解、reader或POST。全部本轮进程已核退出，188＋72原始文件已收存。[累计费用与已核最佳](outputs/experiments/first_stage_ai_search_20261013/analysis/r12_budget_and_best_verified.json) · [三图与原CSV](outputs/experiments/first_stage_ai_search_20261013/round12/report_analysis_01/plot_manifest.json)。
