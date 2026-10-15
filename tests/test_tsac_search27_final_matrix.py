@@ -2,6 +2,49 @@
 from scripts.tsac_search27.final_matrix import build_candidate
 
 class FinalContractTests(unittest.TestCase):
+    def test_json_roundtrip_catalog_candidate_lock_and_policy_metadata(self):
+        """No model, PHY, training, or remote calls: exercise transport boundaries."""
+        import copy,json
+        from unittest.mock import patch
+        from scripts.tsac_search27.final_matrix import policy_reference_catalog
+        from satellite_rl.tsac_search27.known_evaluation import validate_lock,validate_policy_metadata
+        from satellite_rl.tsac_search27.agent import schema_identity
+        from satellite_rl.t0_width.agent import schema_identity as old_schema
+        from satellite_rl.t0_width.logging import content_sha
+        wire=lambda x:json.loads(json.dumps(x))
+        recipe=self.recipe([]);science=recipe['science'];plans={}
+        for port,variant in zip((20418,20424,20627),('B','E','LP')):
+            science['jobs'][variant].update(port=port,task_key='train_'+variant)
+            config=dict(variant=variant,group='S10',run_id='train_'+variant,model_dir='/models/train_'+variant,source_sha='CORE9f',data_manifest_sha='logical6343')
+            plans[str(port)]=dict(source_commit=science['source_commit'],tasks={'train_'+variant:dict(config=config)})
+        original=dict(group='S10',source_sha='CORE9f',data_manifest_sha='history5d')
+        old=dict(schema='W26AuthorizedPlanV1',authorized=True,source_root='/oldsource',source_manifest={'a':'sha'},tasks={'S10':dict(mode='train',config=original)})
+        confirmation=dict(tasks={'evaluate':dict(mode='evaluate',config=dict(terminal_policies={'S10':dict(path='/models/oldrun/policy_150000.pt',sha256='p')},confirmation_manifest_ref=recipe['known_manifest_ref'],confirmation_unlock=recipe['w26_unlock']))})
+        catalog=policy_reference_catalog(science,plans,old,confirmation,50000)
+        for name,item in catalog['inventory_candidates'].items():
+            recipe['inventory'][name].update(schema=wire(item['schema']),config_SHA=item['config_SHA'])
+        candidate=build_candidate(**recipe)
+        producer=dict(original,run_id='oldrun',model_dir='/models/oldrun')
+        oldref=recipe['inventory']['HIST']['original_plan_ref']
+        job=dict(config_sha256=content_sha(producer),status=dict(run_id='oldrun',model_dir='/models/oldrun',plan_sha256=oldref['sha256']),source_manifest=old['source_manifest'],source_root=old['source_root'])
+        config=candidate['config'];lock=candidate['lock_candidate'];lock['root_approved']=True
+        for key,path in [('historical_producer_config_ref','producer'),('historical_producer_job_ref','job')]:config[key]={'path':path};lock[key]=config[key]
+        config=wire(config);lock=wire(lock)
+        refs={'futurelock':lock,'decision':recipe['decision'],'oldplan':old,'producer':producer,'job':job}
+        with patch('satellite_rl.tsac_search27.known_evaluation.read_json_ref',side_effect=lambda ref:refs[ref['path']]):
+            validate_lock(config)
+        for name,p in config['policies'].items():
+            expected=old_schema('S10') if name=='HIST' else schema_identity(name)
+            policy=dict(schema=expected,env_step=p['env_step'],config_sha=p['config_SHA'],source_sha=p['source_SHA'],data_manifest_sha=p['data_manifest_SHA'])
+            validate_policy_metadata(policy,p,expected)
+            for key in ('env_step','config_sha','source_sha','data_manifest_sha'):
+                bad=dict(policy);bad[key]='wrong'
+                with self.assertRaises(ValueError):validate_policy_metadata(bad,p,expected)
+            bad=copy.deepcopy(policy);bad['schema']['dimension']+=1
+            with self.assertRaises(ValueError):validate_policy_metadata(bad,p,expected)
+            bad=copy.deepcopy(policy);bad['schema']['extra_field']='forbidden'
+            with self.assertRaises(ValueError):validate_policy_metadata(bad,p,expected)
+
     def recipe(self,passed):
         node=150000 if passed else 50000;names=['B']+passed+['HIST'] if passed else ['B','E','LP','HIST']
         science=dict(source_commit='a'*40,jobs={m:{'run_id':'train_'+m} for m in ('B','E','LP')})

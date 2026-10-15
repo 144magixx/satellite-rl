@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from scripts.tsac_search27.remote_ops import write_once,sha
 from scripts.t0_width.report_analysis import audit_terminal,action_mismatch,decode_array,bootstrap
-from satellite_rl.tsac_search27.known_evaluation import jobs_for
+from satellite_rl.tsac_search27.known_evaluation import jobs_for, same_schema
 
 
 def read(path):return json.loads(Path(path).read_text(encoding='utf8'))
@@ -72,7 +72,7 @@ def build_candidate(ready,decision,science,inventory,*,evaluation_commit,executo
     from satellite_rl.t0_width.agent import schema_identity as old_schema
     for method,item in inventory.items():
         expected_schema=old_schema('S10') if method=='HIST' else new_schema(method)
-        if item.get('schema')!=expected_schema:raise ValueError('strict LP/new variant or original history schema mismatch')
+        if not same_schema(item.get('schema'),expected_schema):raise ValueError('strict LP/new variant or original history schema mismatch')
         if (item.get('root_approved') is not True or item.get('env_step')!=node or item.get('fixed_node_not_best') is not True
                 or item.get('owner_exit_verified') is not True or item.get('policy_file_SHA_verified') is not True
                 or item.get('executor_port')!=executor_port):

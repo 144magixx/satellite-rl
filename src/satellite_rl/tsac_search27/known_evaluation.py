@@ -7,6 +7,26 @@ from satellite_rl.t0_width.logging import EvidenceLogs, atomic_json, content_sha
 from satellite_rl.t0_width.runner import evaluate_cases, BackgroundPolicy, RecoveryAccountingRequired, seed_all
 
 
+def same_schema(actual, expected):
+    """Compare exact schema content across Python/JSON tuple-list transport.
+
+    content_sha uses canonical JSON; no fields, dimensions or values are removed.
+    Policy metadata remains immutable in its original serialization.
+    """
+    return isinstance(actual, dict) and isinstance(expected, dict) and content_sha(actual) == content_sha(expected)
+
+
+def validate_policy_metadata(policy, provenance, expected_schema):
+    """Pure binding check shared by offline qualification and model loading."""
+    if (not same_schema(policy.get('schema'), provenance['schema'])
+            or not same_schema(provenance['schema'], expected_schema)
+            or policy.get('env_step') != provenance['env_step']
+            or policy.get('config_sha') != provenance['config_SHA']
+            or policy.get('source_sha') != provenance['source_SHA']
+            or policy.get('data_manifest_sha') != provenance['data_manifest_SHA']):
+        raise ValueError('strict policy node/schema/config/source/data binding differs')
+
+
 def jobs_for(passed, node):
     if not isinstance(passed,list) or len(set(passed))!=len(passed) or set(passed)-{'E','LP'}:
         raise ValueError('locked passed candidate list invalid')
@@ -25,7 +45,7 @@ def validate_lock(config):
     if (lock.get('schema')!='W27KnownMatrixLockV1' or lock.get('root_approved') is not True
             or lock.get('experiment_id')!='S2-W27' or lock.get('run_id')!=config['run_id']
             or lock.get('node')!=config['node'] or lock.get('manifest_ref')!=config['known_manifest_ref']
-            or lock.get('policies')!=config['policies'] or lock.get('source_SHA')!=config['source_sha']
+            or content_sha(lock.get('policies'))!=content_sha(config['policies']) or lock.get('source_SHA')!=config['source_sha']
             or lock.get('data_manifest_SHA')!=config['data_manifest_sha']
             or config.get('training_source_sha')!=config['source_sha']
             or not config.get('training_source_commit') or not config.get('evaluation_source_commit')
@@ -80,10 +100,7 @@ def load_agents(config):
         if file_sha(ref['path'])!=ref['sha256']: raise ValueError('locked model file SHA differs')
         policy=torch.load(ref['path'],map_location=device,weights_only=False)
         agent=WidthAgent(old_config('S10',device),device) if method=='HIST' else SearchAgent(build_config(method,device),device)
-        if (policy.get('schema')!=p['schema'] or p['schema']!=agent.schema
-                or policy.get('env_step')!=p['env_step'] or policy.get('config_sha')!=p['config_SHA']
-                or policy.get('source_sha')!=p['source_SHA'] or policy.get('data_manifest_sha')!=p['data_manifest_SHA']):
-            raise ValueError('strict policy node/schema/config/source/data binding differs')
+        validate_policy_metadata(policy, p, agent.schema)
         agent.actor.load_state_dict(policy['actor'],strict=True); agents[method]=agent
     for name in ('random','fixed','greedy'): agents[name]=BackgroundPolicy(name,device)
     return agents
