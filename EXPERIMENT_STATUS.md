@@ -1,19 +1,36 @@
 # 实验状态与新窗口接手说明
 
 <!-- S1_R13_CURRENT_START -->
-**2026-10-15 S1-AI17：R13及报告26已结案；R14的140景数据资格与统一登记已完成，原B140布局批次已唯一提交并在后台运行，完整结果待回，模型尚未拟合。** 原R13在12个已见训练母上分析保质提前停止：最早安全位置合176次，相比逐母事后最佳固定停止规则211次，仅额外省35次／16.5877%，未达20%。五项AND为真／真／真／假／真，关闭原A及条件性B/C后继，不改门槛。此事后包络不能当可部署在线规则，也不证明所有AI停止策略无效。报告26、三图与所选双端规范归档已闭合，[最终签收99325e01](outputs/experiments/first_stage_ai_search_20261013/round13/archive_final_01/root_final_acceptance.json)保留81唯一对象／3,117,310B、164别名及56共享引用；原24份gzip只保归档引用，不再读取或重打包。完整历史T0原始596祖先仍未闭合，既有已核最佳仍引用R10。
+
+**2026-10-15 S1-AI17：R13及报告26已结案；R14的140景数据资格与统一登记完成。布局生成102景成功，第103景在D5解码前因内部控制时限停止，37景未进入；登记进程全部退出，正在准备严格断点资格核验，teacher和模型拟合仍为0。** 原R13在12个已见训练母上分析保质提前停止：最早安全位置合176次，相比逐母事后最佳固定停止规则211次，仅额外省35次／16.5877%，未达20%。五项AND为真／真／真／假／真，关闭原A及条件性B/C后继，不改门槛。此事后包络不能当可部署在线规则，也不证明所有AI停止策略无效。报告26、三图与所选双端规范归档已闭合，[最终签收99325e01](outputs/experiments/first_stage_ai_search_20261013/round13/archive_final_01/root_final_acceptance.json)保留81唯一对象／3,117,310B、164别名及56共享引用；原24份gzip只保归档引用，不再读取或重打包。完整历史T0原始596祖先仍未闭合，既有已核最佳仍引用R10。
+
+
 
 [方案32](docs/第一阶段/方案/32_给定合法布局的可部署停止规则学习候选.md)比较一个实际训练的小树与训练集锁定的强因果停止规则。96训练／24校准／20锁定开发共140母全部披露历史暴露，独立确认0，Jan15历史test不开放。原8合成工程已实际完成并独审：16kernel／62flow、生产1654raypairs，独立240投影／24布局位置／720归属检查；8任务完整外测22.669495933秒，内含审计1.035291268秒不重复计group，剩66flow关闭。source09和原8不重跑，[根工程接受e094adf2](outputs/experiments/first_stage_ai_search_20261013/round14/root_original8_actual_engineering_acceptance.json)及源码提交dcb89e76保留；这不是AI收益。
 
+
+
 固定140原件已完整补传和逐SHA核验，来源job直接引用；资格阶段共7,528,758B压缩读取／53,923,319B解码、151,814条飞机记录。每机固定21.6 Mbps，完整身份/位置/请求保持，无换母、截断或重采样。首次资格执行因同C控制限时停止：56项成功，168在raw读取前失败且已有输入预约，83项未进入。已据[实际故障独审774e1e11](outputs/experiments/first_stage_ai_search_20261013/round14/independent_review_01/data140_actual_failure_control_review_01.json)执行唯一84项接续，复用原56且不重转运140，168原预约只接管一次。旧失败、内部marker及费用保留；旧C合计120上界不再叠加W/L/P，168旧实际0.443369968秒保留。新84正常退出、完整外测74.3364041秒，形成56旧＋84新完整140证明，[完整控制独审5b3bb83e](outputs/experiments/first_stage_ai_search_20261013/round14/independent_review_01/data84_actual_full140_control_review_01.json)已通过。
+
+
 
 原单次registry也已实际完成并独审：完整根外测9.9768064秒，T=5.874035729秒；native读取140个已产typed case作source/identity/schema校验，raw gzip／GEO／模型均0。140 binding逐SHA匹配已有sealed来源，shared registry内容SHA b77680b4、发布envelope598425be已根接受。[最终registry独审51e7df62](outputs/experiments/first_stage_ai_search_20261013/round14/independent_review_01/registry_actual_authority_review_01.json) · [根实际数据授权2b37da89](outputs/experiments/first_stage_ai_search_20261013/round14/data_registry_actual_epoch03/root_actual_authority_acceptance.json)。旧data84终端已由registry既有begin消费，保留U15；当前registry终端也有独审和[根接受7b3745b4](outputs/experiments/first_stage_ai_search_20261013/round14/data_registry_actual_epoch03/root_accepted_terminal_closure.json)，只可由下一既有begin消费，不退款、不重复finalize。最新本轮4个登记进程同boot已核退出。
 
+
+
 工程失败与费用均保留。首工程配置入口错误在任何工程前失败，已按真实证据结为原120控制上界；首数据证明采集因budget文件527,822B超过512KiB退出，部分控制读取量未知且独立120上界保留。唯一必要接续仅把该明确文件上限设为2MiB，总8MiB不增，已成功收存，未重跑数据或科学。当前共享账group=2112.650826969、ops=1993.074239631、B类数据/登记=96.907091405秒，原余group8687.349173031、ops646.925760369、B3503.092908595；audit重叠不再加。[累计账补充](outputs/experiments/first_stage_ai_search_20261013/analysis/r14_data_registry_actual_cost_addendum.json)区分真实时间、保留上界和失败，后续仍须核现场新鲜账。
 
-当前ops05_02父预算快照及B140请求接口、B carrier04与同C有限导出均已独审通过；数学source09、原W/RULE/D5、seed51001及所有门槛不变。[整包源审8b9b8159](outputs/experiments/first_stage_ai_search_20261013/round14/independent_review_01/B_carrier_export_source_review_04.json) · [根唯一B准入28b9a6aa](outputs/experiments/first_stage_ai_search_20261013/round14/B140_root_admission_epoch04/root_exact_admission_complete.json)。已通过同一载体提交一次B140后台批次，unified session57132；11:20 UTC核到本地helper25916／11:14:53.502540 UTC出生仍运行，[观察原件](outputs/experiments/first_stage_ai_search_20261013/round14/B140_actual_epoch04/local_running_observation_01.json)仅证明本地载体，逐景完成数和远端完整结果须以其原生回执为准。禁止重复提交或凭观察推断已完成140。预留时限只取原剩B3503.092908595＋C120，结果导出在同C内，最多10秒／8MiB成员，不新增collector120；当前无完整结果和算法效果结论。teacher只可离线FALSE源准备，未实际执行，fit仍0；必须先接受完整B140结果才放后继。[R14当前清单](outputs/experiments/first_stage_ai_search_20261013/round14/run_manifest.json)优先。
+
+
+原B140只提交过一次，完整父层443.6760817秒后退出；旧本地运行观察为历史时点，不能继续当作存活证据。[实际控制独审a495734c](outputs/experiments/first_stage_ai_search_20261013/round14/independent_review_01/B140_actual_failure_control_review_01.json)及[根接受e0f2bead](outputs/experiments/first_stage_ai_search_20261013/round14/B140_actual_epoch04/root_actual_failure_control_acceptance.json)确认：102景均原生退出0且三态审核与发布引用齐；B:360的W、RULE和投影缓存已保存，实际3.143723899秒，在before_D5停止，D5进入0；其后37景无派发／入口／退出／发布。104个登记身份同boot均已核退出。这是内部控制保存边界，不是新的用户暂停，也不是算法不可行结论；原失败、marker、未知审计精确耗时与预算预约全部保留。一次必要控制采集已完成，不再采集或重放旧入口。
+
+原103任务实际合416.132669607秒，实际控制94.321299670秒可由旧C120完整覆盖；旧C120保留，不叠加嵌套L/P及根外测。当前已采集原账group2885.639772677、ops2233.074239631、B629.896037113、audit145.243831957秒；剩ops406.925760369秒，此时旧失败B120／audit120尚未定向核销。旧B360的audit精确秒数未知，仅可用其完整外测3.143723899秒作已包含费用的保守上界，不填0；该数不是新的免费额度。账本核销与接续均尚未执行，后续以新鲜原账为准。
+
+[有限38项接续设计](outputs/experiments/first_stage_ai_search_20261013/round14/execution_design_01/root_B38_conditional_design_acceptance.json)只接受源码准备：复用102景，B360严格恢复后只做原D5及三态审核，37景首次执行；不能重做W/RULE或投影缓存。先按[一次五文件资格合同](outputs/experiments/first_stage_ai_search_20261013/round14/execution_design_01/root_B360_qualification_design_acceptance.json)准备核验三个确切断点与实际NumPy两份源码，完整操作≤10秒、原ops内一次保留10秒、无自动重试；当前实际读取0。该资格仍需具体源审及根准入，不能当作接续授权。严格状态无法恢复或一次接续再失败则关闭本轮不完整依赖分支，不改门槛。完整B140尚未通过，teacher／fit／校准／开发评价均未开放。[R14当前清单](outputs/experiments/first_stage_ai_search_20261013/round14/run_manifest.json)优先。
+
 
 用户10月15日08:58明确继续原件与旧暂停均保留，新暂停优先；旧七点单次检查保持暂停，每小时跟进。73／74仅候选资源，18／24及其它组不接管；73／74同NFS、C／D／E同物理盘不同分区，不冒充独立备份。统一请求、最终可变非空N≤200和逐束宽度、S1不含PHY/SI/SGM的边界继续执行，整体研究尚未结案。
+
 <!-- S1_R13_CURRENT_END -->
 
 **2026-10-15 S1-AI17-R12已完成十二景审核、报告25、三图及所选规范双端归档；当前进入R13方案31的静态可行性核对，尚未开始新训练。** 方案30的邻域支持两步重构在固定12个已见开发母场景上，对强参照S／Q及一步O1的命中均为0/12；相对最佳固定序列的成功差也为0，原四项AND门槛全部未达。十二景平均峰值：强参照S／Q为228.6 Mbps，O2为248.4 Mbps；本动作集没有证明两步选择学习的增量空间，本轮选择器训练分支关闭。不能据此推断所有AI路线无效、全局最优或独立test泛化。[根科学结案](outputs/experiments/first_stage_ai_search_20261013/round12/root_actual_R12_scientific_closure.json) · [完整独审](outputs/experiments/first_stage_ai_search_20261013/round12/resume_20261015_0858/reader_continuation_review_01/actual_saved_output_review_01/independent_actual_reader_review.json)。
