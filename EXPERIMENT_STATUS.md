@@ -2,6 +2,10 @@
 
 <!-- S1_R13_CURRENT_START -->
 
+**2026-10-15 23:22本组暂停已实核，现仅完成综合报告交付。** 用户23:15前后明确要求暂停并汇总历史研究；73／74均已见本组全局暂停标记，73的41个登记原进程身份全部退出，两端本组活动计算为0，teacher目标与派发意图均未创建。小时跟进和旧七点检查均为PAUSED，未触及其它组或旧闲置服务。根接受见[暂停回执23f13213](outputs/experiments/first_stage_ai_search_20261013/control/pause_20261015_2315/root_pause_acceptance.json)；未完成teacher候选树122文件／5,395,790B已保存，旧FALSE包已过时，不得执行。只有这次暂停后的新明确“继续”才能恢复，写报告不构成恢复。
+
+[报告27 Markdown](docs/第一阶段/实验报告/27_第一阶段自主研究综合报告.md)及[17页PDF](docs/第一阶段/实验报告/27_第一阶段自主研究综合报告.pdf)已完成，综合R1—R14及前置背景、8幅原图、训练／对照／门槛／负结果／未知与证据索引；[最终独审](outputs/reports/first_stage_comprehensive_20261015/report27_independent_review.json)和[PDF核验](outputs/reports/first_stage_comprehensive_20261015/pdf_qa.json)已闭合。下文记录暂停时已完成与未完成的研究范围，所有“准备”均已停止，不新增实验、源码准备或自动调度。
+
 **2026-10-15 S1-AI17：R14的140景数据资格、统一登记和全部B布局前驱已完成并独审；原102景复用，剩38景唯一接续正常结束。当前准备原96训练母的teacher标签计算，teacher实际执行和模型拟合仍为0。** [完整B140根接受011e2ce5](outputs/experiments/first_stage_ai_search_20261013/round14/B38_actual_epoch05/root_full_B140_acceptance.json)与[终态接受565f474b](outputs/experiments/first_stage_ai_search_20261013/round14/B38_actual_epoch05/root_accepted_terminal_closure.json)已落盘；本轮不是AI效果结论，不开放后继训练或Jan15。原R13及报告26已结案：12个已见训练母上最早安全位置合176次，相比逐母事后最佳固定停止规则211次，仅额外省35次／16.5877%，未达20%；五项AND为真／真／真／假／真，关闭原A及条件性B/C，不改门槛。事后包络不能当在线规则，也不证明所有AI停止策略无效。报告26、三图与所选双端归档已闭合，[最终签收99325e01](outputs/experiments/first_stage_ai_search_20261013/round13/archive_final_01/root_final_acceptance.json)保留81唯一对象／3,117,310B、164别名及56共享引用；旧24份gzip不重读或重打包。完整历史T0原始596祖先仍未闭合，已核最佳仍引用R10。
 
 

@@ -9,3 +9,6 @@ scripts/stage1_ai_search_r6/round6_design.json -text whitespace=cr-at-eol
 scripts/stage1_ai_search_r7/** -text
 src/satellite_rl/workbench/*r7*.py -text
 tests/test_ai_search_r7*.py -text
+
+# Preserve the generated S1 synthesis PDF bytes on Windows.
+"docs/第一阶段/实验报告/27_第一阶段自主研究综合报告.pdf" binary
