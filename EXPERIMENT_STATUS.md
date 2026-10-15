@@ -1,5 +1,15 @@
 # 实验状态与新窗口接手说明
 
+<!-- W28_CURRENT_START -->
+**2026-10-15 S2-W28已通过16项实际工程资格，240回合开发对照在20418运行；新增训练／参数更新为0。** 本轮冻结W26 S10／150000步权重和208维状态，比较模型直出P1、四候选按原本步奖励筛选P4，以及随机提案R1／R4。原奖励、布局、请求、动作域与物理均不变；四组在同卡按事前顺序交错。开发240回合／19260真实提交／最多38520候选查询；只有完整开发门通过才放行560个已知场景复核，当前known任务仍禁用。既有场景复用，不称独立test。
+
+GPT-6 Astra设计，GPT-6.1 Sol代码、核验和报告。源`1edb3f4ccb48b6eeb290c02a8e883422a72772b7`，独立20418:9080／s2_w28目录与用户08:57继续对应的恢复epoch；唯一开发POST返回worker13884／generation0，已读到真实回合进展。暂停守卫与5秒存储监控均实活；仅占20418，不恢复W27结案训练或其它聊天任务。
+
+首工程快照容器兼容失败已修，完整旧现场保存后在同工程ID显式付费复核；16项N1／N200、0.3／0.5／1.0°、原概率一致性、动作掩码、试算提交一致、暂停及故障意图检查均通过。累计工程33次PHY（13提交＋20试算）、10前向、18 kernel；旧实测2.950953342秒＋一次保守30秒＋新实测7.435089296秒完整保留，未重置原320 PHY／64前向上限。两个预设故障意图继续保留，不称所有记录无pending；未发现意外未知调用。
+
+入口：[方案28](docs/第二阶段/方案/28_冻结T-SAC策略的四候选一步筛选机制试验.md) · [运行清单](outputs/experiments/s2_tsac_screen28_20261015/run_manifest.json) · [实际资格独审](outputs/experiments/s2_tsac_screen28_20261015/verification/independent_recovery_01/actual16_acceptance_summary.json) · [根资格](outputs/experiments/s2_tsac_screen28_20261015/qualification_01/root_qualification.json)。
+<!-- W28_CURRENT_END -->
+
 <!-- W27_CURRENT_START -->
 **2026-10-15 S2-W27三臂先导运行、持久controller已启动，尚无正式结果。** W26报告18交付后，按持续自主授权独立比较B（S10/alpha0.01）、E（仅alpha0.003）、LP（槽功率联合Actor与双Q/alpha0.01）。三臂seed51001从头训练，分别20418/20424/20627；冻结science源`2beeb1ec678631403b4a6e821ca2976ea75303c3`，task/run为`train_B_2beeb1ec`、`train_E_2beeb1ec`、`train_LP_2beeb1ec`。每臂50k先导计入150k上限，总cap450k；50k共同开发门尚未判定，候选均失败则三臂50k结案。
 
