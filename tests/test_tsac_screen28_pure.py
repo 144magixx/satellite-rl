@@ -1,5 +1,8 @@
 """All tests use synthetic probabilities and a fake integer environment: 0 PHY."""
 import tempfile
+import os
+import pickle
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +25,9 @@ class FakeEnv:
         fl=np.zeros((100,10),bool);fl[0,0]=True;fl[1,0]=True
         p=np.zeros(10,bool);p[:2]=True
         return dict(frequency_slots=fl,power=p)
+    def _observation(self):return np.array([self.beam_idx],np.float32)
+    def metrics(self):return dict(N=self.N,processed=self.beam_idx,complete=self.beam_idx==self.N)
+    def beam_results(self):return [dict(beam_id=str(i),rate_bps=float(self.rates[i])) for i in range(self.N)]
     def step(self,action):
         FakeEnv.calls.append(tuple(action))
         if self.fail:raise RuntimeError('synthetic failure')
@@ -133,5 +139,76 @@ class PureTests(unittest.TestCase):
             with self.assertRaises(UnknownCost):one_decision(env,np.zeros(1),'P4','case',0,self.journal(temp),fail,lambda:False)
             self.assertEqual(j.value['attempts']['forward'],1)
             self.assertEqual(FakeEnv.calls,[])
+    def test_historical_current_to_previous_gap_never_recreates_zero_ledger(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env=FakeEnv();j=self.journal(temp)
+            decision(env,[dict(action=[0,0,0])],j,{'step':0})
+            committed_calls=len(FakeEnv.calls)
+            # Materialize the actual old two-rename crash window on disk after
+            # a committed fake step; do not mock exists() or constructor logic.
+            current=Path(temp)/'current.pkl';previous=current.with_suffix('.previous')
+            os.replace(current,previous)
+            previous_bytes=previous.read_bytes()
+            current.with_suffix('.tmp').write_bytes(pickle.dumps(j.value,protocol=5))
+            with self.assertRaises(UnknownCost):self.journal(temp)
+            self.assertFalse(current.exists());self.assertEqual(previous.read_bytes(),previous_bytes)
+            self.assertEqual(len(FakeEnv.calls),committed_calls)
+    def test_save_failure_before_current_replace_keeps_nonzero_trusted_current(self):
+        with tempfile.TemporaryDirectory() as temp:
+            env=FakeEnv();j=self.journal(temp);decision(env,[dict(action=[0,0,0])],j,{'step':0})
+            current=Path(temp)/'current.pkl';old=current.read_bytes();original_replace=os.replace
+            def crash_at_current(source,target):
+                if Path(target)==current:raise OSError('simulated interruption before final atomic replace')
+                return original_replace(source,target)
+            with patch('satellite_rl.tsac_screen28.transaction.os.replace',side_effect=crash_at_current):
+                with self.assertRaises(OSError):j.save()
+            self.assertEqual(current.read_bytes(),old)
+            with self.assertRaises(UnknownCost):self.journal(temp)
+            self.assertEqual(pickle.loads(current.read_bytes())['attempts']['commit'],1)
+            self.assertEqual(len(FakeEnv.calls),1)
+    def test_full_matrix_injected_loader_and_cursor_finishes_once(self):
+        from satellite_rl.tsac_screen28.runtime import run_matrix
+        from satellite_rl.t0_width.data import file_sha
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp);manifest=path/'manifest.json';manifest.write_text(json.dumps(dict(rows=[dict(case_id=str(i)) for i in range(20)])))
+            jobs=[dict(case_id='0',mother=0,method='R4',repeat=0,N=2),dict(case_id='0',mother=0,method='R1',repeat=0,N=2)]
+            plan=dict(runtime_approved=True,phase='development',source_commit='fake',policy_ref={'sha256':'fake'},
+                data_manifest_ref=dict(path=str(manifest),sha256=file_sha(manifest)),wall_budget_seconds=100,
+                matrix=dict(jobs=jobs,queries=8,commits=4,model_forwards=0))
+            def fake_loader(plan,row,n):return FakeEnv(n),dict(fake_loader=True,kernel_preparation_calls=0)
+            def forbidden_policy(plan):raise AssertionError('R methods must not load a model')
+            first=run_matrix(plan,path/'run',lambda:False,policy_loader=forbidden_policy,environment_loader=fake_loader)
+            self.assertEqual(first['stage'],'completed');self.assertEqual(first['costs']['commit'],4)
+            calls=len(FakeEnv.calls)
+            again=run_matrix(plan,path/'run',lambda:False,policy_loader=forbidden_policy,environment_loader=fake_loader)
+            self.assertEqual(again['stage'],'completed');self.assertEqual(len(FakeEnv.calls),calls)
+            self.assertEqual(len(list((path/'run/episodes').glob('*/terminal.json'))),2)
+            self.assertFalse(list((path/'run/episodes').glob('*/binding.pkl')))
+    def test_engineering_injected_checks_are_bounded_and_do_not_repeat(self):
+        from satellite_rl.tsac_screen28.engineering import run_engineering
+        from satellite_rl.t0_width.data import file_sha
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp);manifest=path/'manifest.json';manifest.write_text(json.dumps(dict(rows=[dict(case_id='case')])))
+            plan=dict(runtime_approved=True,run_id='engineering',data_manifest_ref=dict(path=str(manifest),sha256=file_sha(manifest)),
+                limits=dict(query=256,commit=64,forward=64,proposal=64),
+                checks=[dict(check_index=i,case_id='case',mother=0,method='R4',N=3,step=i) for i in range(3)])
+            def fake_loader(plan,row,n):return FakeEnv(n),dict(fake_loader=True)
+            result=run_engineering(plan,path/'run',lambda:False,environment_loader=fake_loader)
+            self.assertEqual(result['real_commit_attempts'],3);self.assertFalse(result['passed'])
+            calls=len(FakeEnv.calls)
+            run_engineering(plan,path/'run',lambda:False,environment_loader=fake_loader)
+            self.assertEqual(len(FakeEnv.calls),calls)
+    def test_backend_draft_rejects_before_any_child_or_resource_probe(self):
+        from satellite_rl.tsac_screen28.backend import Workbench
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);plan=root/'plan.json'
+            plan.write_text(json.dumps(dict(schema='W28WorkbenchPlanV1',experiment_id='S2-W28',max_workers=1,
+                executor_port=20418,runtime_approved=False,tasks={})))
+            class FakeGate:
+                spec={'experiment_id':'S2-W28'}
+            with patch('satellite_rl.tsac_screen28.backend.Gate',return_value=FakeGate()),patch('satellite_rl.tsac_screen28.backend.subprocess.Popen') as spawn,patch('satellite_rl.tsac_screen28.backend.subprocess.check_output') as probe:
+                backend=Workbench(root/'run',plan,root/'control')
+                with self.assertRaises(ValueError):backend.start('science')
+                spawn.assert_not_called();probe.assert_not_called()
 
 if __name__=='__main__':unittest.main()

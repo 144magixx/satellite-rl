@@ -27,5 +27,5 @@ def development_gate(means,qualified):
     rsi=p4['SI']-r4['SI'];rsgm=p4['SGM']-r4['SGM']
     passed=(qualified is True and dsi>=-.002 and dsgm>=-.005 and (dsi>=.003 or dsgm>=.005)
         and p4['power_w']<=1.1*p1['power_w'] and rsi>=-.002 and rsgm>=-.005 and (rsi>=0 or rsgm>=0))
-    return dict(schema='W28DevelopmentDecisionV1',passed=bool(passed),known_episodes=560 if passed else 0,
+    return dict(schema='W28DevelopmentDecisionV1',experiment_id='S2-W28',root_approved=False,passed=bool(passed),known_episodes=560 if passed else 0,
         delta_P4_P1=dict(SI=dsi,SGM=dsgm),delta_P4_R4=dict(SI=rsi,SGM=rsgm),not_independent=True)

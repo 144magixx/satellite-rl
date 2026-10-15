@@ -16,6 +16,18 @@ FIELDS=('beam_idx','starts','counts','powers','occupied','rates','requested','to
 
 class UnknownCost(RuntimeError):pass
 
+def fsync_directory(path):
+    """Linux production requires a successful directory metadata barrier."""
+    if os.name=='posix':
+        descriptor=os.open(str(path),os.O_RDONLY)
+        try:os.fsync(descriptor)
+        finally:os.close(descriptor)
+
+class FrozenDict(dict):
+    """Dictionary-compatible with the existing content/physics validators."""
+    def _immutable(self,*args,**kwargs):raise TypeError('shared candidate input is read only')
+    __setitem__=__delitem__=clear=pop=popitem=setdefault=update=_immutable
+
 def rng_snapshot():
     value=dict(python=random.getstate(),numpy=np.random.get_state())
     torch=sys.modules.get('torch')
@@ -51,7 +63,7 @@ def restore_memory(env,state):
 def readonly(value):
     if isinstance(value,np.ndarray):
         view=value.view();view.setflags(write=False);return view
-    if isinstance(value,dict):return MappingProxyType({k:readonly(v) for k,v in value.items()})
+    if isinstance(value,dict):return FrozenDict({k:readonly(v) for k,v in value.items()})
     if isinstance(value,list):return tuple(readonly(v) for v in value)
     return value
 
@@ -76,23 +88,35 @@ class Journal:
         limits=dict(limits)
         limits.setdefault('forward',limits['commit']);limits.setdefault('proposal',limits['commit'])
         self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True)
+        remnants=[self.path.with_suffix(suffix) for suffix in ('.tmp','.previous.tmp')]
+        if any(p.exists() for p in remnants):raise UnknownCost('unconfirmed journal write residue exists; preserve every generation and audit')
         if self.path.exists():
             self.value=pickle.loads(self.path.read_bytes())
             if self.value['identity']!=identity or self.value['limits']!=limits:raise ValueError('same-ID immutable contract differs')
         else:
+            remnants=[self.path.with_suffix(suffix) for suffix in ('.previous','.tmp','.previous.tmp','.intent')]
+            remnants.extend(self.path.parent.glob('*.jsonl'))
+            if any(p.exists() for p in remnants):
+                raise UnknownCost('current journal absent beside existing recovery/evidence artifacts; preserve and audit, never reset costs')
             self.value=dict(identity=identity,limits=limits,attempts=dict(query=0,commit=0,forward=0,proposal=0),completed=dict(query=0,commit=0,forward=0,proposal=0),transaction=None)
+            marker=self.path.with_suffix('.intent')
+            with marker.open('xb') as stream:
+                stream.write(pickle.dumps(dict(identity=identity,limits=limits),protocol=5));stream.flush();os.fsync(stream.fileno())
+            fsync_directory(self.path.parent)
             self.save()
 
     def save(self):
         raw=pickle.dumps(self.value,protocol=5);tmp=self.path.with_suffix('.tmp')
         with tmp.open('wb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
         if self.path.exists():
-            previous=self.path.with_suffix('.previous');os.replace(self.path,previous)
+            # Copy old bytes while keeping current present. Only the final
+            # atomic replace changes current; no current->previous rename gap.
+            previous=self.path.with_suffix('.previous');prior_tmp=self.path.with_suffix('.previous.tmp')
+            with prior_tmp.open('wb') as stream:
+                stream.write(self.path.read_bytes());stream.flush();os.fsync(stream.fileno())
+            os.replace(prior_tmp,previous)
         os.replace(tmp,self.path)
-        if os.name=='posix':
-            descriptor=os.open(str(self.path.parent),os.O_RDONLY)
-            try:os.fsync(descriptor)
-            finally:os.close(descriptor)
+        fsync_directory(self.path.parent)
 
     def intent(self,kind):
         if self.value['attempts'][kind]>=self.value['limits'][kind]:raise ValueError('finite '+kind+' budget exhausted')
@@ -124,7 +148,8 @@ def decision(env,proposals,journal,context,stop_requested=lambda:False):
         for index,action in enumerate(actions):
             if stop_requested():return None
             if action in tx['results']:continue
-            child=fork(env,tx['base']);journal.intent('query');started=perf_counter();rng=rng_snapshot()
+            fork_started=perf_counter();child=fork(env,tx['base']);fork_seconds=perf_counter()-fork_started
+            journal.intent('query');started=perf_counter();rng=rng_snapshot()
             try:
                 result=child.step(action);next_state=snapshot(child);digest=result_digest(result,next_state);check_rng(rng)
             except Exception as exc:
@@ -133,7 +158,7 @@ def decision(env,proposals,journal,context,stop_requested=lambda:False):
                 tx['failure']=dict(phase='query',action=list(action),error=type(exc).__name__,message=str(exc),unknown_not_zero=True)
                 journal.save();raise
             if state_sha(snapshot(env))!=tx['base_SHA']:raise ValueError('candidate polluted real environment')
-            tx['results'][action]=dict(result=result,state=next_state,digest=digest,first_index=index,query_seconds=perf_counter()-started)
+            tx['results'][action]=dict(result=result,state=next_state,digest=digest,first_index=index,query_seconds=perf_counter()-started,fork_seconds=fork_seconds)
             journal.finish('query')
         winner=max(range(len(actions)),key=lambda i:tx['results'][actions[i]]['result'][1])
     else:winner=0
