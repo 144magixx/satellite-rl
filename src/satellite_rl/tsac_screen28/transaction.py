@@ -46,9 +46,16 @@ def check_rng(before):
     raise ValueError('candidate/commit changed global RNG; restored and stopped')
 
 def snapshot(env):
-    return dict(schema=copy.deepcopy(env.schema),layout_SHA=env.layout['content_sha256'],
-        physics=copy.deepcopy(dict(getattr(env,'physics',{}))),
+    return dict(schema=plain_copy(env.schema),layout_SHA=env.layout['content_sha256'],
+        physics=plain_copy(dict(getattr(env,'physics',{}))),
         values={key:copy.deepcopy(getattr(env,key)) for key in FIELDS})
+
+def plain_copy(value):
+    """Copy a readonly tree without invoking FrozenDict's mutation guard."""
+    if isinstance(value,dict):return {key:plain_copy(item) for key,item in value.items()}
+    if isinstance(value,list):return [plain_copy(item) for item in value]
+    if isinstance(value,tuple):return tuple(plain_copy(item) for item in value)
+    return copy.deepcopy(value)
 
 def state_sha(state):
     from satellite_rl.t0_width.logging import content_sha
@@ -56,8 +63,8 @@ def state_sha(state):
 
 def restore_memory(env,state):
     """Direct assignment only; never reset/step/load_state_dict/rebuild the kernel."""
-    if (state['schema']!=env.schema or state['layout_SHA']!=env.layout['content_sha256']
-            or state.get('physics',{})!=dict(getattr(env,'physics',{}))):raise ValueError('snapshot identity mismatch')
+    if (state_sha(state['schema'])!=state_sha(env.schema) or state['layout_SHA']!=env.layout['content_sha256']
+            or state_sha(state.get('physics',{}))!=state_sha(dict(getattr(env,'physics',{})))):raise ValueError('snapshot identity mismatch')
     for key,value in state['values'].items():setattr(env,key,copy.deepcopy(value))
 
 def readonly(value):

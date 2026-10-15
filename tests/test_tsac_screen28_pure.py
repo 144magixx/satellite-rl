@@ -262,5 +262,25 @@ class PureTests(unittest.TestCase):
         self.assertTrue(all(ref['path'].startswith(helper.REMOTE+'/admissions/originals/') for ref in refs.values()))
         self.assertIn("issued_UTC=datetime.datetime.now(datetime.timezone.utc).isoformat()",helper.INSTALL)
         self.assertIn("user_continue_event_UTC='2026-10-15T00:57:33+00:00'",helper.INSTALL)
+    def test_real_schema_physics_tree_representation_roundtrip_without_real_env(self):
+        import copy
+        from satellite_rl.t0_width.schema import observation_schema
+        from satellite_rl.shared_interface.spherical_gaussian import PHYSICS
+        from satellite_rl.tsac_screen28.transaction import restore_memory
+        env=FakeEnv();env.schema=observation_schema('S10');env.physics=copy.deepcopy(PHYSICS)
+        before=snapshot(env);child=fork(env,before)
+        self.assertIsInstance(env.physics['geometry']['latitude_range_deg'],list)
+        self.assertIsInstance(child.physics['geometry']['latitude_range_deg'],tuple)
+        self.assertEqual(state_sha(snapshot(child)),state_sha(before))
+        # Actual nested FrozenDict copy is exercised; no T0WidthEnv constructor
+        # or shared link/PHY function is called by this integer fixture.
+        result=child.step([0,0,0]);self.assertEqual(env.beam_idx,0)
+        self.assertEqual(snapshot(child)['values']['beam_idx'],1)
+        invalid=copy.deepcopy(before);invalid['physics']['power_budget_w']=2999.
+        with self.assertRaises(ValueError):restore_memory(env,invalid)
+        invalid=copy.deepcopy(before);invalid['schema']['state_width']+=1
+        with self.assertRaises(ValueError):restore_memory(env,invalid)
+        invalid=copy.deepcopy(before);invalid['layout_SHA']='different-layout'
+        with self.assertRaises(ValueError):restore_memory(env,invalid)
 
 if __name__=='__main__':unittest.main()
