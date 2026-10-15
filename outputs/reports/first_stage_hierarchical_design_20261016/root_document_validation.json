@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-16",
+  "kind": "document_only_validation",
+  "user_scope": "analysis and experimental design only; do not resume experiments",
+  "documents": [
+    {
+      "path": "docs/第一阶段/实验报告/29_学习收益不足的原因分析与分层优化研究建议.md",
+      "sha256": "1d3c5e281695763e84df7cf7b94f711ae5fd137bea69789c7b9c63d525ffcf5f",
+      "bytes": 14043,
+      "local_links": 14,
+      "missing": [],
+      "replacement_character_count": 0
+    },
+    {
+      "path": "docs/第一阶段/方案/33_非学习骨架与学习调度的分层优化实验设计.md",
+      "sha256": "f3156bbc79d921a1c2e61340bd2ec2d808bcd5e6448489dae2115e22218e23ad",
+      "bytes": 33410,
+      "local_links": 8,
+      "missing": [],
+      "replacement_character_count": 0
+    },
+    {
+      "path": "outputs/reports/first_stage_hierarchical_design_20261016/evidence_audit.md",
+      "sha256": "e054b6967464e2779d72c783e1b86866d3029ad97346c489ff1ca579bec27808",
+      "bytes": 17078,
+      "local_links": 30,
+      "missing": [],
+      "replacement_character_count": 0
+    }
+  ],
+  "checks": {
+    "local_links": "passed",
+    "utf8": "passed",
+    "budget_arithmetic": {
+      "stage_seconds": 97200,
+      "scheduled_eval_requests": 640,
+      "bounded_dispatch_flows": 112768
+    },
+    "frontend": "unchanged; documents only"
+  },
+  "no_runtime_admission": true,
+  "new_scientific_execution": 0,
+  "remote_calls": 0,
+  "automation_mutations": 0,
+  "paused_research_remains_paused": true,
+  "limits": [
+    "No performance measurement or scientific re-evaluation was performed.",
+    "Proposed budgets and gates do not authorize execution.",
+    "Source binding, exact data identities and implementation qualification are future requirements."
+  ]
+}
