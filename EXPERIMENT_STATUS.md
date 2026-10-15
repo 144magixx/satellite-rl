@@ -1,7 +1,7 @@
 # 实验状态与新窗口接手说明
 
 <!-- S1_R13_CURRENT_START -->
-**2026-10-15 S1-AI17：R13及报告26已结案；R14的140景数据资格与统一登记已完成，正在准备原B140布局阶段，模型尚未拟合。** 原R13在12个已见训练母上分析保质提前停止：最早安全位置合176次，相比逐母事后最佳固定停止规则211次，仅额外省35次／16.5877%，未达20%。五项AND为真／真／真／假／真，关闭原A及条件性B/C后继，不改门槛。此事后包络不能当可部署在线规则，也不证明所有AI停止策略无效。报告26、三图与所选双端规范归档已闭合，[最终签收99325e01](outputs/experiments/first_stage_ai_search_20261013/round13/archive_final_01/root_final_acceptance.json)保留81唯一对象／3,117,310B、164别名及56共享引用；原24份gzip只保归档引用，不再读取或重打包。完整历史T0原始596祖先仍未闭合，既有已核最佳仍引用R10。
+**2026-10-15 S1-AI17：R13及报告26已结案；R14的140景数据资格与统一登记已完成，原B140布局批次已唯一提交并在后台运行，完整结果待回，模型尚未拟合。** 原R13在12个已见训练母上分析保质提前停止：最早安全位置合176次，相比逐母事后最佳固定停止规则211次，仅额外省35次／16.5877%，未达20%。五项AND为真／真／真／假／真，关闭原A及条件性B/C后继，不改门槛。此事后包络不能当可部署在线规则，也不证明所有AI停止策略无效。报告26、三图与所选双端规范归档已闭合，[最终签收99325e01](outputs/experiments/first_stage_ai_search_20261013/round13/archive_final_01/root_final_acceptance.json)保留81唯一对象／3,117,310B、164别名及56共享引用；原24份gzip只保归档引用，不再读取或重打包。完整历史T0原始596祖先仍未闭合，既有已核最佳仍引用R10。
 
 [方案32](docs/第一阶段/方案/32_给定合法布局的可部署停止规则学习候选.md)比较一个实际训练的小树与训练集锁定的强因果停止规则。96训练／24校准／20锁定开发共140母全部披露历史暴露，独立确认0，Jan15历史test不开放。原8合成工程已实际完成并独审：16kernel／62flow、生产1654raypairs，独立240投影／24布局位置／720归属检查；8任务完整外测22.669495933秒，内含审计1.035291268秒不重复计group，剩66flow关闭。source09和原8不重跑，[根工程接受e094adf2](outputs/experiments/first_stage_ai_search_20261013/round14/root_original8_actual_engineering_acceptance.json)及源码提交dcb89e76保留；这不是AI收益。
 
@@ -11,7 +11,7 @@
 
 工程失败与费用均保留。首工程配置入口错误在任何工程前失败，已按真实证据结为原120控制上界；首数据证明采集因budget文件527,822B超过512KiB退出，部分控制读取量未知且独立120上界保留。唯一必要接续仅把该明确文件上限设为2MiB，总8MiB不增，已成功收存，未重跑数据或科学。当前共享账group=2112.650826969、ops=1993.074239631、B类数据/登记=96.907091405秒，原余group8687.349173031、ops646.925760369、B3503.092908595；audit重叠不再加。[累计账补充](outputs/experiments/first_stage_ai_search_20261013/analysis/r14_data_registry_actual_cost_addendum.json)区分真实时间、保留上界和失败，后续仍须核现场新鲜账。
 
-当前ops05_02父预算快照与B140的FALSE请求接口已通过[源独审b825fee2](outputs/experiments/first_stage_ai_search_20261013/round14/independent_review_01/ops05_B_source_review_02.json)，只减少重复整账读取，原科学数学、预算及停止阈值不变。B实际carrier与[同C有限导出](outputs/experiments/first_stage_ai_search_20261013/round14/execution_design_01/root_B_same_package_export_design_acceptance.json)仍在准备，未冻结草稿不具执行资格；B／teacher／fit实际均0，不据数据登记称模型成果。B之后的必要证明拟在原C内导出，不再每阶段新增独立collector120。原质量门和有限预算保持，只有具体源码/输入/实时任务/暂停/空间及根准入全部满足才启动。[R14当前清单](outputs/experiments/first_stage_ai_search_20261013/round14/run_manifest.json)优先。
+当前ops05_02父预算快照及B140请求接口、B carrier04与同C有限导出均已独审通过；数学source09、原W/RULE/D5、seed51001及所有门槛不变。[整包源审8b9b8159](outputs/experiments/first_stage_ai_search_20261013/round14/independent_review_01/B_carrier_export_source_review_04.json) · [根唯一B准入28b9a6aa](outputs/experiments/first_stage_ai_search_20261013/round14/B140_root_admission_epoch04/root_exact_admission_complete.json)。已通过同一载体提交一次B140后台批次，unified session57132；11:20 UTC核到本地helper25916／11:14:53.502540 UTC出生仍运行，[观察原件](outputs/experiments/first_stage_ai_search_20261013/round14/B140_actual_epoch04/local_running_observation_01.json)仅证明本地载体，逐景完成数和远端完整结果须以其原生回执为准。禁止重复提交或凭观察推断已完成140。预留时限只取原剩B3503.092908595＋C120，结果导出在同C内，最多10秒／8MiB成员，不新增collector120；当前无完整结果和算法效果结论。teacher只可离线FALSE源准备，未实际执行，fit仍0；必须先接受完整B140结果才放后继。[R14当前清单](outputs/experiments/first_stage_ai_search_20261013/round14/run_manifest.json)优先。
 
 用户10月15日08:58明确继续原件与旧暂停均保留，新暂停优先；旧七点单次检查保持暂停，每小时跟进。73／74仅候选资源，18／24及其它组不接管；73／74同NFS、C／D／E同物理盘不同分区，不冒充独立备份。统一请求、最终可变非空N≤200和逐束宽度、S1不含PHY/SI/SGM的边界继续执行，整体研究尚未结案。
 <!-- S1_R13_CURRENT_END -->
