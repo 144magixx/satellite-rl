@@ -15,6 +15,7 @@ import time
 from datetime import datetime, timezone
 from .admission import check, STOP_NEW, GLOBAL_PAUSE
 from .persistence import Journal, content_sha,identity
+from .runtime_epoch import marker_values,stopped,absolute_deadline,validate as validate_epoch,prior_dispatch_absent
 
 def pinned(ref):
     if type(ref.get('bytes')) is not int or not 0<=ref['bytes']<=134217728:raise ValueError('bounded exact content reference')
@@ -54,10 +55,12 @@ def remaining_reader_seconds(plan):
     return 120-prior
 
 def _markers(plan):
-    return {p: (dict(present=True,value=json.loads(Path(p).read_text(encoding='utf8'))) if Path(p).exists() else None)
-            for p in plan['watched_pause_paths']}
+    return marker_values(plan)
 
 def deadline_registration(plan):
+    if 'runtime_epoch' in plan:
+        validate_epoch(plan)
+        return plan['runtime_epoch']
     value=json.loads(pinned(plan['deadline_registration_ref']))
     if (value.get('schema')!='S1AI17NewDeadlineRegisteredScopeV1' or value.get('root_accepted') is not True
         or value.get('group')!='S1-AI17' or value.get('deadline_unix_seconds')!=1792018800.
@@ -131,7 +134,7 @@ def _child(input_ref, root, plan, expected_parent, expected_n):
     scene['aircraft_ids']=tuple(scene['aircraft_ids'])
     journal=Journal(root)
     def stop():
-        return datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(plan).values())
+        return stopped(plan)
     began=time.monotonic()
     import psutil
     provenance=dict(native_pid=os.getpid(),parent_pid=os.getppid(),native_birth_unix=psutil.Process().create_time(),
@@ -140,13 +143,15 @@ def _child(input_ref, root, plan, expected_parent, expected_n):
     def timeout(signum,frame):raise TimeoutError('R12 per-kernel30s including durable save')
     signal.signal(signal.SIGALRM,timeout)
     def persist(event,payload):
-        if event=='entered':signal.setitimer(signal.ITIMER_REAL,30)
+        if event=='entered':
+            if stopped(plan,force=True):raise RuntimeError('pause before new native node')
+            signal.setitimer(signal.ITIMER_REAL,30)
         journal.callback(event,payload)
         if event in ('completed','unknown'):signal.setitimer(signal.ITIMER_REAL,0)
     try:
         from .historical_s import audited_selected
         verify_imports(plan)
-        if stop():raise RuntimeError('pause before producer new scene geometry')
+        if stopped(plan,force=True):raise RuntimeError('pause before producer new scene geometry')
         saved_S=audited_selected(audited_S_rows(plan)[value['original_index']],value)
         from satellite_rl.envs.regions import get_profile
         profile=get_profile(value['geometry_profile'])
@@ -224,25 +229,57 @@ def _reader_child(plan,archive,expected_parent):
     collect(plan,archive)
 
 def _storage(root):
+    """Bounded metadata space observation, never a scientific payload audit."""
+    import stat
+    from .runtime_epoch import ROOT
     root=Path(root)
-    if root.is_symlink():raise RuntimeError('linked owned storage root')
-    persistent=temporary=members=0
-    for directory,dirs,files in os.walk(root,followlinks=False):
-        for name in dirs:
-            if (Path(directory)/name).is_symlink():raise RuntimeError('linked owned storage unknown')
-        for name in files:
-            path=Path(directory)/name;members+=1
-            if members>16384 or path.is_symlink():raise RuntimeError('owned inventory bounded/regular files only')
-            if path.suffix=='.pending':temporary+=path.stat().st_size
-            else:persistent+=path.stat().st_size
-    if persistent>134217728 or temporary>67108864 or shutil.disk_usage(root).free<8589934592:
-        raise RuntimeError('storage cap/reserve exceeded; preserve evidence and stop')
-    return dict(persistent_bytes=persistent,temporary_bytes=temporary,
-                mount_free_bytes=shutil.disk_usage(root).free,quota='not inferred from mount free')
+    if not stat.S_ISDIR(root.lstat().st_mode):raise RuntimeError('owned storage root must be regular directory')
+    journals={Path(ROOT)/'service',Path(ROOT)/'science'/'batch',Path(ROOT)/'science'/'reader'}
+    from .admission import INDICES
+    journals.update(Path(ROOT)/'science'/('mother_'+str(index)) for index in INDICES)
+    rescan=None
+    def walk_error(error):raise error
+    def volatile(path):
+        if path.parent not in journals:return False
+        if path.name=='owner.lock':return True
+        key=path.name[:-8] if path.name.endswith('.pending') else ''
+        return bool(key) and all(c in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in key)
+    for attempt in range(2):
+        persistent=temporary=members=0
+        collision=None
+        for directory,dirs,files in os.walk(root,followlinks=False,onerror=walk_error):
+            for name in dirs:
+                path=Path(directory)/name
+                if not stat.S_ISDIR(path.lstat().st_mode):raise RuntimeError('linked/nonregular owned directory unknown')
+            for name in files:
+                path=Path(directory)/name;members+=1
+                if members>16384:raise RuntimeError('owned inventory bounded regular files only')
+                try:info=path.lstat()
+                except FileNotFoundError:
+                    if attempt or not volatile(path):raise RuntimeError('owned inventory missing or repeated volatile collision')
+                    collision=str(path);break
+                if not stat.S_ISREG(info.st_mode):raise RuntimeError('linked/nonregular owned file unknown')
+                if path.suffix=='.pending':temporary+=info.st_size
+                else:persistent+=info.st_size
+            if collision is not None:break
+        if collision is not None:
+            rescan=dict(path=collision,reason='legal_Journal_pending_publish_or_owner_close')
+            # Small metadata only; preserve the attempted observation even when
+            # the second pass fails. No payload read, watcher, or extra process.
+            print(json.dumps(dict(event='storage_metadata_rescan',**rescan)),flush=True)
+            continue
+        free=shutil.disk_usage(root).free
+        if persistent>134217728 or temporary>67108864 or free<8589934592:
+            raise RuntimeError('storage cap/reserve exceeded; preserve evidence and stop')
+        return dict(persistent_bytes=persistent,temporary_bytes=temporary,mount_free_bytes=free,
+                    quota='not inferred from mount free',inventory_passes=attempt+1,
+                    rescan=rescan,scientific_payload_audited=False)
+    raise RuntimeError('storage metadata second pass incomplete')
 
 def run(plan,review,archive):
     now=datetime.now(timezone.utc)
     check(plan,review,now=now,marker_values=_markers(plan))
+    if 'runtime_epoch' in plan:prior_dispatch_absent(plan)
     design_documents(plan)
     deadline_registration(plan)
     if Path('/proc/sys/kernel/random/boot_id').read_text().strip()!=review['fresh_route']['boot_id']:
@@ -269,13 +306,13 @@ def run(plan,review,archive):
     try:
         for case in plan['cases']:
             owner.write('storage',_storage(storage_root))
-            if datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(plan).values()):
+            if stopped(plan,force=True):
                 raise RuntimeError('cooperative pause before next mother')
             root=output/('mother_'+str(case['original_index']))
             owner.write('ray_reservation_'+str(case['original_index']),dict(new_rays_reserved=case['aircraft_count'],input_ref=case['input_adapter_ref']))
             proc=ctx.Process(target=_child,args=(case['input_adapter_ref'],str(root),plan,os.getpid(),case['aircraft_count']))
             began=time.monotonic();proc.start();reason=None;peak_rss=0;samples=0;birth=None
-            deadline=min(began+180,began+2160-total,began+(datetime(2026,10,14,23,tzinfo=timezone.utc)-datetime.now(timezone.utc)).total_seconds())
+            deadline=min(began+180,began+2160-total,absolute_deadline(plan))
             try:
                 birth=_birth(proc.pid)
                 while proc.is_alive():
@@ -286,7 +323,7 @@ def run(plan,review,archive):
                     peak_rss=max(peak_rss,_rss(proc.pid,birth));samples+=1
                     if elapsed>=165 or total+elapsed>=2145:reason='native_time_save_margin'
                     elif peak_rss>2147483648:reason='parent_children_RSS_ceiling'
-                    elif datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(plan).values()):reason='pause_stop_new_and_save'
+                    elif stopped(plan):reason='pause_stop_new_and_save'
                     if reason:break
                     proc.join(timeout=.1)
             finally:
@@ -299,10 +336,10 @@ def run(plan,review,archive):
             if reason or proc.exitcode!=0 or samples<1 or peak_rss<=0 or time.monotonic()-began>180 or total>2160:raise RuntimeError('incomplete native exit/time/RSS; no retry')
         owner.write('production_complete',dict(complete=True,seconds=total,
                     reader_pending=True,scientific_gate_pending=True))
-        if datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(plan).values()):raise RuntimeError('pause before reader; no implicit recovery')
+        if stopped(plan,force=True):raise RuntimeError('pause before reader; no implicit recovery')
         proc=ctx.Process(target=_reader_child,args=(plan,str(output),os.getpid()));began=time.monotonic();proc.start();reason=None;peak_rss=0;samples=0;birth=None
         reader_remaining=remaining_reader_seconds(plan)
-        deadline=min(began+reader_remaining,began+(datetime(2026,10,14,23,tzinfo=timezone.utc)-datetime.now(timezone.utc)).total_seconds())
+        deadline=min(began+reader_remaining,absolute_deadline(plan))
         try:
             birth=_birth(proc.pid)
             while proc.is_alive():
@@ -310,7 +347,7 @@ def run(plan,review,archive):
                 peak_rss=max(peak_rss,_rss(proc.pid,birth));samples+=1
                 if time.monotonic()-began>=reader_remaining-15:reason='reader_original_remaining110s_reap_margin'
                 elif peak_rss>2147483648:reason='reader_RSS2GiB'
-                elif datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(plan).values()):reason='pause_before_reader_checkpoint'
+                elif stopped(plan):reason='pause_before_reader_checkpoint'
                 if reason:break
                 proc.join(timeout=.1)
         finally:

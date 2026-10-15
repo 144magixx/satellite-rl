@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from .admission import check, STOP_NEW, DEADLINE
+from .runtime_epoch import validate as validate_epoch,stopped,absolute_deadline,prior_dispatch_absent
 from .persistence import Journal, identity
 from .worker import pinned, source_check, bound_parent, _markers, _storage
 
@@ -27,6 +28,9 @@ class Endpoint:
         self.plan_ref,self.review_ref=plan_ref,review_ref
         self.plan=json.loads(pinned(plan_ref));self.review=json.loads(pinned(review_ref))
         source_check(self.plan)
+        if 'runtime_epoch' in self.plan:
+            validate_epoch(self.plan)
+            prior_dispatch_absent(self.plan)
         self.root=Path(self.plan['control_root'])
         if not self.root.resolve().is_relative_to(Path(self.plan['storage_root']).resolve()):raise ValueError('service shared owned storage root')
         self.journal=Journal(self.root)
@@ -61,6 +65,8 @@ class Endpoint:
         if self.journal.has('submission_intent'):raise ValueError('submitted or unknown intent; never replay')
         # Re-read exact pinned approval immediately before the sole start.
         self.review=json.loads(pinned(self.review_ref));pinned(self.plan_ref)
+        if time.monotonic()-self.started>=120:raise ValueError('service idle expired; never renew lease')
+        if 'runtime_epoch' in self.plan:prior_dispatch_absent(self.plan)
         check(self.plan,self.review,now=datetime.now(timezone.utc),marker_values=_markers(self.plan))
         self.journal.write('submission_intent',dict(request=body,actual_service=self.owner,
                            plan_content_identity=identity(self.plan_ref),review_content_identity=identity(self.review_ref)))
@@ -77,9 +83,12 @@ class Endpoint:
 
     def monitor(self):
         import psutil
-        if datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(self.plan).values()):
+        if stopped(self.plan):
             self.stop_owned('service_cooperative_pause_marker');return
-        if self.worker is None:return
+        if self.worker is None:
+            if time.monotonic()-self.started>=120:
+                self.journal.write('idle_expired',dict(submitted=False,automatic_restart=False));self.finished=True
+            return
         for p in psutil.Process().children(recursive=True):
             try:self.registry[(p.pid,p.create_time())]=dict(pid=p.pid,birth_unix=p.create_time(),boot_id=self.owner['boot_id'])
             except psutil.NoSuchProcess:pass
@@ -92,7 +101,7 @@ class Endpoint:
             except psutil.NoSuchProcess:pass
         self.peak_RSS=max(self.peak_RSS,rss)
         _storage(self.plan['storage_root'])
-        if time.monotonic()-self.started>=2430 or datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(self.plan).values()) or self.peak_RSS>2147483648:
+        if time.monotonic()-self.started>=2430 or stopped(self.plan) or self.peak_RSS>2147483648:
             self.stop_owned('service_time_pause_or_RSS')
             return
         code=self.worker.poll()
@@ -114,7 +123,7 @@ class Endpoint:
         for p in psutil.Process().children(recursive=True):
             try:self.registry[(p.pid,p.create_time())]=dict(pid=p.pid,birth_unix=p.create_time(),boot_id=self.owner['boot_id'])
             except psutil.NoSuchProcess:pass
-        deadline=min(time.monotonic()+15,time.monotonic()+(DEADLINE-datetime.now(timezone.utc)).total_seconds())
+        deadline=min(time.monotonic()+15,absolute_deadline(self.plan))
         live=[]
         for owner in self.registry.values():
             try:
@@ -164,7 +173,7 @@ def main():
         def log_message(self,*args):pass
     server=HTTPServer(('127.0.0.1',args.port),Handler);server.timeout=.25
     try:
-        while not endpoint.finished and datetime.now(timezone.utc)<STOP_NEW:
+        while not endpoint.finished and not stopped(endpoint.plan):
             server.handle_request();endpoint.monitor()
     finally:server.server_close();endpoint.close()
 

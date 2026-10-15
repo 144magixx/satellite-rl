@@ -29,16 +29,21 @@ def check(plan, review, *, now, marker_values):
     require_execution_design(plan)
     if now.tzinfo is None:
         raise ValueError('timezone required')
-    if now >= STOP_NEW or (DEADLINE - now).total_seconds() < 2550:
+    resumed='runtime_epoch' in plan
+    if resumed:
+        from .runtime_epoch import validate
+        if validate(plan,now=now.timestamp(),markers=marker_values)['stop_remaining_seconds']<2310:
+            raise ValueError('POST requires full2310 operational seconds before stop-new')
+    elif now >= STOP_NEW or (DEADLINE - now).total_seconds() < 2550:
         raise ValueError('hard pause envelope; new human continue required after pause')
     if plan.get('schema')!='R12ProductionPlanV2' or plan.get('group') != 'S1-AI17-R12' or plan.get('executor_port') not in (20473, 20474):
         raise ValueError('R12 candidate resource only')
-    if plan.get('pause_deadline_utc') != '2026-10-14T23:00:00Z':
+    if not resumed and plan.get('pause_deadline_utc') != '2026-10-14T23:00:00Z':
         raise ValueError('new pause contract binding')
     paths = plan.get('watched_pause_paths', [])
     if pause_inventory(plan) != set(marker_values):
         raise ValueError('both persistent markers must be freshly read')
-    if any(value is not None for value in marker_values.values()):
+    if not resumed and any(value is not None for value in marker_values.values()):
         raise ValueError('pause marker present; no exemptions')
     required = ('execution_authorized', 'source_accepted', 'fixture_accepted',
                 'input_accepted', 'runtime_accepted', 'disk_accepted', 'pause_accepted')

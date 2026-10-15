@@ -52,9 +52,10 @@ def controls(origin,tree,saved,origin_exact):
 
 def collect(plan,archive):
     from .worker import pinned,load_case,audited_S_rows,_markers
-    from .admission import STOP_NEW
+    from .runtime_epoch import stopped
     from .historical_s import audited_selected
-    def stop():return datetime.now(timezone.utc)>=STOP_NEW or any(v is not None for v in _markers(plan).values())
+    if stopped(plan,force=True):raise RuntimeError('pause before independent reader')
+    def stop():return stopped(plan)
     root=Path(archive);journal=Journal(root/'reader');reader=Reader(journal,prior_seconds=plan['reader_prior_seconds'],stop=stop);rows=[]
     production=dict(kernels=0,flow_queries=0,raypairs=0,new_rays=0,seconds=0.,aircraft_records=0)
     try:
@@ -182,6 +183,7 @@ def collect(plan,archive):
                 allowance=dict(rays=0,layouts=new_layouts,raypairs=reader_pair_reservation(n,m,
                     new_contact=bool(contact_pairs),new_region=bool(region_pairs),eligible=eligible))
                 auditor=GeometryAuditor(scene,record['origin'],content_sha(record['origin']['identity']),parent,stop=stop)
+                if stopped(plan,force=True):raise RuntimeError('pause before independent reader node')
                 audit_receipt=reader.audit(node,source_ref=plan['source_manifest_ref'],input_ref=record['source_original_input_ref'],
                     parent_cache_SHA=content_sha(record['origin']['identity']),static_allowance=allowance,independent_auditor=auditor)
                 tree['paths'][path]['exact_evidence']=audit_receipt['result']['terminal_exact']
