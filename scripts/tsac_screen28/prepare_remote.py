@@ -48,7 +48,7 @@ with tarfile.open(ARCHIVE['path'],'r:gz') as archive:
   if target.exists():assert target.read_bytes()==raw
   else:
    with target.open('xb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
-  if member.name.endswith('.py'):ast.parse(raw.decode('utf8'))
+  if member.name.endswith('.py'):ast.parse(raw,filename=member.name)
   seen.add(member.name)
  assert seen==set(FILES)
 actual={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file() and '__pycache__' not in p.parts}
