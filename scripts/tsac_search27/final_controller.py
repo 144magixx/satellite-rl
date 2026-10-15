@@ -22,6 +22,7 @@ from scripts.tsac_search27.pilot_controller import SOFT,HARD,guard,filtered_stat
 from scripts.tsac_search27.final_matrix import policy_reference_catalog,build_candidate,export_results
 from satellite_rl.t0_width.logging import atomic_json,content_sha
 from satellite_rl.t0_width.data import read_json_ref
+from satellite_rl.tsac_search27.known_evaluation import validate_policy_metadata
 
 
 LATEST_START=datetime.fromisoformat('2026-10-14T22:00:00+00:00')
@@ -107,8 +108,7 @@ def stage_policy(method,item,origin_port,local_history,out,remote_dir):
         origin=Path(local_history);actual=r.sha(origin)
         if item['policy_ref']['sha256']!='REQUIRE_ACTUAL_FILE_SHA' and actual!=item['policy_ref']['sha256']:raise ValueError('history SHA differs from original W26 lock')
         policy=torch.load(origin,map_location='cpu',weights_only=False)
-        for key,target in [('schema','schema'),('config_sha','config_SHA'),('source_sha','source_SHA'),('data_manifest_sha','data_manifest_SHA'),('env_step','env_step')]:
-            if policy.get(key)!=item[target]:raise ValueError('history exact old schema/config/source/data/node differs')
+        validate_policy_metadata(policy,item,item['schema'])
         source=origin;original_ref=dict(path=str(origin),sha256=actual)
     else:
         original_ref=item['policy_ref'];raw=r.read_remote(origin_port,original_ref['path'])
