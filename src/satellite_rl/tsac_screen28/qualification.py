@@ -189,13 +189,20 @@ def read_json_ref_bytes(ref):
 def run_checks(plan,root,stop_requested,progress=lambda value:None):
     if plan.get('runtime_approved') is not True or plan.get('root_approved') is not True:raise ValueError('root exact qualification plan required')
     fixtures=read_json_ref(plan['fixture_manifest_ref']);bounds=validate_catalog(plan['checks'],fixtures)
+    from .migration import validate_source_requalification
+    migration=validate_source_requalification(plan)
     root=Path(root);root.mkdir(parents=True,exist_ok=True)
     config_path=root/'engineering_config.json'
     if config_path.exists():
         if content_sha(json.loads(config_path.read_text()))!=content_sha(plan):raise ValueError('immutable engineering config differs')
     else:atomic_json(config_path,plan);fsync_directory(root)
-    budget=Journal(root/'engineering_cursor.pkl',dict(plan_SHA=content_sha(plan),catalog_SHA=bounds['catalog_SHA']),dict(query=256,commit=64,forward=64,proposal=64))
-    value=budget.value;value.setdefault('cursor',0);value.setdefault('active',None);value.setdefault('unknown',[]);value.setdefault('elapsed_active_seconds',0.)
+    prior=migration['prior_actual'] if migration else dict(query=0,commit=0,forward=0,kernel_preparation=0,unknown_effects=0)
+    initial=dict(cursor=0,active=None,unknown=[],elapsed_active_seconds=migration['prior_wall_seconds'] if migration else 0.,
+        prior_actual_costs=prior,source_migration_ref=plan.get('source_migration_ref'))
+    budget=Journal(root/'engineering_cursor.pkl',dict(plan_SHA=content_sha(plan),catalog_SHA=bounds['catalog_SHA']),dict(query=256,commit=64,forward=64,proposal=64),initial_extra=initial)
+    value=budget.value
+    if (value.get('prior_actual_costs')!=prior or value.get('source_migration_ref')!=plan.get('source_migration_ref')
+            or value.get('elapsed_active_seconds',-1)<initial['elapsed_active_seconds']):raise UnknownCost('missing/incomplete inherited source cost or wall metadata')
     started=perf_counter();elapsed=value['elapsed_active_seconds'];agent=None
     try:
         for check in plan['checks'][value['cursor']:]:
@@ -206,7 +213,8 @@ def run_checks(plan,root,stop_requested,progress=lambda value:None):
                 cap=check['worst_case']
                 for key in ('query','commit','forward'):
                     value['attempts'][key]+=cap[key]
-                    if value['attempts'][key]>value['limits'][key]:raise ValueError('global engineering reservation exhausted')
+                    if value['attempts'][key]+prior[key]>value['limits'][key]:raise ValueError('cumulative engineering reservation exhausted')
+                if value['attempts']['query']+value['attempts']['commit']+prior['query']+prior['commit']>320:raise ValueError('cumulative320 PHY cap exceeded')
                 value['active']=dict(check_index=index,check_SHA=content_sha(check),reserved=cap);budget.save()
             elif value['active']['check_SHA']!=content_sha(check):raise ValueError('active engineering check differs')
             if evidence.exists():
@@ -233,6 +241,9 @@ def run_checks(plan,root,stop_requested,progress=lambda value:None):
             engineering_plan_ref=dict(path=str(config_path),sha256=file_sha(config_path)),
             physical_calls_attempted=actual['query']+actual['commit'],real_commit_attempts=actual['commit'],candidate_restore_attempts=actual['query'],model_forward_attempts=actual['forward'],
             parameter_updates=0,restore_PHY_calls=0,kernel_preparation_calls=len(plan['checks']),directory_fsync_available=os.name=='posix',
+            prior_actual_costs=prior,source_migration_ref=plan.get('source_migration_ref'),
+            cumulative_actual_costs=dict(query=actual['query']+prior['query'],commit=actual['commit']+prior['commit'],forward=actual['forward']+prior['forward'],
+                kernel_preparation=len(plan['checks'])+prior['kernel_preparation'],unknown_effects=prior['unknown_effects']),
             root_review_required=True,expected_fault_unknowns_preserved=['unknown_query','unknown_commit'])
         atomic_json(root/'qualification_candidate.json',candidate);fsync_directory(root)
         return dict(candidate,stage='completed')

@@ -282,5 +282,50 @@ class PureTests(unittest.TestCase):
         with self.assertRaises(ValueError):restore_memory(env,invalid)
         invalid=copy.deepcopy(before);invalid['layout_SHA']='different-layout'
         with self.assertRaises(ValueError):restore_memory(env,invalid)
+    def test_paid_source_requalification_retains_actual_old_failure_ledger(self):
+        import shutil,copy
+        from satellite_rl.tsac_screen28.migration import validate_source_requalification,task_contract_sha
+        from satellite_rl.tsac_screen28.checks import validate_catalog,catalog,fixture_manifest
+        from satellite_rl.t0_width.data import file_sha,read_json_ref as real_read
+        from satellite_rl.t0_width.logging import content_sha
+        originals=Path('D:/paper/outputs/experiments/s2_tsac_screen28_20261015/engineering_01/diagnosis_01/originals')
+        if not originals.exists():self.skipTest('historic audited failure fixture not present in this checkout')
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);snapshot_root=root/'source_epoch_01';snapshot_root.mkdir()
+            for path in originals.iterdir():
+                destination=snapshot_root/'checks'/path.name if path.is_dir() else snapshot_root/path.name
+                if path.is_dir():shutil.copytree(path,destination)
+                else:shutil.copy2(path,destination)
+            manifest=dict(files={p.relative_to(snapshot_root).as_posix():dict(sha256=file_sha(p),bytes=p.stat().st_size) for p in snapshot_root.rglob('*') if p.is_file()})
+            manifest_path=snapshot_root/'manifest.json';manifest_path.write_text(json.dumps(manifest))
+            old=json.loads((snapshot_root/'engineering_config.json').read_text())
+            new=dict(copy.deepcopy(old),source_commit='b'*40,source_root='/new/source',source_manifest={'new.py':'c'*64},source_epoch_index=2,requalification=True,prior_source_commit=old['source_commit'])
+            inventory=originals.parent/'readonly_inventory.json'
+            cursor=pickle.loads((snapshot_root/'engineering_cursor.pkl').read_bytes())
+            receipt=dict(schema='W28SourceRequalificationV1',experiment_id='S2-W28',root_approved=True,same_task_key='engineering',mode='paid_full_requalification',
+                old_source_commit=old['source_commit'],new_source_commit=new['source_commit'],new_task_contract_SHA=task_contract_sha(new),old_task_plan_SHA=content_sha(old),
+                snapshot_manifest_ref=dict(path=str(manifest_path),sha256=file_sha(manifest_path)),
+                old_owner_exit_observation_ref=dict(path=str(inventory),sha256=file_sha(inventory)),
+                prior_actual_costs=dict(query=0,commit=1,forward=2,kernel_preparation=2,unknown_effects=0),prior_active_wall_seconds=cursor['elapsed_active_seconds'],
+                prior_unrecorded_wall_upper_bound_seconds=0,prior_wall_complete_proven=True,
+                additional_worst_case=validate_catalog(catalog(),fixture_manifest())['worst_case'])
+            receipt_path=root/'receipt.json'
+            def save_receipt():
+                receipt_path.write_text(json.dumps(receipt));new['source_migration_ref']=dict(path=str(receipt_path),sha256=file_sha(receipt_path))
+            def read(ref):return fixture_manifest() if ref==new['fixture_manifest_ref'] else real_read(ref)
+            with patch('satellite_rl.tsac_screen28.migration.read_json_ref',side_effect=read):
+                save_receipt();verified=validate_source_requalification(new)
+                self.assertEqual(verified['cumulative_worst_case'],dict(query=35,commit=13,forward=10,kernel_preparation=18))
+                self.assertEqual(verified['prior_wall_seconds'],cursor['elapsed_active_seconds'])
+                receipt['prior_actual_costs']['commit']=0;save_receipt()
+                with self.assertRaises(ValueError):validate_source_requalification(new)
+    def test_prior_wall_and_cost_are_in_first_atomic_journal_record(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'engineering_cursor.pkl';prior=dict(query=0,commit=1,forward=2,kernel_preparation=2,unknown_effects=0)
+            Journal(path,dict(run='same'),dict(query=256,commit=64,forward=64,proposal=64),
+                initial_extra=dict(prior_actual_costs=prior,elapsed_active_seconds=2.9509533420205116,source_migration_ref={'sha256':'signed'}))
+            persisted=pickle.loads(path.read_bytes())
+            self.assertEqual(persisted['prior_actual_costs'],prior)
+            self.assertEqual(persisted['elapsed_active_seconds'],2.9509533420205116)
 
 if __name__=='__main__':unittest.main()

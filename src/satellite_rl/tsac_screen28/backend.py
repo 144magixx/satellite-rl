@@ -140,6 +140,14 @@ def worker(args):
         engineering=task.get('schema')=='W28EngineeringPlanV1'
         phase_keys=[key for key,value in w.plan['tasks'].items() if (value.get('schema')=='W28EngineeringPlanV1')==engineering]
         prior_seconds=sum(w.detail(key).get('matrix',{}).get('elapsed_active_seconds',0.) for key in phase_keys)
+        if engineering and task.get('source_migration_ref'):
+            from .migration import validate_source_requalification
+            inheritance=validate_source_requalification(task);existing=folder/'engineering_cursor.pkl'
+            if not existing.exists():prior_seconds+=inheritance['prior_wall_seconds']
+            else:
+                inherited=pickle.loads(existing.read_bytes())
+                if (inherited.get('prior_actual_costs')!=inheritance['prior_actual'] or inherited.get('source_migration_ref')!=task['source_migration_ref']
+                        or inherited.get('elapsed_active_seconds',-1)<inheritance['prior_wall_seconds']):raise ValueError('inherited source wall/cost metadata incomplete; no zero fallback')
         for key in phase_keys:
             for prior in (w.root/'runs'/key).glob('dispatch_*.json'):
                 receipt_ref=read(prior).get('recovery_ref')

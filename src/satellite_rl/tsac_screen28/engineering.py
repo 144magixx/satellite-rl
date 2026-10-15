@@ -24,6 +24,8 @@ def validate_engineering(plan,gate,dispatch_epoch=None):
         from .checks import validate_catalog
         bounds=validate_catalog(plan['checks'],read_json_ref(plan['fixture_manifest_ref']))
         if bounds!=plan['catalog_bounds']:raise ValueError('catalog finite budget differs')
+        from .migration import validate_source_requalification
+        validate_source_requalification(plan)
     gate.validate(dispatch_epoch or plan['rootpauseepoch'])
     closure=read_json_ref(plan['w27_closure_ref'])
     if closure.get('root_approved') is not True or closure.get('formal_report_closed') is not True:raise ValueError('W27 report must close before engineering')

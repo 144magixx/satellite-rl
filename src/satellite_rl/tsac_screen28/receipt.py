@@ -52,4 +52,11 @@ def validate_qualification(receipt,plan):
     actual=dict(physical_calls_attempted=totals['query']+totals['commit'],real_commit_attempts=totals['commit'],
         candidate_restore_attempts=totals['query'],model_forward_attempts=totals['forward'])
     if any(receipt.get(key)!=value for key,value in actual.items()):raise ValueError('receipt total does not equal builtin effect journals')
+    if engineering.get('source_migration_ref'):
+        from .migration import validate_source_requalification
+        migration=validate_source_requalification(engineering);prior=migration['prior_actual']
+        cumulative=dict(query=totals['query']+prior['query'],commit=totals['commit']+prior['commit'],forward=totals['forward']+prior['forward'],
+            kernel_preparation=len(catalog())+prior['kernel_preparation'],unknown_effects=prior['unknown_effects'])
+        if (receipt.get('source_migration_ref')!=engineering['source_migration_ref'] or receipt.get('prior_actual_costs')!=prior
+                or receipt.get('cumulative_actual_costs')!=cumulative):raise ValueError('prior source costs/unknowns omitted from new qualification')
     return dict(passed=True,actual=actual,expected_fault_unknowns_preserved=True)

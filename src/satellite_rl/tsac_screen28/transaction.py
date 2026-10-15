@@ -91,7 +91,7 @@ def result_digest(result,state):
     return state_sha(dict(state=state,observation=observation,reward=reward,done=done,info=stable))
 
 class Journal:
-    def __init__(self,path,identity,limits):
+    def __init__(self,path,identity,limits,*,initial_extra=None):
         limits=dict(limits)
         limits.setdefault('forward',limits['commit']);limits.setdefault('proposal',limits['commit'])
         self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True)
@@ -106,6 +106,9 @@ class Journal:
             if any(p.exists() for p in remnants):
                 raise UnknownCost('current journal absent beside existing recovery/evidence artifacts; preserve and audit, never reset costs')
             self.value=dict(identity=identity,limits=limits,attempts=dict(query=0,commit=0,forward=0,proposal=0),completed=dict(query=0,commit=0,forward=0,proposal=0),transaction=None)
+            if initial_extra:
+                if set(initial_extra)&set(self.value):raise ValueError('initial metadata cannot overwrite effect ledger')
+                self.value.update(copy.deepcopy(initial_extra))
             marker=self.path.with_suffix('.intent')
             with marker.open('xb') as stream:
                 stream.write(pickle.dumps(dict(identity=identity,limits=limits),protocol=5));stream.flush();os.fsync(stream.fileno())
