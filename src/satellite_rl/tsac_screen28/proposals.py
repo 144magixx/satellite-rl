@@ -48,6 +48,10 @@ def draw(fl,power,mask,case_id,family,repeat,step,candidate):
         seed=record,rng_before=before,rng_after=rng.bit_generator.state)
 
 def frozen_s10_probabilities(agent,observation,mask):
+    result=frozen_s10_forward(agent,observation,mask)
+    return result['frequency_slots'],result['power']
+
+def frozen_s10_forward(agent,observation,mask):
     """One actual actor forward only when called after root runtime admission."""
     import torch
     from satellite_rl.agents.action_masking import masked_policy,mask_batch
@@ -56,5 +60,6 @@ def frozen_s10_probabilities(agent,observation,mask):
     with torch.no_grad():
         x=torch.as_tensor(observation,dtype=torch.float32,device=agent.device).reshape(1,-1)
         flmask,pmask=mask_batch([mask],(100,10,10),agent.device)
-        fl,p,*_=masked_policy(net(x),flmask,pmask)
-    return validate_probabilities(fl[0].cpu().numpy(),p[0].cpu().numpy(),mask)
+        heads=net(x);fl,p,*_=masked_policy(heads,flmask,pmask)
+    fl,p=validate_probabilities(fl[0].cpu().numpy(),p[0].cpu().numpy(),mask)
+    return dict(frequency_slots=fl,power=p,logits=[h[0].cpu().numpy().copy() for h in heads])

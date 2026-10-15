@@ -9,13 +9,10 @@ def matrix(case_metadata,phase):
     for mother,row in enumerate(case_metadata):
         n=row['N']
         if type(n) is not int or not 1<=n<=200:raise ValueError('actual metadata N required')
-        methods=list(METHODS)
-        # Predeclared cyclic order reduces systematic method-position effects.
-        methods=methods[mother%4:]+methods[:mother%4]
-        for repeat in range(3):
-            for method in methods:jobs.append(dict(case_id=row['case_id'],mother=mother,method=method,repeat=repeat,N=n))
-        if phase=='known':
-            for method in ('fixed','greedy'):jobs.append(dict(case_id=row['case_id'],mother=mother,method=method,repeat=0,N=n))
+        ordered=[(method,repeat) for repeat in range(3) for method in METHODS]
+        if phase=='known':ordered.extend([('fixed',0),('greedy',0)])
+        offset=mother%len(ordered);ordered=ordered[offset:]+ordered[:offset]
+        for method,repeat in ordered:jobs.append(dict(case_id=row['case_id'],mother=mother,method=method,repeat=repeat,N=n))
     return dict(schema='W28FiniteMatrixV1',phase=phase,jobs=jobs,episodes=len(jobs),
         commits=sum(j['N'] for j in jobs),queries=sum(4*j['N'] for j in jobs if j['method'] in ('P4','R4')),
         model_forwards=sum(j['N'] for j in jobs if j['method'].startswith('P')),

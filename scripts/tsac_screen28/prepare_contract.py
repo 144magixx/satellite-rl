@@ -6,6 +6,7 @@ from satellite_rl.t0_width.data import file_sha
 from satellite_rl.t0_width.logging import atomic_json
 from satellite_rl.tsac_screen28.plan import matrix
 from satellite_rl.tsac_screen28.proposals import SEED_CONTRACT
+from satellite_rl.tsac_screen28.checks import catalog,fixture_manifest,validate_catalog
 
 ROOT=Path('D:/paper')
 BASE=ROOT/'outputs/experiments/s2_tsac_screen28_20261015'
@@ -54,15 +55,20 @@ def main():
     expected=[(19260,38520),(44926,77016)]
     for phase,(commits,queries) in zip(('development','known'),expected):
         if (tasks[phase]['matrix']['commits'],tasks[phase]['matrix']['queries'])!=(commits,queries):raise ValueError('exact finite capacities differ')
+    fixtures=fixture_manifest();checks=catalog();bounds=validate_catalog(checks,fixtures)
+    atomic_json(out/'engineering_fixtures.json',fixtures);atomic_json(out/'engineering_catalog.json',dict(checks=checks,bounds=bounds))
+    fixture_ref=dict(path=REMOTE+'/contracts/engineering_fixtures.json',sha256=file_sha(out/'engineering_fixtures.json'))
     engineering=dict(tasks['development'],schema='W28EngineeringPlanV1',phase='engineering',run_id='engineering_01',
-        parameter_updates=0,limits=dict(query=256,commit=64,forward=64,proposal=64),checks=[],
-        engineering_checklist_status='ROOT_TO_FREEZE_EXACT_CHECKS_BEFORE_RUNTIME; N1/N200/probability/fault points required')
+        parameter_updates=0,limits=dict(query=256,commit=64,forward=64,proposal=64),checks=checks,
+        check_contract_version='W28QualificationChecksV1',fixture_manifest_ref=fixture_ref,metadata_ref=fixture_ref,
+        data_manifest_ref=fixture_ref,catalog_bounds=bounds,
+        engineering_checklist_status='CONCRETE_BUILTIN_16_CHECKS; root must freeze exact source/plan/admissions before runtime')
     engineering.pop('matrix');engineering.pop('qualification_ref')
     tasks['engineering']=engineering
     contract=dict(schema='W28WorkbenchPlanV1',experiment_id='S2-W28',root_approved=False,runtime_approved=False,
         executor_port=20418,http_port=9080,max_workers=1,source_root=REMOTE+'/source/REQUIRE_FROZEN_COMMIT',
         stop_url_base='http://127.0.0.1:9080',science_wall_budget_seconds=21600,engineering_wall_budget_seconds=1800,tasks=tasks,
-        admission_refs={name:dict(path=REMOTE+'/admissions/'+name+'.json',sha256='REQUIRE_ROOT_'+name.upper()+'_SHA') for name in ('source','data','resources')},
+        admission_refs={name:dict(path=REMOTE+'/admissions/'+name+'.json',sha256='REQUIRE_ROOT_'+name.upper()+'_SHA') for name in ('source','data','resources','cost')},
         engineering_budget=dict(physical_calls_attempted=320,real_commit_attempts=64,candidate_restore_attempts=256,model_forward_attempts=64,parameter_updates=0),
         recovery_rule=dict(same_ID=True,source_config_policy_data_SHA_pinned=True,unknown_calls_replayed=0,
             cursor_SHA_required=True,previous_dispatch_SHA_required=True,unrecorded_wall_upper_bound_seconds='REQUIRED_NONNEGATIVE_FINITE; zero needs explicit proof; deduct across both science phases',

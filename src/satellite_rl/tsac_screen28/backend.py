@@ -40,7 +40,7 @@ class Workbench:
         cursor=folder/'matrix_cursor.pkl'
         if not cursor.exists() and (folder/'engineering_cursor.pkl').exists():
             c=pickle.loads((folder/'engineering_cursor.pkl').read_bytes())
-            value['matrix']=dict(cursor=c['cursor'],unknown=c['unknown'],elapsed_active_seconds=c.get('elapsed_active_seconds',0.))
+            value['matrix']=dict(cursor=c.get('cursor'),unknown=c.get('unknown',['initialization_incomplete']),elapsed_active_seconds=c.get('elapsed_active_seconds',0.))
         if cursor.exists():
             c=pickle.loads(cursor.read_bytes());value['matrix']=dict(cursor=c['cursor'],costs_completed_episodes=c['costs'],unknown=c['unknown'],elapsed_active_seconds=c['elapsed_active_seconds'])
             if c['active'] is not None:
@@ -58,10 +58,13 @@ class Workbench:
             from .engineering import validate_engineering
             validate_engineering(task,self.gate,dispatch_epoch)
         else:validate_plan(task,rows,self.gate,runtime=True,dispatch_epoch=dispatch_epoch)
-        for name in ('source','data','resources'):
+        for name in ('source','data','resources','cost'):
             value=read_json_ref(resource_ref if name=='resources' and resource_ref else self.plan['admission_refs'][name])
             if value.get('root_approved') is not True or value.get('passed') is not True or value.get('experiment_id')!='S2-W28':raise ValueError('W28 admission required: '+name)
             if name=='source' and value.get('source_commit')!=task['source_commit']:raise ValueError('source admission differs')
+            if name=='data' and task['phase'] not in value.get('allowed_phases',[]):raise ValueError('data admission does not cover this phase')
+            if name=='cost' and (value.get('engineering_caps')!=dict(physical_calls_attempted=320,real_commit_attempts=64,candidate_restore_attempts=256,model_forward_attempts=64)
+                    or value.get('science_capacity_reward_cap')!=179722 or value.get('unknown_cost_not_zero') is not True):raise ValueError('cumulative finite cost admission differs')
             if name=='resources':
                 age=(datetime.now(timezone.utc)-datetime.fromisoformat(value['checked_UTC'])).total_seconds()
                 if not 0<=age<=min(300,value.get('max_age_seconds',300)):raise ValueError('fresh resource receipt required')

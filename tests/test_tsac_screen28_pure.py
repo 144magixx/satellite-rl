@@ -102,6 +102,8 @@ class PureTests(unittest.TestCase):
         self.assertEqual(dev['queries'],24*sum(range(47,67)))
         known=matrix([dict(case_id=str(i),N=42+i) for i in range(40)],'known')
         self.assertEqual(known['episodes'],560)
+        self.assertEqual(known['jobs'][12*14]['method'],'fixed')
+        self.assertEqual(known['jobs'][13*14]['method'],'greedy')
         means=dict(P1=dict(SI=.9,SGM=.5,power_w=100),P4=dict(SI=.904,SGM=.5,power_w=105),R4=dict(SI=.9,SGM=.5,power_w=100))
         self.assertTrue(development_gate(means,True)['passed'])
         self.assertFalse(development_gate(means,False)['passed'])
@@ -184,6 +186,10 @@ class PureTests(unittest.TestCase):
             self.assertEqual(again['stage'],'completed');self.assertEqual(len(FakeEnv.calls),calls)
             self.assertEqual(len(list((path/'run/episodes').glob('*/terminal.json'))),2)
             self.assertFalse(list((path/'run/episodes').glob('*/binding.pkl')))
+            (path/'run/episodes/0000/episode_timing.json').unlink()
+            missing=run_matrix(plan,path/'run',lambda:False,policy_loader=forbidden_policy,environment_loader=fake_loader)
+            self.assertEqual(missing['timing_unknown'],[0]);self.assertEqual(len(FakeEnv.calls),calls)
+            self.assertTrue((path/'run/episodes/0000/timing_gap.json').exists())
     def test_engineering_injected_checks_are_bounded_and_do_not_repeat(self):
         from satellite_rl.tsac_screen28.engineering import run_engineering
         from satellite_rl.t0_width.data import file_sha
@@ -210,5 +216,34 @@ class PureTests(unittest.TestCase):
                 backend=Workbench(root/'run',plan,root/'control')
                 with self.assertRaises(ValueError):backend.start('science')
                 spawn.assert_not_called();probe.assert_not_called()
+    def test_concrete_engineering_catalog_and_prefix_are_metadata_only(self):
+        from satellite_rl.tsac_screen28.checks import catalog,fixture_manifest,validate_catalog,prefix_recipe
+        bounds=validate_catalog(catalog(),fixture_manifest())
+        self.assertEqual(len(catalog()),16)
+        self.assertEqual(bounds['worst_case'],dict(commit=12,query=35,forward=8,kernel_preparation=16,restore_PHY=0))
+        self.assertEqual(bounds['capacity_reward_calls'],47)
+        large=next(s for s in fixture_manifest()['rows'] if s['N']==200)
+        self.assertAlmostEqual(sum(w*w for w in large['widths']),19.23)
+        prefix=prefix_recipe();self.assertEqual(prefix['total_power_w'],2960)
+        occupied=set()
+        for action in prefix['actions']:
+            slots={(action['group'],slot) for slot in range(action['start'],action['start']+action['count'])}
+            self.assertFalse(occupied & slots);occupied.update(slots)
+        self.assertEqual(len([x for x in occupied if x[0]==4]),96)
+        self.assertEqual(FakeEnv.calls,[])
+    def test_empty_negative_nan_receipts_cannot_be_qualified_by_boolean(self):
+        from satellite_rl.tsac_screen28.receipt import validate_qualification
+        for invalid in (-1,float('nan'),0):
+            receipt=dict(root_approved=True,passed=True,physical_calls_attempted=invalid,
+                real_commit_attempts=0,candidate_restore_attempts=0,model_forward_attempts=0)
+            with self.assertRaises(ValueError):validate_qualification(receipt,{})
+    def test_value_only_binding_pack_removes_authority_mappingproxy_without_env_calls(self):
+        from satellite_rl.tsac_screen28.binding import pack_environment
+        from types import SimpleNamespace,MappingProxyType
+        env=FakeEnv();authority=SimpleNamespace(case_by_id=MappingProxyType({'id':'sha'}),layout_shas=frozenset({'layout'}),allocation_shas=frozenset(),manifest_sha='manifest')
+        env.stage_input=SimpleNamespace(authority=authority,case={'case_id':'id'},layout=env.layout,physics={})
+        binding=pack_environment(env);raw=pickle.dumps(binding,protocol=5)
+        self.assertTrue(raw);self.assertEqual(binding['authority_values']['case_by_id'],{'id':'sha'})
+        self.assertEqual(FakeEnv.calls,[])
 
 if __name__=='__main__':unittest.main()

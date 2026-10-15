@@ -49,7 +49,8 @@ def summarize_completed(plan,root):
         repeats=[0] if method in ('fixed','greedy') else range(3)
         means[method]={name:sum(sum(cells[(mother,method,repeat)][name] for repeat in repeats)/len(repeats) for mother in mothers)/len(mothers) for name in ('SI','SGM','power_w')}
     result=dict(schema='W28MatrixSummaryV1',root_approved=False,phase=plan['phase'],means=means,
-        episodes=len(cells),costs=cursor['costs'],not_independent=True)
+        episodes=len(cells),costs=cursor['costs'],not_independent=True,
+        timing_unknown=cursor.get('timing_unknown',[]),complete_wall_comparison_available=not cursor.get('timing_unknown',[]))
     if plan['phase']=='development':
         gate=development_gate(means,qualified)
         gate.update(development_plan_SHA=content_sha(plan),completed_development_episodes=len(cells),

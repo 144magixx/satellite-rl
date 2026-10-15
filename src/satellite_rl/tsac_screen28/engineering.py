@@ -10,6 +10,7 @@ from .transaction import Journal,UnknownCost,close_transaction,snapshot,state_sh
 from .worker import one_decision,candidate_log
 from .episode import publish_committed
 from .proposals import frozen_s10_probabilities
+from .binding import pack_environment,unpack_environment
 
 def validate_engineering(plan,gate,dispatch_epoch=None):
     if (plan.get('schema')!='W28EngineeringPlanV1' or plan.get('root_approved') is not True
@@ -19,6 +20,10 @@ def validate_engineering(plan,gate,dispatch_epoch=None):
         raise ValueError('bounded root W28 engineering contract required')
     from .workbench import validate_frozen_source
     validate_frozen_source(plan)
+    if plan.get('check_contract_version')=='W28QualificationChecksV1':
+        from .checks import validate_catalog
+        bounds=validate_catalog(plan['checks'],read_json_ref(plan['fixture_manifest_ref']))
+        if bounds!=plan['catalog_bounds']:raise ValueError('catalog finite budget differs')
     gate.validate(dispatch_epoch or plan['rootpauseepoch'])
     closure=read_json_ref(plan['w27_closure_ref'])
     if closure.get('root_approved') is not True or closure.get('formal_report_closed') is not True:raise ValueError('W27 report must close before engineering')
@@ -27,6 +32,9 @@ def validate_engineering(plan,gate,dispatch_epoch=None):
 
 def run_engineering(plan,root,stop_requested,progress=lambda value:None,*,policy_loader=load_policy,environment_loader=load_environment):
     if plan.get('runtime_approved') is not True:raise ValueError('draft engineering runtime forbidden')
+    if plan.get('check_contract_version')=='W28QualificationChecksV1':
+        from .qualification import run_checks
+        return run_checks(plan,root,stop_requested,progress)
     root=Path(root);root.mkdir(parents=True,exist_ok=True);path=root/'engineering_cursor.pkl'
     if path.with_suffix('.tmp').exists():raise UnknownCost('unconfirmed engineering cursor write; preserve and audit')
     if not path.exists() and ((root/'current.pkl').exists() or (root/'engineering_steps.jsonl').exists()):raise UnknownCost('engineering cursor missing beside prior attempts')
@@ -48,12 +56,12 @@ def run_engineering(plan,root,stop_requested,progress=lambda value:None,*,policy
         if case_id not in cursor['bindings']:
             cursor['unknown']=[dict(kind='initial_kernel_preparation',check=index)];checkpoint()
             env,timing=environment_loader(dict(plan,phase='development'),row,check['N']);observation=env._observation()
-            save_pickle(binding,dict(environment=env,observation=observation))
+            save_pickle(binding,dict(environment=pack_environment(env),observation=observation))
             cursor['bindings'][case_id]=dict(path=str(binding),sha256=file_sha(binding));cursor['timing'].append(timing);cursor['unknown']=[];checkpoint()
         else:
             ref=cursor['bindings'][case_id]
             if file_sha(ref['path'])!=ref['sha256']:raise ValueError('engineering saved kernel/input binding differs')
-            saved=pickle.loads(Path(ref['path']).read_bytes());env=saved['environment'];observation=saved['observation']
+            saved=pickle.loads(Path(ref['path']).read_bytes());env=unpack_environment(saved['environment']);observation=saved['observation']
         tx=journal.value['transaction']
         resumed_commit=False
         if tx and tx['context'].get('repeat')==index and tx['context'].get('case_id')==case_id:
@@ -79,8 +87,8 @@ def run_engineering(plan,root,stop_requested,progress=lambda value:None,*,policy
         nextbinding=root/('binding_'+str(check['mother'])+'_'+str(index)+'.pkl')
         if nextbinding.exists():
             candidate=pickle.loads(nextbinding.read_bytes())
-            if state_sha(snapshot(candidate['environment']))!=state_sha(snapshot(env)):raise UnknownCost('orphan engineering binding differs; preserve and audit')
-        else:save_pickle(nextbinding,dict(environment=env,observation=result[0]))
+            if state_sha(snapshot(unpack_environment(candidate['environment'])))!=state_sha(snapshot(env)):raise UnknownCost('orphan engineering binding differs; preserve and audit')
+        else:save_pickle(nextbinding,dict(environment=pack_environment(env),observation=result[0]))
         previous_binding=Path(cursor['bindings'][case_id]['path'])
         cursor['bindings'][case_id]=dict(path=str(nextbinding),sha256=file_sha(nextbinding));cursor['cursor']=index+1;checkpoint()
         if previous_binding!=nextbinding and previous_binding.resolve().is_relative_to(root.resolve()) and previous_binding.exists():previous_binding.unlink();fsync_directory(root)

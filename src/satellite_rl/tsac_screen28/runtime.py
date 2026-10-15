@@ -10,6 +10,7 @@ from .episode import run_episode
 from .workbench import episode_identity
 from .proposals import frozen_s10_probabilities
 from .loading import load_policy,load_environment
+from .binding import pack_environment,unpack_environment
 
 def save_pickle(path,value):
     path=Path(path);tmp=path.with_suffix('.tmp')
@@ -32,9 +33,19 @@ def run_matrix(plan,root,stop_requested,progress=lambda value:None,*,policy_load
             completed_episodes=0,elapsed_active_seconds=0.,timing=[],unknown=[])
         save_pickle(cursor_path,cursor)
     if cursor['unknown']:raise UnknownCost('unknown matrix load/restore cost must be independently accounted')
+    cursor.setdefault('timing_unknown',[])
+    for finished in range(cursor['cursor']):
+        folder=root/'episodes'/('%04d'%finished)
+        if not (folder/'episode_timing.json').exists() and finished not in cursor['timing_unknown']:
+            cursor['timing_unknown'].append(finished)
+            atomic_json(folder/'timing_gap.json',dict(stage='complete_episode_wall_unknown',matrix_cursor=finished,
+                missing_unique_timing=True,unknown_is_not_zero=True,reexecution_allowed=False,
+                budget_accounting='Root accounted recovery receipt must debit unrecorded wall upper bound against common6h'))
+            fsync_directory(folder)
+    save_pickle(cursor_path,cursor)
     manifest=read_json_ref(plan['data_manifest_ref']);rows=manifest['rows'];jobs=plan['matrix']['jobs']
     if len(rows)!=(20 if plan['phase']=='development' else 40):raise ValueError('exact partition required')
-    if cursor['cursor']==len(jobs):return dict(stage='completed',cursor=cursor['cursor'],costs=cursor['costs'])
+    if cursor['cursor']==len(jobs):return dict(stage='completed',cursor=cursor['cursor'],costs=cursor['costs'],timing_unknown=cursor['timing_unknown'])
     started=perf_counter();agent=None;policy_timing=None;episode_started=None;episode_elapsed_before=0.
     def checkpoint():save_pickle(cursor_path,cursor)
     def stop():return stop_requested() or cursor['elapsed_active_seconds']+perf_counter()-started>=plan['wall_budget_seconds']
@@ -50,12 +61,12 @@ def run_matrix(plan,root,stop_requested,progress=lambda value:None,*,policy_load
                 # Durable intent includes setup PHY; failed/unknown setup is not free.
                 cursor['unknown']=[dict(kind='input_kernel_setup',matrix_cursor=index)];cursor['costs']['kernel_preparation']+=1;checkpoint()
                 env,timing=environment_loader(plan,row,job['N'])
-                save_pickle(binding,env)
+                save_pickle(binding,pack_environment(env))
                 cursor['active']=dict(index=index,binding_SHA=file_sha(binding),setup_timing=timing,elapsed_active_seconds=0.)
                 cursor['unknown']=[];checkpoint()
             else:
                 if active['index']!=index or file_sha(binding)!=active['binding_SHA']:raise ValueError('saved active environment binding differs')
-                restore_started=perf_counter();env=pickle.loads(binding.read_bytes())
+                restore_started=perf_counter();env=unpack_environment(pickle.loads(binding.read_bytes()))
                 cursor['timing'].append(dict(matrix_cursor=index,binding_restore_seconds=perf_counter()-restore_started,restore_PHY_calls=0))
             journal=Journal(folder/'current.pkl',episode_identity(plan,index),dict(query=4*job['N'] if job['method'] in ('P4','R4') else 0,
                 commit=job['N'],forward=job['N'] if job['method'].startswith('P') else 0,proposal=job['N']))

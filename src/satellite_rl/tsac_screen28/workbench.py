@@ -44,13 +44,8 @@ def validate_plan(plan,metadata,gate,*,runtime=False,dispatch_epoch=None):
     if runtime:
         validate_frozen_source(plan)
         qualification=read_json_ref(plan['qualification_ref'])
-        if (qualification.get('root_approved') is not True or qualification.get('passed') is not True
-                or qualification.get('physical_calls_attempted',321)>320
-                or qualification.get('real_commit_attempts',65)>64
-                or qualification.get('candidate_restore_attempts',257)>256
-                or qualification.get('model_forward_attempts',65)>64
-                or qualification.get('directory_fsync_available') is not True
-                or qualification.get('parameter_updates')!=0):raise ValueError('bounded engineering qualification required')
+        from .receipt import validate_qualification
+        validate_qualification(qualification,plan)
         policy=plan['policy_ref']
         if file_sha(policy['path'])!=policy['sha256'] or plan['policy_node']!=150000 or plan['policy_group']!='S10':raise ValueError('exact W26 S10/150k policy required')
     return dict(plan_SHA=content_sha(plan),matrix=actual,validated=True,runtime=runtime)
