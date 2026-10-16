@@ -8,6 +8,7 @@ import numpy as np
 from scipy.optimize import linprog, OptimizeWarning
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import maximum_flow
+from scipy.spatial import cKDTree
 
 from .geom import (Layout, angles, cone, envelope, metrics, neighbor_lists,
                    ray_to_latlon, rays, validate_layout)
@@ -41,12 +42,36 @@ def _flow(n, m, aircraft, beam, peak):
     return owner
 
 
-def _at_peak(centers, members, peak, radius):
-    neighbors = neighbor_lists(centers, members, radius)
-    if any(not row for row in neighbors):
+def coverage_radii(centers, spacing=True, fixed_width=None):
+    if fixed_width is not None:
+        return np.full(len(centers), fixed_width / 2)
+    if not spacing or len(centers) < 2:
+        return np.full(len(centers), .5)
+    distance = angles(centers, centers)
+    np.fill_diagonal(distance, np.inf)
+    return np.minimum(.5, distance.min(axis=1))
+
+
+def centers_separated(centers, spacing=True, fixed_width=None):
+    distance = angles(centers, centers)
+    np.fill_diagonal(distance, np.inf)
+    minimum = (.15 if fixed_width is None else fixed_width / 2) if spacing else 1e-10
+    return bool(np.all(distance >= minimum - (1e-9 if spacing else 0)))
+
+
+def _edges(centers, members, radii):
+    rows = cKDTree(members).query_ball_point(
+        centers, 2 * np.sin(np.deg2rad(np.asarray(radii) + 1e-9) / 2))
+    aircraft = np.concatenate(rows).astype(np.int64)
+    beam = np.repeat(np.arange(len(centers)), [len(row) for row in rows])
+    order = np.lexsort((beam, aircraft))
+    return aircraft[order], beam[order]
+
+
+def _at_peak(centers, members, peak, radii):
+    aircraft, beam = _edges(centers, members, radii)
+    if not np.bincount(aircraft, minlength=len(members)).all():
         return None
-    aircraft = np.repeat(np.arange(len(members)), [len(row) for row in neighbors])
-    beam = np.concatenate(neighbors).astype(np.int64)
     return _flow(len(members), len(centers), aircraft, beam, peak)
 
 
@@ -86,7 +111,7 @@ def _nonempty(owner, aircraft, beam, m):
 
 
 def assign(centers_rays, member_rays, mode="peak", prev_owner=None, kappa=0.,
-           eligible_mask=None, radius=.5):
+           eligible_mask=None, radii=None):
     """Exact minimum peak; optional integral convex-cost balance at that peak.
 
     ``eligible_mask`` has aircraft rows and beam columns. ``prev_owner`` uses
@@ -97,16 +122,16 @@ def assign(centers_rays, member_rays, mode="peak", prev_owner=None, kappa=0.,
         return np.empty(0, dtype=np.int64)
     if m == 0:
         return None
-    neighbors = neighbor_lists(centers_rays, member_rays, radius)
+    radii = np.full(m, .5) if radii is None else np.asarray(radii)
+    aircraft, beam = _edges(centers_rays, member_rays, radii)
     if eligible_mask is not None:
-        neighbors = [[j for j in row if eligible_mask[i, j]] for i, row in enumerate(neighbors)]
-    if any(not row for row in neighbors):
+        keep = eligible_mask[aircraft, beam]
+        aircraft, beam = aircraft[keep], beam[keep]
+    if not np.bincount(aircraft, minlength=n).all():
         return None
-    aircraft = np.repeat(np.arange(n), [len(row) for row in neighbors])
-    beam = np.concatenate(neighbors).astype(np.int64)
     distances = np.linalg.norm(member_rays[aircraft] - centers_rays[beam], axis=1)
-    nearest = np.array([row[np.argmin(np.linalg.norm(centers_rays[row] - member_rays[i], axis=1))]
-                        for i, row in enumerate(neighbors)])
+    order = np.lexsort((beam, distances, aircraft))
+    nearest = beam[order[np.r_[True, np.diff(aircraft[order]) != 0]]]
     low, high = int(np.ceil(n / m)), int(np.bincount(nearest, minlength=m).max())
     best = nearest
     while low < high:
@@ -140,7 +165,7 @@ def assign(centers_rays, member_rays, mode="peak", prev_owner=None, kappa=0.,
     values = np.concatenate((np.ones(e), np.ones(e), -np.ones(s)))
     equality = coo_matrix((values, (rows, cols)), shape=(n + m, e + s)).tocsr()
     # Across all n choices the angular tie-break contributes strictly less than 1.
-    cost = distances * (.1 / (max(n, 1) * 2 * np.sin(np.deg2rad(radius) / 2)))
+    cost = distances * (.1 / (max(n, 1) * 2 * np.sin(np.deg2rad(.5) / 2)))
     if prev_owner is not None and kappa:
         cost += kappa * ((prev_owner[aircraft] >= 0) & (beam != prev_owner[aircraft]))
     bounds = [(0, 1)] * e + [slot_bounds] * s
@@ -158,7 +183,7 @@ def assign(centers_rays, member_rays, mode="peak", prev_owner=None, kappa=0.,
 
 
 def initial_cover(member_rays, radius=.5, rng=None):
-    """Greedy set cover using every aircraft ray as a candidate center."""
+    """Greedy radius net: only uncovered aircraft can become new centers."""
     if len(member_rays) == 0:
         return np.empty((0, 3))
     neighbors = neighbor_lists(member_rays, member_rays, radius)
@@ -167,26 +192,21 @@ def initial_cover(member_rays, radius=.5, rng=None):
     chosen = []
     while uncovered.any():
         scores = np.array([np.count_nonzero(uncovered[row]) for row in neighbors])
-        index = order[np.argmax(scores[order])]
+        candidates = order[uncovered[order]]
+        index = candidates[np.argmax(scores[candidates])]
         chosen.append(index)
         uncovered[neighbors[index]] = False
     return np.asarray(member_rays)[chosen].copy()
 
 
-def _nearest(centers, members, radius):
+def _nearest(centers, members, radii):
     if len(members) == 0:
         return np.empty(0, dtype=np.int64)
     distance = angles(members, centers)
-    owner = distance.argmin(axis=1)
-    # Coincident centers are legal when spacing is disabled. Spread exact
-    # nearest-distance ties so a valid split is not discarded as an empty beam.
-    ties = distance <= distance[np.arange(len(members)), owner, None] + 1e-12
-    loads = np.zeros(len(centers), dtype=int)
-    for i, row in enumerate(ties):
-        choices = np.flatnonzero(row)
-        owner[i] = choices[loads[choices].argmin()]
-        loads[owner[i]] += 1
-    return owner if np.all(distance[np.arange(len(members)), owner] <= radius + 1e-9) else None
+    distance[distance > np.asarray(radii) + 1e-9] = np.inf
+    if not np.isfinite(distance.min(axis=1)).all():
+        return None
+    return distance.argmin(axis=1)
 
 
 def _layout(centers, members, owner, ids, fixed_width=None, recenter=False):
@@ -213,7 +233,7 @@ def _split(members, rng=None):
     second = np.linalg.norm(members - members[first], axis=1).argmax()
     centers = members[[first, second]].copy()
     if np.linalg.norm(centers[0] - centers[1]) < 1e-12:
-        return centers
+        return None
     for _ in range(10):
         owner = np.linalg.norm(members[:, None] - centers[None], axis=2).argmin(axis=1)
         if len(np.unique(owner)) < 2:
@@ -225,85 +245,28 @@ def _split(members, rng=None):
     return centers
 
 
-def repair_spacing(layout, member_rays, N_budget, fixed_width=None):
-    """Resolve conflicting beam pairs; return None if the local repairs fail.
-
-    All replacements use fresh arrays. Existing beam IDs survive deletion and
-    movement, so callers can simply retain their previous layout on failure.
-    """
-    radius = .5 if fixed_width is None else fixed_width / 2
-    current = layout
-    seen = set()
-    for _ in range(max(8, 4 * len(layout.widths))):
-        if validate_layout(current, member_rays, N_budget, True, fixed_width):
-            return current
-        centers = rays(current.centers_latlon)
-        distance = angles(centers, centers)
-        required = np.maximum(current.widths[:, None], current.widths[None, :]) / 2
-        violations = np.triu(distance + 1e-8 < required, 1)
-        pairs = np.argwhere(violations)
-        if not len(pairs):
-            return None
-        i, j = pairs[0]
-        loads = np.bincount(current.owner, minlength=len(centers))
-        if loads[i] < loads[j]:
-            i, j = j, i
-        pair_id = (int(current.beam_ids[i]), int(current.beam_ids[j]))
-        if pair_id in seen:
-            return None
-        seen.add(pair_id)
-        peak = int(loads.max())
-        combined = (current.owner == i) | (current.owner == j)
-        center, half = cone(member_rays[combined])
-        if half <= radius + 1e-9 and loads[i] + loads[j] <= peak:
-            merged = centers.copy()
-            merged[i] = center
-            owner = current.owner.copy()
-            owner[owner == j] = i
-            current = _layout(merged, member_rays, owner, current.beam_ids, fixed_width)
-            continue
-        remaining = np.delete(centers, j, axis=0)
-        owner = _at_peak(remaining, member_rays, peak, radius)
-        if owner is not None and np.bincount(owner).max() <= peak:
-            current = _layout(remaining, member_rays, owner, np.delete(current.beam_ids, j), fixed_width)
-            continue
-        # Move the lighter center away on the great circle through this pair.
-        tangent = centers[j] - (centers[j] @ centers[i]) * centers[i]
-        norm = np.linalg.norm(tangent)
-        if norm < 1e-12:
-            tangent = np.cross(centers[i], np.eye(3)[np.argmin(abs(centers[i]))])
-            norm = np.linalg.norm(tangent)
-        tangent /= norm
-        moved = False
-        for extra in (1e-7, .02, .05, .1):
-            target = np.deg2rad(required[i, j] + extra)
-            candidate = centers.copy()
-            candidate[j] = centers[i] * np.cos(target) + tangent * np.sin(target)
-            owner = _at_peak(candidate, member_rays, peak, radius)
-            if owner is not None and np.bincount(owner).max() <= peak:
-                proposal = _layout(candidate, member_rays, owner, current.beam_ids, fixed_width)
-                # Envelope changes with reassignment. Accept only if this pair
-                # is now separated; subsequent pairs are processed next.
-                new_centers = rays(proposal.centers_latlon)
-                a = np.flatnonzero(proposal.beam_ids == current.beam_ids[i])
-                b = np.flatnonzero(proposal.beam_ids == current.beam_ids[j])
-                if not len(a) or not len(b) or angles(new_centers[a], new_centers[b])[0, 0] + 1e-8 >= max(proposal.widths[a[0]], proposal.widths[b[0]]) / 2:
-                    current, moved = proposal, True
-                    break
-        if not moved:
-            return None
-    return None
+def _spread_split(split, others, minimum):
+    """Yield separated pairs along the children's outward great circle."""
+    midpoint, tangent = split.sum(axis=0), split[1] - split[0]
+    midpoint /= np.linalg.norm(midpoint)
+    tangent /= np.linalg.norm(tangent)
+    half = angles(split[:1], split[1:])[0, 0] / 2
+    for extra in np.arange(0, .255, .005):
+        theta = np.deg2rad(half + extra)
+        candidate = split if extra == 0 else (midpoint * np.cos(theta)
+                    + np.array([-1, 1])[:, None] * tangent * np.sin(theta))
+        if (angles(candidate[:1], candidate[1:])[0, 0] >= minimum - 1e-9
+                and np.all(angles(candidate, others) >= minimum - 1e-9)):
+            yield candidate
 
 
 def _accept(layout, members, budget, spacing, fixed):
-    if spacing:
-        return repair_spacing(layout, members, budget, fixed)
-    return layout if validate_layout(layout, members, budget, False, fixed) else None
+    return layout if (centers_separated(rays(layout.centers_latlon), spacing, fixed)
+                      and validate_layout(layout, members, budget, spacing, fixed)) else None
 
 
 def _add_beams(layout, members, budget, spacing, fixed, next_id, rng=None,
                nearest=False, deadline=np.inf):
-    radius = .5 if fixed is None else fixed / 2
     while len(layout.widths) < budget and _key(layout)[0] > 1 and perf_counter() < deadline:
         centers = rays(layout.centers_latlon)
         loads = np.bincount(layout.owner, minlength=len(centers))
@@ -316,18 +279,26 @@ def _add_beams(layout, members, budget, spacing, fixed, next_id, rng=None,
             split = _split(members[layout.owner == j], rng)
             if split is None:
                 continue
-            proposed = np.concatenate((centers.copy(), split[1:]))
-            proposed[j] = split[0]
-            owner = _nearest(proposed, members, radius) if nearest else assign(proposed, members, radius=radius)
-            if owner is None:
-                continue
-            candidate = _layout(proposed, members, owner, np.append(layout.beam_ids, next_id), fixed)
-            candidate = _accept(candidate, members, budget, spacing, fixed)
-            if candidate is not None and len(candidate.widths) > len(layout.widths):
-                next_id += 1
-                layout, accepted = candidate, True
-                break
-            if perf_counter() >= deadline:
+            candidates = (_spread_split(split, np.delete(centers, j, axis=0),
+                                          .15 if fixed is None else fixed / 2)
+                          if spacing else [split])
+            for split in candidates:
+                if perf_counter() >= deadline:
+                    break
+                proposed = np.concatenate((centers.copy(), split[1:]))
+                proposed[j] = split[0]
+                if not spacing and not centers_separated(proposed, False):
+                    continue
+                radii = coverage_radii(proposed, spacing, fixed)
+                owner = _nearest(proposed, members, radii) if nearest else assign(proposed, members, radii=radii)
+                if owner is None or np.bincount(owner).max() > loads.max():
+                    continue
+                candidate = _layout(proposed, members, owner, np.append(layout.beam_ids, next_id), fixed)
+                if len(candidate.widths) > len(layout.widths):
+                    next_id += 1
+                    layout, accepted = candidate, True
+                    break
+            if accepted or perf_counter() >= deadline:
                 break
         if not accepted:
             break
@@ -347,17 +318,19 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
     if N0 > N_budget:
         return Result(None, N0, False, perf_counter() - start, 0., 0., perf_counter() - start)
     ids = np.arange(N0) if init_layout is None else init_layout.beam_ids.copy()
-    owner = _nearest(centers, members, radius) if nearest else assign(centers, members, radius=radius)
+    radii = coverage_radii(centers, spacing, fixed_width)
+    owner = _nearest(centers, members, radii) if nearest else assign(centers, members, radii=radii)
     if owner is None:
         return Result(None, N0, False, perf_counter() - start, 0., 0., perf_counter() - start)
-    layout = _layout(centers, members, owner, ids, fixed_width, recenter=True)
+    layout = _layout(centers, members, owner, ids, fixed_width)
     layout = _accept(layout, members, N_budget, spacing, fixed_width)
     if preserve_N and init_layout is not None and (layout is None or len(layout.widths) != N0):
         layout = init_layout
     if layout is None:
         return Result(None, N0, False, perf_counter() - start, 0., 0., perf_counter() - start)
     next_id = int(ids.max()) + 1
-    layout, next_id = _add_beams(layout, members, N_budget, spacing, fixed_width,
+    growth_budget = N0 if preserve_N else N_budget
+    layout, next_id = _add_beams(layout, members, growth_budget, spacing, fixed_width,
                                  next_id, rng, nearest, deadline)
     init_end = perf_counter()
     best, stale = layout, 0
@@ -365,13 +338,20 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
         if perf_counter() >= deadline:
             break
         centers = rays(layout.centers_latlon)
-        owner = assign(centers, members, radius=radius)
+        radii = coverage_radii(centers, spacing, fixed_width)
+        owner = assign(centers, members, radii=radii)
         if balance:
-            owner = assign(centers, members, mode="balance", radius=radius)
-        proposal = _layout(centers, members, owner, layout.beam_ids, fixed_width, recenter=True)
-        candidate = _accept(proposal, members, N_budget, spacing, fixed_width)
-        if candidate is not None and (not preserve_N or len(candidate.widths) == len(layout.widths)):
-            layout = candidate
+            owner = assign(centers, members, mode="balance", radii=radii)
+        recentered = np.array([cone(members[owner == j])[0] if np.any(owner == j)
+                               else centers[j] for j in range(len(centers))])
+        if centers_separated(recentered, spacing, fixed_width):
+            owner = assign(recentered, members,
+                           radii=coverage_radii(recentered, spacing, fixed_width))
+            if owner is not None:
+                candidate = _layout(recentered, members, owner, layout.beam_ids, fixed_width)
+                if (_key(candidate) < _key(layout)
+                        and (not preserve_N or len(candidate.widths) == len(layout.widths))):
+                    layout = candidate
         # Delete a dispensable light beam, then reuse its slot on the busiest.
         centers = rays(layout.centers_latlon)
         loads = np.bincount(layout.owner, minlength=len(centers))
@@ -379,10 +359,11 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
             if len(centers) <= 1 or perf_counter() >= deadline:
                 break
             reduced = np.delete(centers, j, axis=0)
-            owner = _at_peak(reduced, members, int(loads.max()), radius)
+            owner = _at_peak(reduced, members, int(loads.max()),
+                             coverage_radii(reduced, spacing, fixed_width))
             if owner is None or np.bincount(owner).max() > loads.max():
                 continue
-            proposal = _layout(reduced, members, owner, np.delete(layout.beam_ids, j), fixed_width, recenter=True)
+            proposal = _layout(reduced, members, owner, np.delete(layout.beam_ids, j), fixed_width)
             proposal = _accept(proposal, members, N_budget, spacing, fixed_width)
             if proposal is None:
                 continue
@@ -391,7 +372,10 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
             if _key(proposal) < _key(layout) and (not preserve_N or len(proposal.widths) == len(layout.widths)):
                 layout = proposal
             break
-        if _key(layout) < _key(best):
+        previous_count = len(layout.widths)
+        layout, next_id = _add_beams(layout, members, growth_budget, spacing, fixed_width,
+                                     next_id, rng, False, deadline)
+        if len(layout.widths) > previous_count or _key(layout) < _key(best):
             best, stale = layout, 0
         else:
             stale += 1

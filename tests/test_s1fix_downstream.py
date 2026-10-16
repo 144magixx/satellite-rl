@@ -59,8 +59,8 @@ class DownstreamTests(unittest.TestCase):
     def test_script_variants_share_actual_n(self):
         from scripts.s1fix.run_C import comparison_job
         centers = np.array([[40., -5.], [50., 10.], [60., 20.]])
+        # 重合成员无法拆分，确保实际束数小于预算，三种布局仍须同N。
         positions = np.repeat(centers, 2, axis=0)
-        positions[::2, 0] += .01
         frame = SimpleNamespace(date="2024-01-12", time=1705017720., index=0,
                                 positions=positions, icao=np.arange(6, dtype=np.uint32))
         with TemporaryDirectory() as directory:

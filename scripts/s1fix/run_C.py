@@ -79,7 +79,7 @@ def main():
     parser.add_argument("--max-iters", type=int, default=None, help="小型冒烟优化轮数")
     parser.add_argument("--layout-seconds", type=float, default=None)
     parser.add_argument("--sca-seconds", type=float, default=30.)
-    parser.add_argument("--sca-maxiter", type=int, default=30)
+    parser.add_argument("--sca-maxiter", type=int, default=200)
     args = parser.parse_args()
     sets = static_sets(args.data_dir)
     requested = ["dev", "confirm", "effort"] if args.subexperiment == "all" else [args.subexperiment]

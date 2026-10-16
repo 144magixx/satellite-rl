@@ -2,9 +2,8 @@
 
 Latitude/longitude here are coordinates of unit satellite rays, not ground
 locations. Their spherical metric is bounded by the Euclidean coordinate
-metric, so rounding moves a centre by at most g/sqrt(2) degrees. With spacing
-enabled, centres are >=.15 degrees apart; for g<=.1 their rounded grid points
-are distinct. Larger grids allow multiple centres per candidate (x<=N).
+metric, so rounding moves a centre by at most g/sqrt(2) degrees. Both models
+allow multiple centres per candidate (x<=N), independently of spacing.
 """
 from time import perf_counter
 import warnings
@@ -15,7 +14,7 @@ from scipy.sparse import coo_matrix, vstack
 from scipy.spatial import cKDTree
 
 
-def grid_edges(directions, g=.1):
+def grid_edges(directions, g=.2):
     """Return enlarged candidate centres and aircraft/candidate edge indices."""
     directions = np.asarray(directions)
     latitude = np.rad2deg(np.arcsin(directions[:, 2]))
@@ -53,8 +52,8 @@ def _model(n, candidates, aircraft, candidate, peak):
     return np.r_[np.ones(c), np.zeros(e)], assignment, vstack((capacity, opened), format="csr")
 
 
-def compute_bound(frame_or_rays, N_budget, upper_peak, g=.1, milp_seconds=120):
-    """Lower bound for spacing-enabled layouts, ignoring spacing in the LP.
+def compute_bound(frame_or_rays, N_budget, upper_peak, g=.2, milp_seconds=120):
+    """Lower bound ignoring spacing in both LP and integer strengthening.
 
     ``upper_peak`` must come from a feasible layout. Unknown/time-limited
     solves leave the last proved lower bound unchanged. MILP time is shared
@@ -70,12 +69,11 @@ def compute_bound(frame_or_rays, N_budget, upper_peak, g=.1, milp_seconds=120):
     started = perf_counter()
     candidates, aircraft, candidate = grid_edges(directions, g)
     c = len(candidates)
-    maximum_x = 1 if np.sqrt(2) * g < .15 else N_budget
     statuses = []
 
     def relaxation(peak, integer=False, seconds=None):
         objective, equality, inequality = _model(n, candidates, aircraft, candidate, peak)
-        upper = np.r_[np.full(c, maximum_x), np.ones(len(aircraft))]
+        upper = np.r_[np.full(c, N_budget), np.ones(len(aircraft))]
         if integer:
             constraints = [LinearConstraint(equality, np.ones(n), np.ones(n)),
                            LinearConstraint(inequality, -np.inf, 0)]
@@ -91,7 +89,7 @@ def compute_bound(frame_or_rays, N_budget, upper_peak, g=.1, milp_seconds=120):
                 result = linprog(objective, A_ub=inequality, b_ub=np.zeros(inequality.shape[0]),
                                  A_eq=equality, b_eq=np.ones(n),
                                  bounds=np.column_stack((np.zeros(len(objective)), upper)),
-                                 method="highs", options={"threads": 1})
+                                 method="highs", options={"threads": 1, "time_limit": 300.})
             proof = result.fun if result.success else None
         # A finite incumbent above N never proves impossibility at this T.
         ruled_out = result.status == 2 or (proof is not None and proof > N_budget + 1e-6)

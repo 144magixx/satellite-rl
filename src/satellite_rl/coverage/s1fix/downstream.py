@@ -97,7 +97,7 @@ def evaluate_layout(layout, sca_options=None, arrays_path=None):
     problem, power, coefficients = build_problem(layout)
     initial = problem.evaluate(power)
     t_second = perf_counter() - started
-    options = dict(maxiter=30, max_evaluations=500, time_limit_seconds=30.)
+    options = dict(maxiter=200, max_evaluations=500, time_limit_seconds=30.)
     options.update(sca_options or {})
     started = perf_counter()
     result = optimize_power(problem, power, "sca", options)

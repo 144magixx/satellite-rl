@@ -19,10 +19,35 @@ class BoundTests(unittest.TestCase):
         self.assertEqual(result["LB_lp"], 5)
         self.assertEqual(result["LB_milp"], 5)
 
+    def test_lp_timeout_keeps_previously_proved_bound(self):
+        excluded = SimpleNamespace(status=2, success=False, fun=None)
+        timed = SimpleNamespace(status=1, success=False, fun=10.)
+        with patch("satellite_rl.coverage.s1fix.bound.linprog",
+                   side_effect=[excluded, timed]) as solver:
+            result = compute_bound(separated_clusters([5, 1]), 2, 8, milp_seconds=0)
+        self.assertEqual(result["LB_lp"], 6)
+        self.assertEqual(result["LB_milp"], 6)
+        self.assertEqual(result["g"], .2)
+        self.assertEqual(solver.call_args.kwargs["options"]["time_limit"], 300.)
+
+    def test_lp_timeout_does_not_use_incumbent_as_proof(self):
+        timed = SimpleNamespace(status=1, success=False, fun=10.)
+        with patch("satellite_rl.coverage.s1fix.bound.linprog", return_value=timed):
+            result = compute_bound(separated_clusters([5, 1]), 2, 8, milp_seconds=0)
+        self.assertEqual(result["LB_lp"], result["LB_avg"])
+
     def test_integer_strengthening(self):
         result = compute_bound(separated_clusters([3, 3]), 3, 3, milp_seconds=5)
         self.assertEqual(result["LB_avg"], 2)
         self.assertEqual(result["LB_lp"], 2)
+        self.assertEqual(result["LB_milp"], 3)
+
+    def test_integer_model_allows_multiple_beams_at_one_grid_point(self):
+        directions = separated_clusters([6])
+        edges = (directions[:1], np.arange(6), np.zeros(6, dtype=int))
+        with patch("satellite_rl.coverage.s1fix.bound.grid_edges", return_value=edges):
+            result = compute_bound(directions, 2, 6, milp_seconds=5)
+        self.assertEqual(result["LB_lp"], 3)
         self.assertEqual(result["LB_milp"], 3)
 
     def test_unknown_milp_does_not_prove_infeasibility(self):

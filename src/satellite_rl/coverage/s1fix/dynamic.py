@@ -7,9 +7,9 @@ from time import perf_counter
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from .geom import Layout, angles, cone, forecast, metrics, rays, ray_to_latlon, validate_layout
+from .geom import Layout, angles, cone, envelope, forecast, metrics, rays, ray_to_latlon, validate_layout
 from .io import load_layout, save_layout
-from .skeleton import assign, repair_spacing, solve
+from .skeleton import _split as split_members, assign, centers_separated, coverage_radii, solve
 
 
 def copy_layout(layout):
@@ -24,9 +24,7 @@ def with_members(centers, owner, beam_ids, aircraft_rays):
     remap[used] = np.arange(len(used))
     owner = remap[owner]
     centers = np.asarray(centers)[used]
-    separation = angles(rays(centers), aircraft_rays)
-    widths = np.array([max(.3, 2 * separation[j, owner == j].max()) + 1e-9
-                       for j in range(len(used))])
+    widths = envelope(rays(centers), aircraft_rays, owner)
     return Layout(centers, widths, owner, np.asarray(beam_ids)[used])
 
 
@@ -68,7 +66,7 @@ def previous_owner(layout, old_frame, frame):
 
 
 def patch(layout, old_frame, frame, N_budget=200, next_id=None):
-    """中心固定的增量覆盖；仅在预算用尽且确有必要时移动一束。"""
+    """中心固定；先补覆盖，再保留合法归属并增量分配其余飞机。"""
     aircraft = rays(frame.positions)
     centers = np.array(layout.centers_latlon, copy=True)
     ids = list(layout.beam_ids)
@@ -76,7 +74,8 @@ def patch(layout, old_frame, frame, N_budget=200, next_id=None):
     owner = previous_owner(layout, old_frame, frame)
     distance = angles(rays(centers), aircraft)
     valid = owner >= 0
-    valid[valid] &= distance[owner[valid], np.flatnonzero(valid)] <= .5
+    radii = coverage_radii(rays(centers))
+    valid[valid] &= distance[owner[valid], np.flatnonzero(valid)] <= radii[owner[valid]] + 1e-10
     owner[~valid] = -1
     loads = np.bincount(owner[owner >= 0], minlength=len(centers))
     keep = np.flatnonzero(loads)
@@ -85,29 +84,32 @@ def patch(layout, old_frame, frame, N_budget=200, next_id=None):
     owner[owner >= 0] = remap[owner[owner >= 0]]
     centers, distance, loads = centers[keep], distance[keep], loads[keep]
     ids = list(np.asarray(ids)[keep])
+    while True:
+        radii = coverage_radii(rays(centers))
+        eligible = distance <= radii[:, None] + 1e-10
+        uncovered = np.flatnonzero(~eligible.any(axis=0))
+        if not len(uncovered):
+            break
+        if len(centers) == N_budget:
+            return None, next_id
+        nearby = angles(aircraft[uncovered], aircraft[uncovered]) <= .5
+        a = uncovered[np.argmax(nearby.sum(axis=1))]
+        if np.any(distance[:, a] < .15 - 1e-10):
+            return None, next_id
+        centers = np.vstack((centers, frame.positions[a]))
+        ids.append(next_id)
+        next_id += 1
+        distance = np.vstack((distance, angles(aircraft[a:a + 1], aircraft)))
+    known = owner >= 0
+    owner[known] = np.where(eligible[owner[known], np.flatnonzero(known)], owner[known], -1)
+    loads = np.bincount(owner[owner >= 0], minlength=len(centers))
     for a in np.flatnonzero(owner < 0):
-        possible = np.flatnonzero(distance[:, a] <= .5)
-        if len(possible):
-            j = possible[np.argmin(loads[possible])]
-        elif len(centers) < N_budget:
-            j = len(centers)
-            centers = np.vstack((centers, frame.positions[a]))
-            ids.append(next_id)
-            next_id += 1
-            distance = np.vstack((distance, angles(aircraft[a:a + 1], aircraft)))
-            loads = np.r_[loads, 0]
-        else:
-            j = int(np.argmin(distance[:, a]))
-            center, radius = cone(aircraft[np.r_[np.flatnonzero(owner == j), a]])
-            if radius > .5:
-                return None, next_id
-            centers[j] = ray_to_latlon(center)
-            distance[j] = angles(center[None], aircraft)[0]
+        possible = np.flatnonzero(eligible[:, a])
+        j = possible[np.argmin(loads[possible])]
         owner[a] = j
         loads[j] += 1
     candidate = with_members(centers, owner, ids, aircraft)
-    candidate = repair_spacing(candidate, aircraft, N_budget)
-    if candidate is None or not validate_layout(candidate, aircraft, N_budget):
+    if not validate_layout(candidate, aircraft, N_budget):
         return None, next_id
     return candidate, max(next_id, int(candidate.beam_ids.max(initial=-1)) + 1)
 
@@ -119,27 +121,9 @@ def predicted_frame(frame):
 
 
 def forecast_peak(layout, frame):
-    """预测patch的负载；不改中心，不作间隔修复或未来完整求解。"""
-    future = rays(predicted_frame(frame).positions)
-    distance = angles(rays(layout.centers_latlon), future)
-    centers = rays(layout.centers_latlon)
-    owner = np.array(layout.owner, copy=True)
-    outside = distance[owner, np.arange(len(owner))] > .5
-    loads = np.bincount(owner[~outside], minlength=len(layout.widths))
-    keep = np.flatnonzero(loads)
-    centers, distance, loads = centers[keep], distance[keep], loads[keep]
-    for a in np.flatnonzero(outside):
-        possible = np.flatnonzero(distance[:, a] <= .5)
-        if len(possible):
-            j = possible[np.argmin(loads[possible])]
-            loads[j] += 1
-        elif len(loads) < 200:
-            centers = np.vstack((centers, future[a]))
-            distance = np.vstack((distance, angles(future[a:a + 1], future)))
-            loads = np.r_[loads, 1]
-        else:
-            loads[np.argmin(distance[:, a])] += 1
-    return int(loads.max(initial=0))
+    """同一半径约束下的预测patch；覆盖失败触发重配置。"""
+    candidate, _ = patch(layout, frame, predicted_frame(frame))
+    return metrics(candidate)["peak"] if candidate is not None else len(frame.icao)
 
 
 def heavy_region(layout):
@@ -147,22 +131,6 @@ def heavy_region(layout):
     heavy = np.argsort(-loads, kind="stable")[:6]
     distance = angles(rays(layout.centers_latlon), rays(layout.centers_latlon))
     return np.any(distance[:, heavy] <= 1., axis=1)
-
-
-def split_members(members):
-    """最远点初始化的两均值；每组中心取成员包络锥中心。"""
-    first = np.linalg.norm(members - members[0], axis=1).argmax()
-    second = np.linalg.norm(members - members[first], axis=1).argmax()
-    centers = members[[first, second]].copy()
-    for _ in range(10):
-        owner = np.linalg.norm(members[:, None] - centers[None], axis=2).argmin(axis=1)
-        if not np.any(owner == 0) or not np.any(owner == 1):
-            return None
-        updated = np.array([cone(members[owner == j])[0] for j in (0, 1)])
-        if np.max(np.linalg.norm(updated - centers, axis=1)) < 1e-10:
-            return updated
-        centers = updated
-    return centers
 
 
 def repair(layout, frame, region="heavy", iters=10, kappa=1., forecast=True,
@@ -174,50 +142,54 @@ def repair(layout, frame, region="heavy", iters=10, kappa=1., forecast=True,
     midpoint /= np.linalg.norm(midpoint, axis=1, keepdims=True)
     active = heavy_region(layout) if region == "heavy" else np.ones(len(layout.widths), bool)
     frozen_ids = layout.beam_ids[~active]
+    frozen_centers = rays(layout.centers_latlon[~active])
+    frozen_radii = coverage_radii(rays(layout.centers_latlon))[~active]
     mobile = active[layout.owner]
     reference = layout.beam_ids[layout.owner] if prev_ids is None else prev_ids
     next_id = int(layout.beam_ids.max(initial=-1) + 1 if next_id is None else next_id)
     best = copy_layout(layout)
     best_score = tuple(metrics(best)[key] for key in ("peak", "top10", "CV"))
 
-    def optimize(centers, ids):
-        center_rays = rays(centers)
-        distance = angles(center_rays, aircraft).T
+    def allocate(center_rays, ids, mode):
         available = ~np.isin(ids, frozen_ids)
-        eligible = (distance <= .5) & mobile[:, None] & available[None, :]
+        if (not centers_separated(center_rays)
+                or np.any(angles(center_rays[available], frozen_centers) + 1e-10 < frozen_radii)):
+            return None
+        radii = coverage_radii(center_rays)
+        covered = angles(center_rays, aircraft).T <= radii + 1e-10
+        eligible = covered & mobile[:, None] & available[None, :]
         for j, beam_id in enumerate(ids):
             if beam_id in frozen_ids:
-                eligible[:, j] = layout.beam_ids[layout.owner] == beam_id
+                eligible[:, j] = covered[:, j] & (layout.beam_ids[layout.owner] == beam_id)
         if forecast:
-            predicted = angles(center_rays, future).T <= .5
+            predicted = angles(center_rays, future).T <= radii + 1e-10
             both = eligible & predicted
             eligible[mobile & both.any(axis=1)] = both[mobile & both.any(axis=1)]
         old = np.full(len(aircraft), -1, int)
         for j, beam_id in enumerate(ids):
             old[reference == beam_id] = j
-        owner = assign(center_rays, aircraft, mode="peak", eligible_mask=eligible)
+        return assign(center_rays, aircraft, mode=mode, radii=radii, prev_owner=old,
+                      kappa=kappa, eligible_mask=eligible)
+
+    def optimize(centers, ids):
+        center_rays = rays(centers)
+        owner = allocate(center_rays, ids, "peak")
         if owner is None:
             return None
-        owner = assign(center_rays, aircraft, mode="balance", prev_owner=old,
-                       kappa=kappa, eligible_mask=eligible)
+        owner = allocate(center_rays, ids, "balance")
         if owner is None:
             return None
         centers = np.array(centers, copy=True)
-        for j in np.flatnonzero(available):
+        for j in np.flatnonzero(~np.isin(ids, frozen_ids)):
             if np.any(owner == j):
                 center, _ = cone(midpoint[owner == j])
                 centers[j] = ray_to_latlon(center)
-        candidate = with_members(centers, owner, ids, aircraft)
-        candidate = repair_spacing(candidate, aircraft, N_budget)
-        if candidate is None or not validate_layout(candidate, aircraft, N_budget):
+        owner = allocate(rays(centers), ids, "peak")
+        if owner is None:
             return None
-        if forecast:
-            centers_now = rays(candidate.centers_latlon)
-            both = (angles(centers_now, aircraft).T <= .5) & (angles(centers_now, future).T <= .5)
-            both[:, np.isin(candidate.beam_ids, frozen_ids)] = False
-            selected = both[np.arange(len(aircraft)), candidate.owner]
-            if np.any(mobile & both.any(axis=1) & ~selected):
-                return None
+        candidate = with_members(centers, owner, ids, aircraft)
+        if not validate_layout(candidate, aircraft, N_budget):
+            return None
         for beam_id in frozen_ids:
             old_j = np.flatnonzero(layout.beam_ids == beam_id)[0]
             new_j = np.flatnonzero(candidate.beam_ids == beam_id)
@@ -225,7 +197,7 @@ def repair(layout, frame, region="heavy", iters=10, kappa=1., forecast=True,
                 return None
             j = new_j[0]
             if (not np.array_equal(candidate.centers_latlon[j], layout.centers_latlon[old_j])
-                    or candidate.widths[j] != layout.widths[old_j]
+                    or not np.isclose(candidate.widths[j], layout.widths[old_j])
                     or not np.array_equal(candidate.owner == j, layout.owner == old_j)):
                 return None
         return candidate
@@ -325,7 +297,8 @@ class DynamicEpisode:
         distance = angles(rays(self.layout.centers_latlon), rays(frame.positions))
         known = old_owner >= 0
         self.new_ratio = float(np.mean(~known))
-        self.outside_ratio = float(np.count_nonzero(distance[old_owner[known], np.flatnonzero(known)] > .5)
+        radii = coverage_radii(rays(self.layout.centers_latlon))
+        self.outside_ratio = float(np.count_nonzero(distance[old_owner[known], np.flatnonzero(known)] > radii[old_owner[known]])
                                    / max(len(frame.icao), 1))
         self.patched, self.patch_next_id = patch(self.layout, self.frames[self.index - 1], frame,
                                                  next_id=self.next_id)

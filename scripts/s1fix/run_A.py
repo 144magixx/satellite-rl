@@ -131,16 +131,16 @@ def main():
             previous = csv_rows(output / "A/static_results.csv")
             for name in ("DEV24", "CONF48"):
                 for frame in sets[name]:
-                    for budget in args.budgets:
+                    for budget in (100, 200):
                         peaks = [int(float(row["peak"])) for row in previous
                                  if row["scene_set"] == name and row["date"] == frame.date
                                  and datetime.fromisoformat(row["frame_time"]).timestamp() == frame.time
                                  and int(row["N_budget"]) == budget and row.get("peak")
                                  and row["spacing"] == "True"]
-                        jobs.append((name, frame, budget, min(peaks, default=len(frame.icao)), .1, args.milp_seconds))
-            # 预定DEV24的低、中、高负载各一景，N=200复算细网格。
-            selected = [sets["DEV24"][i] for i in (0, 6, 12) if i < len(sets["DEV24"])]
-            jobs += [(name, frame, budget, upper, .05, seconds)
+                        jobs.append((name, frame, budget, min(peaks, default=len(frame.icao)), .2, args.milp_seconds))
+            # 仅三景n<600的DEV24场景，N=200复算g=.1敏感性。
+            selected = [frame for frame in sets["DEV24"] if len(frame.icao) < 600][:3]
+            jobs += [(name, frame, budget, upper, .1, seconds)
                      for name, frame, budget, upper, g, seconds in jobs.copy()
                      if name == "DEV24" and budget == 200 and any(frame is x for x in selected)]
             results = parallel(bound_job, jobs, args.workers)

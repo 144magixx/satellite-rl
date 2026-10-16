@@ -11,7 +11,7 @@ import torch
 from satellite_rl.coverage.s1fix.data import Frame
 from satellite_rl.coverage.s1fix.dynamic import (DynamicEpisode, FullCache, costs, evaluate,
     forecast_peak, heavy_region, inherit_ids, patch, predicted_frame, repair, with_members)
-from satellite_rl.coverage.s1fix.geom import Layout, forecast, rays, validate_layout
+from satellite_rl.coverage.s1fix.geom import Layout, forecast, rays, ray_to_latlon, validate_layout
 from satellite_rl.coverage.s1fix.io import save_layout
 from satellite_rl.coverage.s1fix.ppo_dyn import (ActorCritic, advantages, load_policy,
     merge_curves, train)
@@ -30,6 +30,26 @@ def toy_layout(frame):
 
 
 class DynamicTests(unittest.TestCase):
+    def test_patch_uses_nearest_center_radius_and_never_moves_centers(self):
+        axis = rays([[45., 10.]])[0]
+        tangent = np.cross(axis, [0., 0., 1.])
+        tangent /= np.linalg.norm(tangent)
+
+        def positions(degrees):
+            theta = np.deg2rad(degrees)[:, None]
+            return ray_to_latlon(axis * np.cos(theta) + tangent * np.sin(theta))
+
+        old = Frame("2024-01-12", 0., 0, np.arange(3, dtype=np.uint32),
+                    positions([0., .2, .18]), np.zeros(3), np.zeros(3))
+        layout = with_members(old.positions[:2], np.array([0, 1, 0]), [0, 1], rays(old.positions))
+        frame = replace(old, positions=positions([0., .2, .22]))
+        current, _ = patch(layout, old, frame, N_budget=2)
+        np.testing.assert_array_equal(current.owner, [0, 1, 1])
+        np.testing.assert_array_equal(current.centers_latlon, layout.centers_latlon)
+        self.assertTrue(validate_layout(current, rays(frame.positions), 2))
+        failed, _ = patch(layout, old, replace(frame, positions=positions([0., .2, .41])), N_budget=2)
+        self.assertIsNone(failed)
+
     def test_identity_matching_and_costs(self):
         frame = toy_frames()[0]
         old = toy_layout(frame)
