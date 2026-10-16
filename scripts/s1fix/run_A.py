@@ -26,13 +26,16 @@ def history_rows(history):
             csv_rows(history / "round8/analysis/mechanism_01/mechanism_rows.csv"))
 
 
+TIME_LIMIT = 120.  # 每景软限时（秒），effort>1时按倍数放宽
+
+
 def static_job(job):
     scene_set, frame, budget, arm, effort, output, max_iters = job
     spacing = arm not in ("FLOW-AO-no-spacing", "HIST-cap", "HIST-actual")
     result = (init_baseline if arm == "INIT" else solve)(
         frame, budget, spacing=spacing, effort=effort,
         fixed_width=.5 if arm == "FLOW-AO-fixed" else None,
-        max_iters=max_iters)
+        max_iters=max_iters, time_limit=TIME_LIMIT * effort)
     row = dict(scene_set=scene_set, date=frame.date,
                frame_time=datetime.fromtimestamp(frame.time, timezone.utc).isoformat(),
                n=len(frame.icao), N_budget=budget, arm=arm, effort=effort,
@@ -109,7 +112,7 @@ def main():
                 jobs = [(name, frame, budget, arm, 1, output, args.max_iters)
                         for frame in sets[name] for budget in args.budgets for arm in arms]
             elif sub == "effort":
-                jobs = [("DEV24", frame, 200, "FLOW-AO", effort, output, args.max_iters)
+                jobs = [("DEV24", frame, 100, "FLOW-AO", effort, output, args.max_iters)
                         for frame in sets["DEV24"] if len(frame.icao) >= 1200 for effort in (1, 3, 10)]
             elif sub == "history":
                 h12, h20, mechanism = history_rows(Path(args.history_dir))
