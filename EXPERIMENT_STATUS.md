@@ -1,5 +1,9 @@
 # 实验状态与新窗口接手说明
 
+<!-- S2_W31_CURRENT_START -->
+**2026-10-17 S2-W31精简执行版已实现，准备部署。** 用户直接要求完整执行`D:/paper/outputs/experiments/s2_w31_20261017/codex/task1_build_and_launch.md`，该任务覆盖W30旧工作台、准入、队列及守卫要求；W30已被用户叫停，下方W30运行描述仅为历史快照。本轮八组各从零150000步、seed51001，原科学配置全部沿用；20627同时P00/P11各M0/M1，20653同时P10/P01各M0/M1。新入口`power30.lean_runner`仅周期断点、回合CSV/逐束分块、终点后开发评价；不恢复W30、不写其目录、不新增跟进调度。源码和部署结果以本分支及`D:/paper/outputs/experiments/s2_w31_20261017/codex/task1_result.json`为准，当前尚未声称启动或正式结果。
+<!-- S2_W31_CURRENT_END -->
+
 <!-- S2_W30_DESIGN_START -->
 **S2-W30正式训练进行中，2026-10-17 02:22（北京时间）实核。** 20627上的原5W档位无摘要组已实际3911步／1912次更新；20653上的原菜单加入0.5W无摘要组已3925步／1926次更新。两进程均正常、初始策略已保存。原始状态与永久账有正常的刷新时间差，不将缓存进度冒充同一瞬间。其余六组由唯一后台控制器排队：先完成四组无摘要，再做四组有摘要，同菜单保持同GPU。[运行清单](outputs/experiments/s2_power30_20261016/run_manifest.json) · [实际学习核验](outputs/experiments/s2_power30_20261016/preflight/resources_20261017_start/science_learning_progress_once.json) · [接手入口](outputs/experiments/s2_power30_20261016/control/execution_handoff.json)。
 
