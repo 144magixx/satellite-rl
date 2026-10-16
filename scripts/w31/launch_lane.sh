@@ -20,7 +20,7 @@ for menu in $menus; do
         mkdir -p "$run_dir"
         nohup setsid "$python_bin" -m satellite_rl.power30.lean_runner \
             --menu "$menu" --group "$group" --data-dir "$data" \
-            --run-dir "$run_dir" --threads 3 >"$run_dir/worker.log" 2>&1 </dev/null &
+            --run-dir "$run_dir" --threads 3 >>"$run_dir/worker.log" 2>&1 </dev/null &
         echo "$menu-$group $! $lane $run_dir"
     done
 done

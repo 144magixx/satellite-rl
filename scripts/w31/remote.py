@@ -12,7 +12,7 @@ import tempfile
 import paramiko
 
 ROOT = '/home/u2025140002/second_stage_satellite_rl/s2_w31'
-PYTHON = '/opt/conda/envs/pytorch-2.1.1/bin/python'
+PYTHON = '/home/u2025140002/second_stage_satellite_rl/envs/DQN/bin/python'
 RESULT = Path('D:/paper/outputs/experiments/s2_w31_20261017/codex/task1_result.json')
 
 
@@ -72,8 +72,8 @@ def deploy():
             exact_resume=True, final_policy_saved=True, evaluation_matches_W30=True,
             power_menus_valid=True, frozen_configurations_match=True,
             scientific_results=False), issues=[
-                'py310 lacks torch; selected existing pytorch-2.1.1 CUDA environment on both ports.',
-                'Disabled Git archive autocrlf conversion after shell rejected CRLF; no training started in failed attempts.'])
+                'py310 lacks torch; stock torch2.1.1 lacks tuple-dimension Tensor.any used by frozen science. Selected existing shared DQN torch2.3.1+cu121 environment on both ports; failed workers stopped at env_step=0.',
+                'Disabled Git archive autocrlf conversion after shell rejected CRLF; failed deployment attempts made no scientific updates.'])
     RESULT.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
