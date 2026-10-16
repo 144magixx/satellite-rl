@@ -1,5 +1,19 @@
 # 实验状态与新窗口接手说明
 
+<!-- S2_W30_DESIGN_START -->
+**S2-W30正式训练进行中，2026-10-17 02:22（北京时间）实核。** 20627上的原5W档位无摘要组已实际3911步／1912次更新；20653上的原菜单加入0.5W无摘要组已3925步／1926次更新。两进程均正常、初始策略已保存。原始状态与永久账有正常的刷新时间差，不将缓存进度冒充同一瞬间。其余六组由唯一后台控制器排队：先完成四组无摘要，再做四组有摘要，同菜单保持同GPU。[运行清单](outputs/experiments/s2_power30_20261016/run_manifest.json) · [实际学习核验](outputs/experiments/s2_power30_20261016/preflight/resources_20261017_start/science_learning_progress_once.json) · [接手入口](outputs/experiments/s2_power30_20261016/control/execution_handoff.json)。
+
+首轮固定seed51001、八组各150000步，共120万交互；每组预计148001次更新。四功率菜单为P00原5—50W／5W步长、P10保5W下限／0.5W步长、P01原菜单仅加0.5W、P11为0.5—50W／0.5W步长，各有／无100槽余量摘要。保持原S10／Transformer主体、legacy_repaired奖励、alpha0.01、未来束5W与一槽预留，沿用已核576训练母＋20开发母及每机21.6Mbps。50k／100k／150k三个节点共同开发评价，共1440回合；0步只保存模型。**现在没有正式优劣结论。** [方案30原件](docs/第二阶段/方案/30_功率档位与余量摘要训练对照方案.md)的“仅设计”为旧时点，由[实施授权](outputs/experiments/s2_power30_20261016/control/human_implementation_authority.json)及本次实际启动覆盖。
+
+八组工程均已完成2048步／49次更新，合16384步／392次更新；各自2016步／17更新保存后，只在同ID继续32步／32更新。数值、真实CUDA更新、恢复、逐步及终态日志、约束与退出闭账均通过独审。末段显存峰值最大798MiB，两段均未OOM；这不是整个训练的显存峰值。七组另保存并核验初始0步原件，P10M0工程初始原件漏捕如实保留限制，不重跑补造。工程学习额度已用完，不再启动这八个短任务。[工程根验收](outputs/experiments/s2_power30_20261016/verification/root_actual_engineering_acceptance_01.json) · [完整独审](outputs/experiments/s2_power30_20261016/verification/eight_arm_engineering_independent_readback_aggregate_01.json)。此前9条小例轨迹／648PHY及53次CPU前向证明继续保留，没有因运维修复而重算。
+
+远端模型／运行源码为`35d66977`，本地控制源码为`6ce21068`，分别固定字节和来源；本地控制修复未改科学核心。科学工作台为两端9130／9131，凭据只从BUPT_PASSWORD环境读取。先前SSH断开、时间字符串、HTTP返回读取、Windows开机时间估值及缺回执目录问题均保留原件；五次未提交或明确无新POST的失败预留650秒永久保留，无重复训练。工程控制器1800秒和科学控制器1200秒均来自原8小时工程账，预扣不能冒充真实计算或再次叠加。科学启动前该账保守扣4201.688485秒，含实际工程、外层上界及预留；原每组20GPU小时／首轮160GPU小时、评价24worker小时和2026-10-23 09:24北京时间截止不变。存储仍为自有90GiB上限＋16GiB余量，个人配额未知。[实际启动准入](outputs/experiments/s2_power30_20261016/verification/root_scientific_actual_launch_acceptance_01.json)。
+
+当前完整八组阶段预计超过8小时，跟进已切回每8小时；剩4—8小时改每4小时，4小时内改每2小时，无可靠估计保持当前间隔。普通检查无变化不通知。控制器的15分钟轻量观察、派发后10秒补另一空闲GPU与模型跟进频率分开，训练持续运行。当前科学常驻控制器原件见[启动回执](outputs/experiments/s2_power30_20261016/control/scientific_admission_20261017_01/actual_hidden_launch.json)，不要重启已完成工程控制器或重复提交已接受任务。
+
+只有八组终点齐全、开发候选SGM至少+0.01且SI退不超0.002／功率不超110%／约束通过，并有40个新确认母合格封存，才进入完整两新种子复验。新日期目前仅做只读盘点，尚未建立四个合格新日期，不把旧Feb23／24或其它暂停组封存资产冒充新确认。该缺口不影响正在进行的首轮。W29已关闭预算、S1／W28暂停均保持；U摘要、1W、预留或alpha改动不自动进入后继。
+<!-- S2_W30_DESIGN_END -->
+
 <!-- W27_CURRENT_START -->
 **2026-10-15 S2-W27三臂先导运行、持久controller已启动，尚无正式结果。** W26报告18交付后，按持续自主授权独立比较B（S10/alpha0.01）、E（仅alpha0.003）、LP（槽功率联合Actor与双Q/alpha0.01）。三臂seed51001从头训练，分别20418/20424/20627；冻结science源`2beeb1ec678631403b4a6e821ca2976ea75303c3`，task/run为`train_B_2beeb1ec`、`train_E_2beeb1ec`、`train_LP_2beeb1ec`。每臂50k先导计入150k上限，总cap450k；50k共同开发门尚未判定，候选均失败则三臂50k结案。
 
