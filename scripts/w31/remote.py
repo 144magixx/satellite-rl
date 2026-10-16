@@ -93,11 +93,14 @@ def observe():
                     with sftp.open(group['output_dir'] + '/progress.json') as stream:
                         rows[arm] = json.load(stream)
                     run(client, 'kill -0 ' + str(group['pid']))
-            return port, dict(gpu=gpu, processes=processes), rows
+            memory, total, utilization, memory_utilization = map(int, gpu.split(','))
+            return port, dict(memory_used_MiB=memory, memory_total_MiB=total,
+                gpu_utilization_percent=utilization, memory_utilization_percent=memory_utilization,
+                compute_process_count=len(processes.splitlines()), processes=processes), rows
         finally:
             client.close()
 
-    previous = {arm: data.get('env_step') for arm, data in value['groups'].items()}
+    previous = {arm: dict(data) for arm, data in value['groups'].items()}
     gpus = {}
     now = datetime.now(timezone.utc)
     with ThreadPoolExecutor(2) as pool:
@@ -106,9 +109,14 @@ def observe():
             for arm, progress in rows.items():
                 value['groups'][arm].update(progress)
                 old = previous[arm]
-                if old is not None:
-                    value['groups'][arm]['step_increase_since_previous_observation'] = progress['env_step'] - old
                 speed = progress['steps_per_second']
+                if 'env_step' in old:
+                    increase = progress['env_step'] - old['env_step']
+                    elapsed = progress['wall_seconds'] - old['wall_seconds']
+                    value['groups'][arm]['step_increase_since_previous_observation'] = increase
+                    if elapsed > 0:
+                        speed = increase / elapsed
+                        value['groups'][arm]['observation_window_steps_per_second'] = speed
                 # Approximate training ETA; evaluation time has not been measured yet.
                 if speed > 0:
                     value['groups'][arm]['estimated_training_completion'] = (now + timedelta(

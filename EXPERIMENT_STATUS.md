@@ -1,7 +1,7 @@
 # 实验状态与新窗口接手说明
 
 <!-- S2_W31_CURRENT_START -->
-**2026-10-17 S2-W31精简执行版已实现，准备部署。** 用户直接要求完整执行`D:/paper/outputs/experiments/s2_w31_20261017/codex/task1_build_and_launch.md`，该任务覆盖W30旧工作台、准入、队列及守卫要求；W30已被用户叫停，下方W30运行描述仅为历史快照。本轮八组各从零150000步、seed51001，原科学配置全部沿用；20627同时P00/P11各M0/M1，20653同时P10/P01各M0/M1。新入口`power30.lean_runner`仅周期断点、回合CSV/逐束分块、终点后开发评价；不恢复W30、不写其目录、不新增跟进调度。源码和部署结果以本分支及`D:/paper/outputs/experiments/s2_w31_20261017/codex/task1_result.json`为准，当前尚未声称启动或正式结果。
+**2026-10-17 03:56（北京时间）S2-W31八组已并行训练并进入真实参数更新。** 用户直接要求完整执行`D:/paper/outputs/experiments/s2_w31_20261017/codex/task1_build_and_launch.md`，该任务覆盖W30旧工作台、准入、队列及守卫要求；W30已被用户叫停，下方W30运行描述仅为历史快照。本轮八组各从零150000步、seed51001，原科学配置全部沿用；20627同时P00/P11各M0/M1，20653同时P10/P01各M0/M1。新入口`power30.lean_runner`仅周期断点、回合CSV/逐束分块、终点后开发评价；不恢复W30、不写其目录、不新增跟进调度。运行源码`9e905cce153f9dde369505b9f1341c6ce86aaac5`，解释器为共享`envs/DQN/bin/python`（torch2.3.1+cu121）。约两分钟现场八组2438—2543步／439—544更新，两卡各四进程、GPU93%／95%；尚无正式结果。八配置本地317步、3次显式代码检查更新、完整状态恢复和一母评价通过，评价与W30逐值一致，不算科学结果。部署前的缺torch、旧torch API和归档CRLF错误已修复，失败worker均停在0交互／0更新。PID、吞吐、显存、预计完成时间及后续十分钟启动观察见`D:/paper/outputs/experiments/s2_w31_20261017/codex/task1_result.json`；完成启动观察后结束本次任务，不守候训练。
 <!-- S2_W31_CURRENT_END -->
 
 <!-- S2_W30_DESIGN_START -->
