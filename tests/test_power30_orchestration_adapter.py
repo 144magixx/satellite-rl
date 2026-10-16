@@ -45,6 +45,28 @@ class AdapterTests(unittest.TestCase):
                 return {}
         return adapter.Adapter(pins, bridge_factory=FakeBridge)
 
+    def test_http10_body_survives_channel_until_consumed(self):
+        import io
+        payload=b'{"group":"S2-W30","runs":[]}'
+        class Channel:
+            def __init__(self):
+                self.stream=io.BytesIO(b'HTTP/1.0 200 OK\r\nContent-Length: '+str(len(payload)).encode()+b'\r\n\r\n'+payload)
+                self.sent=b'';self.closed=False
+            def settimeout(self,value):pass
+            def sendall(self,value):self.sent+=value
+            def makefile(self,*args):return self.stream
+            def close(self):self.closed=True;self.stream.close()
+        for method,body in [('GET',None),('POST',{'key':'value'})]:
+            channel=Channel()
+            bridge=object.__new__(adapter.SSHBridge)
+            bridge.endpoint=dict(api_port=9120)
+            bridge.transport=type('Transport',(),dict(open_channel=lambda *a,**kw:channel))()
+            self.assertEqual(bridge.http(method,'/api/status',body),{'group':'S2-W30','runs':[]})
+            self.assertTrue(channel.closed)
+            self.assertTrue(channel.sent.startswith((method+' /api/status HTTP/1.0').encode()))
+            self.assertIn(b'Content-Type: application/json\r\n',channel.sent)
+            if body is not None:self.assertTrue(channel.sent.endswith(b'{"key": "value"}'))
+
     def test_raw_pin_change_and_authority_mismatch_rejected(self):
         ref = self.ref('pinned.json', {'a':1})
         self.assertEqual(adapter.read_ref(ref), {'a':1})

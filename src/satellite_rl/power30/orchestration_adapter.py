@@ -356,18 +356,26 @@ class SSHBridge:
         port = self.endpoint['api_port']
         channel = self.transport.open_channel('direct-tcpip', ('127.0.0.1', port), ('127.0.0.1', 0), timeout=15)
         channel.settimeout(25)
-        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=25)
-        connection.sock = channel
+        response = None
         try:
-            payload = None if body is None else json.dumps(body, ensure_ascii=False).encode('utf8')
-            connection.request(method, path, body=payload, headers={'Content-Type':'application/json'})
-            response = connection.getresponse()
+            payload = b'' if body is None else json.dumps(body, ensure_ascii=False).encode('utf8')
+            # HTTPConnection closes its socket early for HTTP/1.0 responses.
+            # Paramiko makefile has no real-socket ownership reference counting:
+            # retain the channel ourselves until HTTPResponse consumed its body.
+            header = ('%s %s HTTP/1.0\r\nHost: 127.0.0.1:%s\r\n'
+                      'Content-Type: application/json\r\nContent-Length: %s\r\n'
+                      'Connection: close\r\n\r\n') % (method,path,port,len(payload))
+            channel.sendall(header.encode('ascii') + payload)
+            response = http.client.HTTPResponse(channel,method=method)
+            response.begin()
             data = response.read(4 * 1024 * 1024)
             if response.status != 200:
                 return dict(http_status=response.status, raw=data.decode('utf8', 'replace')[:2000])
             return json.loads(data)
         finally:
-            connection.close()
+            if response is not None:
+                response.close()
+            channel.close()
 
 
 class Adapter:
