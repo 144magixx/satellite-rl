@@ -37,7 +37,7 @@ def deploy():
     source = ROOT + '/source/' + commit
     with tempfile.TemporaryDirectory() as temp:
         archive = Path(temp) / 'source.tar'
-        subprocess.run(['git', 'archive', '--format=tar', '-o', str(archive), commit,
+        subprocess.run(['git', '-c', 'core.autocrlf=false', 'archive', '--format=tar', '-o', str(archive), commit,
                         'src', 'scripts/w31', 'pyproject.toml'], check=True)
         client = connect(20627)
         try:
@@ -72,7 +72,8 @@ def deploy():
             exact_resume=True, final_policy_saved=True, evaluation_matches_W30=True,
             power_menus_valid=True, frozen_configurations_match=True,
             scientific_results=False), issues=[
-                'py310 lacks torch; selected existing pytorch-2.1.1 CUDA environment on both ports.'])
+                'py310 lacks torch; selected existing pytorch-2.1.1 CUDA environment on both ports.',
+                'Disabled Git archive autocrlf conversion after shell rejected CRLF; no training started in failed attempts.'])
     RESULT.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
