@@ -58,10 +58,18 @@ class Workbench:
                 raise ValueError('Frozen source differs: '+rel)
         if not p.get('tasks'):
             raise ValueError('No frozen task map')
+        if any(t['mode']=='fixtures' for t in p['tasks'].values()) and len(p['tasks'])!=1:
+            raise ValueError('Fixtures require a separate single-task frozen plan')
         for key, task in p['tasks'].items():
             c = task['config']
             if not re.fullmatch('[A-Za-z0-9_-]{1,100}', key) or task['executor_port'] not in (20655,20654,20653,20627):
                 raise ValueError('Task identity/port')
+            if task['mode']=='fixtures':
+                from .fixture_executor import validate_fixture_config
+                validate_fixture_config(c)
+                if c['source_sha']!=p['source_commit']:
+                    raise ValueError('Fixture frozen source binding differs')
+                continue
             if task['mode']=='evaluate':
                 if c.get('phase')!='evaluation' or c.get('task_kind')!='confirmation':
                     raise ValueError('Only future sealed confirmation evaluate mode')
@@ -226,7 +234,9 @@ def worker(directory,plan_path,executor_port):
     def progress(value):
         s=read(path);s.update(status=value.get('stage','running'),progress=value,last_updated_UTC=now());atomic_json(path,s)
     try:
-        if s['mode']=='evaluate':
+        if s['mode']=='fixtures':
+            from .fixture_executor import run_owned_fixture_task as run_task
+        elif s['mode']=='evaluate':
             from .evaluation import run_confirmation_task as run_task
         else:
             from .runner import run_task

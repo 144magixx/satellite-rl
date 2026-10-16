@@ -83,6 +83,26 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(len(self.receipts), 5)
         self.assertTrue(all(r['delegation_sha256'] == module.digest(self.delegation) for r in self.receipts))
 
+    def test_two_gpu_busy_lane_skipped_then_complete_m0_wave(self):
+        mapping = {'P00':20627, 'P11':20627, 'P10':20653, 'P01':20653}
+        for task in self.tasks.values():
+            task['executor_port'] = mapping[task['config']['menu']]
+        self.delegation.update(plan_content_sha256=module.digest(self.plan),
+            identities={str(port):self.identity for port in (20627,20653)})
+        controller = self.controller()
+        self.assertEqual(controller.tick(), 'dispatched')
+        first = self.calls[-1][2]['task_key']
+        self.statuses[first] = dict(self.status(first, 'running', 10, 0), alive=True)
+        self.assertEqual(controller.tick(), 'dispatched')
+        second = self.calls[-1][2]['task_key']
+        self.assertNotEqual(mapping[self.tasks[first]['config']['menu']],
+                            mapping[self.tasks[second]['config']['menu']])
+        self.statuses[second] = dict(self.status(second, 'running', 10, 0), alive=True)
+        self.assertEqual(controller.tick(), 'observe')
+        self.statuses[first] = self.status(first)
+        self.assertEqual(controller.tick(), 'dispatched')
+        self.assertEqual(self.tasks[self.calls[-1][2]['task_key']]['config']['group'], 'M0')
+
     def test_unknown_post_never_repeated_even_if_snapshot_changes(self):
         def lost(*args):
             self.calls.append(args)

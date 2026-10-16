@@ -147,6 +147,10 @@ class Controller:
                 raise ValueError('Unverified workbench snapshot')
             if status.get('config_sha256') != digest(tasks[key]['config']):
                 raise ValueError('Snapshot run/config identity differs')
+        unresolved = [p for p in self.directory.glob('*.json')
+                      if json.loads(p.read_text(encoding='utf8')).get('state') == 'intent']
+        if unresolved:
+            return 'unknown_observe_only'
         m0_done = all(self.completed(statuses.get(k), t) for k, t in tasks.items()
                       if t['config']['group'] == 'M0')
         for key in self.delegation['task_keys']:
@@ -156,16 +160,20 @@ class Controller:
             if any(s.get('status') in ('failed', 'interrupted', 'needs_root_recovery_accounting')
                    for s in lane_statuses):
                 continue
+            if any(s.get('status') == 'stopped_during_evaluation'
+                   or (s.get('status') == 'stopped'
+                       and s.get('stop_reason') != 'engineering_2016_recovery_probe')
+                   for s in lane_statuses):
+                continue
+            if any(s.get('alive') is True or s.get('status') in ('created', 'starting', 'running', 'stop_requested')
+                   for s in lane_statuses):
+                continue
             if task['config']['group'] == 'M1' and not m0_done:
                 continue
             status = statuses.get(key)
             if self.completed(status, task):
                 continue
             action, run_id = 'submit', None
-            unresolved = [p for p in self.directory.glob('*.json')
-                          if json.loads(p.read_text(encoding='utf8')).get('state') == 'intent']
-            if unresolved:
-                return 'unknown_observe_only'
             if status:
                 if (task['mode'] == 'engineering' and status.get('status') == 'stopped'
                         and status.get('progress', {}).get('env_step') == 2016

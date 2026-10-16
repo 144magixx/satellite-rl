@@ -42,6 +42,16 @@ def validate_data_admission(config):
         raise ValueError('All arms require exact ordered same576train+20dev rows; test sealed')
 
 
+def validate_engineering_data_admission(config):
+    if config.get('dev_cases')!=[]:
+        raise ValueError('Engineering cannot execute development evaluation')
+    # Preserve the exact20 development identities while keeping them outside
+    # the engineering evaluation list. No case/layout/PHY is opened here.
+    from copy import copy
+    check=copy(config);check['dev_cases']=config['development_identity_rows']
+    validate_data_admission(check)
+
+
 class RuntimeControl:
     def __init__(self, config, directory):
         self.config = config
@@ -49,6 +59,11 @@ class RuntimeControl:
         self.last_check = 0.
         self.reason = None
         self.started = time.monotonic()
+        self.storage_guard=None
+
+    def arm_storage_guard(self):
+        from .storage_guard import StorageGuard
+        self.storage_guard=StorageGuard(self.config,self.directory)
 
     def validate_owner(self):
         owner = json.loads((self.directory / 'status.json').read_text(encoding='utf8'))
@@ -70,6 +85,10 @@ class RuntimeControl:
             raise ValueError('Exact authority-origin 168h window required')
         if receipt.get('pause_markers') != self.config.get('pause_markers'):
             raise ValueError('Frozen future-pause contract differs from root receipt')
+        from .storage_guard import validate_contract
+        validate_contract(self.config,self.directory)
+        if receipt.get('storage_control')!=self.config.get('storage_control'):
+            raise ValueError('Root fixed storage control contract differs')
         if not self.config.get('pause_markers'):
             raise ValueError('Future pause marker contract required')
         if float(self.config['reserve_free_bytes']) < 16*1024**3:
@@ -82,6 +101,8 @@ class RuntimeControl:
         if not force and stamp - self.last_check < .5:
             return self.reason is not None
         self.last_check = stamp
+        if self.storage_guard is not None and self.storage_guard.check():
+            self.reason='owned_storage_STOP'
         if any(Path(p).exists() for p in self.config['pause_markers']):
             self.reason = 'user_or_root_pause'
         deadline = datetime.fromisoformat(self.config['deadline_utc'].replace('Z', '+00:00'))

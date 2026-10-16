@@ -282,6 +282,8 @@ def _validate_task(config, records, dev, loader, env_factory):
             raise ValueError("Engineering must include real T0 update, at most2048 steps")
         if dev:
             raise ValueError("Engineering cannot consume science evaluation budget")
+        from .control import validate_engineering_data_admission
+        validate_engineering_data_admission(config)
     elif phase == "correctness":
         if not 1 <= total <= 16 or dev:
             raise ValueError("Tiny correctness fixtures only")
@@ -333,6 +335,7 @@ def run_task(config, run_dir, progress_callback=None, stop_requested=None, *, lo
         allowances={interaction_kind:total_steps,update_kind:expected_updates,
                     'update':expected_updates,'evaluation_episode':180 if phase=='scientific' else 0})
     IO_HOOK=ledger.record_io
+    control.arm_storage_guard()
     def call_hook(kind, **metadata):
         control.check_or_raise()
         ledger.charge(kind, **metadata)

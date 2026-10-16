@@ -62,6 +62,7 @@ def run_confirmation_task(config,directory,progress_callback=None,stop_requested
     manifest,unlock=validate_confirmation(config)
     directory=Path(directory);control=RuntimeControl(config,directory);control.validate_owner()
     ledger=CallLedger(config['ledger_root'],config['run_id'],'evaluation')
+    control.arm_storage_guard()
     def hook(kind,**metadata):ledger.charge(kind,**metadata)
     def loader(row):
         # W26's test unlock is deliberately not used or forged. W30 checks its
