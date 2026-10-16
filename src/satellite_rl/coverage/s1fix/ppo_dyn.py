@@ -37,24 +37,27 @@ def advantages(rewards, values, gamma=.99, gae_lambda=.95):
     return result, result + np.asarray(values, dtype=np.float32)
 
 
-def update(model, optimizer, episodes, epochs=4, clip=.2, entropy_coefficient=.01):
+def update(model, optimizer, episodes, epochs=4, clip=.2, entropy_coefficient=.01, minibatch=64):
     observations = torch.as_tensor(np.concatenate([e["observations"] for e in episodes]), dtype=torch.float32)
     actions = torch.as_tensor(np.concatenate([e["actions"] for e in episodes]), dtype=torch.long)
     old_logprob = torch.as_tensor(np.concatenate([e["logprobs"] for e in episodes]), dtype=torch.float32)
     advantage = torch.as_tensor(np.concatenate([e["advantages"] for e in episodes]), dtype=torch.float32)
     returns = torch.as_tensor(np.concatenate([e["returns"] for e in episodes]), dtype=torch.float32)
     advantage = (advantage - advantage.mean()) / (advantage.std(unbiased=False) + 1e-8)
+    # 小批次更新：整批只走4步梯度时策略几乎不动（S1-FIX首轮训练实测）。
     for _ in range(epochs):
-        logits, values = model(observations)
-        distribution = Categorical(logits=logits)
-        ratio = (distribution.log_prob(actions) - old_logprob).exp()
-        policy_loss = -torch.minimum(ratio * advantage, ratio.clamp(1 - clip, 1 + clip) * advantage).mean()
-        value_loss = .5 * (values - returns).square().mean()
-        loss = policy_loss + value_loss - entropy_coefficient * distribution.entropy().mean()
-        optimizer.zero_grad()
-        loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), .5)
-        optimizer.step()
+        for index in torch.randperm(len(actions)).split(minibatch):
+            logits, values = model(observations[index])
+            distribution = Categorical(logits=logits)
+            ratio = (distribution.log_prob(actions[index]) - old_logprob[index]).exp()
+            gain = advantage[index]
+            policy_loss = -torch.minimum(ratio * gain, ratio.clamp(1 - clip, 1 + clip) * gain).mean()
+            value_loss = .5 * (values - returns[index]).square().mean()
+            loss = policy_loss + value_loss - entropy_coefficient * distribution.entropy().mean()
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), .5)
+            optimizer.step()
     return float(loss.detach())
 
 
