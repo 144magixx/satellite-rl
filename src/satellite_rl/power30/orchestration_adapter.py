@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import http.client
 import json
+import math
 import os
 from pathlib import Path
 import shlex
@@ -39,6 +40,42 @@ def health_poll_seconds(pins):
     if type(value) is not int or not 5 <= value <= 3600:
         raise ValueError('Root-pinned 5..3600 second health cadence required')
     return value
+
+
+def local_boot_matches(recorded, observed):
+    # Windows psutil boot_time is estimated independently in each process.
+    # PID and process create_time remain exact; remote Linux UUID is untouched.
+    if os.name != 'nt':
+        return recorded == observed
+    try:
+        if not recorded.startswith('boot-time:') or not observed.startswith('boot-time:'):
+            return False
+        old, new = float(recorded[10:]), float(observed[10:])
+        return math.isfinite(old) and math.isfinite(new) and abs(old-new) <= 5
+    except (ValueError,TypeError,AttributeError):
+        return False
+
+
+def verify_single_pass_parent(pins):
+    import psutil
+    owner = json.loads((Path(pins['controller_directory']) / 'singleton' / 'owner.json').read_text())
+    pending = json.loads((Path(pins['controller_directory']) / 'ops_clock.json').read_text()).get('pending')
+    if (not pending or owner['pid'] != os.getppid()
+            or owner['process_birth'] != psutil.Process(os.getppid()).create_time()
+            or not local_boot_matches(owner['boot_id'],'boot-time:' + str(psutil.boot_time()))):
+        raise ValueError('Single pass requires live singleton parent and reserved ops time')
+
+
+def persist_child_outputs(directory, stamp, stdout, stderr):
+    refs = {}
+    for name, value in (('stdout',stdout),('stderr',stderr)):
+        path = Path(directory) / 'pass_outputs' / (stamp + '.' + name + '.txt')
+        path.parent.mkdir(parents=True,exist_ok=True)
+        payload = value if isinstance(value,bytes) else (value or '').encode('utf8')
+        with path.open('wb') as stream:
+            stream.write(payload);stream.flush();os.fsync(stream.fileno())
+        refs[name] = dict(path=str(path),sha256=hashlib.sha256(payload).hexdigest())
+    return refs
 
 
 def recursive_refs(value):
@@ -575,13 +612,7 @@ def main():
         raise ValueError('Explicit future local pause markers required')
     poll_seconds = health_poll_seconds(pins)
     if args.single_pass:
-        import psutil
-        owner = json.loads((Path(pins['controller_directory']) / 'singleton' / 'owner.json').read_text())
-        pending = json.loads((Path(pins['controller_directory']) / 'ops_clock.json').read_text()).get('pending')
-        if (not pending or owner['pid'] != os.getppid()
-                or owner['process_birth'] != psutil.Process(os.getppid()).create_time()
-                or owner['boot_id'] != 'boot-time:' + str(psutil.boot_time())):
-            raise ValueError('Single pass requires live singleton parent and reserved ops time')
+        verify_single_pass_parent(pins)
         print(json.dumps(dict(result=run_single_pass(pins))))
         return
     group_singleton = Singleton(pins['group_controller_directory'])
@@ -600,15 +631,23 @@ def main():
             if not ops_clock.begin():
                 save(Path(pins['controller_directory']) / 'controller_status.json', dict(result='controller_active_budget_exhausted'))
                 return
+            output_refs = None
             try:
                 completed = subprocess.run([sys.executable, '-m', 'satellite_rl.power30.orchestration_adapter',
                     '--pins', args.pins, '--pins-sha', args.pins_sha, '--single-pass'],
-                    check=True, capture_output=True, text=True, timeout=ops_clock.timeout)
+                    check=False, capture_output=True, text=True, timeout=ops_clock.timeout)
+                output_refs = persist_child_outputs(pins['controller_directory'],
+                    datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ'),completed.stdout,completed.stderr)
+                completed.check_returncode()
                 result = json.loads(completed.stdout)['result']
             except Exception as error:
                 # Reservation stays pending/charged. No automatic process retry.
+                if output_refs is None:
+                    output_refs = persist_child_outputs(pins['controller_directory'],
+                        datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')+'-error',
+                        getattr(error,'stdout',None),getattr(error,'stderr',None))
                 save(Path(pins['controller_directory']) / 'controller_status.json',
-                     dict(result='unknown_pass_needs_root', error=repr(error)))
+                     dict(result='unknown_pass_needs_root', error=repr(error),child_output_refs=output_refs))
                 return
             ops_clock.finish()
             if result in ('deadline', 'unknown_observe_only', 'stage_completed'):

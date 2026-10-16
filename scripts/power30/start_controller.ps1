@@ -43,6 +43,6 @@ for ($index=0; $index -lt 50 -and -not (Test-Path -LiteralPath $ownerPath); $ind
 }
 if (-not (Test-Path -LiteralPath $ownerPath)) { throw 'No singleton owner receipt; do not relaunch blindly' }
 $owner = Get-Content -LiteralPath $ownerPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$inspection = & $python -c 'import json,psutil,sys; p=psutil.Process(int(sys.argv[1])); print(json.dumps(dict(pid=p.pid,process_birth=p.create_time(),boot_id="boot-time:"+str(psutil.boot_time()),executable=p.exe())))' $process.Id | ConvertFrom-Json
-if ($owner.pid -ne $process.Id -or $owner.process_birth -ne $inspection.process_birth -or $owner.boot_id -ne $inspection.boot_id -or $inspection.executable -ne $python) { throw 'Actual controller PID/birth/boot/interpreter differs; do not steal/retry' }
+$inspection = & $python -c 'import json,psutil,sys; sys.path.insert(0,sys.argv[2]); from satellite_rl.power30.orchestration_adapter import local_boot_matches; p=psutil.Process(int(sys.argv[1])); observed="boot-time:"+str(psutil.boot_time()); print(json.dumps(dict(pid=p.pid,process_birth=p.create_time(),boot_id=observed,owner_boot_matches=local_boot_matches(sys.argv[3],observed),executable=p.exe())))' $process.Id (Join-Path $sourceRoot 'src') $owner.boot_id | ConvertFrom-Json
+if ($owner.pid -ne $process.Id -or $owner.process_birth -ne $inspection.process_birth -or -not $inspection.owner_boot_matches -or $inspection.executable -ne $python) { throw 'Actual controller PID/birth/boot/interpreter differs; do not steal/retry' }
 [pscustomobject]@{pid=$process.Id; process_birth=$inspection.process_birth; boot_id=$inspection.boot_id; launcher_sha256=$scriptSha; pins_sha256=$PinsSha; status='hidden_controller_owner_verified'} | ConvertTo-Json -Compress

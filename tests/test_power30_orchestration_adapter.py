@@ -67,6 +67,33 @@ class AdapterTests(unittest.TestCase):
             self.assertIn(b'Content-Type: application/json\r\n',channel.sent)
             if body is not None:self.assertTrue(channel.sent.endswith(b'{"key": "value"}'))
 
+    def test_windows_boot_estimate_bound_and_linux_identity_unchanged(self):
+        with patch.object(adapter.os,'name','nt'):
+            self.assertTrue(adapter.local_boot_matches('boot-time:100','boot-time:100.5'))
+            self.assertTrue(adapter.local_boot_matches('boot-time:100','boot-time:105'))
+            self.assertFalse(adapter.local_boot_matches('boot-time:100','boot-time:105.00001'))
+            self.assertFalse(adapter.local_boot_matches('boot-time:100','boot-time:nan'))
+        with patch.object(adapter.os,'name','posix'):
+            self.assertTrue(adapter.local_boot_matches('boot-uuid','boot-uuid'))
+            self.assertFalse(adapter.local_boot_matches('boot-uuid','other-boot-uuid'))
+
+    def test_child_failure_outputs_are_durably_kept(self):
+        refs=adapter.persist_child_outputs(self.root,'failed',b'partial output',b'exact failure traceback')
+        self.assertEqual(Path(refs['stderr']['path']).read_bytes(),b'exact failure traceback')
+        self.assertEqual(adapter.file_sha(refs['stderr']['path']),refs['stderr']['sha256'])
+
+    def test_real_local_parent_child_ownership_gate_without_network(self):
+        import os,subprocess,sys
+        directory=self.root/'real-parent'
+        owner=adapter.Singleton(directory)
+        try:
+            save(directory/'ops_clock.json',dict(pending=dict(reserved_seconds=130)))
+            code='import json,sys;from satellite_rl.power30.orchestration_adapter import verify_single_pass_parent;verify_single_pass_parent(json.loads(sys.argv[1]));print("parent-gate-passed-no-network")'
+            env=dict(os.environ,PYTHONPATH=str(Path(__file__).parents[1]/'src'))
+            result=subprocess.run([sys.executable,'-c',code,json.dumps(dict(controller_directory=str(directory)))],env=env,capture_output=True,text=True,check=True)
+            self.assertIn('parent-gate-passed-no-network',result.stdout)
+        finally:owner.close()
+
     def test_raw_pin_change_and_authority_mismatch_rejected(self):
         ref = self.ref('pinned.json', {'a':1})
         self.assertEqual(adapter.read_ref(ref), {'a':1})
