@@ -59,9 +59,14 @@ def centers_separated(centers, spacing=True, fixed_width=None):
     return bool(np.all(distance >= minimum - (1e-9 if spacing else 0)))
 
 
+def _tolerant(radii):
+    """Eligibility slack must stay below validate_layout's 1e-8 spacing slack."""
+    return np.asarray(radii) + 1e-9
+
+
 def _edges(centers, members, radii):
     rows = cKDTree(members).query_ball_point(
-        centers, 2 * np.sin(np.deg2rad(np.asarray(radii) + 2e-8) / 2))
+        centers, 2 * np.sin(np.deg2rad(_tolerant(radii)) / 2))
     aircraft = np.concatenate(rows).astype(np.int64)
     beam = np.repeat(np.arange(len(centers)), [len(row) for row in rows])
     order = np.lexsort((beam, aircraft))
@@ -231,7 +236,7 @@ def _nearest(centers, members, radii):
     if len(members) == 0:
         return np.empty(0, dtype=np.int64)
     distance = angles(members, centers)
-    distance[distance > np.asarray(radii) + 2e-8] = np.inf
+    distance[distance > _tolerant(radii)] = np.inf
     if not np.isfinite(distance.min(axis=1)).all():
         return None
     return distance.argmin(axis=1)
