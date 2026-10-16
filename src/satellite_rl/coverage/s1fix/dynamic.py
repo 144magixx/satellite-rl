@@ -9,6 +9,8 @@ from scipy.optimize import linear_sum_assignment
 
 from .geom import Layout, angles, cone, envelope, forecast, metrics, rays, ray_to_latlon, validate_layout
 from .io import load_layout, save_layout
+N_DYN = 100  # 动态实验波束预算：最大白天场景上100束与200束峰值相同（伦敦热点决定），100束快约30倍
+
 from .skeleton import _split as split_members, assign, centers_separated, coverage_radii, solve
 
 
@@ -65,7 +67,7 @@ def previous_owner(layout, old_frame, frame):
     return result
 
 
-def patch(layout, old_frame, frame, N_budget=200, next_id=None):
+def patch(layout, old_frame, frame, N_budget=N_DYN, next_id=None):
     """中心固定；先补覆盖，再保留合法归属并增量分配其余飞机。"""
     aircraft = rays(frame.positions)
     centers = np.array(layout.centers_latlon, copy=True)
@@ -134,7 +136,7 @@ def heavy_region(layout):
 
 
 def repair(layout, frame, region="heavy", iters=10, kappa=1., forecast=True,
-           N_budget=200, prev_ids=None, next_id=None):
+           N_budget=N_DYN, prev_ids=None, next_id=None):
     """局部交替优化；heavy外的中心、宽度、成员与ID均冻结。"""
     aircraft = rays(frame.positions)
     future = rays(predicted_frame(frame).positions) if forecast else aircraft
@@ -269,7 +271,7 @@ class FullCache:
     def build(self, frame):
         path = self.path(frame)
         if not path.exists():
-            result = solve(frame, 200, spacing=True, effort=1, time_limit=30.)
+            result = solve(frame, N_DYN, spacing=True, effort=1, time_limit=30.)
             if not result.feasible:
                 raise RuntimeError(f"full布局不可行: {frame.date}/{frame.index}")
             save_layout(path, result.layout, frame, t_init=result.t_init, t_opt=result.t_opt,
@@ -322,7 +324,7 @@ class DynamicEpisode:
         self.prepare()
         start = perf_counter()
         frame = self.frames[self.index]
-        lb = max(1, int(np.ceil(len(frame.icao) / 200)))
+        lb = max(1, int(np.ceil(len(frame.icao) / N_DYN)))
         current = self.patched
         # 失败patch的观测仍可计算，step会按同一规则强制full。
         m = metrics(current) if current is not None else metrics(self.layout)
@@ -331,7 +333,7 @@ class DynamicEpisode:
         delta = (len(frame.icao) - len(first.icao)) / max(len(first.icao), 1)
         hour = datetime.fromtimestamp(frame.time, timezone.utc).hour + (frame.time % 3600) / 3600
         values = [m["peak"] / lb, (m["peak"] - lb) / 10., m["top10"] / lb, m["CV"],
-                  len(current.widths if current is not None else self.layout.widths) / 200.]
+                  len(current.widths if current is not None else self.layout.widths) / N_DYN]
         if self.use_forecast:
             values.append(peak / lb)
         values += [self.reference_peak / lb, (self.index - self.last_repair) / 30.,
@@ -373,7 +375,7 @@ class DynamicEpisode:
         m = metrics(candidate)
         if action or forced:
             self.reference_peak = m["peak"]
-        lb = int(np.ceil(len(frame.icao) / 200))
+        lb = int(np.ceil(len(frame.icao) / N_DYN))
         reward = -(m["peak"] - lb) - self.lam * 100 * churn
         elapsed += perf_counter() - start - cache_seconds + solver_seconds
         row = dict(day=frame.date, seq=self.frames[0].index // 30, frame=self.index,

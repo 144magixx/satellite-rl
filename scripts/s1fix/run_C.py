@@ -43,11 +43,16 @@ def comparison_job(job):
     # The same feasible INIT is the starting point for every comparison.
     # preserve_N rejects merges/empty-beam proposals that change its actual K.
     common_n = len(initial.widths)
-    variants = [("INIT", False, 1), ("FLOW-AO-peak", False, 1), ("FLOW-AO", True, 1)]
+    variants = [("INIT", False, 1), ("FLOW-AO-peak", False, 1), ("FLOW-AO", True, 1),
+                ("FLOW-AO-no-spacing", True, 1)]
     rows = []
     for variant, balance, effort in variants:
         source = initial_source if variant == "INIT" else "C-common-N"
         layout = initial if variant == "INIT" else None
+        if variant == "FLOW-AO-no-spacing":
+            # Same actual N, built from scratch with stacking allowed: does stacking help service?
+            layout = solve(frame, common_n, spacing=False, balance=True, max_iters=max_iters,
+                           time_limit=time_limit).layout
         if layout is None:
             result = solve(frame, common_n, spacing=True, balance=balance, effort=effort,
                            init_layout=initial, preserve_N=True, max_iters=max_iters,
