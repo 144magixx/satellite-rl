@@ -199,6 +199,34 @@ def initial_cover(member_rays, radius=.5, rng=None):
     return np.asarray(member_rays)[chosen].copy()
 
 
+def adaptive_net(member_rays, k, fixed_width=None):
+    """Open sparse-region centers first, using each aircraft's kth-neighbor radius."""
+    tree = cKDTree(member_rays)
+    chord = tree.query(member_rays, k=[min(k + 1, len(member_rays))])[0][:, 0]
+    radius = np.rad2deg(2 * np.arcsin(np.minimum(chord / 2, 1)))
+    minimum, maximum = (.15, .5) if fixed_width is None else (fixed_width / 2, fixed_width / 2)
+    radius = np.clip(radius, minimum, maximum)
+    covered = np.zeros(len(member_rays), dtype=bool)
+    chosen = []
+    for index in np.argsort(-radius, kind="stable"):
+        if not covered[index]:
+            chosen.append(index)
+            covered[tree.query_ball_point(member_rays[index],
+                2 * np.sin(np.deg2rad(radius[index] + 1e-10) / 2))] = True
+    return np.asarray(member_rays)[chosen].copy()
+
+
+def _adaptive_centers(members, budget, fixed_width):
+    low, high = 1, len(members)
+    while low < high:
+        middle = (low + high) // 2
+        if len(adaptive_net(members, middle, fixed_width)) <= budget:
+            high = middle
+        else:
+            low = middle + 1
+    return adaptive_net(members, low, fixed_width)
+
+
 def _nearest(centers, members, radii):
     if len(members) == 0:
         return np.empty(0, dtype=np.int64)
@@ -290,11 +318,20 @@ def _add_beams(layout, members, budget, spacing, fixed, next_id, rng=None,
                 if not spacing and not centers_separated(proposed, False):
                     continue
                 radii = coverage_radii(proposed, spacing, fixed)
-                owner = _nearest(proposed, members, radii) if nearest else assign(proposed, members, radii=radii)
+                if nearest:
+                    owner = _nearest(proposed, members, radii)
+                else:
+                    owner = _at_peak(proposed, members, int(loads.max()), radii)
+                    if owner is not None:
+                        aircraft, beam = _edges(proposed, members, radii)
+                        owner = _nonempty(owner, aircraft, beam, len(proposed))
                 if owner is None or np.bincount(owner).max() > loads.max():
                     continue
                 candidate = _layout(proposed, members, owner, np.append(layout.beam_ids, next_id), fixed)
                 if len(candidate.widths) > len(layout.widths):
+                    if not nearest:
+                        owner = assign(proposed, members, radii=radii)
+                        candidate = _layout(proposed, members, owner, np.append(layout.beam_ids, next_id), fixed)
                     next_id += 1
                     layout, accepted = candidate, True
                     break
@@ -309,29 +346,31 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
             init_layout, balance, max_iters, rng, nearest=False, preserve_N=False):
     start = perf_counter()
     members = rays(frame.positions)
-    radius = .5 if fixed_width is None else fixed_width / 2
     if len(members) == 0:
         empty = Layout(np.empty((0, 2)), np.empty(0), np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64))
         return Result(empty, 0, True, 0., 0., 0., perf_counter() - start)
-    centers = initial_cover(members, radius, rng) if init_layout is None else rays(init_layout.centers_latlon)
-    N0 = len(centers)
-    if N0 > N_budget:
+    N0 = len(initial_cover(members))
+    centers = (_adaptive_centers(members, N_budget, fixed_width) if init_layout is None
+               else rays(init_layout.centers_latlon))
+    initial_count = len(centers)
+    if initial_count > N_budget:
         return Result(None, N0, False, perf_counter() - start, 0., 0., perf_counter() - start)
-    ids = np.arange(N0) if init_layout is None else init_layout.beam_ids.copy()
+    ids = np.arange(initial_count) if init_layout is None else init_layout.beam_ids.copy()
     radii = coverage_radii(centers, spacing, fixed_width)
     owner = _nearest(centers, members, radii) if nearest else assign(centers, members, radii=radii)
     if owner is None:
         return Result(None, N0, False, perf_counter() - start, 0., 0., perf_counter() - start)
     layout = _layout(centers, members, owner, ids, fixed_width)
     layout = _accept(layout, members, N_budget, spacing, fixed_width)
-    if preserve_N and init_layout is not None and (layout is None or len(layout.widths) != N0):
+    if preserve_N and init_layout is not None and (layout is None or len(layout.widths) != initial_count):
         layout = init_layout
     if layout is None:
         return Result(None, N0, False, perf_counter() - start, 0., 0., perf_counter() - start)
     next_id = int(ids.max()) + 1
-    growth_budget = N0 if preserve_N else N_budget
-    layout, next_id = _add_beams(layout, members, growth_budget, spacing, fixed_width,
-                                 next_id, rng, nearest, deadline)
+    growth_budget = initial_count if preserve_N else N_budget
+    if not nearest:
+        layout, next_id = _add_beams(layout, members, growth_budget, spacing, fixed_width,
+                                     next_id, rng, False, deadline)
     init_end = perf_counter()
     best, stale = layout, 0
     for _ in range(0 if nearest else (30 * effort if max_iters is None else max_iters)):
@@ -342,16 +381,27 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
         owner = assign(centers, members, radii=radii)
         if balance:
             owner = assign(centers, members, mode="balance", radii=radii)
-        recentered = np.array([cone(members[owner == j])[0] if np.any(owner == j)
-                               else centers[j] for j in range(len(centers))])
-        if centers_separated(recentered, spacing, fixed_width):
-            owner = assign(recentered, members,
-                           radii=coverage_radii(recentered, spacing, fixed_width))
-            if owner is not None:
-                candidate = _layout(recentered, members, owner, layout.beam_ids, fixed_width)
-                if (_key(candidate) < _key(layout)
-                        and (not preserve_N or len(candidate.widths) == len(layout.widths))):
-                    layout = candidate
+        assigned = _layout(centers, members, owner, layout.beam_ids, fixed_width)
+        if (_key(assigned) < _key(layout)
+                and (not preserve_N or len(assigned.widths) == len(layout.widths))):
+            layout = assigned
+            centers, owner = rays(layout.centers_latlon), layout.owner
+        # Tighten one beam at a time: a blocked neighbor must not veto all moves.
+        # Keeping the owners also admits load-neutral moves that enable a split.
+        centers = rays(layout.centers_latlon)
+        loads = np.bincount(layout.owner, minlength=len(centers))
+        for j in np.argsort(-loads, kind="stable"):
+            recentered = centers.copy()
+            recentered[j] = cone(members[layout.owner == j])[0]
+            candidate = _layout(recentered, members, layout.owner, layout.beam_ids, fixed_width)
+            if _accept(candidate, members, N_budget, spacing, fixed_width) is not None:
+                layout, centers = candidate, recentered
+        owner = assign(centers, members, radii=coverage_radii(centers, spacing, fixed_width))
+        if owner is not None:
+            candidate = _layout(centers, members, owner, layout.beam_ids, fixed_width)
+            if (_key(candidate) < _key(layout)
+                    and (not preserve_N or len(candidate.widths) == len(layout.widths))):
+                layout = candidate
         # Delete a dispensable light beam, then reuse its slot on the busiest.
         centers = rays(layout.centers_latlon)
         loads = np.bincount(layout.owner, minlength=len(centers))
@@ -379,6 +429,8 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
             best, stale = layout, 0
         else:
             stale += 1
+            if _key(layout) == _key(best):
+                best = layout
         if stale >= 3:
             break
     opt_end = perf_counter()

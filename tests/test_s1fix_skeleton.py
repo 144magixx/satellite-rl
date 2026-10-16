@@ -6,9 +6,10 @@ from unittest.mock import patch
 import numpy as np
 
 from satellite_rl.coverage.s1fix import skeleton
-from satellite_rl.coverage.s1fix.geom import angles, rays, validate_layout
+from satellite_rl.coverage.s1fix.geom import angles, rays, ray_to_latlon, validate_layout
 from satellite_rl.coverage.s1fix.skeleton import (
-    assign, initial_cover, init_baseline, coverage_radii, centers_separated, solve, _spread_split, _edges,
+    adaptive_net, assign, initial_cover, init_baseline, coverage_radii, centers_separated,
+    solve, _spread_split, _edges,
 )
 
 
@@ -92,6 +93,37 @@ class SkeletonTests(unittest.TestCase):
         self.assertTrue(validate_layout(result.layout, rays(frame.positions), 3, fixed_width=.5))
         np.testing.assert_allclose(result.layout.widths, .5)
 
+    def test_blocked_recenter_does_not_discard_load_neutral_tightening(self):
+        axis = rays(np.array([[45., 10.]]))[0]
+        tangent = np.cross(axis, np.array([0., 0., 1.]))
+        tangent /= np.linalg.norm(tangent)
+
+        def directions(degrees):
+            theta = np.deg2rad(degrees)[:, None]
+            return axis * np.cos(theta) + tangent * np.sin(theta)
+
+        centers = directions([0., .2, 1.])
+        members = directions([.08, .08, .2, .2, 1.12, 1.16])
+        owner = np.repeat(np.arange(3), 2)
+        initial = skeleton._layout(centers, members, owner, np.arange(3))
+        self.assertTrue(validate_layout(initial, members, 3))
+
+        # The first beam's ideal center enters its neighbor's minimum footprint.
+        blocked = centers.copy()
+        blocked[0] = skeleton.cone(members[owner == 0])[0]
+        self.assertFalse(validate_layout(
+            skeleton._layout(blocked, members, owner, np.arange(3)), members, 3))
+
+        frame = SimpleNamespace(positions=ray_to_latlon(members))
+        result = solve(frame, 3, init_layout=initial, preserve_N=True, max_iters=1)
+        self.assertTrue(result.feasible)
+        np.testing.assert_array_equal(np.bincount(result.layout.owner), [2, 2, 2])
+        final_centers = rays(result.layout.centers_latlon)
+        np.testing.assert_allclose(final_centers[0], centers[0], atol=1e-10)
+        np.testing.assert_allclose(final_centers[2], skeleton.cone(members[owner == 2])[0],
+                                   atol=1e-10)
+        self.assertLess(result.layout.widths[2], initial.widths[2] - .01)
+
     def test_radius_limits_and_eligible_nearest(self):
         centers = rays(np.array([[45., 10.], [45., 12.], [50., 20.]]))
         distance = angles(centers, centers)
@@ -127,9 +159,9 @@ class SkeletonTests(unittest.TestCase):
         layout = skeleton._layout(members[:1], members, owner, np.array([0]))
         first, second = members[[0, 1]], members[[0, 2]]
         with patch.object(skeleton, "_spread_split", return_value=iter([first, second])), \
-             patch.object(skeleton, "assign", side_effect=[None, np.array([0, 0, 1])]) as assignment:
+             patch.object(skeleton, "_at_peak", side_effect=[None, np.array([0, 0, 1])]) as feasibility:
             result, _ = skeleton._add_beams(layout, members, 2, True, None, 1)
-        self.assertEqual(assignment.call_count, 2)
+        self.assertEqual(feasibility.call_count, 2)
         self.assertEqual(len(result.widths), 2)
 
     def test_sparse_edges_match_per_beam_radii(self):
@@ -149,6 +181,30 @@ class SkeletonTests(unittest.TestCase):
             np.fill_diagonal(distance, np.inf)
             self.assertTrue((distance > radius).all())
             self.assertTrue((angles(members, centers).min(axis=1) <= radius + 1e-9).all())
+
+    def test_adaptive_net_covers_dense_and_sparse_regions_under_radius_caps(self):
+        theta = np.deg2rad([0., .01, .02, .16, .17, .3, .7, 1.3, 2., 2.45])
+        members = np.column_stack((np.sin(theta), np.zeros(len(theta)), np.cos(theta)))
+        for k in (1, 2, len(members)):
+            for fixed in (None, .5):
+                centers = adaptive_net(members, k, fixed)
+                self.assertTrue(centers_separated(centers, fixed_width=fixed))
+                eligible = angles(members, centers) <= coverage_radii(centers, fixed_width=fixed) + 1e-9
+                self.assertTrue(eligible.any(axis=1).all())
+                self.assertEqual(len(centers), len(np.unique(centers, axis=0)))
+        # Sparse endpoints open before the dense cluster; ties use aircraft order.
+        np.testing.assert_array_equal(adaptive_net(members, 2)[0], members[6])
+        np.testing.assert_array_equal(adaptive_net(members, 2), adaptive_net(members, 2))
+
+    def test_init_uses_adaptive_net_without_flow(self):
+        frame = SimpleNamespace(positions=np.array([[45., 10.], [45.1, 10.1], [50., 20.]]))
+        with patch.object(skeleton, "assign", side_effect=AssertionError("INIT must use nearest")), \
+                patch.object(skeleton, "_add_beams", side_effect=AssertionError("INIT must use initial centers")), \
+                patch.object(skeleton, "adaptive_net", wraps=adaptive_net) as net:
+            result = init_baseline(frame, 3)
+        self.assertTrue(result.feasible)
+        self.assertTrue(net.called)
+        self.assertEqual(result.N0, len(initial_cover(rays(frame.positions))))
 
 
 if __name__ == "__main__":

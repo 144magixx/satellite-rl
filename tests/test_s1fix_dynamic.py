@@ -11,7 +11,7 @@ import torch
 from satellite_rl.coverage.s1fix.data import Frame
 from satellite_rl.coverage.s1fix.dynamic import (DynamicEpisode, FullCache, costs, evaluate,
     forecast_peak, heavy_region, inherit_ids, patch, predicted_frame, repair, with_members)
-from satellite_rl.coverage.s1fix.geom import Layout, forecast, rays, ray_to_latlon, validate_layout
+from satellite_rl.coverage.s1fix.geom import Layout, forecast, metrics, rays, ray_to_latlon, validate_layout
 from satellite_rl.coverage.s1fix.io import save_layout
 from satellite_rl.coverage.s1fix.ppo_dyn import (ActorCritic, advantages, load_policy,
     merge_curves, train)
@@ -92,6 +92,26 @@ class DynamicTests(unittest.TestCase):
             np.testing.assert_array_equal(result.centers_latlon[k], layout.centers_latlon[j])
             np.testing.assert_array_equal(result.owner == k, layout.owner == j)
             self.assertEqual(result.widths[k], layout.widths[j])
+
+    def test_repair_keeps_balanced_assignment_when_recentering_breaks_spacing(self):
+        axis = rays([[45., 10.]])[0]
+        tangent = np.cross(axis, [0., 0., 1.])
+        tangent /= np.linalg.norm(tangent)
+        theta = np.deg2rad([-.2, .2, 0., 0., 0., 0.])[:, None]
+        positions = ray_to_latlon(axis * np.cos(theta) + tangent * np.sin(theta))
+        frame = Frame("2024-01-12", 0., 0, np.arange(6, dtype=np.uint32),
+                      positions, np.zeros(6), np.zeros(6))
+        layout = with_members(positions[:2], np.array([0, 1, 0, 0, 0, 0]),
+                              [11, 22], rays(positions))
+        # Assignment improves 5/1 to 3/3 before the proposed centers coincide.
+        with mocked("satellite_rl.coverage.s1fix.dynamic.cone",
+                    return_value=(rays(positions[:1])[0], .2)):
+            result, next_id = repair(layout, frame, "all", 1, 1., False, N_budget=2)
+        self.assertEqual(metrics(result)["peak"], 3)
+        self.assertTrue(validate_layout(result, rays(positions), 2))
+        np.testing.assert_array_equal(result.centers_latlon, layout.centers_latlon)
+        np.testing.assert_array_equal(result.beam_ids, layout.beam_ids)
+        self.assertEqual(next_id, 23)
 
     def test_forecast_eligibility_and_current_position_fallback(self):
         positions = np.array([[45., -10.], [45., -2.], [45., -6.], [45., -10.01]])

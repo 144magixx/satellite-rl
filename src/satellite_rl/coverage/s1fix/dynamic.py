@@ -171,22 +171,7 @@ def repair(layout, frame, region="heavy", iters=10, kappa=1., forecast=True,
         return assign(center_rays, aircraft, mode=mode, radii=radii, prev_owner=old,
                       kappa=kappa, eligible_mask=eligible)
 
-    def optimize(centers, ids):
-        center_rays = rays(centers)
-        owner = allocate(center_rays, ids, "peak")
-        if owner is None:
-            return None
-        owner = allocate(center_rays, ids, "balance")
-        if owner is None:
-            return None
-        centers = np.array(centers, copy=True)
-        for j in np.flatnonzero(~np.isin(ids, frozen_ids)):
-            if np.any(owner == j):
-                center, _ = cone(midpoint[owner == j])
-                centers[j] = ray_to_latlon(center)
-        owner = allocate(rays(centers), ids, "peak")
-        if owner is None:
-            return None
+    def candidate_layout(centers, owner, ids):
         candidate = with_members(centers, owner, ids, aircraft)
         if not validate_layout(candidate, aircraft, N_budget):
             return None
@@ -200,6 +185,34 @@ def repair(layout, frame, region="heavy", iters=10, kappa=1., forecast=True,
                     or not np.isclose(candidate.widths[j], layout.widths[old_j])
                     or not np.array_equal(candidate.owner == j, layout.owner == old_j)):
                 return None
+        return candidate
+
+    def layout_score(candidate):
+        return tuple(metrics(candidate)[key] for key in ("peak", "top10", "CV"))
+
+    def optimize(centers, ids):
+        center_rays = rays(centers)
+        owner = allocate(center_rays, ids, "peak")
+        if owner is None:
+            return None
+        candidate = candidate_layout(centers, owner, ids)
+        balanced = allocate(center_rays, ids, "balance")
+        if balanced is not None:
+            trial = candidate_layout(centers, balanced, ids)
+            if trial is not None and (candidate is None or layout_score(trial) < layout_score(candidate)):
+                candidate = trial
+            owner = balanced
+        # 指派已经得到合法改进时，重定中心失败不能丢掉这一步的结果。
+        centers = np.array(centers, copy=True)
+        for j in np.flatnonzero(~np.isin(ids, frozen_ids)):
+            if np.any(owner == j):
+                center, _ = cone(midpoint[owner == j])
+                centers[j] = ray_to_latlon(center)
+        owner = allocate(rays(centers), ids, "balance")
+        if owner is not None:
+            trial = candidate_layout(centers, owner, ids)
+            if trial is not None and (candidate is None or layout_score(trial) < layout_score(candidate)):
+                candidate = trial
         return candidate
 
     stale = 0
