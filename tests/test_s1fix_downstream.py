@@ -66,12 +66,12 @@ class DownstreamTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             rows = comparison_job(("DEV24", frame, 5, directory, "dev", 1, None,
                                    dict(maxiter=1, time_limit_seconds=1.)))
-            self.assertEqual(len(rows), 3)
+            self.assertEqual(len(rows), 4)
             self.assertTrue(all(row["feasible"] for row in rows))
             self.assertEqual(len({row["N_used"] for row in rows}), 1)
             self.assertLess(rows[0]["N_used"], 5)
             self.assertTrue(all(row["comparison_N"] == row["N_used"] for row in rows))
-            self.assertEqual(len(list((Path(directory) / "C/service_arrays").glob("*.npz"))), 3)
+            self.assertEqual(len(list((Path(directory) / "C/service_arrays").glob("*.npz"))), 4)
 
 
 if __name__ == "__main__":
