@@ -42,6 +42,10 @@ def health_poll_seconds(pins):
     return value
 
 
+def next_health_delay_seconds(result,poll_seconds):
+    return min(poll_seconds,10) if result=='dispatched' else poll_seconds
+
+
 def local_boot_matches(recorded, observed):
     # Windows psutil boot_time is estimated independently in each process.
     # PID and process create_time remain exact; remote Linux UUID is untouched.
@@ -652,7 +656,7 @@ def main():
             ops_clock.finish()
             if result in ('deadline', 'unknown_observe_only', 'stage_completed'):
                 return
-            time.sleep(poll_seconds)  # healthy queue cadence; independent from model review
+            time.sleep(next_health_delay_seconds(result,poll_seconds))
     finally:
         if singleton is not None:
             singleton.close()

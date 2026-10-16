@@ -210,6 +210,13 @@ class AdapterTests(unittest.TestCase):
         self.assertFalse(saved['statuses']['arm']['closed_ledger']['open'])
         self.assertEqual(saved['statuses']['arm']['resume_index']['env_step'],2016)
 
+    def test_fixed_dispatch_fills_next_lane_promptly_then_observes_slowly(self):
+        self.assertEqual(adapter.next_health_delay_seconds('dispatched',900),10)
+        self.assertEqual(adapter.next_health_delay_seconds('observe',900),900)
+        self.assertEqual(adapter.next_health_delay_seconds('dispatched',5),5)
+        self.assertEqual(adapter.next_health_delay_seconds('observe',10),10)
+        self.assertEqual([adapter.next_health_delay_seconds(r,900) for r in ('dispatched','dispatched','observe')],[10,10,900])
+
     def test_health_poll_default_and_root_bounded_science_cadence(self):
         self.assertEqual(adapter.health_poll_seconds({}),60)
         self.assertEqual(adapter.health_poll_seconds(dict(poll_seconds=3600)),3600)
