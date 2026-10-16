@@ -12,7 +12,7 @@ import tempfile
 import paramiko
 
 ROOT = '/home/u2025140002/second_stage_satellite_rl/s2_w31'
-PYTHON = '/opt/conda/envs/py310/bin/python'
+PYTHON = '/opt/conda/envs/pytorch-2.1.1/bin/python'
 RESULT = Path('D:/paper/outputs/experiments/s2_w31_20261017/codex/task1_result.json')
 
 
@@ -71,7 +71,8 @@ def deploy():
         local_self_check=dict(arms=8, steps_per_arm=317, explicit_updates_per_arm=3,
             exact_resume=True, final_policy_saved=True, evaluation_matches_W30=True,
             power_menus_valid=True, frozen_configurations_match=True,
-            scientific_results=False), issues=[])
+            scientific_results=False), issues=[
+                'py310 lacks torch; selected existing pytorch-2.1.1 CUDA environment on both ports.'])
     RESULT.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
