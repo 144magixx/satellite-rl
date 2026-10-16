@@ -74,8 +74,10 @@ def load_layout(path):
 def manifest(out, key, config):
     path = Path(out) / "run_manifest.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    entry = dict(config=config, git_commit=subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], text=True).strip(), python=platform.python_version(),
+    commit_file = Path("COMMIT")  # 远端冻结快照没有.git，部署时写入提交号
+    commit = (commit_file.read_text().strip() if commit_file.exists() else
+              subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip())
+    entry = dict(config=config, git_commit=commit, python=platform.python_version(),
         packages={name: version(name) for name in ("numpy", "scipy", "torch")},
         host=socket.gethostname(), start=datetime.now(timezone.utc).isoformat())
     def save():
