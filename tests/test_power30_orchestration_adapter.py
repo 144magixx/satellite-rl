@@ -28,6 +28,7 @@ class AdapterTests(unittest.TestCase):
         delegation = dict(authority=authority, plan_sha256=plan_ref['sha256'],
                           budget_contract_sha256=budget_ref['sha256'])
         pins = dict(adapter_source_sha256=adapter.file_sha(adapter.__file__),
+            controller_directory=str(self.root/'controller'),
             plan_ref=plan_ref, authority_ref=self.ref('authority.json', authority),
             budget_contract_ref=budget_ref,
             delegation_ref=self.ref('delegation.json', delegation),
@@ -111,6 +112,7 @@ class AdapterTests(unittest.TestCase):
         actual = dict(config, run_id=run_id, model_dir=str(model_dir))
         plan = dict(source_commit='source', tasks={'arm':dict(mode='engineering', executor_port=20627, config=config)})
         status = dict(task_key='arm', run_id=run_id, status='stopped', plan_sha256='plan',
+                      pid=123,process_birth=456,boot_id='boot',
                       source_commit='source', request_sha256='request', progress=dict(env_step=2016, update_step=17))
         save(directory / 'status.json', status)
         save(directory / 'config.json', actual)
@@ -126,15 +128,51 @@ class AdapterTests(unittest.TestCase):
 
     def test_original_config_probe_checkpoint_closed_ledger_and_no_stop(self):
         pins, plan, directory = self.status_fixture()
-        with patch.object(adapter,'verify_service'), patch.object(adapter,'linux_alive',return_value=False):
+        with patch.object(adapter,'verify_service'), patch.object(adapter,'linux_alive',return_value=False), \
+                patch.object(adapter,'linux_boot',return_value='boot'), \
+                patch.object(adapter,'linux_process_identity',return_value=dict(pid=123,state='Z',process_birth='456')):
             result = adapter.inspect_statuses(pins, plan)['arm']
             self.assertTrue(result['checkpoint_saved'])
             self.assertEqual(result['stop_reason'], 'engineering_2016_recovery_probe')
+            self.assertEqual(result['closed_ledger']['actual']['engineering_update'],17)
+            self.assertEqual(result['resume_index']['env_step'],2016)
+            self.assertEqual(result['process_exit_evidence']['observed_process']['state'],'Z')
             (directory / 'stop.request').write_text('human stop')
             self.assertFalse(adapter.inspect_statuses(pins,plan)['arm']['checkpoint_saved'])
             save(directory / 'config.json', {})
             with self.assertRaises(ValueError):
                 adapter.inspect_statuses(pins,plan)
+
+    def test_verified_snapshot_durable_before_resume_and_survives_changed_worker(self):
+        instance=self.local_adapter()
+        record=dict(status='stopped',ledger_closed=True,resume_index=dict(env_step=2016,current_SHA='checkpoint'),
+                    closed_ledger=dict(open=False,actual=dict(engineering_update=17,engineering_interaction=2016)),
+                    process_exit_evidence=dict(pid=123,recorded_process_birth=456,recorded_boot_id='boot',recorded_owner_live=False))
+        bridge=instance.bridge(20627)
+        bridge.inspect=lambda operation:{'arm':record}
+        self.assertEqual(instance.snapshot()['arm']['status'],'stopped')
+        paths=list((self.root/'controller'/'snapshots').glob('*.json'))
+        self.assertEqual(len(paths),1)
+        saved=json.loads(paths[0].read_text(encoding='utf8'))
+        self.assertEqual(saved['schema'],'W30VerifiedWorkbenchSnapshotV1')
+        self.assertEqual(saved['plan_sha256'],instance.pins['plan_ref']['sha256'])
+        record['closed_ledger']['open']=True
+        record['resume_index']['env_step']=2048
+        self.assertFalse(saved['statuses']['arm']['closed_ledger']['open'])
+        self.assertEqual(saved['statuses']['arm']['resume_index']['env_step'],2016)
+
+    def test_health_poll_default_and_root_bounded_science_cadence(self):
+        self.assertEqual(adapter.health_poll_seconds({}),60)
+        self.assertEqual(adapter.health_poll_seconds(dict(poll_seconds=3600)),3600)
+        for value in (4,3601,True,0,-1):
+            with self.assertRaises(ValueError):adapter.health_poll_seconds(dict(poll_seconds=value))
+
+    def test_same_birth_live_owner_cannot_be_called_exited(self):
+        pins,plan,_=self.status_fixture()
+        with patch.object(adapter,'verify_service'), patch.object(adapter,'linux_alive',return_value=False), \
+                patch.object(adapter,'linux_boot',return_value='boot'), \
+                patch.object(adapter,'linux_process_identity',return_value=dict(pid=123,state='R',process_birth='456')):
+            with self.assertRaises(ValueError):adapter.inspect_statuses(pins,plan)
 
     def test_ops_clock_root_precharge_real_active_and_unknown_reservation(self):
         directory = str(self.root / 'clock')

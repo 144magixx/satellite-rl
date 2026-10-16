@@ -34,6 +34,13 @@ def read_ref(ref):
     return json.loads(Path(ref['path']).read_text(encoding='utf8'))
 
 
+def health_poll_seconds(pins):
+    value = pins.get('poll_seconds',60)
+    if type(value) is not int or not 5 <= value <= 3600:
+        raise ValueError('Root-pinned 5..3600 second health cadence required')
+    return value
+
+
 def recursive_refs(value):
     if isinstance(value, dict):
         if set(value) == {'path', 'sha256'}:
@@ -57,6 +64,15 @@ def linux_birth(pid):
 
 def linux_boot():
     return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+
+
+def linux_process_identity(pid):
+    try:
+        text = Path('/proc/%s/stat' % int(pid)).read_text()
+        tail = text[text.rfind(')') + 2:].split()
+        return dict(pid=int(pid), state=tail[0], process_birth=tail[19])
+    except (FileNotFoundError, ProcessLookupError):
+        return None
 
 
 def linux_alive(status):
@@ -153,12 +169,29 @@ def inspect_statuses(pins, plan):
                       config_sha256=digest(task['config']))
         if status['status'] in ('completed', 'stopped') and not status['alive']:
             progress = status['progress']
-            ledger = json.loads((Path(config['ledger_root']) / 'workers' / (run_id + '.json')).read_text())
+            ledger_path = Path(config['ledger_root']) / 'workers' / (run_id + '.json')
+            ledger_bytes = ledger_path.read_bytes()
+            ledger = json.loads(ledger_bytes)
             status['ledger_closed'] = ledger['open'] is False and ledger['run_id'] == run_id
             if not status['ledger_closed']:
                 raise ValueError('Exited clean status has open ledger')
+            status['closed_ledger'] = ledger
+            status['closed_ledger_ref'] = dict(path=str(ledger_path), sha256=hashlib.sha256(ledger_bytes).hexdigest())
+            observed = linux_process_identity(status['pid'])
+            owner_live = bool(observed and str(observed['process_birth']) == str(status['process_birth'])
+                              and observed['state'] not in ('Z','X'))
+            if status['boot_id'] != linux_boot() or owner_live:
+                raise ValueError('Original owner exit/boot not verified at evidence barrier')
+            status['process_exit_evidence'] = dict(pid=status['pid'],
+                recorded_process_birth=status['process_birth'], recorded_boot_id=status['boot_id'],
+                actual_boot_id=linux_boot(), observed_process=observed, recorded_owner_live=False,
+                checked_UTC=datetime.now(timezone.utc).isoformat())
             if task['mode'] == 'engineering' and status['status'] == 'stopped' and progress.get('env_step') == 2016:
-                index = json.loads((Path(config['model_dir']) / 'resume_index.json').read_text())
+                index_path = Path(config['model_dir']) / 'resume_index.json'
+                index_bytes = index_path.read_bytes()
+                index = json.loads(index_bytes)
+                status['resume_index'] = index
+                status['resume_index_ref'] = dict(path=str(index_path),sha256=hashlib.sha256(index_bytes).hexdigest())
                 checkpoint = Path(config['model_dir']) / 'current.pt'
                 # Frozen runner checks this exact branch before user stop and
                 # saves engineering_recovery_probe_done in the hashed checkpoint.
@@ -171,6 +204,7 @@ def inspect_statuses(pins, plan):
                          and not any(Path(p).exists() for p in config['pause_markers']))
                 status['checkpoint_saved'] = saved
                 if saved:
+                    status['checkpoint_ref'] = dict(path=str(checkpoint),sha256=index['current_SHA'])
                     status['stop_reason'] = 'engineering_2016_recovery_probe'
         statuses[key] = status
     return statuses
@@ -374,6 +408,12 @@ class Adapter:
             if set(result) & set(all_statuses):
                 raise ValueError('Duplicate tasks across lanes')
             all_statuses.update(result)
+        stamp = datetime.now(timezone.utc)
+        snapshot = dict(schema='W30VerifiedWorkbenchSnapshotV1',checked_UTC=stamp.isoformat(),
+                        plan_sha256=self.pins['plan_ref']['sha256'],statuses=all_statuses)
+        # This durable barrier precedes every candidate submit/resume in tick.
+        name = stamp.strftime('%Y%m%dT%H%M%S.%fZ') + '-' + digest(snapshot)[:12] + '.json'
+        save(Path(self.pins['controller_directory']) / 'snapshots' / name, snapshot)
         self.last_statuses = all_statuses
         return all_statuses
 
@@ -525,9 +565,7 @@ def main():
     verify_launch_admission(pins)
     if not isinstance(pins.get('local_pause_markers'), list) or not pins['local_pause_markers']:
         raise ValueError('Explicit future local pause markers required')
-    poll_seconds = pins.get('poll_seconds', 60)
-    if type(poll_seconds) is not int or not 5 <= poll_seconds <= 60:
-        raise ValueError('Root-pinned 5..60 second health cadence required')
+    poll_seconds = health_poll_seconds(pins)
     if args.single_pass:
         import psutil
         owner = json.loads((Path(pins['controller_directory']) / 'singleton' / 'owner.json').read_text())
