@@ -29,6 +29,19 @@ def toy_layout(frame):
                         np.array([11, 22]), rays(frame.positions))
 
 
+def angular_positions(degrees):
+    axis = rays([[45., 10.]])[0]
+    tangent = np.cross(axis, [0., 0., 1.])
+    tangent /= np.linalg.norm(tangent)
+    theta = np.deg2rad(degrees)[:, None]
+    return ray_to_latlon(axis * np.cos(theta) + tangent * np.sin(theta))
+
+
+def angular_frame(degrees):
+    return Frame("2024-01-12", 0., 0, np.arange(len(degrees), dtype=np.uint32),
+                 angular_positions(degrees), np.zeros(len(degrees)), np.zeros(len(degrees)))
+
+
 class DynamicTests(unittest.TestCase):
     def test_patch_uses_nearest_center_radius_and_never_moves_centers(self):
         axis = rays([[45., 10.]])[0]
@@ -47,8 +60,64 @@ class DynamicTests(unittest.TestCase):
         np.testing.assert_array_equal(current.owner, [0, 1, 1])
         np.testing.assert_array_equal(current.centers_latlon, layout.centers_latlon)
         self.assertTrue(validate_layout(current, rays(frame.positions), 2))
-        failed, _ = patch(layout, old, replace(frame, positions=positions([0., .2, .41])), N_budget=2)
-        self.assertIsNone(failed)
+        frame = replace(frame, positions=positions([0., .2, .41]))
+        current, next_id = patch(layout, old, frame, N_budget=2)
+        self.assertTrue(validate_layout(current, rays(frame.positions), 2))
+        np.testing.assert_array_equal(current.owner, [0, 0, 1])
+        np.testing.assert_array_equal(current.centers_latlon,
+                                      np.vstack((layout.centers_latlon[1], frame.positions[2])))
+        np.testing.assert_array_equal(current.beam_ids, [1, 2])
+        self.assertEqual(next_id, 3)
+
+    def test_patch_dissolves_using_radii_after_removing_center(self):
+        old = angular_frame([-.19, .2])
+        layout = with_members(angular_positions([0., .2]), np.array([0, 1]),
+                              [11, 22], rays(old.positions))
+        frame = angular_frame([-.19, .2, .8])
+        current, next_id = patch(layout, old, frame, N_budget=2, next_id=30)
+        self.assertTrue(validate_layout(current, rays(frame.positions), 2))
+        # The left member is .39 degrees from the survivor: only its expanded
+        # post-deletion radius covers it (the original radius was .2).
+        np.testing.assert_array_equal(current.owner, [0, 0, 1])
+        np.testing.assert_array_equal(current.beam_ids, [22, 30])
+        np.testing.assert_array_equal(current.centers_latlon,
+                                      np.vstack((layout.centers_latlon[1], frame.positions[2])))
+        self.assertEqual(next_id, 31)
+
+    def test_patch_skips_lightest_beam_when_its_member_cannot_move(self):
+        old = angular_frame([0., 1., 1.01, 1.2, 1.21, 1.22])
+        layout = with_members(angular_positions([0., 1., 1.2]),
+                              np.array([0, 1, 1, 2, 2, 2]), [11, 22, 33], rays(old.positions))
+        frame = angular_frame([0., 1., 1.01, 1.2, 1.21, 1.22, 1.9])
+        current, next_id = patch(layout, old, frame, N_budget=3, next_id=40)
+        self.assertTrue(validate_layout(current, rays(frame.positions), 3))
+        np.testing.assert_array_equal(current.owner, [0, 1, 1, 1, 1, 1, 2])
+        np.testing.assert_array_equal(current.beam_ids, [11, 33, 40])
+        np.testing.assert_array_equal(current.centers_latlon,
+                                      np.vstack((layout.centers_latlon[[0, 2]], frame.positions[6])))
+        self.assertEqual(next_id, 41)
+
+    def test_patch_rechecks_coverage_after_replacing_a_center(self):
+        old = angular_frame([-.19, .2])
+        layout = with_members(angular_positions([0., .2]), np.array([0, 1]),
+                              [11, 22], rays(old.positions))
+        frame = angular_frame([-.19, .2, .41])
+        current, next_id = patch(layout, old, frame, N_budget=2, next_id=30)
+        self.assertTrue(validate_layout(current, rays(frame.positions), 2))
+        # Opening .41 reduces .2's expanded radius from .5 to .21; the
+        # dissolved member at -.19 then needs a second replacement center.
+        np.testing.assert_array_equal(current.owner, [1, 0, 0])
+        np.testing.assert_array_equal(current.beam_ids, [30, 31])
+        np.testing.assert_array_equal(current.centers_latlon, frame.positions[[2, 0]])
+        self.assertEqual(next_id, 32)
+
+    def test_patch_fails_when_no_beam_can_be_dissolved(self):
+        old = angular_frame([0., 1.2])
+        layout = with_members(old.positions, np.array([0, 1]), [11, 22], rays(old.positions))
+        frame = angular_frame([0., 1.2, 2.4])
+        current, next_id = patch(layout, old, frame, N_budget=2, next_id=30)
+        self.assertIsNone(current)
+        self.assertEqual(next_id, 30)
 
     def test_identity_matching_and_costs(self):
         frame = toy_frames()[0]

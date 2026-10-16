@@ -68,17 +68,13 @@ def previous_owner(layout, old_frame, frame):
 
 
 def patch(layout, old_frame, frame, N_budget=N_DYN, next_id=None):
-    """中心固定；先补覆盖，再保留合法归属并增量分配其余飞机。"""
+    """中心固定；增量指派，满预算时解散可改分的最闲束以补覆盖。"""
     aircraft = rays(frame.positions)
     centers = np.array(layout.centers_latlon, copy=True)
     ids = list(layout.beam_ids)
     next_id = int(max(ids, default=-1) + 1 if next_id is None else next_id)
     owner = previous_owner(layout, old_frame, frame)
     distance = angles(rays(centers), aircraft)
-    valid = owner >= 0
-    radii = coverage_radii(rays(centers))
-    valid[valid] &= distance[owner[valid], np.flatnonzero(valid)] <= radii[owner[valid]] + 1e-10
-    owner[~valid] = -1
     loads = np.bincount(owner[owner >= 0], minlength=len(centers))
     keep = np.flatnonzero(loads)
     remap = np.full(len(centers), -1, dtype=int)
@@ -89,27 +85,36 @@ def patch(layout, old_frame, frame, N_budget=N_DYN, next_id=None):
     while True:
         radii = coverage_radii(rays(centers))
         eligible = distance <= radii[:, None] + 1e-10
-        uncovered = np.flatnonzero(~eligible.any(axis=0))
+        known = owner >= 0
+        owner[known] = np.where(eligible[owner[known], np.flatnonzero(known)], owner[known], -1)
+        loads = np.bincount(owner[owner >= 0], minlength=len(centers))
+        for a in np.flatnonzero(owner < 0):
+            possible = np.flatnonzero(eligible[:, a])
+            if len(possible):
+                j = possible[np.argmin(loads[possible])]
+                owner[a] = j
+                loads[j] += 1
+        uncovered = np.flatnonzero(owner < 0)
         if not len(uncovered):
             break
         if len(centers) == N_budget:
-            return None, next_id
-        nearby = angles(aircraft[uncovered], aircraft[uncovered]) <= .5
-        a = uncovered[np.argmax(nearby.sum(axis=1))]
-        if np.any(distance[:, a] < .15 - 1e-10):
-            return None, next_id
+            for j in np.argsort(loads, kind="stable"):
+                remaining = np.arange(len(centers)) != j
+                other_radii = coverage_radii(rays(centers[remaining]))
+                members = owner == j
+                if np.all(np.any(distance[remaining][:, members] <= other_radii[:, None] + 1e-10, axis=0)):
+                    owner[members] = -1
+                    owner[owner > j] -= 1
+                    centers, distance = centers[remaining], distance[remaining]
+                    ids.pop(j)
+                    break
+            else:
+                return None, next_id
+        a = uncovered[0]
         centers = np.vstack((centers, frame.positions[a]))
         ids.append(next_id)
         next_id += 1
         distance = np.vstack((distance, angles(aircraft[a:a + 1], aircraft)))
-    known = owner >= 0
-    owner[known] = np.where(eligible[owner[known], np.flatnonzero(known)], owner[known], -1)
-    loads = np.bincount(owner[owner >= 0], minlength=len(centers))
-    for a in np.flatnonzero(owner < 0):
-        possible = np.flatnonzero(eligible[:, a])
-        j = possible[np.argmin(loads[possible])]
-        owner[a] = j
-        loads[j] += 1
     candidate = with_members(centers, owner, ids, aircraft)
     if not validate_layout(candidate, aircraft, N_budget):
         return None, next_id

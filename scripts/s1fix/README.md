@@ -94,6 +94,32 @@ DQN Python 3.11.11、NumPy 1.26.4、SciPy 1.11.4，`PYTHONPATH=src`，OMP/MKL/Op
 
 全部`tests/test_s1fix_*.py`共41项通过。新旧中间结果、最终布局、逐帧数据、诊断脚本、最终源码快照和测试日志在`D:/paper/outputs/experiments/s1_fix_20261017/adaptive_revision/`，最终静态看`static_summary.json`、动态看`repair_diagnosis/final.json`。本轮未运行完整实验、正式训练或远端调用，不涉及工作台前端。
 
+## 满预算patch修订自测（2026-10-17）
+
+第14节只修改`dynamic.py`的patch：先保留仍合法的归属，其余飞机分给合格束中负载最小者；仍有飞机无法覆盖且预算用满时，按当前负载从小到大寻找可解散束。判断使用删除该中心后重算的半径上限，要求全部当前成员都能改分；跳过不可解散的候选。解散后开新中心，并重新核算半径、补分成员，直到覆盖齐全。存续束的中心与ID不变，新束使用新ID；不预留名额，不改`skeleton.py`或`geom.py`，不重算既有缓存。补充删后半径扩大、跳过不可删最闲束、连续替换中心补覆盖和无束可解散四个回归用例，全部45项`test_s1fix_*.py`通过。
+
+自测用指定DQN Python、`PYTHONPATH=src`和单线程，取`sequence_sets(data, 'train')[10]`：2024-01-08 UTC 11:00—11:30，动态帧300—330，1808—1864架飞机。独立目录新建31帧full缓存（N=100、effort=1、30秒软截止），均100束且合法，累计求解243.337秒。三臂共用这些缓存；第0帧仅初始化，以下统计30次相邻帧转换，LB为`ceil(n/100)`，full计缓存原始求解时间，缓存读取不计耗时。
+
+| 臂 | 平均峰值−LB/架 | 平均换束比例 | 强制full次数 | 平均单帧耗时/秒 |
+| --- | --- | --- | --- | --- |
+| B0 | 7.7667 | 45.6972% | 0/30 | 7.9898 |
+| B1 | 20.8000 | 5.6067% | 0/30 | 0.0264 |
+| B2+（θ=2） | 8.6333 | 8.1402% | 0/30 | 0.6864 |
+
+三臂全部逐帧合法。B2+触发repair19次。参照`782905d`在同一序列、同一缓存上的B1和B2+均强制full29/30次，平均峰值−LB为7.6667、换束44.2127%、单帧约7.854秒。修订消除了本段的强制full，B1换束较B0低87.73%，代价是负载峰值更高；B2+修复后峰值差距接近B0。本段只验证局部修补行为，不代表完整动态实验或训练结论；没有新增前端操作，无需前端变更。
+
+缓存、修订前后逐帧CSV、修订后三臂布局、配置/汇总`summary.json`、测试日志及脚本均在`D:/paper/outputs/experiments/s1_fix_20261017/local_patch_smoke/`。在前述PowerShell环境中复跑：
+
+```powershell
+$env:OMP_NUM_THREADS='1'
+$env:MKL_NUM_THREADS='1'
+$env:OPENBLAS_NUM_THREADS='1'
+& $python D:/paper/outputs/experiments/s1_fix_20261017/local_patch_smoke/build_cache.py
+& $python D:/paper/outputs/experiments/s1_fix_20261017/local_patch_smoke/evaluate_patch.py
+```
+
+首条命令复用已有full缓存；第二条从Git读取`782905d`作修改前对照，重算三臂自测并覆盖同目录CSV与修订后布局。
+
 ## 远端耗时估计
 
 初版按16核CPU估计：A静态与A3约0.5—2小时，A2约1—4小时，C约1—3小时；B的3410个唯一full缓存约2—4小时，规则臂约0.5—3小时；12个PPO任务并行约8—36小时，再做评价约1—4小时。这些旧估计按每帧0.1—数秒推算，当前大场景本地耗时已超出该假设，不能直接用于修订版排期；远端首次运行后需据实更新。
