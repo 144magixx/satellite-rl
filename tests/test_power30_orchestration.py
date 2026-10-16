@@ -167,6 +167,29 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(self.controller().tick(), 'deadline')
         self.assertFalse(self.calls)
 
+    def test_dead_development_and_incomplete_completion_do_not_free_lane(self):
+        mapping={'P00':20627,'P11':20627,'P01':20653,'P10':20653}
+        for task in self.tasks.values():task['executor_port']=mapping[task['config']['menu']]
+        self.delegation['identities']={str(port):self.identity for port in (20627,20653)}
+        self.qualify_science_fixture()
+        key='P00M0'
+        for index,(state,steps,updates) in enumerate((('development',50000,48001),('completed',149999,148000),('unknown',0,0))):
+            self.statuses={key:self.status(key,state,steps,updates)}
+            controller=self.controller();controller.directory=Path(self.temp.name)/str(index)
+            self.assertEqual(controller.tick(),'dispatched')
+            chosen=self.calls[-1][2]['task_key']
+            self.assertEqual(self.tasks[chosen]['executor_port'],20653)
+
+    def test_true_completed_budget_frees_lane_without_weakening_busy(self):
+        mapping={'P00':20627,'P11':20627,'P01':20653,'P10':20653}
+        for task in self.tasks.values():task['executor_port']=mapping[task['config']['menu']]
+        self.delegation['identities']={str(port):self.identity for port in (20627,20653)}
+        self.qualify_science_fixture()
+        self.statuses={'P00M0':self.status('P00M0','completed',150000,148001),
+                       'P01M0':dict(self.status('P01M0','development',50000,48001),alive=True)}
+        self.assertEqual(self.controller().tick(),'dispatched')
+        self.assertEqual(self.calls[-1][2]['task_key'],'P11M0')
+
     def test_science_requires_pinned_complete_root_engineering_evidence(self):
         for task in self.tasks.values():
             task['mode']='train'

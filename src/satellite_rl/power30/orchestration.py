@@ -160,6 +160,11 @@ class Controller:
             task = tasks[key]
             lane_statuses = [s for k, s in statuses.items()
                              if tasks[k]['executor_port'] == task['executor_port']]
+            if any(s.get('alive') is not True and not self.completed(s,tasks[k])
+                   and not self.resumable_engineering_stop(s,tasks[k])
+                   for k,s in statuses.items()
+                   if tasks[k]['executor_port'] == task['executor_port']):
+                continue  # Dead nonterminal/incomplete work never frees its lane.
             if any(s.get('status') in ('failed', 'interrupted', 'needs_root_recovery_accounting')
                    for s in lane_statuses):
                 continue
@@ -178,13 +183,7 @@ class Controller:
                 continue
             action, run_id = 'submit', None
             if status:
-                if (task['mode'] == 'engineering' and status.get('status') == 'stopped'
-                        and status.get('progress', {}).get('env_step') == 2016
-                        and status.get('progress', {}).get('update_step') == 17
-                        and status.get('alive') is False
-                        and status.get('stop_reason') == 'engineering_2016_recovery_probe'
-                        and status.get('checkpoint_saved') is True
-                        and status.get('ledger_closed') is True):
+                if self.resumable_engineering_stop(status,task):
                     action, run_id = 'resume', status['run_id']
                 else:
                     continue  # failed/unknown/user stop never gets automatic recovery
@@ -228,6 +227,16 @@ class Controller:
             save(intent_path, intent)
             return 'dispatched'
         return 'observe'
+
+    @staticmethod
+    def resumable_engineering_stop(status,task):
+        return bool(status and task['mode']=='engineering' and status.get('status')=='stopped'
+                    and status.get('progress',{}).get('env_step')==2016
+                    and status.get('progress',{}).get('update_step')==17
+                    and status.get('alive') is False
+                    and status.get('stop_reason')=='engineering_2016_recovery_probe'
+                    and status.get('checkpoint_saved') is True
+                    and status.get('ledger_closed') is True)
 
     @staticmethod
     def completed(status, task):
