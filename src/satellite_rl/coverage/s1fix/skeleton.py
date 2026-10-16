@@ -61,7 +61,7 @@ def centers_separated(centers, spacing=True, fixed_width=None):
 
 def _edges(centers, members, radii):
     rows = cKDTree(members).query_ball_point(
-        centers, 2 * np.sin(np.deg2rad(np.asarray(radii) + 1e-9) / 2))
+        centers, 2 * np.sin(np.deg2rad(np.asarray(radii) + 2e-8) / 2))
     aircraft = np.concatenate(rows).astype(np.int64)
     beam = np.repeat(np.arange(len(centers)), [len(row) for row in rows])
     order = np.lexsort((beam, aircraft))
@@ -231,7 +231,7 @@ def _nearest(centers, members, radii):
     if len(members) == 0:
         return np.empty(0, dtype=np.int64)
     distance = angles(members, centers)
-    distance[distance > np.asarray(radii) + 1e-9] = np.inf
+    distance[distance > np.asarray(radii) + 2e-8] = np.inf
     if not np.isfinite(distance.min(axis=1)).all():
         return None
     return distance.argmin(axis=1)
@@ -379,8 +379,10 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
         centers = rays(layout.centers_latlon)
         radii = coverage_radii(centers, spacing, fixed_width)
         owner = assign(centers, members, radii=radii)
-        if balance:
+        if owner is not None and balance:
             owner = assign(centers, members, mode="balance", radii=radii)
+        if owner is None:
+            break
         assigned = _layout(centers, members, owner, layout.beam_ids, fixed_width)
         if (_key(assigned) < _key(layout)
                 and (not preserve_N or len(assigned.widths) == len(layout.widths))):

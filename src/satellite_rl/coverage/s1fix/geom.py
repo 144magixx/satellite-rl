@@ -90,7 +90,7 @@ def ray_to_latlon(directions):
     lon = np.deg2rad(profile.satellite_longitude_deg)
     satellite = profile.orbit_radius_km * np.array([np.cos(lon), np.sin(lon), 0.0])
     dot = direction @ satellite
-    distance = -dot - np.sqrt(dot ** 2 - (satellite @ satellite - profile.earth_radius_km ** 2))
+    distance = -dot - np.sqrt(np.maximum(dot ** 2 - (satellite @ satellite - profile.earth_radius_km ** 2), 0.))
     point = satellite + distance[..., None] * direction
     return np.stack((np.rad2deg(np.arctan2(point[..., 2], np.linalg.norm(point[..., :2], axis=-1))),
                      np.rad2deg(np.arctan2(point[..., 1], point[..., 0]))), axis=-1)
