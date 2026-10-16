@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from satellite_rl.power30 import orchestration as module
 
 
@@ -134,6 +134,16 @@ class OrchestrationTests(unittest.TestCase):
                     self.controller().tick()
                 self.facts[field] = old
         self.assertFalse(self.calls)
+
+    def test_root_bounded_negative_clock_age_and_unchanged_stale_upper_bound(self):
+        key=next(iter(self.tasks))
+        controller=self.controller()
+        for delta in (0.290528,0.313377,5.0,-60.0):
+            facts=dict(self.facts,checked_UTC=(self.now+timedelta(seconds=delta)).isoformat())
+            controller.validate_facts(key,facts)
+        for delta in (5.000001,-60.000001):
+            facts=dict(self.facts,checked_UTC=(self.now+timedelta(seconds=delta)).isoformat())
+            with self.assertRaises(ValueError):controller.validate_facts(key,facts)
 
     def test_mutated_plan_and_unverified_snapshot_rejected(self):
         controller = self.controller()

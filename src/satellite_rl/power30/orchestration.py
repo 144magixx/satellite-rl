@@ -27,6 +27,9 @@ from datetime import datetime, timezone
 
 
 MENUS = {'P00', 'P10', 'P01', 'P11'}
+# Root-qualified clock brackets showed remote clocks <1s ahead of Windows.
+# Only tolerate a bounded negative local age; stale evidence still expires60s.
+MAX_NEGATIVE_CLOCK_SKEW_SECONDS = 5
 
 
 def digest(value):
@@ -249,7 +252,7 @@ class Controller:
         if self.delegation.get('new_human_pause_overrides') is not True:
             raise ValueError('New human pause always overrides delegation')
         age = (self.clock() - datetime.fromisoformat(facts['checked_UTC'].replace('Z', '+00:00'))).total_seconds()
-        if not 0 <= age <= 60 or facts.get('deadline_utc') != self.deadline:
+        if not -MAX_NEGATIVE_CLOCK_SKEW_SECONDS <= age <= 60 or facts.get('deadline_utc') != self.deadline:
             raise ValueError('Fresh same-deadline ops evidence required')
         for field in ('source_verified', 'input_verified', 'exclusive_claim_verified',
                       'storage_peak_verified', 'shared_budget_verified',
