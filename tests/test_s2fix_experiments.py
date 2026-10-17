@@ -1,5 +1,7 @@
 """Evaluation wiring checks with no scene solve, policy rollout, or SCA."""
 import tempfile
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -9,6 +11,25 @@ from satellite_rl.s2fix.experiments import evaluate_scene
 
 
 class EvaluationWiringTests(unittest.TestCase):
+    def test_source_cases_loads_content_addressed_objects(self):
+        from satellite_rl.s2fix.data import source_cases
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'objects').mkdir()
+            rows = []
+            for case_id in ('first', 'second'):
+                payload = json.dumps({'case_id': case_id}).encode('utf-8')
+                digest = hashlib.sha256(payload).hexdigest()
+                (root / 'objects' / digest).write_bytes(payload)
+                rows.append({'case_ref': {'path': 'case.json', 'sha256': digest}})
+            (root / 'development_published.json').write_text(
+                json.dumps({'rows': rows}), encoding='utf-8')
+            # A basename-based lookup must not silently load a shared wrong case.
+            (root / 'objects' / 'case.json').write_text(
+                json.dumps({'case_id': 'wrong'}), encoding='utf-8')
+            cases = source_cases('development', inputs_dir=root)
+        self.assertEqual([case['case_id'] for case in cases], ['first', 'second'])
+
     def test_manifest_set_name_and_list_power_result(self):
         stage=SimpleNamespace(case={'UTC':'2024-02-24T00:00:00Z'},layout={
             'beam_ids':['a','b'],'request_bps_by_beam_int64':np.array([100,200]),
