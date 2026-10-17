@@ -14,8 +14,8 @@ from .genetic import genetic
 from .convex_relax import convex_relax
 from .power_lit import C1, C2
 
-METHODS = ('B1_32', 'B1_320', 'B1_3200', 'B1W_320',
-           'B2_32', 'B2_320', 'B2_3200', 'B2W_320',
+METHODS = ('B1_32', 'B1_320', 'B1_3200', 'B1W_320', 'B1W_3200',
+           'B2_32', 'B2_320', 'B2_3200', 'B2W_320', 'B2W_3200',
            'B3', 'P0', 'C1', 'C2', 'E1_320', 'E1_3200')
 
 
