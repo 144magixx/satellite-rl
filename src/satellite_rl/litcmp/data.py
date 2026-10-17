@@ -12,7 +12,7 @@ from satellite_rl.coverage.s1fix.data import load_day, stratified
 from satellite_rl.shared_interface.stages import make_case
 
 SETS = dict(s2data.SETS, conf_d432_n150=("test", 43200000, 150),
-            conf_d216_n150=("test", 21600000, 150))
+            conf_d216_n150=("test", 21600000, 150), conf_d864_n150=("test", 86400000, 150))
 
 
 def source_cases(role, inputs_dir=INPUTS, frames_dir=FRAMES):
