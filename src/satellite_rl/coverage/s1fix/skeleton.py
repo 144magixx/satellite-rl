@@ -27,7 +27,7 @@ class Result:
     reserve: int = 0
 
 
-def _flow(n, m, aircraft, beam, peak):
+def _flow(n, m, aircraft, beam, peak, partial=False):
     source, sink = n + m, n + m + 1
     rows = np.concatenate((np.full(n, source), aircraft, n + np.arange(m)))
     cols = np.concatenate((np.arange(n), n + beam, np.full(m, sink)))
@@ -35,11 +35,11 @@ def _flow(n, m, aircraft, beam, peak):
                                np.full(m, peak, dtype=np.int64)))
     graph = coo_matrix((capacity, (rows, cols)), shape=(sink + 1, sink + 1)).tocsr()
     flow = maximum_flow(graph, source, sink)
-    if flow.flow_value != n:
+    if flow.flow_value != n and not partial:
         return None
     assigned = flow.flow[:n, n:n + m].tocoo()
     positive = assigned.data > 0
-    owner = np.empty(n, dtype=np.int64)
+    owner = np.full(n, -1, dtype=np.int64)
     owner[assigned.row[positive]] = assigned.col[positive]
     return owner
 
@@ -57,9 +57,12 @@ def coverage_radii(centers, spacing=True, fixed_width=None, stack_id=None):
     return np.minimum(.5, distance.min(axis=1))
 
 
-def centers_separated(centers, spacing=True, fixed_width=None):
+def centers_separated(centers, spacing=True, fixed_width=None, stack_id=None):
     distance = angles(centers, centers)
     np.fill_diagonal(distance, np.inf)
+    if stack_id is not None:
+        stacks = np.asarray(stack_id)
+        distance[(stacks[:, None] >= 0) & (stacks[:, None] == stacks[None, :])] = np.inf
     minimum = (.15 if fixed_width is None else fixed_width / 2) if spacing else 1e-10
     return bool(np.all(distance >= minimum - (1e-9 if spacing else 0)))
 
@@ -270,7 +273,7 @@ def _nearest(centers, members, radii):
     return distance.argmin(axis=1)
 
 
-def _layout(centers, members, owner, ids, fixed_width=None, recenter=False):
+def _layout(centers, members, owner, ids, fixed_width=None, recenter=False, stack_id=None):
     keep = np.flatnonzero(np.bincount(owner, minlength=len(centers)))
     remap = np.full(len(centers), -1, dtype=np.int64)
     remap[keep] = np.arange(len(keep))
@@ -278,7 +281,8 @@ def _layout(centers, members, owner, ids, fixed_width=None, recenter=False):
     if recenter:
         centers = np.array([cone(members[owner == j])[0] for j in range(len(centers))])
     widths = envelope(centers, members, owner) if fixed_width is None else np.full(len(centers), fixed_width)
-    return Layout(ray_to_latlon(centers), widths, owner, ids)
+    stacks = None if stack_id is None else np.asarray(stack_id)[keep].copy()
+    return Layout(ray_to_latlon(centers), widths, owner, ids, stacks)
 
 
 def _key(layout):
@@ -322,12 +326,12 @@ def _spread_split(split, others, minimum):
 
 
 def _accept(layout, members, budget, spacing, fixed):
-    return layout if (centers_separated(rays(layout.centers_latlon), spacing, fixed)
+    return layout if (centers_separated(rays(layout.centers_latlon), spacing, fixed, layout.stack_id)
                       and validate_layout(layout, members, budget, spacing, fixed)) else None
 
 
 def _add_beams(layout, members, budget, spacing, fixed, next_id, rng=None,
-               nearest=False, deadline=np.inf, per_beam_cap=None):
+               nearest=False, deadline=np.inf, per_beam_cap=None, bounded=False):
     while len(layout.widths) < budget and _key(layout)[0] > 1 and perf_counter() < deadline:
         centers = rays(layout.centers_latlon)
         loads = np.bincount(layout.owner, minlength=len(centers))
@@ -363,7 +367,10 @@ def _add_beams(layout, members, budget, spacing, fixed, next_id, rng=None,
                 candidate = _layout(proposed, members, owner, np.append(layout.beam_ids, next_id), fixed)
                 if len(candidate.widths) > len(layout.widths):
                     if not nearest:
-                        owner = assign(proposed, members, radii=radii, per_beam_cap=per_beam_cap)
+                        owner = assign(proposed, members, radii=radii, per_beam_cap=per_beam_cap,
+                                       deadline=deadline if bounded else None)
+                        if owner is None:
+                            break
                         candidate = _layout(proposed, members, owner, np.append(layout.beam_ids, next_id), fixed)
                     next_id += 1
                     layout, accepted = candidate, True
@@ -376,7 +383,8 @@ def _add_beams(layout, members, budget, spacing, fixed, next_id, rng=None,
 
 
 def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
-            init_layout, balance, max_iters, rng, nearest=False, preserve_N=False, objective=None, per_beam_cap=None):
+            init_layout, balance, max_iters, rng, nearest=False, preserve_N=False, objective=None,
+            per_beam_cap=None, bounded=False):
     def score(value):
         if objective == "narrow":
             center_rays = rays(value.centers_latlon)
@@ -384,16 +392,17 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
         return _key(value)
 
     start = perf_counter()
+    assignment_deadline = deadline if bounded or objective is not None else None
     members = rays(frame.positions)
     if len(members) == 0:
         empty = Layout(np.empty((0, 2)), np.empty(0), np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64))
         return Result(empty, 0, True, 0., 0., 0., perf_counter() - start)
     N0 = len(initial_cover(members))
-    if objective is not None and perf_counter() >= deadline:
+    if assignment_deadline is not None and perf_counter() >= deadline:
         return Result(None, N0, False, 0., 0., 0., perf_counter() - start)
     centers = (_adaptive_centers(members, N_budget, fixed_width) if init_layout is None
                else rays(init_layout.centers_latlon))
-    if objective is not None and perf_counter() >= deadline:
+    if assignment_deadline is not None and perf_counter() >= deadline:
         return Result(None, N0, False, 0., 0., 0., perf_counter() - start)
     initial_count = len(centers)
     if initial_count > N_budget:
@@ -401,7 +410,7 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
     ids = np.arange(initial_count) if init_layout is None else init_layout.beam_ids.copy()
     radii = coverage_radii(centers, spacing, fixed_width)
     owner = _nearest(centers, members, radii) if nearest else assign(centers, members, radii=radii, objective=objective, per_beam_cap=per_beam_cap,
-            deadline=deadline if objective is not None else None)
+            deadline=assignment_deadline)
     if owner is None:
         return Result(None, N0, False, perf_counter() - start, 0., 0., perf_counter() - start)
     layout = _layout(centers, members, owner, ids, fixed_width)
@@ -414,7 +423,7 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
     growth_budget = initial_count if preserve_N else N_budget
     if not nearest:
         layout, next_id = _add_beams(layout, members, growth_budget, spacing, fixed_width,
-                                     next_id, rng, False, deadline, per_beam_cap)
+                                     next_id, rng, False, deadline, per_beam_cap, bounded)
     init_end = perf_counter()
     best, stale = layout, 0
     for _ in range(0 if nearest else (30 * effort if max_iters is None else max_iters)):
@@ -423,9 +432,10 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
         centers = rays(layout.centers_latlon)
         radii = coverage_radii(centers, spacing, fixed_width)
         owner = assign(centers, members, radii=radii, objective=objective, per_beam_cap=per_beam_cap,
-            current_peak=int(np.bincount(layout.owner).max()), deadline=deadline if objective is not None else None)
+            current_peak=int(np.bincount(layout.owner).max()), deadline=assignment_deadline)
         if owner is not None and balance and objective != "narrow":
-            owner = assign(centers, members, mode="balance", radii=radii, per_beam_cap=per_beam_cap)
+            owner = assign(centers, members, mode="balance", radii=radii, per_beam_cap=per_beam_cap,
+                           deadline=assignment_deadline)
         if owner is None:
             break
         assigned = _layout(centers, members, owner, layout.beam_ids, fixed_width)
@@ -438,13 +448,15 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
         centers = rays(layout.centers_latlon)
         loads = np.bincount(layout.owner, minlength=len(centers))
         for j in np.argsort(-loads, kind="stable"):
+            if bounded and perf_counter() >= deadline:
+                break
             recentered = centers.copy()
             recentered[j] = cone(members[layout.owner == j])[0]
             candidate = _layout(recentered, members, layout.owner, layout.beam_ids, fixed_width)
             if _accept(candidate, members, N_budget, spacing, fixed_width) is not None:
                 layout, centers = candidate, recentered
         owner = assign(centers, members, radii=coverage_radii(centers, spacing, fixed_width), objective=objective, per_beam_cap=per_beam_cap,
-            current_peak=int(np.bincount(layout.owner).max()), deadline=deadline if objective is not None else None)
+            current_peak=int(np.bincount(layout.owner).max()), deadline=assignment_deadline)
         if owner is not None:
             candidate = _layout(centers, members, owner, layout.beam_ids, fixed_width)
             if (score(candidate) < score(layout)
@@ -466,13 +478,13 @@ def _single(frame, N_budget, spacing, effort, deadline, fixed_width,
             if proposal is None:
                 continue
             proposal, next_id = _add_beams(proposal, members, min(N_budget, len(layout.widths)),
-                                          spacing, fixed_width, next_id, rng, False, deadline, per_beam_cap)
+                                          spacing, fixed_width, next_id, rng, False, deadline, per_beam_cap, bounded)
             if score(proposal) < score(layout) and (not preserve_N or len(proposal.widths) == len(layout.widths)):
                 layout = proposal
             break
         previous_count = len(layout.widths)
         layout, next_id = _add_beams(layout, members, growth_budget, spacing, fixed_width,
-                                     next_id, rng, False, deadline, per_beam_cap)
+                                     next_id, rng, False, deadline, per_beam_cap, bounded)
         if len(layout.widths) > previous_count or score(layout) < score(best):
             best, stale = layout, 0
         else:
@@ -517,22 +529,33 @@ def init_baseline(frame, N_budget, spacing=True, fixed_width=None, time_limit=No
 
 
 def _narrow_layout(layout, members, spacing, fixed_width, deadline, max_iters, cap):
-    """Distance-cost flow followed by minimum enclosing-cone recentering."""
+    """Distance-cost flow, recentering every stack as one geometric site."""
     for _ in range(30 if max_iters is None else max_iters):
         if perf_counter() >= deadline:
             break
         centers = rays(layout.centers_latlon)
-        owner = assign(centers, members, radii=coverage_radii(centers, spacing, fixed_width),
+        radii = coverage_radii(centers, spacing, fixed_width, layout.stack_id)
+        owner = assign(centers, members, radii=radii,
                        per_beam_cap=cap, objective="narrow",
                        current_peak=int(np.bincount(layout.owner).max()), deadline=deadline)
         if owner is None:
             break
-        candidate = _layout(centers, members, owner, layout.beam_ids, fixed_width)
+        aircraft, beam = _edges(centers, members, radii)
+        owner = _nonempty(owner, aircraft, beam, len(centers))
+        candidate = _layout(centers, members, owner, layout.beam_ids, fixed_width,
+                            stack_id=layout.stack_id)
         centers = rays(candidate.centers_latlon)
-        for j in range(len(centers)):
+        stacks = candidate.stack_id
+        sites = np.arange(len(centers)) if stacks is None else np.where(
+            stacks >= 0, stacks, np.arange(len(centers)) + len(centers))
+        for site in np.unique(sites):
+            if perf_counter() >= deadline:
+                break
+            columns = np.flatnonzero(sites == site)
             proposed = centers.copy()
-            proposed[j] = cone(members[candidate.owner == j])[0]
-            moved = _layout(proposed, members, candidate.owner, candidate.beam_ids, fixed_width)
+            proposed[columns] = cone(members[np.isin(candidate.owner, columns)])[0]
+            moved = _layout(proposed, members, candidate.owner, candidate.beam_ids, fixed_width,
+                            stack_id=stacks)
             if _accept(moved, members, 200, spacing, fixed_width) is not None:
                 candidate, centers = moved, proposed
         old_cost = angles(members, rays(layout.centers_latlon))[np.arange(len(members)), layout.owner].sum()
@@ -543,65 +566,72 @@ def _narrow_layout(layout, members, spacing, fixed_width, deadline, max_iters, c
     return layout
 
 
-def _stack_layout(layout, members, cap, budget):
-    """Duplicate overloaded sites, preserving their exact geometry and eligibility."""
-    loads = np.bincount(layout.owner, minlength=len(layout.widths))
-    copies = np.maximum(1, (loads + cap - 1) // cap)
-    if copies.sum() > budget:
-        return layout, int(np.count_nonzero(loads > cap))
-    source = np.repeat(np.arange(len(copies)), copies)
-    centers = layout.centers_latlon[source]
-    widths = layout.widths[source]
-    stacks = np.full(len(source), -1, dtype=np.int64)
-    owner = np.empty(len(members), dtype=np.int64)
-    for j in range(len(copies)):
-        columns = np.flatnonzero(source == j)
-        aircraft = np.flatnonzero(layout.owner == j)
-        # The local flow only contains the original beam's members and copies.
-        assigned = _flow(len(aircraft), len(columns),
-                         np.repeat(np.arange(len(aircraft)), len(columns)),
-                         np.tile(np.arange(len(columns)), len(aircraft)), cap)
-        owner[aircraft] = columns[assigned]
-        if len(columns) > 1:
-            stacks[columns] = j
-    return Layout(centers, widths, owner, np.arange(len(source)), stacks), 0
+def _stack_layout(layout, members, cap, budget, spacing=True, fixed_width=None,
+                  deadline=np.inf):
+    """Add one copy at the site eligible for the most still-unassigned aircraft."""
+    centers = rays(layout.centers_latlon)
+    radii = coverage_radii(centers, spacing, fixed_width)
+    source = np.arange(len(centers))
+    site_aircraft, site_beam = _edges(centers, members, radii)
+    while True:
+        expanded = centers[source]
+        aircraft, beam = _edges(expanded, members, radii[source])
+        owner = _flow(len(members), len(source), aircraft, beam, cap, partial=True)
+        missing = owner < 0
+        if not missing.any():
+            break
+        if len(source) == budget or perf_counter() >= deadline:
+            # The original peak flow retains every aircraft when K is infeasible.
+            owner = assign(expanded, members, radii=radii[source])
+            break
+        counts = np.bincount(site_beam[missing[site_aircraft]], minlength=len(centers))
+        source = np.append(source, counts.argmax())
+    owner = _nonempty(owner, aircraft, beam, len(source))
+    copies = np.bincount(source, minlength=len(centers))
+    stacks = np.where(copies[source] > 1, source, -1)
+    output = _layout(centers[source], members, owner, np.arange(len(source)), fixed_width,
+                     stack_id=stacks)
+    over = int(np.count_nonzero(np.bincount(output.owner) > cap))
+    return output, over
 
 
 def _solve_v2(frame, N_budget, spacing, effort, time_limit, fixed_width,
               init_layout, balance, max_iters, preserve_N, cap, objective, stacking):
     start = perf_counter()
-    deadline = np.inf if time_limit is None else start + time_limit
+    deadline = start + (300 if time_limit is None else time_limit)
     members = rays(frame.positions)
-    reserves = range(0, min(50, N_budget - 1) + 1, 5) if stacking else (0,)
-    last = None
-    reserves = list(reserves)
-    for trial, reserve in enumerate(reserves):
-        if perf_counter() >= deadline: break
-        trial_deadline = deadline if time_limit is None else perf_counter() + max(0., deadline - perf_counter()) / (len(reserves) - trial)
-        base = _single(frame, N_budget - reserve, spacing, effort, trial_deadline, fixed_width,
-                       init_layout, balance, max_iters, None, preserve_N=preserve_N, objective=objective,
-                       per_beam_cap=None if stacking else cap)
-        if base.layout is None:
-            continue
-        layout = base.layout
-        if objective == "narrow":
-            # Before stacking, an overloaded site must retain enough capacity.
-            assignment_cap = cap if not stacking else None
-            layout = _narrow_layout(layout, members, spacing, fixed_width,
-                                    trial_deadline, max_iters, assignment_cap)
-        if stacking:
-            layout, over = _stack_layout(layout, members, cap, N_budget)
+    base = _single(frame, N_budget, spacing, effort,
+                   min(deadline, start + 120) if stacking else deadline, fixed_width,
+                   init_layout, balance, max_iters, None, preserve_N=preserve_N,
+                   objective=None if stacking else objective,
+                   per_beam_cap=None if stacking else cap, bounded=True)
+    if base.layout is None:
+        return base
+    layout, reserve = base.layout, 0
+    init_seconds = base.t_init
+    if stacking:
+        centers = rays(layout.centers_latlon)
+        aircraft, beam = _edges(centers, members, coverage_radii(centers, spacing, fixed_width))
+        owner = _flow(len(members), len(centers), aircraft, beam, cap, partial=True)
+        unassigned = int(np.count_nonzero(owner < 0))
+        if unassigned:
+            reserve = int(np.clip((unassigned + cap - 1) // cap + 5, 0, min(60, N_budget - 1)))
+            base = _single(frame, N_budget - reserve, spacing, effort,
+                           min(deadline, perf_counter() + 120), fixed_width,
+                           init_layout, balance, max_iters, None, preserve_N=preserve_N, bounded=True)
+            init_seconds += base.t_init
+            if base.layout is not None:
+                layout = base.layout
+            layout, _ = _stack_layout(layout, members, cap, N_budget, spacing, fixed_width, deadline)
         else:
-            over = int(np.count_nonzero(np.bincount(layout.owner) > cap)) if cap else 0
-        if layout.stack_id is None:
-            layout.stack_id = np.full(len(layout.widths), -1, dtype=np.int64)
-        legal = validate_layout(layout, members, N_budget, spacing, fixed_width)
-        if not legal: continue
-        last = Result(layout, base.N0, legal,
-                      base.t_init, perf_counter() - start - base.t_init, 0.,
-                      perf_counter() - start, over, reserve)
-        if legal and over == 0:
-            return last
-    if last is None:
-        return Result(None, len(initial_cover(members)), False, 0., 0., 0., perf_counter() - start)
-    return last
+            owner = _nonempty(owner, aircraft, beam, len(centers))
+            layout = _layout(centers, members, owner, layout.beam_ids, fixed_width)
+    if objective == "narrow":
+        layout = _narrow_layout(layout, members, spacing, fixed_width, deadline, max_iters, cap)
+    if layout.stack_id is None:
+        layout.stack_id = np.full(len(layout.widths), -1, dtype=np.int64)
+    over = int(np.count_nonzero(np.bincount(layout.owner) > cap)) if cap else 0
+    legal = validate_layout(layout, members, N_budget, spacing, fixed_width)
+    elapsed = perf_counter() - start
+    return Result(layout if legal else None, base.N0, legal, init_seconds,
+                  elapsed - init_seconds, 0., elapsed, over, reserve)

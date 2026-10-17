@@ -64,7 +64,7 @@ def load_input(record):
 def source_cases(role, inputs_dir=INPUTS, frames_dir=FRAMES):
     root = Path(inputs_dir)
     records = json.loads((root / f"{role}_published.json").read_text(encoding="utf-8"))["rows"]
-    cases = [read_record(root / "objects" / Path(row["case_ref"]["path"]).name) for row in records]
+    cases = [read_record(root / "objects" / row["case_ref"]["sha256"]) for row in records]  # 对象按内容摘要命名
     if role == "test":
         for date in ("2024-01-15", "2024-01-18"):
             for frame in stratified(load_day(frames_dir, date)):
@@ -76,7 +76,7 @@ def source_cases(role, inputs_dir=INPUTS, frames_dir=FRAMES):
     return cases
 
 
-def build_scene(case, request_bps, N_budget, *, time_limit=120, max_iters=None):
+def build_scene(case, request_bps, N_budget, *, time_limit=300, max_iters=None):
     """Rebuild aircraft requests and geometry, without retaining the source layout."""
     started = time.perf_counter()
     metadata = {name: case[name] for name in ("case_id", "actual_role", "source_role", "original_mother_id", "UTC", "source_asset_SHA", "source")}

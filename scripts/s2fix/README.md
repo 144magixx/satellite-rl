@@ -1,7 +1,7 @@
 # S2-FIX 代码与运行说明
 来源：codex
 
-实现依据是 `D:/paper/docs/Claude维护/06_S2-FIX给Codex的实现说明.md`。本次只实现、测试并完成第11节两景冒烟；正式数据生成、九组训练和共同评价交给远端执行，效果待验证。
+实现依据是 `D:/paper/docs/Claude维护/S2-FIX第二阶段需求压力/06_S2-FIX给Codex的实现说明.md`。已完成第11节冒烟及第12节按需叠放修订；正式数据生成、九组训练和共同评价交给远端执行，效果待验证。
 
 ## 文件清单
 
@@ -17,7 +17,7 @@
 - `tsac.py`：L2/L3训练和策略采样。
 - `experiments.py`：逐场景、逐方法、逐种子和重复评价。
 
-新增脚本是本目录的 `build_data.py`、`train_i0.py`、`train_tsac.py`、`evaluate.py`、`summarize.py`、`smoke_check.py`。测试是 `tests/test_s2fix_{flow,physics,search,tsac,experiments,summary}.py`。
+新增脚本是本目录的 `build_data.py`、`train_i0.py`、`train_tsac.py`、`evaluate.py`、`summarize.py`、`smoke_check.py`、`check_stacking.py`。测试是 `tests/test_s2fix_{flow,physics,search,tsac,experiments,summary}.py`。
 
 旧模块只增加可选路径：`coverage/s1fix/{skeleton,geom,io}.py`，`shared_interface/{spherical_gaussian,geometry,link,stages}.py`，`power_refinement/{physics,model_based}.py`，`sac_improvement/{config,agent}.py`，`power30/{agent,environment,menus,schema}.py`。原v1、21.6 Mbps和Transformer默认路径保留。根目录 `EXPERIMENT_STATUS.md` 增加本次实现状态。
 
@@ -91,8 +91,25 @@ v1对照的状态、奖励、终态容量、起点、槽数、功率全部逐位
 
 按“不算SHA、不做身份校验”的明确要求，新数据采用普通JSON和plain输入路径，用物理版本号区分v2；旧v1的内容校验保持原样。保留了原始来源字段，没有生成新摘要或回执。
 
-120秒用作整景总时限，各S试算共享该时限。若耗尽时尚未走到S=50，返回最后已完成的合法布局并记录实际S和超K束数；不强行启动剩余试算。单次几何/最大流调用不能中途打断，可能略超时。这一处理优先满足规格的整景时限。实际两景均S=0。
+第12节修订后，整景默认300秒。先用完整N预算、原峰值目标求A，以K容量最大流计算未分配数U；U为0时直接收窄，否则取S=clip(ceil(U/K)+5, 0, 60)，以N−S重求骨架B。A/B各最多120秒，未用时间留给后续步骤，不再按S档位均分。按不同站点计算半径上限，每轮在合格未分配飞机最多的站点加一个副本，并对全部飞机重新做K容量流；达到N或时间不足仍未全分配时，用原峰值流保全全部飞机并记录超K束数。最后做K约束距离最小指派，同簇按全部成员的最小包络锥共同移动，仅接受满足站点间隔的移动。LP使用剩余时限；单次几何/最大流操作不能中途打断，可能略超时。
 
 MLP隐藏层按原Transformer参数量选206维：展平14×128词元后，1792→206→128；词元投影等共同部分仍参与计算。
 
-远端粗估：单4090D和12—16核，完整数据约1—2小时，九组训练约8—12小时，共同评价约2—4小时，总计约11—18小时；两张卡训练约5—8小时。这里只测了稀疏两景与预热段，正式更新吞吐和密集场景SCA耗时需远端实测后修正。
+修订前远端粗估：单4090D和12—16核，完整数据约1—2小时，九组训练约8—12小时，共同评价约2—4小时，总计约11—18小时；两张卡训练约5—8小时。该估计来自稀疏两景与预热段，正式更新吞吐、完整开发集与密集场景SCA耗时需远端实测后修正。
+
+## 第12节叠放回归
+
+以下命令只生成最大开发景与夜间最小开发景的布局，使用每机86.4 Mbps、预算150、K=13，保存case、layout、逐景check与numbers.json：
+
+```powershell
+$env:PYTHONPATH = 'src'
+& 'C:/Users/Admin/anaconda3/envs/DQN/python.exe' scripts/s2fix/check_stacking.py
+& 'C:/Users/Admin/anaconda3/envs/DQN/python.exe' -m unittest discover -s tests -p 'test_s2fix_*.py' -v
+```
+
+| 开发时刻（2024-01-12 UTC） | 飞机数 | 实际N | 叠放簇数 | 簇内束数 | 最大束飞机数 | 超K束数 | 平均宽度 | 耗时（秒） |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 11:22 | 1815 | 148 | 16 | 36 | 13 | 0 | 0.323360° | 28.742 |
+| 01:47 | 122 | 89 | 0 | 0 | 5 | 0 | 0.303496° | 7.389 |
+
+结果在 `D:/paper/outputs/experiments/s2_fix_20261018/stacking_revision1/`。白天叠放共16簇，其中12簇各2束、4簇各3束，合计36束；原飞机ID、位置及每机请求核对通过，同簇中心完全相同，公共第二阶段输入构造通过。23项S2-FIX测试通过，包含旧默认行为、全局流重分、预算不足保全飞机、整簇收窄、A/B各120秒与总300秒、U=0跳过重求，以及case_ref路径同名时按sha256定位对象。Claude的source_cases改动一并保留。
