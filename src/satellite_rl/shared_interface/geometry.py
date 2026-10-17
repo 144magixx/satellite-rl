@@ -12,15 +12,15 @@ def assert_geometry_config():
     if content_sha(GEOMETRY)!=GEOMETRY_SHA:raise ValueError('shared geometry global config mutated')
 
 
-def locations(value):
-    assert_geometry_config()
+def locations(value,validate=True):
+    if validate:assert_geometry_config()
     array=np.asarray(value,dtype=np.float64)
     if array.ndim!=2 or array.shape[1]!=2 or not np.isfinite(array).all():raise ValueError('finite lat_lon_deg[n,2] required')
     return array
 
 
-def directions_and_distance(value):
-    array=locations(value);lat,lon=np.deg2rad(array).T
+def directions_and_distance(value,validate=True):
+    array=locations(value,validate);lat,lon=np.deg2rad(array).T
     ground=GEOMETRY['earth_radius_m']*np.column_stack((np.cos(lat)*np.cos(lon),np.cos(lat)*np.sin(lon),np.sin(lat)))
     longitude=np.deg2rad(GEOMETRY['satellite_lon_deg'])
     satellite=GEOMETRY['orbit_radius_m']*np.array([np.cos(longitude),np.sin(longitude),0.])

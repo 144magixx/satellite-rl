@@ -14,12 +14,16 @@ def observation_schema(group):
         fields['margin_summary']=[208,308]
     return dict(version='S2W30ObservationV1', group=group, state_width=state_width(group), fields=fields)
 
-def schema_identity(menu, group):
+def schema_identity(menu, group, plain=False):
     from satellite_rl.shared_interface.spherical_gaussian import PHYSICS_SHA
     value = dict(version='S2W30CheckpointV1', observation=observation_schema(group),
-                 action=action_schema(menu), dimension=state_width(group), tokens=14,
+                 action=action_schema(menu,plain=plain), dimension=state_width(group), tokens=14,
                  readout='first_geo', physics_SHA=PHYSICS_SHA,
                  reward='legacy_repaired_T0_threshold_50Mbps_v1',
                  summary='log1p_sum_prefix_exp_neg_abs_capacity_demand_minus1_kappa_over_noise_plus_I')
-    value['sha256'] = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+    if not plain:
+        value['sha256'] = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+    else:
+        value.pop('physics_SHA')
+        value['physics_version'] = 'spherical_gaussian_tx_v2'
     return value

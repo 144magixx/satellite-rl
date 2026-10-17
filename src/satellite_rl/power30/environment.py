@@ -23,7 +23,7 @@ class Power30Env:
     def __init__(self,stage_input,menu='P00',group='M0',call_hook=None):
         if not isinstance(stage_input,UniformStage2Input):raise TypeError('validated UniformStage2Input required')
         self.stage_input=stage_input;self.group=group;self.menu=menu;self.power_table=power_table(menu)
-        self.schema=schema_identity(menu,group);self.action_schema=action_schema(menu);self.call_hook=call_hook;self.call_counts={}
+        self.schema=schema_identity(menu,group,plain=getattr(stage_input,'plain',False));self.action_schema=action_schema(menu,plain=getattr(stage_input,'plain',False));self.call_hook=call_hook;self.call_counts={}
         self.last_coefficients=None
         self.layout=stage_input.layout;self.physics=stage_input.physics
         self.ids=list(self.layout['beam_ids']);self.order=list(stage_input.processing_index_to_beam_id)
@@ -32,7 +32,13 @@ class Power30Env:
         self.N=len(self.ids);self.demands=self.layout['request_bps_by_beam_int64'].astype(np.float64)
         self.beta=float(self.demands.mean());self.noise=self.physics['k_J_per_K']*self.physics['noise_temperature_K']*self.physics['slot_Hz']
         self._newcall("kernel")
-        self.kernel=prepare_slot_kernel(self.layout,self.physics)
+        if getattr(stage_input,'plain',False):
+            self.kernel=getattr(stage_input,'_s2fix_slot_kernel',None)
+            if self.kernel is None:
+                self.kernel=prepare_slot_kernel(self.layout,self.physics,case=stage_input.case)
+                stage_input._s2fix_slot_kernel=self.kernel
+        else:
+            self.kernel=prepare_slot_kernel(self.layout,self.physics)
         self.reset()
 
     def _newcall(self, kind, **metadata):
@@ -145,9 +151,17 @@ class Power30Env:
         return [dict(beam_id=bid,group=int(self.groups[i]),full_width_deg=float(self.layout['full_width_deg'][i]),demand_bps=int(self.demands[i]),capacity_bps=float(self.rates[i]),SI=float(min(self.rates[i]/self.demands[i],1)),SGM=float(sgms[i]),start=int(self.starts[i]),count=int(self.counts[i]),power_w=float(self.powers[i])) for i,bid in enumerate(self.ids)]
 
     def state_dict(self):
+        if getattr(self.stage_input,'plain',False):
+            return copy.deepcopy({name:getattr(self,name) for name in
+                ('beam_idx','starts','counts','powers','occupied','rates','requested',
+                 'total_satisfaction','last_coefficients')})
         return dict(schema=copy.deepcopy(self.schema),layout_SHA=self.layout['content_sha256'],physics_SHA=PHYSICS_SHA,beam_idx=self.beam_idx,starts=self.starts.copy(),counts=self.counts.copy(),powers=self.powers.copy(),occupied=self.occupied.copy(),rates=self.rates.copy(),requested=copy.deepcopy(self.requested),total_satisfaction=self.total_satisfaction,last_coefficients=self.last_coefficients)
 
     def load_state_dict(self,state):
+        if getattr(self.stage_input,'plain',False):
+            for name,value in copy.deepcopy(state).items():
+                setattr(self,name,value)
+            return
         if state['schema']!=self.schema or state['layout_SHA']!=self.layout['content_sha256'] or state['physics_SHA']!=PHYSICS_SHA:
             raise ValueError('environment checkpoint identity mismatch')
         count=state['beam_idx']

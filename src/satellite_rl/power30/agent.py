@@ -30,9 +30,10 @@ def state_dimension(group):return state_width(group)
 
 
 class Power30Encoder(nn.Module):
-    def __init__(self, base, group, seed):
+    def __init__(self, base, group, seed, encoder='transformer'):
         super().__init__()
         self.group=group;self.state_dim=state_width(group);self.output_dim=base.output_dim
+        self.encoder=encoder
         for name in ('geo_embed','rate_embed','power_embed','slot_embed','net','global_embed'):
             setattr(self,name,deepcopy(getattr(base,name)))
         self.pos_embed=nn.Parameter(base.pos_embed.detach().clone())
@@ -44,6 +45,14 @@ class Power30Encoder(nn.Module):
                 torch.random.default_generator.manual_seed(seed+30011)
                 self.slot_embed=WidthEncoder._extend(self.slot_embed,30)
         self.last_token_count=14
+        if encoder == 'mlp':
+            width = self.pos_embed.shape[-1]
+            target = sum(p.numel() for p in self.net.parameters())
+            hidden = round((target - self.output_dim) / (14*width + self.output_dim + 1))
+            with torch.random.fork_rng(devices=[]):
+                torch.random.default_generator.manual_seed(seed + 61001)
+                self.net = nn.Sequential(nn.Linear(14*width, hidden), nn.ReLU(),
+                                         nn.Linear(hidden, self.output_dim))
 
     def forward(self,states,lengths=None):
         if lengths is not None or states.ndim!=2 or states.shape[1]!=self.state_dim:
@@ -58,6 +67,8 @@ class Power30Encoder(nn.Module):
                           self.slot_embed(torch.cat(channels,dim=-1))),dim=1)+self.pos_embed
         global_token=self.global_embed(states[:,204:207]).unsqueeze(1)+self.extra_pos_embed
         sequence=torch.cat((tokens,global_token),dim=1).permute(1,0,2)
+        if self.encoder == 'mlp':
+            return self.net(sequence.permute(1,0,2).reshape(batch,-1))
         return self.net(sequence).permute(1,0,2)[:,0]
 
 
@@ -91,7 +102,8 @@ class Power30Agent(WorkbenchAgent):
         for index,name in enumerate(('actor','critic1','critic2')):
             network=getattr(self,name)
             component_seed=self.train['seed']+100003*(index+1)
-            network.encoder=Power30Encoder(network.encoder,group,component_seed).to(self.device)
+            network.encoder=Power30Encoder(network.encoder,group,component_seed,
+                                          config.get('encoder','transformer')).to(self.device)
             if menu!='P00':
                 old=network.heads[2]
                 # Explicit independent per-watt rows preserve matching new rows across
@@ -114,13 +126,16 @@ class Power30Agent(WorkbenchAgent):
         cuda_after=torch.cuda.get_rng_state(self.device) if self.device.type=='cuda' else None
         if not torch.equal(cpu_before,cpu_after) or (cuda_before is not None and not torch.equal(cuda_before,cuda_after)):
             raise RuntimeError('W30 additions shifted action RNG')
-        self.extension_rng=dict(cpu_unchanged=True,cuda_unchanged=None if cuda_before is None else True,
-                               cpu_SHA=hashlib.sha256(cpu_after.cpu().numpy().tobytes()).hexdigest(),
-                               cuda_SHA=None if cuda_after is None else hashlib.sha256(cuda_after.cpu().numpy().tobytes()).hexdigest())
+        self.extension_rng = {} if config.get('s2fix') else dict(
+            cpu_unchanged=True,cuda_unchanged=None if cuda_before is None else True,
+            cpu_SHA=hashlib.sha256(cpu_after.cpu().numpy().tobytes()).hexdigest(),
+            cuda_SHA=None if cuda_after is None else hashlib.sha256(cuda_after.cpu().numpy().tobytes()).hexdigest())
         self.actor_opt=torch.optim.Adam(self.actor.parameters(),lr=self.train['actor_lr'])
         self.critic1_opt=torch.optim.Adam(self.critic1.parameters(),lr=self.train['critic_lr'])
         self.critic2_opt=torch.optim.Adam(self.critic2.parameters(),lr=self.train['critic_lr'])
-        self.schema=schema_identity(menu,group)
+        self.schema=schema_identity(menu,group,plain=config.get('s2fix',False))
+        if config.get('s2fix'):
+            self.schema.update(version='s2fix_tsac_v1',encoder=config.get('encoder','transformer'))
         # Pre-hooks count every whole-network execution, including direct act() paths.
         self._meter_handles=[]
         for name in ('actor','critic1','critic2','target1','target2'):

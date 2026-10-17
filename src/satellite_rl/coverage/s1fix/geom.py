@@ -15,6 +15,7 @@ class Layout:
     widths: np.ndarray
     owner: np.ndarray
     beam_ids: np.ndarray
+    stack_id: np.ndarray | None = None
 
 
 def rays(positions):
@@ -109,7 +110,8 @@ def envelope(centers_rays, member_rays, owner):
     return widths
 
 
-def validate_layout(layout, member_rays, N_budget, spacing=True, fixed_width=None):
+def validate_layout(layout, member_rays, N_budget, spacing=True, fixed_width=None,
+                    per_beam_cap=None, stack_id=None):
     """The one algorithmic legality check: coverage, widths, count and spacing."""
     centers = np.asarray(layout.centers_latlon)
     widths, owner = np.asarray(layout.widths), np.asarray(layout.owner)
@@ -128,6 +130,8 @@ def validate_layout(layout, member_rays, N_budget, spacing=True, fixed_width=Non
         return count == 0
     if count == 0 or (owner < 0).any() or (owner >= count).any():
         return False
+    if per_beam_cap is not None and np.bincount(owner, minlength=count).max() > per_beam_cap:
+        return False
     if (np.bincount(owner, minlength=count) == 0).any():
         return False
     if (widths < 0.3 - 1e-8).any() or (widths > 1 + 1e-8).any():
@@ -135,7 +139,11 @@ def validate_layout(layout, member_rays, N_budget, spacing=True, fixed_width=Non
     center_rays = rays(centers)
     required = envelope(center_rays, member_rays, owner)
     if fixed_width is None:
-        if not np.allclose(widths, required, rtol=0, atol=3e-8):
+        exact = np.ones(count, dtype=bool)
+        stacks = layout.stack_id if stack_id is None else stack_id
+        if stacks is not None:
+            exact = np.asarray(stacks) < 0
+        if not np.allclose(widths[exact], required[exact], rtol=0, atol=3e-8):
             return False
     elif not np.allclose(widths, fixed_width, rtol=0, atol=1e-8):
         return False
@@ -144,6 +152,10 @@ def validate_layout(layout, member_rays, N_budget, spacing=True, fixed_width=Non
     if spacing and count > 1:
         distances = angles(center_rays, center_rays)
         np.fill_diagonal(distances, np.inf)
+        stacks = layout.stack_id if stack_id is None else stack_id
+        if stacks is not None:
+            stacks = np.asarray(stacks)
+            distances[(stacks[:, None] >= 0) & (stacks[:, None] == stacks[None, :])] = np.inf
         if (distances + 1e-8 < np.maximum(widths[:, None], widths[None, :]) / 2).any():
             return False
     return True

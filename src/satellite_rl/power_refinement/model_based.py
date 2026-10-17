@@ -91,7 +91,7 @@ def _wmmse_proposal(problem, power, ev, cap, phase):
 
 
 def _sca_proposal(problem, power, ev, cap, phase, si_floor, trust_w,
-                  floor_ratio, baseline_sgm, sgm_tolerance, remaining_time):
+                  floor_ratio, baseline_sgm, sgm_tolerance, remaining_time, beam_power_cap_w=None):
     """Solve an LP formed by first-order capacity/SGM models in a trust box."""
     from scipy.optimize import linprog
 
@@ -121,6 +121,8 @@ def _sca_proposal(problem, power, ev, cap, phase, si_floor, trust_w,
         objective = np.r_[np.zeros(m), -np.ones(n) / n]
     trust = trust_w / scale
     bounds = [(max(0, value - trust), value + trust) for value in x0]
+    if beam_power_cap_w is not None:
+        bounds = [(lo, min(hi, beam_power_cap_w / scale)) for lo, hi in bounds]
     bounds.extend([(0, 1)] * n)
     result = linprog(objective, A_ub=np.vstack(rows), b_ub=np.concatenate(rhs),
                      bounds=bounds, method="highs",
@@ -149,7 +151,7 @@ def optimize_model_based(problem: FixedAllocationPhysics, initial_power,
     allowed = {"power_cap_w", "maxiter", "max_evaluations", "maxeval",
                "time_limit_seconds", "max_time_seconds", "ftol", "si_tolerance",
                "sgm_tolerance", "constraint_tolerance", "protect_basic_service",
-               "discrete_step_w"}
+               "discrete_step_w", "beam_power_cap_w"}
     if set(opts) - allowed:
         raise ValueError(f"Unknown optimization options: {sorted(set(opts) - allowed)}")
     cap = float(opts.get("power_cap_w", problem.power_budget_w))
@@ -169,7 +171,10 @@ def optimize_model_based(problem: FixedAllocationPhysics, initial_power,
             or maxiter < 1 or maxeval < 1 or limit_seconds <= 0 or ftol <= 0
             or min(si_tolerance, sgm_tolerance, constraint_tolerance) < 0):
         raise ValueError("Invalid optimization limits")
+    beam_cap = opts.get("beam_power_cap_w")
     initial = np.asarray(initial_power, dtype=np.float64)
+    if beam_cap is not None and np.any(initial > beam_cap + 1e-7):
+        raise ValueError("Initial power exceeds beam power cap")
     original = problem.evaluate(initial, with_jacobian=True)
     if initial.sum() > cap + 1e-7:
         raise ValueError("Initial power exceeds selected budget")
@@ -203,6 +208,7 @@ def optimize_model_based(problem: FixedAllocationPhysics, initial_power,
         return (np.isfinite(power).all() and np.all(power >= 0)
                 and np.all(power[~problem.active] == 0)
                 and power.sum() <= cap + 1e-7
+                and (beam_cap is None or np.all(power <= beam_cap + 1e-7))
                 and ev.sgm >= original.sgm - sgm_tolerance - 1e-10
                 and np.all(ev.capacity_bps / problem.demand_bps
                            >= floor_ratio - constraint_tolerance)
@@ -237,7 +243,7 @@ def optimize_model_based(problem: FixedAllocationPhysics, initial_power,
                 proposal, message = _sca_proposal(
                     problem, best_power, best_eval, cap, phase, phase2_si_floor,
                     trust, floor_ratio, original.sgm, sgm_tolerance,
-                    limit_seconds - (perf_counter() - start))
+                    limit_seconds - (perf_counter() - start), beam_cap)
                 lp_subproblems += 1
                 lp_elapsed_seconds += perf_counter() - lp_started
             else:

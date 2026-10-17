@@ -15,14 +15,15 @@ def power_table(menu):
         raise ValueError('Unknown W30 power menu')
     return MENUS[menu]
 
-def action_schema(menu):
+def action_schema(menu, plain=False):
     table = power_table(menu)
     value = dict(version='S2W30ActionV1', menu=menu, power_table_w=list(table),
                  action_dims=[100, 10, len(table)], unit='whole_beam_watt',
                  minimum_power_w=min(table), maximum_power_w=50.0, power_budget_w=3000.0,
                  future_reserve_power_w=5.0, future_reserve_slots=1,
                  zero_slot_allowed=False, clipping_allowed=False)
-    value['sha256'] = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+    if not plain:
+        value['sha256'] = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
     return value
 
 def legal_power_mask(menu, used_power_w, future_count):

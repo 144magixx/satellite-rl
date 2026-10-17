@@ -61,13 +61,14 @@ def save_layout(path, layout, frame, **metadata):
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, centers_latlon=layout.centers_latlon, widths=layout.widths,
                         owner=layout.owner, beam_ids=layout.beam_ids, aircraft_index=frame.icao,
-                        **metadata)
+                        **({"stack_id": layout.stack_id} if layout.stack_id is not None else {}), **metadata)
 
 
 def load_layout(path):
     from .geom import Layout
     with np.load(path) as z:
-        return Layout(z["centers_latlon"], z["widths"], z["owner"], z["beam_ids"])
+        return Layout(z["centers_latlon"], z["widths"], z["owner"], z["beam_ids"],
+                      z["stack_id"] if "stack_id" in z else None)
 
 
 @contextmanager
