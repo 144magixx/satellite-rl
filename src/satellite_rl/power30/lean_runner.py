@@ -222,6 +222,8 @@ def main():
     parser.add_argument('--run-dir', required=True)
     parser.add_argument('--device', default='cuda')
     parser.add_argument('--threads', type=int, default=3)
+    parser.add_argument('--seed', type=int, default=51001)
+    parser.add_argument('--loader', choices=('published', 'simple'), default='published')
     args = parser.parse_args()
     directory = Path(args.run_dir)
     directory.mkdir(parents=True, exist_ok=True)
@@ -232,16 +234,20 @@ def main():
             return
         torch.set_num_threads(args.threads)
         torch.set_num_interop_threads(1)
-        config = build_config(args.menu, args.group, args.device, seed=51001)
+        config = build_config(args.menu, args.group, args.device, seed=args.seed)
+        loader = _default_loader
+        if args.loader == 'simple':
+            from .simple_data import load_input
+            loader = load_input
         records, dev = read_cases(args.data_dir)
-        agent, progress = train(config, records, directory)
+        agent, progress = train(config, records, directory, loader=loader)
         progress['stage'] = 'evaluation'
         atomic_json(directory / 'progress.json', progress)
         for node in NODES:
             policy = torch.load(directory / f'policy_{node}.pt', map_location=agent.device, weights_only=False)
             for name in ('actor', 'critic1', 'critic2'):
                 getattr(agent, name).load_state_dict(policy[name])
-            evaluate(agent, dev, args.menu, args.group, directory, node)
+            evaluate(agent, dev, args.menu, args.group, directory, node, loader=loader)
         progress.update(stage='completed', latest_time=datetime.now(timezone.utc).isoformat())
         atomic_json(directory / 'progress.json', progress)
         (directory / 'DONE').write_text(progress['latest_time'] + '\n', encoding='utf-8')
