@@ -1,7 +1,7 @@
 # 实验状态与新窗口接手说明
 
 <!-- S2_W32_CURRENT_START -->
-**2026-10-17 S2-W32已获连续中心接口修正授权，正在完成两项旧数据回归；尚未启动正式训练。** 最新用户要求执行`D:/paper/outputs/experiments/s2_w32_20261017/codex/followup_1_interface_decision.md`，只把`contracts.py`的中心锚点等式改为锚点属于该束；物理、覆盖审计、奖励与学习超参不动。旧596训练/开发加40确认对象共636/636校验通过且原布局哈希不变；W31 P00-M0旧开发20母×3复现正在运行，需其SI/SGM/power_w逐行最大差≤1e-6后再全量生成并启动。冻结FLOW-AO五文件与19f6c45逐字节一致；新布局最近成员作锚点。本地新数据P01-M1共300步、精确恢复、1母评价通过，预热2000未改、更新0。20627/20653/20655可连；20654未触碰。实现文件位于`scripts/w32/`及`power30`精简加载器；本轮不接工作台、不写账本或新增守卫。状态与原始证据入口：`D:/paper/outputs/experiments/s2_w32_20261017/codex/result.json`、远端`s2_w32/evals/regression_old_interface/`。
+**2026-10-17 S2-W32两项接口回归与本地300步检查通过，三端并行生成新布局；正式训练待全量数据汇总。** 用户最新要求执行`D:/paper/outputs/experiments/s2_w32_20261017/codex/followup_1_interface_decision.md`：只把`contracts.py`的中心锚点等式改为锚点属于该束，其余共享物理、覆盖审计、奖励与学习超参不动。旧596训练/开发加40确认对象共636/636校验通过且原布局哈希不变；W31 P00-M0旧开发20母×3逐行SI/SGM/power_w最大绝对差均0。原两CSV和差值位于远端`s2_w32/evals/regression_old_interface/`及本地交付目录。冻结FLOW-AO五文件与19f6c45逐字节一致；新布局保留连续中心并取最近成员作锚点。本地新数据P01-M1共300步、150步精确恢复、1母评价通过，预热2000未改、更新0。三端20627/20653/20655独立12进程各生成一个分片；开发另有60/150/200预算，实际束数可能小于预算，不补空束。20654未触碰。本轮使用`scripts/w32/`和精简加载器，不接工作台、不写账本或新增守卫。最新状态入口：`D:/paper/outputs/experiments/s2_w32_20261017/codex/result.json`。
 <!-- S2_W32_CURRENT_END -->
 
 <!-- S2_W31_CURRENT_START -->

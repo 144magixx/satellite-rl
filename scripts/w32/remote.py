@@ -164,20 +164,55 @@ def observe():
 
 def after():
     value=json.loads(RESULT.read_text(encoding='utf-8'));source=value['remote_source']
+    c=connect(20627)
+    try:run(c,f'cp {source}/scripts/w32/after_training.sh {ROOT}/after_training.sh')
+    finally:c.close()
     watchers={}
     for port in (20627,20653,20655):
         c=connect(port)
         try:
             arms=' '.join(arm for arm,info in value['groups'].items() if info['port']==port)
-            watchers[str(port)]=int(run(c,f'nohup setsid bash {source}/scripts/w32/after_training.sh {source} {PYTHON} watch {port} 3 {arms} >> {ROOT}/after_training.log 2>&1 < /dev/null & echo $!').strip())
+            watchers[str(port)]=int(run(c,f'nohup setsid bash {ROOT}/after_training.sh {source} {PYTHON} watch {port} 3 {arms} >> {ROOT}/after_training.log 2>&1 < /dev/null & echo $!').strip())
         finally:c.close()
     c=connect(20627)
-    try:pid=int(run(c,f'nohup setsid bash {source}/scripts/w32/after_training.sh {source} {PYTHON} > {ROOT}/after_training_main.log 2>&1 < /dev/null & echo $!').strip())
+    try:pid=int(run(c,f'nohup setsid bash {ROOT}/after_training.sh {source} {PYTHON} > {ROOT}/after_training_main.log 2>&1 < /dev/null & echo $!').strip())
     finally:c.close()
     update(after_training_pid=pid,after_training_watchers=watchers,after_training_deployed=True)
     print(pid,watchers,flush=True)
 
 
+def early():
+    value=json.loads(RESULT.read_text(encoding='utf-8'));source=value['remote_source']
+    def lane(port):
+        c=connect(port)
+        try:
+            pid=int(run(c,f'nohup setsid bash {source}/scripts/w32/early_evaluations.sh {source} {PYTHON} {port} > {ROOT}/early_evaluations_{port}.log 2>&1 < /dev/null & echo $!').strip())
+            return str(port),pid
+        finally:c.close()
+    with ThreadPoolExecutor(3) as pool:pids=dict(pool.map(lane,(20627,20653,20655)))
+    update(early_evaluation_pids=pids)
+    print(pids,flush=True)
+
+
+def evaluations():
+    c=connect(20627)
+    try:
+        result={}
+        with c.open_sftp() as s:
+            for category,arms in [('baselines_dev',('random','fixed','greedy')),
+                                  ('baselines_conf',('random','fixed','greedy')),
+                                  ('transfer_w31',('P00-M0','P01-M1'))]:
+                result[category]={}
+                for arm in arms:
+                    directory=ROOT+'/evals/'+category+'/'+arm
+                    try:s.stat(directory+'/DONE');complete=True
+                    except FileNotFoundError:complete=False
+                    result[category][arm]=dict(complete=complete,directory=directory)
+        update(evaluations=result)
+        print(json.dumps(result,indent=2),flush=True)
+    finally:c.close()
+
+
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('action',choices=('prepare','regression','generate','merge','deploy','observe','after'))
+    parser=argparse.ArgumentParser();parser.add_argument('action',choices=('prepare','regression','generate','merge','deploy','observe','after','early','evaluations'))
     globals()[parser.parse_args().action]()
