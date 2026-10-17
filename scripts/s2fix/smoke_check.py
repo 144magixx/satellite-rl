@@ -46,8 +46,8 @@ def main():
     torch.set_num_threads(1)
     directory = Path(args.output_dir)
     with run_manifest(directory,args):
-        checks = build_set('dev_d864_n150',directory/'data',workers=2,limit=2)
-        records = read_records(directory/'data','dev_d864_n150')
+        checks = build_set('dev_d432_n150',directory/'data',workers=2,limit=2)
+        records = read_records(directory/'data','dev_d432_n150')
         (directory/'evaluation'/'beams').mkdir(parents=True,exist_ok=True)
         rows=[]
         for i, record in enumerate(records):

@@ -14,7 +14,7 @@ from satellite_rl.s2fix.experiments import evaluate_scene
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data-dir', required=True)
-    parser.add_argument('--set', default='dev_d864_n150')
+    parser.add_argument('--set', default='dev_d432_n150')
     parser.add_argument('--methods', nargs='+', default=['G1','R','S1','S2'])
     parser.add_argument('--models', nargs='*', default=[], help='L1=/abs/model.pt L2=/abs/model.pt ...')
     parser.add_argument('--output-dir', required=True)

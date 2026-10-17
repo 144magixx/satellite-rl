@@ -20,12 +20,12 @@ def cone_omega(widths):
 
 INPUTS = Path("D:/paper/outputs/experiments/s2_width26_20261014/collected/inputs")
 FRAMES = Path("D:/paper/outputs/experiments/s1_fix_20261017/data")
-SETS = {"train_d864_n150": ("train", 86400000, 150),
-        "dev_d864_n150": ("development", 86400000, 150),
+SETS = {"train_d432_n150": ("train", 43200000, 150),  # 主设定43.2 Mbps（方案05第11节）
         "dev_d432_n150": ("development", 43200000, 150),
         "dev_d216_n150": ("development", 21600000, 150),
-        "dev_d864_n200": ("development", 86400000, 200),
-        "conf_d864_n150": ("test", 86400000, 150)}
+        "dev_d864_n150": ("development", 86400000, 150),
+        "dev_d432_n200": ("development", 43200000, 200),
+        "conf_d432_n150": ("test", 43200000, 150)}
 
 
 def _json_value(value):

@@ -17,7 +17,7 @@ def main():
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
     with run_manifest(args.output_dir, args):
-        train(read_records(args.data_dir, "train_d864_n150"), args.output_dir,
+        train(read_records(args.data_dir, "train_d432_n150"), args.output_dir,
               seed=args.seed, steps=args.steps, device=args.device)
 
 
