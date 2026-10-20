@@ -26,6 +26,15 @@ def summarize(root):
         grouped.append(item)
     with (root/'summary.csv').open('w',newline='',encoding='utf-8') as stream:
         writer=csv.DictWriter(stream,fieldnames=list(grouped[0]));writer.writeheader();writer.writerows(grouped)
+    dated=[]
+    for (dataset,method,seed),values in sorted(groups.items()):
+        for date in sorted({r['date'] for r in values}):
+            selected=[r for r in values if r['date']==date]
+            item=dict(set=dataset,method=method,seed=int(seed),date=date,n=len(selected))
+            item.update({field:float(np.mean([float(r[field]) for r in selected])) for field in fields})
+            dated.append(item)
+    with (root/'by_date.csv').open('w',newline='',encoding='utf-8') as stream:
+        writer=csv.DictWriter(stream,fieldnames=list(dated[0]));writer.writeheader();writer.writerows(dated)
     comparisons=[('PTS32','GTS32'),('PTS96','GTS96'),('PTS320','GTS320'),
                  ('PTS32','G1'),('PTS96','G1'),('PTS320','G1'),('Random0','G1'),
                  ('PTS32','Random0'),('PTS96','Random0'),('PTS320','Random0'),
@@ -52,7 +61,7 @@ def summarize(root):
                                  better=int((favorable>1e-9).sum()),same=int((abs(delta)<=1e-9).sum()),
                                  worse=int((favorable < -1e-9).sum()))
             paired.append(item)
-    payload=dict(rows=len(rows),groups=grouped,paired=paired,
+    payload=dict(rows=len(rows),groups=grouped,paired=paired,by_date=dated,
                  constraints_failed=sum(r['constraints_ok']!='True' for r in rows),
                  units='rates are fractions; seconds; watts; equal weight per scene; seeds kept separate')
     (root/'analysis.json').write_text(json.dumps(payload,indent=2),encoding='utf-8')
