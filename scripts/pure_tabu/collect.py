@@ -47,7 +47,12 @@ def main():
             with s.open(REMOTE+'/eval/status.json') as stream:status=json.load(stream)
             (local/'remote_status.json').write_text(json.dumps(status),encoding='utf-8')
             print(json.dumps(status),flush=True)
-            if not conf_pulled and status['completed']>=704:
+            try:
+                s.stat(REMOTE+'/eval/conf_d432_n150/results.csv');conf_ready=True
+            except FileNotFoundError:conf_ready=False
+            (local/'eval').mkdir(exist_ok=True)
+            s.get(REMOTE+'/eval/run_manifest.json',str(local/'eval'/'run_manifest.json'))
+            if not conf_pulled and status['completed']>=704 and conf_ready:
                 pull_tree(s,REMOTE+'/eval/conf_d432_n150',local/'eval'/'conf_d432_n150')
                 pull_tree(s,DATA+'/conf_d432_n150',local/'data'/'conf_d432_n150')
                 (local/'confirmation_ready.json').write_text(json.dumps(status),encoding='utf-8')
@@ -59,7 +64,7 @@ def main():
             if done:
                 archive=REMOTE+'/results.tar.gz'
                 data_members=' '.join('data/'+dataset for dataset in SETS)
-                command(c,f'tar -czf {archive} -C {REMOTE} eval run.log -C /home/u2025140002/s2fix_20261018 {data_members}')
+                command(c,f'tar -czf {archive} -C {REMOTE} eval run.log serial_diagnostic -C /home/u2025140002/s2fix_20261018 {data_members}')
                 s.get(archive,str(local/'results.tar.gz'))
                 with tarfile.open(local/'results.tar.gz') as tar:
                     for member in tar.getmembers():
