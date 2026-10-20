@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="author" content="codex">
+<title>禁忌搜索：每一轮在做什么</title>
+<style>
+:root{--bg:#f5f7f9;--ink:#172b3a;--muted:#526773;--line:#dbe3e8;--teal:#086b63;--soft:#e8f5ef;--blue:#2859a7;--orange:#9b470e;--red:#af3048;--radius:18px}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.75 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}a{color:var(--teal);text-underline-offset:4px}button,select,input{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.45}button,a,summary,input,select{-webkit-tap-highlight-color:transparent}button:focus-visible,a:focus-visible,summary:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #d39824;outline-offset:3px}h1,h2,h3,p{margin:0}h1{font-size:clamp(30px,3.6vw,48px);line-height:1.3;letter-spacing:-1px}h2{font-size:25px;line-height:1.4}h3{font-size:20px}small,.small{font-size:15px}svg text{font-family:inherit}button{border:1px solid var(--line);background:white;color:var(--ink);border-radius:9px;padding:9px 16px}button:hover:not(:disabled){border-color:var(--teal);background:#f1f8f5}button.primary{background:var(--teal);color:white;border-color:var(--teal)}button.primary:hover{background:#075b54}button[aria-pressed=true]{border-color:var(--teal);background:var(--soft);color:var(--teal);font-weight:700}.wrap{width:min(1320px,calc(100% - 48px));margin:auto}.top{border-bottom:1px solid var(--line);background:white}.top .wrap{display:flex;justify-content:space-between;align-items:center;gap:16px;min-height:64px;font-size:15px}.top nav{display:flex;gap:22px;flex-wrap:wrap}.top a{text-decoration:none}.eyebrow{color:var(--teal);font-size:14px;font-weight:700;letter-spacing:2px;margin-bottom:12px}.hero{padding:44px 0 28px}.source{font-size:14px;color:var(--muted);margin:12px 0}.lead{font-size:21px;max-width:950px}.hero-line{display:flex;justify-content:space-between;gap:28px;align-items:end}.route-preview{display:flex;gap:12px;align-items:center;flex-shrink:0;padding-bottom:8px;color:var(--muted)}.route-preview b{font-size:29px;display:block;line-height:1.3;color:var(--ink)}.route-preview div:last-child b{color:var(--teal)}.route-preview small{font-size:13px}.card{background:white;border:1px solid var(--line);border-radius:var(--radius);padding:26px;min-width:0}.setup{display:grid;grid-template-columns:1fr 1.1fr;gap:32px;margin-bottom:28px}.setup ul{margin:12px 0 0;padding-left:22px}.setup li{margin:4px 0}.muted{color:var(--muted)}.note{font-size:15px;color:var(--muted);margin-top:12px}.formula{padding:12px 16px;background:#f0f5f7;border-radius:10px;font-size:19px;margin:12px 0}.formula strong{color:var(--teal)}.setup details{margin-top:10px}summary{cursor:pointer;color:var(--teal);font-weight:600}details p{margin:12px 0;font-size:16px}.workspace{scroll-margin-top:20px}.controls{position:sticky;top:0;z-index:20;background:#f5f7f9f5;backdrop-filter:blur(10px);padding:14px 0 12px;border-bottom:1px solid var(--line);margin-bottom:20px}.control-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.control-line .grow{flex:1}.position{font-weight:700;font-size:19px}.control-line select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:white;color:var(--ink);font-size:15px}.rounds{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:12px}.rounds .label{font-size:14px;color:var(--muted);margin-right:7px}.rounds button{font-size:14px;padding:4px 12px}.phases{display:grid;grid-template-columns:repeat(5,1fr);margin-bottom:20px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:white}.phase{padding:11px 14px;font-size:16px;color:var(--muted);border-right:1px solid var(--line)}.phase:last-child{border:0}.phase.active{background:var(--teal);color:white}.phase.done{color:var(--teal);background:#edf6f2}.phase span{display:inline-block;font-size:13px;opacity:.8;margin-right:7px}.explain{background:#e8f5ef;border-left:4px solid var(--teal);padding:20px 24px;border-radius:0 12px 12px 0;margin-bottom:20px;min-height:125px}.explain h2{font-size:24px;margin-bottom:8px}.explain p{max-width:1100px;font-size:18px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:15px;margin-bottom:20px}.stat{padding:16px 22px}.stat .label{font-size:15px;color:var(--muted)}.stat strong{display:inline-block;font-size:32px;line-height:1.4;margin:3px 8px 0 0;font-variant-numeric:tabular-nums}.stat.best strong{color:var(--teal)}.stat .detail{font-size:14px;color:var(--muted)}.grid{display:grid;grid-template-columns:.85fr 1.15fr;gap:20px;align-items:start}.card-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.tag{display:inline-block;font-size:13px;line-height:1.6;border-radius:6px;padding:3px 8px;background:#f0f4f6;color:var(--muted)}.tag.green{color:var(--teal);background:var(--soft)}.tag.red{color:var(--red);background:#fff0f2}.network{display:block;width:100%;height:265px}.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:14px;color:var(--muted)}.dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;background:#dce8fc;border:1px solid var(--blue)}.dot.orange{background:#ffead6;border-color:var(--orange)}.diagram-caption{font-size:16px;line-height:1.65;margin:10px 0 15px;min-height:52px}.beam-table{display:grid;gap:9px}.beam-line{display:grid;grid-template-columns:24px 1fr 58px;align-items:center;gap:10px;font-size:15px}.bar{height:10px;background:#eef2f5;border-radius:5px;overflow:hidden}.bar div{height:100%;background:var(--teal);border-radius:5px}.candidate-list{display:grid;gap:10px}.candidate{border:1px solid var(--line);border-radius:12px;display:grid;grid-template-columns:1fr auto;gap:7px;padding:13px 15px;position:relative}.candidate.active{border:2px solid var(--teal);padding:12px 14px;background:#f5fbf8}.candidate.blocked{background:#faf4f5;border-color:#ebd5da}.candidate.blocked .candidate-title{color:#7f4c58}.candidate-title{font-size:17px;font-weight:700}.candidate-sub{font-size:14px;color:var(--muted);margin-top:3px}.candidate-score{text-align:right;min-width:82px;align-self:center}.candidate-score strong{display:block;font-size:24px;line-height:1.3}.candidate-score small{font-size:12px;color:var(--muted)}.layout{display:inline-flex;gap:4px;vertical-align:middle;flex-wrap:wrap}.slot{display:inline-block;font-size:13px;font-weight:600;background:#edf3ff;color:var(--blue);padding:1px 6px;border-radius:4px;white-space:nowrap}.slot.two{background:#fff0e0;color:var(--orange)}.slot.changed{outline:1px solid currentColor;outline-offset:1px}.candidate-foot{display:flex;justify-content:space-between;gap:8px;align-items:center;grid-column:1/-1;font-size:13px}.inspect{font-size:13px;background:transparent;border:0;text-decoration:underline;text-underline-offset:3px;color:var(--teal);padding:0}.candidate-foot .state{color:var(--muted)}.candidate.blocked .state{color:var(--red)}.result-line{border-top:1px solid var(--line);margin-top:14px;padding-top:12px;font-size:16px}.memory{margin-top:20px}.memory-list{display:flex;gap:8px;flex-wrap:wrap;margin:15px 0}.memory-item{border:1px solid var(--line);padding:10px 12px;border-radius:10px;min-width:124px;flex:1}.memory-item.new{border-color:var(--teal);background:#edf8f3}.memory-item .label{font-size:12px;display:flex;justify-content:space-between;color:var(--muted);margin-bottom:6px}.memory-item .layout{gap:3px}.memory-item .slot{padding:0 4px;font-size:12px}.memory-note{font-size:16px}.bottom-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:20px 0}.chart{width:100%;height:230px;display:block}.history{width:100%;border-collapse:collapse;font-size:15px}.history th,.history td{text-align:left;padding:8px 10px;border-bottom:1px solid #e8edf0}.history th{font-weight:500;color:var(--muted);font-size:13px}.history tr:last-child td{border-bottom:0}.history tr.active td{background:#edf8f3}.history .go{border:0;padding:0;color:var(--teal);font-size:15px;text-decoration:underline;background:transparent}.jump-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.jump-links button{font-size:14px}.reading{margin:26px 0}.reading details{border-top:1px solid var(--line);padding:18px 0}.reading details:first-child{border:0}.reading summary{font-size:18px}.reading p,.reading li{font-size:17px}.reading ul{padding-left:24px;margin:12px 0}.compare{border-collapse:collapse;width:100%;margin:15px 0;font-size:16px}.compare th,.compare td{padding:12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}.compare th{color:var(--muted);font-weight:500;width:25%}.finish{border:2px solid var(--teal);background:#eef8f3;padding:22px;border-radius:14px;margin-top:20px}.finish strong{font-size:24px;color:var(--teal)}.finish p{margin:10px 0}.footer{border-top:1px solid var(--line);padding:22px 0 32px;color:var(--muted);font-size:14px}.footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}[hidden]{display:none!important}code{font-size:14px;overflow-wrap:anywhere}noscript{display:block;padding:20px;background:#fff1cf}
+@media(max-width:1050px){.hero-line{display:block}.route-preview{margin-top:20px}.grid{grid-template-columns:1fr 1.1fr}.card{padding:20px}.controls{position:static}.phase{padding:9px;font-size:14px}.phase span{display:none}.top nav{gap:12px}}
+@media(max-width:760px){body{font-size:17px}.wrap{width:calc(100% - 28px)}.hero{padding-top:28px}.setup,.grid,.bottom-grid{grid-template-columns:1fr;gap:16px}.stats{gap:8px}.stat{padding:13px 11px}.stat strong{font-size:27px}.stat .label{font-size:13px}.stat .detail{font-size:12px}.top .wrap{padding:14px 0;align-items:start;flex-direction:column;gap:6px}.top nav{font-size:13px}.card{padding:19px}.control-line .position{width:100%}.control-line .grow{display:none}.control-line button{font-size:16px;padding:8px 12px}.control-line select{font-size:14px}.phases{margin-top:5px}.phase{font-size:12px;padding:9px 5px;text-align:center}.explain{padding:17px;min-height:165px}.explain h2{font-size:21px}.explain p{font-size:16px}.network{height:265px}.candidate-title{font-size:16px}.compare th,.compare td{padding:9px 6px;font-size:14px}.memory-item{flex:0 0 calc(50% - 4px)}.history th,.history td{padding:8px 6px}.lead{font-size:19px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap"><a href="06_算法交互演示.html">← 全部算法演示</a><nav aria-label="阶段导航"><a href="08_第一阶段算法逐步演示.html">第一阶段 · 覆盖</a><a href="09_第二阶段算法逐步演示.html">第二阶段 · 频率</a><a href="10_第三阶段算法逐步演示.html">第三阶段 · 功率</a></nav></div></header>
+<main class="wrap">
+<section class="hero">
+<div class="eyebrow">一个小例子，看清每一轮</div>
+<h1>禁忌搜索，每一轮到底在做什么？</h1>
+<p class="source">来源：codex</p>
+<div class="hero-line"><p class="lead">允许暂时退一步，记住刚走过的布局，<br>再把找到过的最好结果留下来。</p><div class="route-preview" aria-label="前两轮满足率从80%到75%再到100%"><div><b>80%</b><small>初始</small></div><span>→</span><div><b>75%</b><small>第1轮</small></div><span>→</span><div><b>100%</b><small>第2轮</small></div></div></div>
+</section>
+<section class="card setup" aria-label="小例子的规则">
+<div><h2>先记住这个小场景</h2><ul><li>4个波束，叫 A、B、C、D，每束都要 <strong>10份服务</strong>。</li><li>每束占1个槽，可以选<strong>频率槽1或2</strong>。一次只改一束。</li><li>邻束用同一个槽，会互相干扰；换槽可能同时影响邻束。</li></ul><p class="note">本页是可手算的教学例。服务以“份”为单位，位置、干扰和需求都固定。</p></div>
+<div><h2>分数就是总需求满足率</h2><div class="formula">分数 = 四束实际服务之和 ÷ <strong>40份需求</strong></div><p class="small">同槽时，A—B、C—D 各损失6份；B—C、D—A 各损失4份。每条边的损失由两端各分一半。</p><details><summary>展开一遍初始算式</summary><p>初始 A1、B2、C2、D1。B—C 同槽损失4份，D—A 同槽再损失4份。每束得到8份，所以总服务为 8＋8＋8＋8＝32份，满足率 32÷40＝80%。</p><p>只有环上相邻的波束有干扰。它们视为允许复用频率的不同组；这里省去组编号和完整链路公式。</p></details></div>
+</section>
+<section id="workspace" class="workspace" aria-label="逐步演示">
+<div class="controls">
+<div class="control-line"><span class="position" id="position"></span><span class="grow"></span><button id="prev">← 上一步</button><button class="primary" id="next">下一步 →</button><button id="play" aria-pressed="false">自动播放</button><label class="sr-only" for="speed">播放速度</label><select id="speed"><option value="3000">慢速 · 3秒</option><option value="1600">快速 · 1.6秒</option></select><button id="reset">从头看</button></div>
+<div class="rounds" id="rounds" aria-label="选择轮次"><span class="label">跳到</span></div>
+<p class="note" id="stepCount">每次点击只推进一小步；方向键也能前后翻看。</p>
+</div>
+<div class="phases" id="phases" aria-label="本轮流程"></div>
+<div class="explain" role="status" aria-live="polite" aria-atomic="true"><h2 id="headline"></h2><p id="explanation"></p></div>
+<div class="stats"><div class="card stat"><div class="label">当前走到的方案</div><strong id="currentScore"></strong><div class="detail" id="currentLayout"></div></div><div class="card stat best"><div class="label">已保存的历史最好</div><strong id="bestScore"></strong><div class="detail" id="bestLayout"></div></div><div class="card stat"><div class="label">已试算的候选数</div><strong id="probeCount"></strong><span class="muted small">/ 32次</span><div class="detail" id="roundCount"></div></div></div>
+<div class="grid">
+<section class="card"><div class="card-head"><h2 id="diagramTitle">当前布局</h2><span class="tag" id="diagramTag"></span></div><div class="legend"><span><i class="dot"></i>频率槽1</span><span><i class="dot orange"></i>频率槽2</span><span>红线 = 同槽干扰</span></div><svg id="network" class="network" role="img" aria-label="四个波束的频率分配与干扰"></svg><p class="diagram-caption" id="diagramCaption"></p><div class="beam-table" id="beamBars" aria-label="每束服务"></div><div class="result-line" id="serviceFormula"></div></section>
+<section class="card"><div class="card-head"><h2>本轮的4种改法</h2><span class="tag" id="candidateTag"></span></div><p class="small muted" style="margin-bottom:15px">所有候选都从本轮起点出发。试算一次，不等于已经走过去。</p><div class="candidate-list" id="candidates"></div><p class="note" id="candidateNote"></p></section>
+</div>
+<section class="card memory"><div class="card-head"><h2>禁忌表：记住最近8个完整布局</h2><span class="tag" id="memoryCount"></span></div><p class="small muted">从左到右：最旧 → 最新。禁止的是回到这套布局；同一个波束仍然可以继续改。</p><div class="memory-list" id="memory"></div><p class="memory-note" id="memoryNote"></p></section>
+<div class="finish" id="finish" hidden><strong>交付第2轮保存的最好方案：100%</strong><p>本例共走8轮、试算22次。虽然最后一轮也得到100%，程序只在严格变好时更新记录，所以交付的仍是第2轮那套布局。</p><p class="small">8轮上限先到，32次试算额度没有用满。真实项目也可能因为没有可选候选而提前结束。</p></div>
+<div class="bottom-grid"><section class="card"><h2>当前可以退，最好纪录不回退</h2><div class="legend" style="margin-top:10px"><span style="color:var(--orange)">实线：当前方案</span><span style="color:var(--teal)">虚线：历史最好</span></div><svg class="chart" id="chart" role="img" aria-label="已完成各轮的当前分数和历史最好分数"></svg><p class="note">曲线只画已经走完的轮次。试算时发现新纪录，上方“历史最好”会先更新。</p></section><section class="card"><h2>走过哪些轮次</h2><table class="history"><thead><tr><th scope="col">轮次</th><th scope="col">选了什么</th><th scope="col">当前</th><th scope="col">最好</th><th scope="col">试算</th></tr></thead><tbody id="history"></tbody></table><div class="jump-links"><button data-jump="worse">看“先退一步”</button><button data-jump="tabu">看“阻止回头”</button><button data-jump="keep">看“保留最好”</button><button data-jump="expire">看“最旧出表”</button></div></section></div>
+</section>
+<section class="card reading" aria-label="算法与项目的关系">
+<h2>弄清这几件事，就读懂禁忌搜索了</h2>
+<details open><summary>为什么明明从80%跌到75%，还要走？</summary><p>初始方案附近，一次改一束的4个候选都只有75%。只接受变好的方法会停在80%。禁忌搜索先选其中一个75%，到了新位置再看下一步，才有机会走到100%。它事先并不知道第二步一定会成功。</p><p>第3轮以后仍会继续探索，当前分数可能再次降低；已经找到的100%一直单独保存。达到轮数或试算上限后，交付保存的最好方案。</p></details>
+<details><summary>禁忌表是不是“这个波束以后不能改”？</summary><p>记住的是完整布局。本例的 A1、B2、C2、D1 是一个整体；如果新候选正好回到它，就先划掉。实际源码还把频率组、槽起点和槽数一起记录。</p><p>队列最多容纳8个布局。放入第9个时，最早的那个出表。出表只是解除禁忌，以后仍要由候选生成规则产生，才可能再次被选中。</p></details>
+<details><summary>32次、320次究竟在数什么？</summary><p><strong>数的是完整候选方案被真实评价了多少次。</strong>生成候选、查禁忌、比较已算出的分数，都不算一次新的真实评价。每轮最多试算4个，最后只走一步。</p><p>当前项目另外设置轮数上限：32次对应最多8轮，320次对应最多80轮。本例8轮仅试算22次，因为一些候选被禁忌提前划掉。候选试算一次要重新检查全场景服务；不能只看被修改的波束。</p></details>
+<details><summary>本页和项目实际实现，哪里一样、哪里简化？</summary><table class="compare"><tbody><tr><th scope="row">保持一致</th><td>先过滤禁忌，每轮最多评价4个；允许当前方案变差；保留合格的历史最好；最近8个布局滚动更新；当前实现没有“破禁忌”的特赦分支。</td></tr><tr><th scope="row">本页简化</th><td>4束、2槽、每束1槽；只生成“换一束的槽”4个动作；同分按 A、B、C、D 顺序选择；用明确的干扰损失算式代替物理链路。</td></tr><tr><th scope="row">项目动作</th><td>移动频率块、转移相邻槽、交换两束、轮换3—4束、跨组交换等。先生成候选池，再用规则优先级选最多4个进行真实评价。</td></tr><tr><th scope="row">保存条件</th><td>项目要求满足率严格超过历史最好，并保护初始已达到10%需求的波束。本例所有方案每束至少拿到5份，满足保护条件。</td></tr><tr><th scope="row">功率怎样处理</th><td>项目搜索候选时固定贪心给出的参考功率。选好频率方案后，再接第三阶段连续功率优化；每次候选试算都重新计算干扰和服务。</td></tr></tbody></table></details>
+<details><summary>数据、图与代码依据</summary><p>教学场景、逐步记录、交互图与页面脚本均由 codex 制作。所有表格、图和文字中的分数由本页同一份计算结果生成。教学分数不代表实验成绩。</p><p>项目流程依据：<code>D:/paper-s2fix/src/satellite_rl/s2fix/search_env.py</code> 中的 <code>run_search</code>、<code>probe</code> 与 <code>allocation</code>，核对日期2026-10-20。</p><p>已有实验结果见 <a href="../../S2-FIX第二阶段需求压力/12_S2-FIX第二阶段需求压力实验报告.md">S2-FIX第二阶段实验报告</a>；近期比较见 <a href="04_近期工作交互汇报.html">近期工作交互汇报</a>。</p></details>
+</section>
+</main>
+<footer class="footer"><div class="wrap"><span>教学例 · 所有数字在浏览器中计算 · 断网也能使用</span><a href="06_算法交互演示.html">继续看其他算法 →</a></div></footer>
+<noscript>请启用浏览器 JavaScript，才能逐步播放这个小例子。</noscript>
+<script>
+'use strict';
+const names=['A','B','C','D'];
+const edges=[{a:0,b:1,loss:6},{a:1,b:2,loss:4},{a:2,b:3,loss:6},{a:3,b:0,loss:4}];
+const initial=[1,2,2,1], phases=['列出改法','划掉禁忌','逐个试算','选一步走','更新记录'];
+const $=id=>document.getElementById(id);
+const key=layout=>layout.join('');
+const layoutText=layout=>layout.map((slot,i)=>names[i]+slot).join('、');
+const clone=layout=>[...layout];
+const fmt=value=>Number.isInteger(value)?String(value):value.toFixed(1);
+function evaluate(layout){
+    const service=[10,10,10,10], conflicts=edges.filter(e=>layout[e.a]===layout[e.b]);
+    conflicts.forEach(e=>{service[e.a]-=e.loss/2;service[e.b]-=e.loss/2;});
+    const total=service.reduce((a,b)=>a+b,0);
+    return {service,conflicts,total,score:total/40*100};
+}
+function chips(layout,changed=-1){return '<span class="layout">'+layout.map((slot,i)=>`<span class="slot ${slot===2?'two':''} ${i===changed?'changed':''}">${names[i]}${slot}</span>`).join('')+'</span>';}
+// Every frame is a snapshot, so going backward restores both counters and memory.
+function buildDemo(){
+    const frames=[], rounds=[], history=[{round:0,layout:clone(initial),score:80,best:80,probes:0}];
+    let current=clone(initial), best=clone(initial), bestRound=0, probes=0;
+    let memory=[{round:0,layout:clone(initial)}];
+    for(let round=1;round<=8;round++){
+        const before=clone(current), memoryBefore=memory.map(m=>({...m,layout:clone(m.layout)})), bestAtStart=clone(best);
+        const candidates=names.map((name,i)=>{
+            const layout=clone(before);layout[i]=3-layout[i];
+            return {i,name,layout,blocked:memory.some(m=>key(m.layout)===key(layout)),value:evaluate(layout)};
+        });
+        const allowed=candidates.filter(c=>!c.blocked).slice(0,Math.min(4,32-probes));
+        if(!allowed.length)break;
+        const chosen=allowed.reduce((a,b)=>b.value.score>a.value.score?b:a);
+        const startProbes=probes, evaluated=[];
+        function frame(phase,extra={}){
+            frames.push({round,phase,before:clone(before),current:clone(current),best:clone(best),bestRound,
+                probes,memory:memory.map(m=>({...m,layout:clone(m.layout)})),candidates,chosen,
+                evaluated:[...evaluated],history:history.map(h=>({...h})),bestAtStart:clone(bestAtStart),...extra});
+        }
+        const firstFrame=frames.length;
+        frame(0);frame(1);
+        for(const candidate of allowed){
+            probes++;evaluated.push(candidate.i);
+            const improved=candidate.value.score>evaluate(best).score && candidate.value.service.every(v=>v>=1);
+            if(improved){best=clone(candidate.layout);bestRound=round;}
+            frame(2,{active:candidate.i,improved});
+        }
+        frame(3,{active:chosen.i});
+        current=clone(chosen.layout);
+        memory.push({round,layout:clone(current)});
+        const expired=memory.length>8?memory.shift():null;
+        history.push({round,layout:clone(current),score:evaluate(current).score,best:evaluate(best).score,probes:probes-startProbes,chosen:chosen.name});
+        frame(4,{expired});
+        rounds.push({round,firstFrame,lastFrame:frames.length-1,before,memoryBefore});
+    }
+    frames.push({...frames[frames.length-1],phase:5});
+    return {frames,rounds};
+}
+const demo=buildDemo();
+let index=0,timer=null,preview=null;
+function describe(frame){
+    const {round,phase,candidates,evaluated,chosen,before}=frame;
+    const start=evaluate(before).score, end=chosen.value.score;
+    const blocked=candidates.filter(c=>c.blocked);
+    if(phase===0)return [`第${round}轮：从当前${fmt(start)}%出发，列出4种改法`,
+        '分别试着只改 A、B、C 或 D 的频率槽。每个候选都是从同一个当前布局复制后再改，彼此不连续执行。此时还没有做新的服务试算。'];
+    if(phase===1)return blocked.length?[`先划掉${blocked.length}个会回头的候选`,
+        blocked.map(c=>`“改${c.name}”会回到${layoutText(c.layout)}`).join('；')+'，这套布局还在禁忌表里，所以本轮不评价它。剩下的候选才进入试算。']:
+        ['这一轮没有禁忌候选，4个都可以试','4种改法都没有回到禁忌表内的布局。这里候选只有4个；实际项目候选更多时，还会按规则优先级选最多4个。'];
+    if(phase===2){
+        const c=candidates.find(c=>c.i===frame.active), v=c.value;
+        return [`试算“改${c.name}”：${v.total} ÷ 40 = ${fmt(v.score)}%`,
+            `重新计算四束服务，得到 ${v.service.join('＋')}＝${v.total}份。本轮已试${evaluated.length}个候选；当前位置仍是${fmt(start)}%。`+
+            (frame.improved?`这个分数超过此前纪录，立即保存为历史最好。`:'先记下这个结果，等本轮试算完再决定走哪一步。')];
+    }
+    if(phase===3){
+        const ties=candidates.filter(c=>!c.blocked&&c.value.score===end).length;
+        return [`选“改${chosen.name}”：${fmt(start)}% → ${fmt(end)}%`,
+            `在本轮允许且已试算的候选中，${fmt(end)}%最高。`+(ties>1?'遇到同分，按 A、B、C、D 顺序取第一个。':'')+
+            (end<start?'虽然比当前位置低，仍然走过去，继续寻找新的改法。已经保存的最好方案保持不变。':end>start?'下一步将把它设为新的当前位置。':'即使没有提高，也可以走到新的布局继续探索。')];
+    }
+    if(phase===4)return [`走到新位置，写入禁忌表`,
+        `当前布局改为${layoutText(frame.current)}，满足率${fmt(evaluate(frame.current).score)}%。历史最好仍单独保存在${fmt(evaluate(frame.best).score)}%。`+
+        (frame.expired?`表已装满8个，最早的初始布局出表，后续允许再次考虑它。`:'新布局放在表尾，下一轮从这里重新生成候选。')];
+    return ['8轮结束，交付历史最好的100%方案',
+        `已试算${frame.probes}个候选，轮数上限先到。第2轮保存的是${layoutText(frame.best)}；最后停留的是${layoutText(frame.current)}。两套都是100%，严格变好才更新纪录，所以返回第2轮那套。`];
+}
+const svgNS='http://www.w3.org/2000/svg';
+function svgEl(parent,tag,attributes={},text=''){
+    const node=document.createElementNS(svgNS,tag);
+    Object.entries(attributes).forEach(([k,v])=>node.setAttribute(k,v));
+    if(text)node.textContent=text;parent.append(node);return node;
+}
+function drawNetwork(layout,scored,title){
+    const svg=$('network');svg.replaceChildren();svg.setAttribute('viewBox','0 0 420 265');
+    svg.setAttribute('aria-label',title+'：'+layoutText(layout));
+    const positions=[[80,58],[340,58],[340,207],[80,207]];
+    edges.forEach(edge=>{
+        const [x1,y1]=positions[edge.a],[x2,y2]=positions[edge.b], conflict=layout[edge.a]===layout[edge.b];
+        svgEl(svg,'line',{x1,y1,x2,y2,stroke:conflict?'#bd4c60':'#d3dee5','stroke-width':conflict?5:2,'stroke-dasharray':conflict?'':'6 6'});
+        const x=(x1+x2)/2,y=(y1+y2)/2, vertical=x1===x2;
+        svgEl(svg,'rect',{x:x-(vertical?42:58),y:y-15,width:vertical?84:116,height:30,rx:7,fill:conflict?'#fff0f2':'white'});
+        svgEl(svg,'text',{x,y:y+5,'text-anchor':'middle','font-size':14,fill:conflict?'#aa2842':'#647782'},conflict?'损失'+edge.loss+'份':'无同槽干扰');
+    });
+    positions.forEach(([x,y],i)=>{
+        svgEl(svg,'circle',{cx:x,cy:y,r:31,fill:layout[i]===1?'#edf3ff':'#fff0e0',stroke:layout[i]===1?'#2859a7':'#9b470e','stroke-width':2});
+        svgEl(svg,'text',{x,y:y+1,'text-anchor':'middle','font-size':23,'font-weight':700,fill:'#172b3a'},names[i]);
+        svgEl(svg,'text',{x,y:y+18,'text-anchor':'middle','font-size':12,fill:layout[i]===1?'#2859a7':'#9b470e'},'频率槽'+layout[i]);
+    });
+    svgEl(svg,'text',{x:210,y:135,'text-anchor':'middle','font-size':16,fill:'#526773'},'总需求 40份');
+    const value=evaluate(layout);
+    $('beamBars').innerHTML=value.service.map((v,i)=>`<div class="beam-line"><strong>${names[i]}</strong><div class="bar"><div style="width:${v*10}%"></div></div><span>${v} / 10</span></div>`).join('');
+    $('serviceFormula').innerHTML=`服务合计：${value.service.join('＋')}＝<strong>${value.total}份</strong>　→　<strong>${fmt(value.score)}%</strong>`;
+}
+function renderDiagram(frame){
+    let layout=frame.current,title='当前布局',tag='已经走到这里';
+    if(frame.phase===5){layout=frame.best;title='最终交付的布局';tag='第2轮保存的最好';}
+    else if(preview!==null){layout=frame.candidates[preview].layout;title='查看“改'+names[preview]+'”';tag='仅查看已试算候选';}
+    else if(frame.phase===2||frame.phase===3){layout=frame.candidates[frame.active].layout;title=frame.phase===2?'试算“改'+names[frame.active]+'”':'准备走“改'+names[frame.active]+'”';tag=frame.phase===2?'仅试算，尚未走':'本轮已选中';}
+    $('diagramTitle').textContent=title;$('diagramTag').textContent=tag;
+    const v=evaluate(layout);
+    $('diagramCaption').textContent=v.conflicts.length?v.conflicts.map(e=>names[e.a]+'—'+names[e.b]+'同槽，损失'+e.loss+'份').join('；')+'。':'环上相邻波束全部错开频率，没有同槽干扰。';
+    drawNetwork(layout,true,title);
+}
+function renderCandidates(frame){
+    $('candidateTag').textContent=frame.phase===0?'尚未检查':frame.evaluated.length+'个已试算';
+    $('candidates').innerHTML=frame.candidates.map(c=>{
+        const isBlocked=frame.phase>=1&&c.blocked, known=frame.evaluated.includes(c.i);
+        const active=preview===c.i||(preview===null&&frame.phase>=2&&frame.phase<=3&&frame.active===c.i);
+        const status=isBlocked?'禁忌：回到表内布局':known?(frame.phase>=3&&c.i===frame.chosen.i?'本轮选中':'已试算'):frame.phase===0?'待查禁忌':'等待试算';
+        return `<article class="candidate ${isBlocked?'blocked':''} ${active?'active':''}" data-candidate="${c.i}"><div><div class="candidate-title">改${c.name}：槽${frame.before[c.i]} → 槽${c.layout[c.i]}</div><div class="candidate-sub">${chips(c.layout,c.i)}</div></div><div class="candidate-score">${known?'<strong>'+fmt(c.value.score)+'%</strong><small>'+c.value.total+' / 40份</small>':'<span class="muted small">'+(isBlocked?'不试算':'待计算')+'</span>'}</div><div class="candidate-foot"><span class="state">${status}</span>${known?'<button class="inspect" data-inspect="'+c.i+'">查看这次试算</button>':''}</div></article>`;
+    }).join('');
+    $('candidateNote').textContent=frame.phase===0?'列候选只提出改法；下一步先检查是否会回头。':frame.phase===1?'被划掉的候选不消耗试算次数。':frame.phase===2?'每试一个候选，试算计数加1。所有候选都从同一个本轮起点出发。':'本轮试算'+frame.evaluated.length+'个，只执行1个动作。';
+    document.querySelectorAll('[data-inspect]').forEach(button=>button.onclick=()=>{stop();preview=Number(button.dataset.inspect);renderCandidates(frame);renderDiagram(frame);});
+}
+function renderMemory(frame){
+    $('memoryCount').textContent=frame.memory.length+' / 8个';
+    $('memory').innerHTML=frame.memory.map((m,i)=>`<div class="memory-item ${frame.phase>=4&&i===frame.memory.length-1?'new':''}"><div class="label"><span>${m.round===0?'初始':`第${m.round}轮`}</span><span>${i===0?'最旧':i===frame.memory.length-1?'最新':''}</span></div>${chips(m.layout)}</div>`).join('');
+    $('memoryNote').textContent=frame.phase===5?'初始布局已出表。搜索在轮数上限处结束，交付独立保存的历史最好方案。':frame.phase===4?frame.expired?'刚移出：'+layoutText(frame.expired.layout)+'。刚加入：'+layoutText(frame.current)+'。':'刚加入：'+layoutText(frame.current)+'。':frame.phase===2?'试算本身不往禁忌表里加记录；只有实际走到的新位置才入表。':'这一轮用上面这份表过滤候选；只有完成本轮移动后才更新。';
+}
+function drawChart(frame){
+    const svg=$('chart');svg.replaceChildren();svg.setAttribute('viewBox','0 0 550 230');
+    const x=r=>45+r*60,y=v=>190-(v-50)*3;
+    [50,75,100].forEach(v=>{svgEl(svg,'line',{x1:45,x2:525,y1:y(v),y2:y(v),stroke:'#e0e7eb'});svgEl(svg,'text',{x:35,y:y(v)+5,'text-anchor':'end','font-size':13,fill:'#526773'},v+'%');});
+    for(let i=0;i<=8;i++)svgEl(svg,'text',{x:x(i),y:216,'text-anchor':'middle','font-size':13,fill:'#526773'},i===0?'初始':i+'轮');
+    [['score','#9b470e',''],['best','#086b63','6 5']].forEach(([field,color,dash])=>{
+        svgEl(svg,'path',{d:frame.history.map((h,i)=>(i?'L':'M')+x(h.round)+','+y(h[field])).join(' '),stroke:color,'stroke-width':3,fill:'none','stroke-dasharray':dash});
+        frame.history.forEach(h=>{svgEl(svg,'circle',{cx:x(h.round),cy:y(h[field]),r:4,fill:color});});
+    });
+    $('history').innerHTML=frame.history.map(h=>`<tr class="${h.round===frame.history.length-1?'active':''}"><td>${h.round===0?'初始':'<button class="go" data-history="'+h.round+'">第'+h.round+'轮</button>'}</td><td>${h.round===0?'给定起点':'改'+h.chosen}</td><td>${fmt(h.score)}%</td><td>${fmt(h.best)}%</td><td>${h.probes}次</td></tr>`).join('');
+    document.querySelectorAll('[data-history]').forEach(button=>button.onclick=()=>go(demo.rounds[Number(button.dataset.history)-1].lastFrame));
+}
+function render(){
+    const frame=demo.frames[index],[title,body]=describe(frame);
+    $('position').textContent=frame.phase===5?'演示结束':`第 ${frame.round} / 8 轮`;
+    $('headline').textContent=title;$('explanation').textContent=body;
+    $('stepCount').textContent=`讲解 ${index+1} / ${demo.frames.length} 步 · 每次点击只推进一小步；左右方向键也能翻看。`;
+    $('phases').innerHTML=phases.map((label,i)=>`<div class="phase ${i===frame.phase?'active':i<frame.phase?'done':''}" ${i===frame.phase?'aria-current="step"':''}><span>${i+1}</span>${label}</div>`).join('');
+    $('currentScore').textContent=fmt(evaluate(frame.current).score)+'%';$('currentLayout').textContent=layoutText(frame.current);
+    $('bestScore').textContent=fmt(evaluate(frame.best).score)+'%';$('bestLayout').textContent=(frame.bestRound===0?'初始保存':`第${frame.bestRound}轮保存`)+' · '+layoutText(frame.best);
+    $('probeCount').textContent=frame.probes;$('roundCount').textContent=`已走 ${frame.history.length-1} / 8 轮；每轮最多试算4个`;
+    $('prev').disabled=index===0;$('next').disabled=index===demo.frames.length-1;
+    $('next').textContent=frame.phase===4?(frame.round===8?'看最终交付 →':'进入下一轮 →'):'下一步 →';
+    document.querySelectorAll('[data-round]').forEach(button=>button.setAttribute('aria-pressed',String(Number(button.dataset.round)===frame.round&&frame.phase<5)));
+    $('resultButton').setAttribute('aria-pressed',String(frame.phase===5));$('finish').hidden=frame.phase!==5;
+    renderCandidates(frame);renderDiagram(frame);renderMemory(frame);drawChart(frame);
+}
+function stop(){clearInterval(timer);timer=null;$('play').textContent='自动播放';$('play').setAttribute('aria-pressed','false');}
+function go(next){stop();preview=null;index=Math.max(0,Math.min(demo.frames.length-1,next));render();}
+function play(){
+    if(timer){stop();return;}if(index===demo.frames.length-1){index=0;preview=null;render();}
+    $('play').textContent='暂停播放';$('play').setAttribute('aria-pressed','true');
+    timer=setInterval(()=>{preview=null;index++;render();if(index===demo.frames.length-1)stop();},Number($('speed').value));
+}
+demo.rounds.forEach(round=>{const button=document.createElement('button');button.textContent=round.round+'轮';button.dataset.round=round.round;button.onclick=()=>go(round.firstFrame);$('rounds').append(button);});
+const resultButton=document.createElement('button');resultButton.id='resultButton';resultButton.textContent='最终交付';resultButton.onclick=()=>go(demo.frames.length-1);$('rounds').append(resultButton);
+$('prev').onclick=()=>go(index-1);$('next').onclick=()=>go(index+1);$('reset').onclick=()=>go(0);$('play').onclick=play;
+$('speed').onchange=()=>{if(timer){stop();play();}};
+document.querySelectorAll('[data-jump]').forEach(button=>button.onclick=()=>{
+    const targets={worse:[1,3],tabu:[2,1],keep:[3,4],expire:[8,4]};
+    const [round,phase]=targets[button.dataset.jump];go(demo.frames.findIndex(f=>f.round===round&&f.phase===phase));
+    $('workspace').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth'});
+});
+document.addEventListener('keydown',event=>{
+    if(['INPUT','SELECT','TEXTAREA','BUTTON','SUMMARY','A'].includes(event.target.tagName))return;
+    if(event.key==='ArrowRight'){event.preventDefault();go(index+1);}
+    if(event.key==='ArrowLeft'){event.preventDefault();go(index-1);}
+});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
+render();
+</script>
+</body>
+</html>
