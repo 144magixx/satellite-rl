@@ -45,4 +45,5 @@ def verify(root):
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('root');a=p.parse_args();verify(Path(a.root))
+    p=argparse.ArgumentParser();p.add_argument('root');a=p.parse_args();result=verify(Path(a.root))
+    if result['failures']:raise ValueError('saved metrics or allocation constraints failed verification')

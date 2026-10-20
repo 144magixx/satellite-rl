@@ -47,9 +47,10 @@ def summarize(root):
                           'after_aircraft_worst10','after_total_power_w','total_seconds'):
                 delta=np.array([float(left[i][field])-float(right[i][field]) for i in ids])
                 estimates=np.array([delta[idx].mean() for idx in indices])
+                favorable=-delta if field in ('after_total_power_w','total_seconds') else delta
                 item[field]=dict(mean=float(delta.mean()),ci95=np.percentile(estimates,[2.5,97.5]).tolist(),
-                                 better=int((delta>1e-9).sum()),same=int((abs(delta)<=1e-9).sum()),
-                                 worse=int((delta < -1e-9).sum()))
+                                 better=int((favorable>1e-9).sum()),same=int((abs(delta)<=1e-9).sum()),
+                                 worse=int((favorable < -1e-9).sum()))
             paired.append(item)
     payload=dict(rows=len(rows),groups=grouped,paired=paired,
                  constraints_failed=sum(r['constraints_ok']!='True' for r in rows),
