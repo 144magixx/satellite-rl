@@ -24,7 +24,7 @@ def verify(root):
                 assert sum(case['request_bps_int64'])==case['total_request_bps_int64']
                 owners=layout['owner_aircraft_to_beam_id'];beams=layout['beam_ids']
                 assert len(owners)==len(ids) and {a for a,b in owners}==set(ids)
-                counts=np.array([sum(b==beam for a,b in owners) for beam in beams])
+                counts=np.array([sum(b==beam for a,b in owners) for beam in beams],dtype=np.int64)
                 np.testing.assert_array_equal(counts,layout['aircraft_count_by_beam'])
                 np.testing.assert_array_equal(counts*fixed,layout['request_bps_by_beam_int64'])
                 assert counts.sum()==len(ids) and (counts*fixed).sum()==case['total_request_bps_int64']
