@@ -48,15 +48,22 @@ def main():
                     page.locator("#spectrum").scroll_into_view_if_needed()
                     page.wait_for_timeout(1800)
                     page.locator("#spectrum").screenshot(path=str(VISUALS / "codex版_main_pure32.png"))
+                    page.set_viewport_size({"width": 390, "height": 800})
+                    page.locator("#searchKpis").screenshot(path=str(VISUALS / "codex版_main_pure32_mobile.png"))
+                    page.set_viewport_size({"width": 1280, "height": 800})
                 elif path.parent.name == "dsh版":
                     assert "纯禁忌搜索32次（随机初解）" in page.locator("#rankChart").inner_text()
                     page.locator('[data-m="w10"]', has_text="最差一成").click()
                     assert "56.3%" in page.locator("#rankChart").inner_text()
-                    assert "3.65 秒" in page.locator("#pure32-main-result").inner_text()
+                    assert "3.65秒" in page.locator("#stage2 .sec-head").all_inner_texts()[1]
+                    assert page.locator("#pure32-main-result").count() == 0
                     page.locator("#rankChart").scroll_into_view_if_needed()
                     page.mouse.move(1200, 700)
                     page.wait_for_timeout(1800)
                     page.locator("#stage2 .rank").first.screenshot(path=str(VISUALS / "dsh版_main_pure32.png"))
+                    page.set_viewport_size({"width": 390, "height": 800})
+                    page.locator("#rankChart").screenshot(path=str(VISUALS / "dsh版_main_pure32_mobile.png"))
+                    page.set_viewport_size({"width": 1280, "height": 800})
                 else:
                     assert "纯禁忌搜索32次（随机初解）" in page.locator("#s2cchart").inner_text()
                     assert "纯禁忌搜索32次（随机初解）" in page.locator("#s2dtab").inner_text()
@@ -64,6 +71,9 @@ def main():
                     page.locator("#s2dtab").scroll_into_view_if_needed()
                     page.wait_for_timeout(1800)
                     page.locator("#s2dtab").screenshot(path=str(VISUALS / "cc版_main_pure32.png"))
+                    page.set_viewport_size({"width": 390, "height": 800})
+                    page.locator("#s2dtab").screenshot(path=str(VISUALS / "cc版_main_pure32_mobile.png"))
+                    page.set_viewport_size({"width": 1280, "height": 800})
             if path.name.startswith("09_"):
                 page.goto(path.as_uri() + "#tabu", wait_until="load")
                 page.wait_for_timeout(500)
@@ -71,6 +81,11 @@ def main():
                 assert page.frame_locator("#tabuFrame").locator("#headline").count() == 1
             assert not errors, (path, errors)
             print(path.relative_to(ROOT), "OK")
+        guide = ROOT / "docs/资料/08_三阶段近期实验导读.html"
+        page.goto(guide.as_uri(), wait_until="load")
+        assert "纯禁忌搜索32次" in page.locator("#section-3").locator("xpath=..").inner_text()
+        assert page.locator("a[href*='25_纯禁忌搜索与贪心加禁忌搜索配对评价.md']").count() == 1
+        print(guide.relative_to(ROOT), "OK")
         browser.close()
 
 

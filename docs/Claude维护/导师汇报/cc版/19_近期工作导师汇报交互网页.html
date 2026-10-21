@@ -1941,7 +1941,7 @@ const s2b = (() => {
 
 /* PURE_TABU_MAIN_20261021_START */
 D.hd.splice(4,0,{"name": "纯禁忌搜索32次（随机初解）", "sgm": 0.963383, "w": 90.030267, "cat": "search", "n": "随机初解 · 32 次评价"});
-D.s2d.splice(3,0,{"name": "纯禁忌搜索32次（随机初解）", "sgm": 0.963383, "w": 90.030267, "worst": 56.33004, "probes": 32, "t": 3.649158, "train": 0, "trainS": "无需训练", "color": "#e5a36e"});
+D.s2d.splice(3,0,{"name": "纯禁忌搜索32次（随机初解）", "sgm": 0.963383, "w": 90.030267, "worst": 56.33004, "probes": 32, "t": 3.649158, "train": 0, "trainS": "无需训练", "color": CAT.search[1]});
 /* PURE_TABU_MAIN_20261021_END */
 /* ---------- 第二阶段：高需求全部方法 ---------- */
 const s2c = (() => {
@@ -2076,7 +2076,7 @@ const s3 = (() => {
     E('td', 'n', undefined, tr).innerHTML = `<div class="mbar"><s style="width:${(r.sgm - 0.8) * 20}rem;background:${r.color}${r.hl ? ';box-shadow:0 0 8px rgba(59,158,255,.7)' : ''}"></s><b style="color:#fff">${f3(r.sgm)}</b></div>`;
     E('td', 'n', f1(r.w) + '%', tr);
     E('td', 'n', undefined, tr).innerHTML = `<div class="mbar"><s style="width:${r.p / 3000 * 3}rem;background:${r.color}"></s><span>${r.p} W</span></div>`;
-    E('td', 'n', (r.name.startsWith('纯禁忌搜索32次') ? r.t.toFixed(2) : f1(r.t)) + ' 秒', tr);
+    E('td', 'n', f1(r.t) + ' 秒', tr);
     hover(tr, ev => showTip(ev, r.name, [{ v: f3(r.sgm), k: 'SGM', c: r.color }, { v: f1(r.w) + '%', k: '需求满足率', c: r.color }, { v: r.p + ' W', k: '总功率（上限 3000 W）', c: r.color }, { v: f1(r.t) + ' 秒', k: '单景耗时', c: r.color }], r.d));
   }
   const ch = vbars($('#s3chart'), { w: 680, h: 440, m: { l: 60, r: 6, t: 80, b: 72 }, min: 0.6, max: 1.0, ticks: [0.6, 0.7, 0.8, 0.9, 1.0], tickFmt: v => v.toFixed(1), bw: 60, items: D.s3t,

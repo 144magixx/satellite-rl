@@ -603,6 +603,9 @@ section[id]{scroll-margin-top:84px}
 }
 
 </style>
+<style id="stage2-rank-mobile-style">
+@media(max-width:650px){#rankChart,#same32Chart{overflow-x:auto}#rankChart svg,#same32Chart svg{width:760px!important;max-width:none}}
+</style>
 </head>
 <body>
 <div id="tip"></div>
@@ -772,7 +775,7 @@ section[id]{scroll-margin-top:84px}
       <div class="sec-head" style="margin-top:clamp(60px,8vw,110px)" data-reveal>
         <p class="eyebrow">03 · 确认 88 景</p>
         <h2>加 32 次评价，多 2 个点；最差飞机多 14 点</h2>
-        <p class="lead">每架飞机 43.2 Mbps，功率优化之后。切换“全部飞机 / 最差一成”，鼠标悬停柱子看 SGM 和评价次数。</p>
+        <p class="lead">每架飞机 43.2 Mbps，功率优化之后。切换“全部飞机 / 最差一成”，鼠标悬停柱子看 SGM 和评价次数。纯禁忌搜索32次从随机合法初解出发：满足率90.0%、最差一成56.3%、SGM 0.963，含SCA总耗时3.65秒。</p>
       </div>
       <div class="rank">
         <div class="card chartcard" data-reveal>
@@ -780,7 +783,7 @@ section[id]{scroll-margin-top:84px}
           <div id="rankChart" style="height:clamp(420px,40vw,620px)"></div>
         </div>
         <div class="rankside" data-reveal style="--d:.08s">
-          <div class="card sidecard" id="pure32-main-result"><div class="k">纯禁忌搜索32次 · 随机初解</div><div class="v">SCA后满足率 <b>90.0%</b>，最差一成 <b>56.3%</b>，SGM <b>0.963</b>；含SCA总耗时 <b>3.65 秒</b>。</div></div><div class="card sidecard"><div class="k">搜索对贪心</div><div class="v" id="rankTip1"><b>+2.0 点</b>（区间 +1.6 到 +2.5）；最差一成 <b>+14.4 点</b>。</div></div>
+          <div class="card sidecard"><div class="k">搜索对贪心</div><div class="v" id="rankTip1"><b>+2.0 点</b>（区间 +1.6 到 +2.5）；最差一成 <b>+14.4 点</b>。</div></div>
           <div class="card sidecard"><div class="k">次数翻十倍</div><div class="v">320 次只再多 <b>0.4 点</b>——收益来自“改得准”，不是“改得多”。</div></div>
           <div class="card sidecard"><div class="k">直出学习</div><div class="v"><b>88.3%</b>，比贪心低 4.2 点；最差一成只有 <b>50.0%</b>。</div></div>
           <div class="card sidecard"><div class="k">SGM 并列报告</div><div class="v">贪心 <b>0.973</b>；搜索类 <b>0.988–0.990</b>；直出 <b>0.919</b>——排序与满足率一致。</div></div>
@@ -1969,8 +1972,8 @@ $('#demandRange').addEventListener('input',e=>{demandState.i=+e.target.value;dra
 drawDemand();
 
 /* PURE_TABU_MAIN_20261021_START */
-DATA.stage2.confirm.rows.splice(1,0,{"id": "PTS32", "name": "纯禁忌搜索32次（随机初解）", "kind": "base", "W": 90.030267, "w10": 56.33004, "SGM": 0.963383, "probes": 32, "t": 3.649158});
-DATA.stage2.same32.rows.splice(2,0,{"id": "PTS32", "name": "纯禁忌搜索32次（随机初解）", "W": 90.030267, "kind": "base"});
+DATA.stage2.confirm.rows.splice(1,0,{"id": "PTS32", "name": "纯禁忌搜索32次（随机初解）", "kind": "ours", "W": 90.030267, "w10": 56.33004, "SGM": 0.963383, "probes": 32, "t": 3.649158});
+DATA.stage2.same32.rows.splice(2,0,{"id": "PTS32", "name": "纯禁忌搜索32次（随机初解）", "W": 90.030267, "kind": "ours"});
 /* PURE_TABU_MAIN_20261021_END */
 /* ---------- ranking ---------- */
 const rankState={m:'W'};

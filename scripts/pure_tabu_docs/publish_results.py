@@ -301,6 +301,10 @@ def navigation(public):
 ## 追问：主对比表为什么仍只有贪心＋禁忌？我要纯禁忌32次
 
 此前只给旧行补了初始化名称，并在附页加入纯禁忌对照，漏了主表。本次把“纯禁忌搜索32次（随机初解）”直接补入主要算法对比：需求满足率{percent(r['PTS32']['after_W'])}、最差10%飞机{percent(r['PTS32']['after_aircraft_worst10'])}、SGM {r['PTS32']['after_SGM']:.3f}，均为SCA后。原94.5%的行仍是贪心＋禁忌32次，两者分别展示。
+
+## 追问：格式与其他行一致，并同步dsh、cc和中期材料
+
+2026-10-22：先前的绿色是额外添加的强调，现已去掉。纯禁忌行沿用原表的字体、字号、字重、边框及交替底色。dsh、cc、codex三套PPT、Word、网页及对应PDF同步主比较，中期材料在第二阶段正文单列本次43.2 Mbps、确认88景的补充实验；相关展示图和公开CSV也加入纯禁忌32次，保留历史实验的条件和原成绩。具体入口见[文档同步清单]({rel(OUT / 'document_sync.md', question)})。
 '''
     question.write_text(content, encoding="utf-8")
     names = ["EXPERIMENT_STATUS.md", "docs/00_目录.md", "docs/第二阶段/00_目录.md", "docs/Claude维护/00_说明.md", "Q&A/问答索引.md", "docs/Claude维护/导师汇报/codex版/数据与图/来源说明.md"]

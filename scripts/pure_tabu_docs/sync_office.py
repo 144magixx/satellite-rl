@@ -8,7 +8,7 @@ from pathlib import Path
 
 from docx import Document
 from docx.text.paragraph import Paragraph
-from docx.shared import Pt as DocPt
+from docx.shared import Inches as DocInches, Pt as DocPt
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from pptx import Presentation
@@ -22,6 +22,7 @@ REPORT = "docs/第二阶段/实验报告/25_纯禁忌搜索与贪心加禁忌搜
 MARKER = "2026-10-21 纯禁忌搜索与贪心初解对照"
 FIGURE_NOTE = "图中禁忌搜索采用贪心初解；纯禁忌见新增对照页。"
 OLD_FIGURE_NOTE = "图中贪心＋禁忌搜索采用贪心初解；纯禁忌见新增对照页。"
+UPDATED_FIGURE_NOTE = "图中贪心＋禁忌搜索用贪心初解；纯禁忌32次用随机合法初解。"
 OFFICE = ROOT / "docs/Claude维护/导师汇报"
 DOCS = [
     *sorted(OFFICE.rglob("*.docx")),
@@ -29,6 +30,48 @@ DOCS = [
 ]
 PPTS = [p for p in sorted(OFFICE.rglob("*.pptx"))
         if not p.name.startswith("~$") and not p.stem.endswith(("_纯禁忌对照版", "_纯禁忌主表更新版"))]
+FIGURES = ROOT / "outputs/experiments/s2_pure_tabu_20261021/presentation_figures"
+PPT_FIGURES = {
+    "cc版": {15: "cc_v2_11_高需求全方法.png", 17: "cc_v2_13_搜索效率.png"},
+    "dsh版": {11: "dsh_G1_SGM两种协议.png", 14: "dsh_G2_SGM第三阶段前后.png",
+              15: "dsh_G5_评价次数与满足率.png"},
+}
+WORD_FIGURES = {
+    "cc版": {"图15": "cc_v2_11_高需求全方法.png", "图17": "cc_v2_13_搜索效率.png"},
+    "dsh版": {"图 4": "dsh_G1_SGM两种协议.png", "图 5": "dsh_G2_SGM第三阶段前后.png",
+              "图 6": "dsh_G5_评价次数与满足率.png"},
+}
+
+
+def replace_word_figures(document, variant):
+    changed = False
+    paragraphs = document.paragraphs
+    for caption, filename in WORD_FIGURES.get(variant, {}).items():
+        index = next((i for i, paragraph in enumerate(paragraphs) if paragraph.text.startswith(caption)), None)
+        if index is None:
+            continue
+        image_paragraph = next(paragraph for paragraph in reversed(paragraphs[:index])
+                               if paragraph._p.xpath(".//a:blip"))
+        relation_id = image_paragraph._p.xpath(".//a:blip")[0].get(qn("r:embed"))
+        part = document.part.related_parts[relation_id]
+        new = (FIGURES / filename).read_bytes()
+        if part.blob != new:
+            part._blob = new
+            changed = True
+    return changed
+
+
+def replace_ppt_figures(presentation, variant):
+    changed = False
+    for slide_number, filename in PPT_FIGURES.get(variant, {}).items():
+        slide = presentation.slides[slide_number - 1]
+        shape = next(shape for shape in slide.shapes if shape.shape_type == 13)
+        part = slide.part.related_part(shape._element.blipFill.blip.rEmbed)
+        new = (FIGURES / filename).read_bytes()
+        if part.blob != new:
+            part._blob = new
+            changed = True
+    return changed
 
 
 def comparison_rows():
@@ -57,16 +100,32 @@ def insert_word_result(document, header, anchor, values):
         anchor_row._tr.addnext(new_tr)
         new_cells = [cell for row in table.rows if row._tr is new_tr for cell in row.cells]
         for cell, value in zip(new_cells, values):
-            cell.text = value
-            tc_pr = cell._tc.get_or_add_tcPr()
-            shade = tc_pr.find(qn("w:shd"))
-            if shade is None:
-                shade = OxmlElement("w:shd")
-                tc_pr.append(shade)
-            shade.set(qn("w:fill"), "E1F4EF")
-            for paragraph in cell.paragraphs:
-                for run in paragraph.runs:
-                    run.bold = True
+            cell.paragraphs[0].runs[0].text = value
+        return True
+    return False
+
+
+def normalize_word_result(document, header, template_label):
+    for table in document.tables:
+        if [cell.text for cell in table.rows[0].cells][:len(header)] != header:
+            continue
+        pure_row = next((row for row in table.rows if "纯禁忌搜索" in row.cells[0].text), None)
+        if pure_row is None:
+            return False
+        has_green = any(cell._tc.get_or_add_tcPr().find(qn("w:shd")) is not None and
+                        cell._tc.get_or_add_tcPr().find(qn("w:shd")).get(qn("w:fill")) == "E1F4EF"
+                        for cell in pure_row.cells)
+        has_bold = any(run.bold is True for cell in pure_row.cells for p in cell.paragraphs for run in p.runs)
+        if not has_green and not has_bold:
+            return False
+        values = [cell.text for cell in pure_row.cells]
+        template = next(row for row in table.rows if template_label in row.cells[0].text)
+        fresh = deepcopy(template._tr)
+        pure_row._tr.addnext(fresh)
+        pure_row._tr.getparent().remove(pure_row._tr)
+        new_row = next(row for row in table.rows if row._tr is fresh)
+        for cell, value in zip(new_row.cells, values):
+            cell.paragraphs[0].runs[0].text = value
         return True
     return False
 
@@ -78,15 +137,82 @@ def insert_word_main_sentence(document, anchor, pure):
         f"SGM {pure['after_SGM']:.3f}；单景总时间{pure['total_seconds']:.2f}秒"
         "（初解＋搜索＋核验＋SCA）。"
     )
-    if any(sentence in paragraph.text for paragraph in document.paragraphs):
+    existing = next((paragraph for paragraph in document.paragraphs if sentence in paragraph.text), None)
+    if existing is not None:
+        if existing.style.name.startswith("Heading"):
+            existing.style = document.styles["Normal"]
+            return True
         return False
     source = next(paragraph for paragraph in document.paragraphs if anchor in paragraph.text)
     element = OxmlElement("w:p")
     source._p.addnext(element)
     paragraph = Paragraph(element, source._parent)
-    paragraph.style = source.style
+    paragraph.style = document.styles["Normal"] if source.style.name.startswith("Heading") else source.style
     paragraph.add_run(sentence)
     return True
+
+
+def insert_midterm_section(document, anchor, pure, greedy, hybrid):
+    title = "2026-10-21 需求压力补充实验"
+    if any(title in paragraph.text for paragraph in document.paragraphs):
+        return False
+    source = next(paragraph for paragraph in document.paragraphs if anchor in paragraph.text)
+
+    def after(node, value, style=None):
+        element = OxmlElement("w:p")
+        node.addnext(element)
+        paragraph = Paragraph(element, source._parent)
+        if style:
+            paragraph.style = style
+        paragraph.add_run(value)
+        return paragraph
+
+    level = "Heading 3" if source.style.name == "Heading 2" else "Heading 2"
+    heading = after(source._p, title, level)
+    origin = after(heading._p, "来源：codex")
+    intro = after(origin._p,
+                  "主档每机43.2 Mbps、150束、同一确认88景；下表为相同SCA后的逐机平均结果。"
+                  "纯禁忌搜索从随机合法初解起步，贪心＋禁忌搜索从容量感知贪心初解起步。")
+    table = document.add_table(rows=1, cols=5)
+    table.style = "Table Grid"
+    headers = ["方法", "满足率", "最低10%飞机", "SGM", "总时间/秒"]
+    for cell, value in zip(table.rows[0].cells, headers):
+        cell.text = value
+    for name, row in (("纯禁忌搜索32次", pure), ("容量感知贪心", greedy),
+                      ("贪心＋禁忌搜索32次", hybrid)):
+        for cell, value in zip(table.add_row().cells,
+                               [name, percent(row, "after_W"), percent(row, "after_aircraft_worst10"),
+                                f"{row['after_SGM']:.3f}", f"{row['total_seconds']:.2f}"]):
+            cell.text = value
+    intro._p.addnext(table._tbl)
+    after(table._tbl,
+          f"纯禁忌搜索32次在SCA前满足率{percent(pure, 'before_W')}、SGM {pure['before_SGM']:.3f}；"
+          "表中时间包括初解、搜索、核验与SCA，不含第一阶段布局和文件读写。"
+          "本组是后续需求压力实验，旧表沿用原批次条件。")
+    return True
+
+
+def normalize_midterm_table(document):
+    for table in document.tables:
+        headers = [cell.text for cell in table.rows[0].cells]
+        if headers != ["方法", "满足率", "最低10%飞机", "SGM", "总时间/秒"]:
+            continue
+        widths = [1.9, .9, 1.3, 1.1, .9]
+        changed = table.autofit or any(abs(cell.width.inches - width) >= .02
+                                      for cell, width in zip(table.rows[0].cells, widths))
+        table.autofit = False
+        for column, width in zip(table.columns, widths):
+            column.width = DocInches(width)
+        for row in table.rows:
+            for cell, width in zip(row.cells, widths):
+                cell.width = DocInches(width)
+                for paragraph in cell.paragraphs:
+                    fmt = paragraph.paragraph_format
+                    changed = changed or fmt.first_line_indent != DocPt(0) or fmt.left_indent != DocPt(0)
+                    fmt.first_line_indent = DocPt(0)
+                    fmt.left_indent = DocPt(0)
+        return changed
+    return False
 
 
 def insert_ppt_result(presentation, pure):
@@ -94,25 +220,48 @@ def insert_ppt_result(presentation, pure):
                  if shape.has_table and shape.table.cell(0, 0).text == "方法"
                  and any("直出T-SAC" in row.cells[0].text for row in shape.table.rows))
     if any("纯禁忌搜索32次" in row.cells[0].text for row in table.rows):
-        return False
+        return normalize_ppt_result(table, "改进式SAC（I0）", "纯禁忌搜索32次")
     anchor = next(row for row in table.rows if row.cells[0].text == "容量感知贪心")
     new_tr = deepcopy(anchor._tr)
     anchor._tr.addnext(new_tr)
     row = next(row for row in table.rows if row._tr is new_tr)
-    values = ["纯禁忌搜索32次（随机初解）", percent(pure, "after_W"),
+    values = ["纯禁忌搜索32次", percent(pure, "after_W"),
               percent(pure, "after_aircraft_worst10"), f"{pure['after_SGM']:.3f}"]
     for cell, value in zip(row.cells, values):
-        cell.text = value
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = RGBColor(225, 244, 239)
-        for paragraph in cell.text_frame.paragraphs:
-            paragraph.font.name = "Microsoft YaHei"
-            paragraph.font.size = Pt(14)
-            paragraph.font.bold = True
-            paragraph.font.color.rgb = RGBColor(13, 95, 77)
+        cell.text_frame.paragraphs[0].runs[0].text = value
     for index, existing in enumerate(table.rows):
         existing.height = Inches(.49 if index == 0 else .5)
     return True
+
+
+def normalize_ppt_result(table, template_label, pure_label):
+    pure_row = next(row for row in table.rows if pure_label in row.cells[0].text)
+    green = RGBColor(225, 244, 239)
+    needs_style = any(cell.fill.type is not None and cell.fill.fore_color.rgb == green for cell in pure_row.cells)
+    if needs_style:
+        values = [cell.text for cell in pure_row.cells]
+        if len(values) == 4:
+            values[0] = "纯禁忌搜索32次"
+        template = next(row for row in table.rows if template_label in row.cells[0].text)
+        fresh = deepcopy(template._tr)
+        pure_row._tr.addnext(fresh)
+        pure_row._tr.getparent().remove(pure_row._tr)
+        new_row = next(row for row in table.rows if row._tr is fresh)
+        for cell, value in zip(new_row.cells, values):
+            cell.text_frame.paragraphs[0].runs[0].text = value
+    first = table.rows[1].cells[0].fill.fore_color.rgb
+    second = table.rows[2].cells[0].fill.fore_color.rgb
+    changed = needs_style
+    for index, row in enumerate(table.rows):
+        if index == 0:
+            continue
+        expected = first if index % 2 == 1 else second
+        for cell in row.cells:
+            if cell.fill.fore_color.rgb != expected:
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = expected
+                changed = True
+    return changed
 
 
 def insert_cc_ppt_result(presentation, pure):
@@ -121,7 +270,7 @@ def insert_cc_ppt_result(presentation, pure):
                  if shape.has_table and shape.table.cell(0, 0).text == "方法"
                  and shape.table.cell(0, 1).text == "SGM")
     if any("纯禁忌搜索32次" in row.cells[0].text for row in table.rows):
-        return False
+        return normalize_ppt_result(table, "直出T-SAC", "纯禁忌搜索32次")
     anchor = next(row for row in table.rows if row.cells[0].text == "直出多层感知机")
     new_tr = deepcopy(anchor._tr)
     anchor._tr.addnext(new_tr)
@@ -129,14 +278,7 @@ def insert_cc_ppt_result(presentation, pure):
     values = ["纯禁忌搜索32次", f"{pure['after_SGM']:.3f}", percent(pure, "after_W"),
               percent(pure, "after_aircraft_worst10"), "32", f"{pure['total_seconds']:.2f}秒*", "无需训练"]
     for cell, value in zip(row.cells, values):
-        cell.text = value
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = RGBColor(225, 244, 239)
-        for paragraph in cell.text_frame.paragraphs:
-            paragraph.font.name = "Microsoft YaHei"
-            paragraph.font.size = Pt(14)
-            paragraph.font.bold = True
-            paragraph.font.color.rgb = RGBColor(13, 95, 77)
+        cell.text_frame.paragraphs[0].runs[0].text = value
     for existing in table.rows:
         existing.height = Inches(.4)
     add_text(slide, .61, 5.04, 11.8, .18,
@@ -192,7 +334,7 @@ def word_table(document, rows):
 
 def update_docx(path, rows):
     document = Document(path)
-    changed = False
+    changed = replace_word_figures(document, path.parent.name)
     for paragraph in document.paragraphs:
         changed = relabel_paragraph(paragraph) or changed
     caption_numbers = {
@@ -206,8 +348,18 @@ def update_docx(path, rows):
                     if OLD_FIGURE_NOTE in run.text:
                         run.text = run.text.replace(" " + OLD_FIGURE_NOTE, "").replace(OLD_FIGURE_NOTE, "")
                         changed = True
-                if FIGURE_NOTE not in paragraph.text:
+                if FIGURE_NOTE not in paragraph.text and UPDATED_FIGURE_NOTE not in paragraph.text:
                     paragraph.add_run(" " + FIGURE_NOTE)
+                    changed = True
+    updated_captions = {
+        "cc版": ("图15", "图17"),
+        "dsh版": ("图 4", "图 5", "图 6"),
+    }
+    for paragraph in document.paragraphs:
+        if any(paragraph.text.startswith(number) for number in updated_captions.get(path.parent.name, ())):
+            for run in paragraph.runs:
+                if FIGURE_NOTE in run.text:
+                    run.text = run.text.replace(FIGURE_NOTE, UPDATED_FIGURE_NOTE)
                     changed = True
     for table in document.tables:
         if table.rows[0].cells[0].text == "搜索次数" and table.rows[0].cells[1].text == "初解":
@@ -230,6 +382,8 @@ def update_docx(path, rows):
             ["纯禁忌搜索32次（随机初解）", percent(pure, "after_W"),
              percent(pure, "after_aircraft_worst10"), f"{pure['after_SGM']:.3f}"]
         ) or changed
+        changed = normalize_word_result(document, ["方法", "飞机平均W", "服务最低10%", "SGM"],
+                                        "改进式SAC（I0）") or changed
     if path.parent.name == "cc版" and path.stem == "14_近期工作导师汇报材料":
         changed = insert_word_result(
             document, ["方法", "SGM", "满足率", "最差 10% 飞机"], "直出多层感知机版",
@@ -237,10 +391,33 @@ def update_docx(path, rows):
              percent(pure, "after_W"), percent(pure, "after_aircraft_worst10"),
              "32", f"{pure['total_seconds']:.2f} 秒（新评）", "无需训练"]
         ) or changed
+        changed = normalize_word_result(document, ["方法", "SGM", "满足率", "最差 10% 飞机"],
+                                        "直出 T-SAC") or changed
     if path.parent.name == "dsh版" and path.stem == "16_近期工作导师汇报材料":
         changed = insert_word_main_sentence(document, "学习类算法的完整对照", pure) or changed
     if path.parent.name == "codex版" and path.stem == "05_中期研究进展同步稿":
         changed = insert_word_main_sentence(document, "当前43.2 Mbps、确认88景", pure) or changed
+    anchors = {
+        ("cc版", "14_近期工作导师汇报材料"): "每架 43.2 Mbps、88 景、SCA 后",
+        ("cc版", "15_导师汇报讲解提纲"): "第 20 页 第二阶段：高需求压力测试",
+        ("codex版", "01_导师汇报材料"): "全部为同一确认88景",
+        ("codex版", "03_讲解提纲"): "15｜43.2 Mbps压力下",
+        ("dsh版", "17_导师汇报讲解提纲"): "第 15 页　方法全家福",
+    }
+    key = (path.parent.name, path.stem)
+    if key in anchors:
+        changed = insert_word_main_sentence(document, anchors[key], pure) or changed
+    midterm_anchors = {
+        "05_第二三阶段中期进展报告草稿": "第二阶段离散结构学习的研究进展",
+        "06_中期研究进展与路线调整_导师讨论版": "对当前最好证据的判断",
+        "07_HTS资源分配中期报告_正式版": "3.4 阶段研究结果与分析",
+    }
+    if path.stem in midterm_anchors:
+        summary = json.loads(SUMMARY.read_text(encoding="utf-8"))
+        cohort = {r["method"]: r for r in summary["rows"] if r["set"] == "conf_d432_n150"}
+        changed = insert_midterm_section(document, midterm_anchors[path.stem], pure,
+                                         cohort["G1"], cohort["GTS32"]) or changed
+        changed = normalize_midterm_table(document) or changed
     if any(MARKER in p.text for p in document.paragraphs):
         if changed:
             document.save(path)
@@ -283,7 +460,7 @@ def add_text(slide, left, top, width, height, text, size, bold=False, color=(30,
 
 def update_pptx(path, rows):
     presentation = Presentation(path)
-    changed = False
+    changed = replace_ppt_figures(presentation, path.parent.name)
     for slide in presentation.slides:
         for shape in slide.shapes:
             if shape.has_text_frame:
@@ -308,12 +485,14 @@ def update_pptx(path, rows):
     }
     for number, top in figure_pages.get(path.parent.name, {}).items():
         slide = presentation.slides[number - 1]
-        if not any(FIGURE_NOTE in shape.text for shape in slide.shapes if shape.has_text_frame):
+        if not any(FIGURE_NOTE in shape.text or UPDATED_FIGURE_NOTE in shape.text
+                   for shape in slide.shapes if shape.has_text_frame):
             add_text(slide, .61, top, 11.6, .23, FIGURE_NOTE, 10, color=(70, 85, 95))
             changed = True
     if path.parent.name == "dsh版":
         slide = presentation.slides[10]
-        if not any(FIGURE_NOTE in shape.text for shape in slide.shapes if shape.has_text_frame):
+        if not any(FIGURE_NOTE in shape.text or UPDATED_FIGURE_NOTE in shape.text
+                   for shape in slide.shapes if shape.has_text_frame):
             frame = max((shape.text_frame for shape in slide.shapes if shape.has_text_frame and shape.top / 914400 > 5 and shape.top / 914400 < 7),
                         key=lambda frame: len(frame.text))
             paragraph = frame.add_paragraph()
@@ -322,6 +501,23 @@ def update_pptx(path, rows):
             paragraph.font.size = Pt(10)
             paragraph.font.color.rgb = RGBColor(70, 85, 95)
             changed = True
+        slide = presentation.slides[14]
+        for shape in slide.shapes:
+            if shape.has_text_frame and shape.text.startswith("32 次评价：") and "纯禁忌搜索90.0" not in shape.text:
+                shape.text_frame.paragraphs[0].runs[0].text = (
+                    "32 次评价：纯禁忌搜索90.0、贪心＋禁忌搜索94.5、SAC改进式94.9；"
+                    "退火/遗传92.4/92.6。经典方法到3200次最高94.1；直出式约88。"
+                )
+                changed = True
+    updated_note_slides = {"cc版": (15,), "dsh版": (11, 14)}
+    for number in updated_note_slides.get(path.parent.name, ()):
+        for shape in presentation.slides[number - 1].shapes:
+            if shape.has_text_frame and FIGURE_NOTE in shape.text:
+                for paragraph in shape.text_frame.paragraphs:
+                    for run in paragraph.runs:
+                        if FIGURE_NOTE in run.text:
+                            run.text = run.text.replace(FIGURE_NOTE, UPDATED_FIGURE_NOTE)
+                            changed = True
     if path.parent.name == "codex版" and path.stem == "02_导师汇报":
         changed = insert_ppt_result(presentation, pure_32()) or changed
     if path.parent.name == "cc版" and path.stem == "14_近期工作导师汇报":
