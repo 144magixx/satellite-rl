@@ -777,10 +777,10 @@ section[id]{scroll-margin-top:84px}
       <div class="rank">
         <div class="card chartcard" data-reveal>
           <div class="tabs" id="rankTabs"><button class="on" data-m="W">全部飞机</button><button data-m="w10">最差一成</button></div>
-          <div id="rankChart" style="height:clamp(330px,34vw,520px)"></div>
+          <div id="rankChart" style="height:clamp(420px,40vw,620px)"></div>
         </div>
         <div class="rankside" data-reveal style="--d:.08s">
-          <div class="card sidecard"><div class="k">搜索对贪心</div><div class="v" id="rankTip1"><b>+2.0 点</b>（区间 +1.6 到 +2.5）；最差一成 <b>+14.4 点</b>。</div></div>
+          <div class="card sidecard" id="pure32-main-result"><div class="k">纯禁忌搜索32次 · 随机初解</div><div class="v">SCA后满足率 <b>90.0%</b>，最差一成 <b>56.3%</b>，SGM <b>0.963</b>；含SCA总耗时 <b>3.65 秒</b>。</div></div><div class="card sidecard"><div class="k">搜索对贪心</div><div class="v" id="rankTip1"><b>+2.0 点</b>（区间 +1.6 到 +2.5）；最差一成 <b>+14.4 点</b>。</div></div>
           <div class="card sidecard"><div class="k">次数翻十倍</div><div class="v">320 次只再多 <b>0.4 点</b>——收益来自“改得准”，不是“改得多”。</div></div>
           <div class="card sidecard"><div class="k">直出学习</div><div class="v"><b>88.3%</b>，比贪心低 4.2 点；最差一成只有 <b>50.0%</b>。</div></div>
           <div class="card sidecard"><div class="k">SGM 并列报告</div><div class="v">贪心 <b>0.973</b>；搜索类 <b>0.988–0.990</b>；直出 <b>0.919</b>——排序与满足率一致。</div></div>
@@ -793,7 +793,7 @@ section[id]{scroll-margin-top:84px}
         <p class="lead">把评价次数都压到 32 次（退火、遗传是两种经典随机搜索）；学习每一步要过一次网络，4.8 秒只够贪心+禁忌搜索跑 96 次。</p>
       </div>
       <div class="rank">
-        <div class="card chartcard" data-reveal><div id="same32Chart" style="height:clamp(250px,26vw,360px)"></div></div>
+        <div class="card chartcard" data-reveal><div id="same32Chart" style="height:clamp(310px,30vw,430px)"></div></div>
         <div class="rankside" data-reveal style="--d:.08s">
           <div class="card sidecard"><div class="k">同样耗时</div><div class="v">改进式学习 32 次 <b>4.8 秒</b>；贪心+禁忌搜索 96 次 <b>4.8 秒</b>；贪心+禁忌搜索 320 次 <b>13.7 秒</b>。三者都是 <b>94.9%</b>。</div></div>
           <div class="card sidecard"><div class="k">最好的文献臂</div><div class="v">遗传算法 3200 次、换成满足率目标：<b>94.1%</b>，单景 61 秒，仍比 320 次贪心+禁忌搜索低 <b>0.8 点</b>。</div></div>
@@ -1968,12 +1968,16 @@ function drawDemand(){
 $('#demandRange').addEventListener('input',e=>{demandState.i=+e.target.value;drawDemand();});
 drawDemand();
 
+/* PURE_TABU_MAIN_20261021_START */
+DATA.stage2.confirm.rows.splice(1,0,{"id": "PTS32", "name": "纯禁忌搜索32次（随机初解）", "kind": "base", "W": 90.030267, "w10": 56.33004, "SGM": 0.963383, "probes": 32, "t": 3.649158});
+DATA.stage2.same32.rows.splice(2,0,{"id": "PTS32", "name": "纯禁忌搜索32次（随机初解）", "W": 90.030267, "kind": "base"});
+/* PURE_TABU_MAIN_20261021_END */
 /* ---------- ranking ---------- */
 const rankState={m:'W'};
 function drawRank(){
   const rows=DATA.stage2.confirm.rows.map(r=>({label:r.name,value:rankState.m==='W'?r.W:r.w10,color:r.kind==='bad'?'#ff7a45':(r.kind==='ours'?'#38bdf8':'#94a3b8'),meta:r}));
-  hbars($('#rankChart'),{w:980,h:460,pad:{l:220,r:80,t:22,b:6},min:40,max:100,ticks:6,rows,pitch:86,barH:28,valFmt:v=>FMT(v)+'%',axisFmt:v=>v+'%',labelSize:15,valSize:17,
-    tip:r=>`<div style="font-weight:600;margin-bottom:3px">${r.meta.name}</div>`+tipRows([['满足率',FMT(r.meta.W)+'%'],['最差一成',FMT(r.meta.w10)+'%'],['SGM',r.meta.SGM.toFixed(3)],['真实评价',r.meta.probes?r.meta.probes+' 次':'0 次']])});
+  hbars($('#rankChart'),{w:980,h:550,pad:{l:220,r:80,t:22,b:6},min:40,max:100,ticks:6,rows,pitch:86,barH:28,valFmt:v=>FMT(v)+'%',axisFmt:v=>v+'%',labelSize:15,valSize:17,
+    tip:r=>`<div style="font-weight:600;margin-bottom:3px">${r.meta.name}</div>`+tipRows([['满足率',FMT(r.meta.W)+'%'],['最差一成',FMT(r.meta.w10)+'%'],['SGM',r.meta.SGM.toFixed(3)],['真实评价',r.meta.probes?r.meta.probes+' 次':'0 次'],['含SCA总耗时',FMT(r.meta.t)+' 秒']])});
   $('#rankTip1').innerHTML=rankState.m==='W'
     ? '<b>+2.0 点</b>（区间 +1.6 到 +2.5）；最差一成 <b>+14.4 点</b>。'
     : '最差的一成飞机：贪心 <b>67.2%</b> → 贪心+禁忌搜索 32 次 <b>81.6%</b> → 改进式学习 <b>84.4%</b>。';
@@ -1984,7 +1988,7 @@ drawRank();
 /* same 32 */
 (function(){
   const rows=DATA.stage2.same32.rows.map(r=>({label:r.name,value:r.W,color:r.kind==='ours'?'#38bdf8':'#94a3b8'}));
-  hbars($('#same32Chart'),{w:820,h:310,pad:{l:200,r:70,t:34,b:6},min:90,max:100,ticks:5,rows,pitch:66,barH:24,valFmt:v=>FMT(v)+'%',axisFmt:v=>v+'%',labelSize:14,valSize:16,
+  hbars($('#same32Chart'),{w:820,h:370,pad:{l:200,r:70,t:34,b:6},min:90,max:100,ticks:5,rows,pitch:66,barH:24,valFmt:v=>FMT(v)+'%',axisFmt:v=>v+'%',labelSize:14,valSize:16,
     refs:[{v:92.5,label:'贪心 92.5',color:'#7d92a8'},{v:94.9,label:'贪心+禁忌搜索 320 次 94.9',color:'#38bdf8'}],
     tip:r=>`<div style="font-weight:600;margin-bottom:3px">${r.label}</div>`+tipRows([['满足率',FMT(r.value)+'%'],['评价次数','32 次']])});
 })();

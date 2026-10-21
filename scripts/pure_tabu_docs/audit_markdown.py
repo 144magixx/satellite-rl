@@ -3,11 +3,13 @@ import json
 from pathlib import Path
 import re
 
-from sync_markdown import BEGIN, END, OUT, ROOT, TEACHING_FILES
+from sync_markdown import BEGIN, END, MAIN_BEGIN, MAIN_END, MAIN_ROW, OUT, ROOT, TEACHING_FILES
 
 
 def historical_numbers(text):
     text = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END), "", text, flags=re.S)
+    text = re.sub(re.escape(MAIN_BEGIN) + r".*?" + re.escape(MAIN_END), "", text, flags=re.S)
+    text = re.sub(r"^.*" + re.escape(MAIN_ROW) + r"\n?", "", text, flags=re.M)
     text = re.sub(r"\]\([^\n)]*\)", "]", text)
     text = re.sub(r"outputs/experiments/[^\s`，；)]+\.png", "IMAGE_PATH", text)
     return re.findall(r"\d+(?:\.\d+)?", text)

@@ -297,6 +297,10 @@ def navigation(public):
 {table(["方法", "SGM", "需求满足率", "平均总时间"], rows)}
 
 32、96、320是候选真实评价上限；两种搜索共用邻域、禁忌表和输出规则。三种初解种子在开发20景分别报告，不挑最好种子。完整SCA前后指标、压力档、资源与计时分位数见[报告25]({rel(report_path, question)})，相关报告/PPT/Word/网页均从[同一摘要]({rel(OUT / 'presentation_summary.json', question)})同步。
+
+## 追问：主对比表为什么仍只有贪心＋禁忌？我要纯禁忌32次
+
+此前只给旧行补了初始化名称，并在附页加入纯禁忌对照，漏了主表。本次把“纯禁忌搜索32次（随机初解）”直接补入主要算法对比：需求满足率{percent(r['PTS32']['after_W'])}、最差10%飞机{percent(r['PTS32']['after_aircraft_worst10'])}、SGM {r['PTS32']['after_SGM']:.3f}，均为SCA后。原94.5%的行仍是贪心＋禁忌32次，两者分别展示。
 '''
     question.write_text(content, encoding="utf-8")
     names = ["EXPERIMENT_STATUS.md", "docs/00_目录.md", "docs/第二阶段/00_目录.md", "docs/Claude维护/00_说明.md", "Q&A/问答索引.md", "docs/Claude维护/导师汇报/codex版/数据与图/来源说明.md"]

@@ -11,6 +11,9 @@ OUT = ROOT / "outputs/experiments/s2_pure_tabu_20261021"
 REPORT = ROOT / "docs/第二阶段/实验报告/25_纯禁忌搜索与贪心加禁忌搜索配对评价.md"
 BEGIN = "<!-- PURE_TABU_COMPARISON_20261021_START -->"
 END = "<!-- PURE_TABU_COMPARISON_20261021_END -->"
+MAIN_ROW = "<!-- PURE_TABU_MAIN_ROW -->"
+MAIN_BEGIN = "<!-- PURE_TABU_MAIN_START -->"
+MAIN_END = "<!-- PURE_TABU_MAIN_END -->"
 
 RESULT_FILES = [
     "docs/Claude维护/S2-FIX第二阶段需求压力/05_第二阶段方案_需求压力下的频率槽学习改进与三阶段连通.md",
@@ -99,6 +102,44 @@ def block(path, category, data):
     return "\n".join(lines)
 
 
+def main_comparison(path, text, data):
+    """Put the pure 32-probe result beside the algorithms in the main narrative."""
+    name = path.relative_to(ROOT).as_posix()
+    prefix = "docs/Claude维护/导师汇报/"
+    formats = {
+        prefix + "codex版/01_导师汇报材料.md": ("| 方法 | 飞机平均W | 服务最低10% | SGM |", "compact"),
+        prefix + "cc版/14_近期工作导师汇报材料.md": ("| 方法 | SGM | 满足率 | 最差 10% 飞机 | 每景评价次数 | 单景耗时 | 训练时间 |", "timing"),
+    }
+    r = next(row for row in data["rows"] if row["method"] == "PTS32")
+    text = re.sub(r"^.*" + re.escape(MAIN_ROW) + r"\n?", "", text, flags=re.M)
+    text = re.sub(re.escape(MAIN_BEGIN) + r".*?" + re.escape(MAIN_END) + r"\n*", "", text, flags=re.S)
+    if name in formats:
+        header, kind = formats[name]
+        pattern = re.escape(header) + r"\n(?:\|[^\n]*\n)+"
+        match = re.search(pattern, text)
+        rows = match[0].splitlines()
+        values = ["**纯禁忌搜索32次（随机初解）**", f'**{r["after_W"]*100:.1f}%**',
+                  f'**{r["after_aircraft_worst10"]*100:.1f}%**', f'**{r["after_SGM"]:.3f}**']
+        if kind == "timing":
+            values = [values[0], values[3], values[1], values[2], "32", f'{r["total_seconds"]:.2f} 秒', "无需训练"]
+        at = next(i for i, row in enumerate(rows) if "贪心＋禁忌搜索" in row)
+        rows.insert(at, "| " + " | ".join(values) + " | " + MAIN_ROW)
+        note = (f"{MAIN_BEGIN}\n新增纯禁忌32次行采用随机合法初解，来源为本次确认88景配对评价；"
+                "表内旧贪心＋禁忌行仍是另一种方法，保留原成绩。"
+                + ("纯禁忌耗时包含初解、搜索、核验和SCA；各旧行保留历史计时。" if kind == "timing" else "")
+                + f"\n{MAIN_END}\n")
+        text = text[:match.start()] + "\n".join(rows) + "\n\n" + note + text[match.end():].lstrip("\n")
+    elif name in (prefix + "dsh版/16_近期工作导师汇报材料.md", prefix + "codex版/05_中期研究进展同步稿.md"):
+        anchor = r"^\*\*学习类算法的完整对照[^\n]*\n" if "dsh版" in name else r"^当前43\.2[^\n]*\n"
+        match = re.search(anchor, text, flags=re.M)
+        note = (f"{MAIN_BEGIN}\n**纯禁忌搜索32次（随机合法初解）**：同一确认88景、SCA后，"
+                f'需求满足率**{r["after_W"]*100:.1f}%**，最差10%飞机**{r["after_aircraft_worst10"]*100:.1f}%**，'
+                f'SGM **{r["after_SGM"]:.3f}**，平均总时间{r["total_seconds"]:.2f}秒。'
+                f"这是新增的纯禁忌对照，原贪心＋禁忌成绩单列。\n{MAIN_END}\n")
+        text = text[:match.end()] + "\n" + note + text[match.end():].lstrip("\n")
+    return text
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--summary", type=Path)
@@ -115,6 +156,8 @@ def main():
             text = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n*", "", original, flags=re.S)
             if category == "results":
                 text = name_results(text)
+                if data:
+                    text = main_comparison(path, text, data)
                 for figure in HISTORICAL_CHARTS:
                     pattern = rf"(!\[[^\n]*\]\([^\n)]*/{re.escape(figure)}\))"
                     text = re.sub(pattern + rf"(?:\n\n{re.escape(CHART_NOTE)})?", lambda m: m[1] + "\n\n" + CHART_NOTE, text)

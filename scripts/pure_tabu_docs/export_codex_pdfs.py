@@ -17,7 +17,10 @@ def export_word():
     application.Visible = False
     application.DisplayAlerts = 0
     try:
-        for stem in WORD_STEMS:
+        stems = WORD_STEMS[2:] if "--word05-only" in sys.argv else (
+            WORD_STEMS[:1] if "--affected-only" in sys.argv else WORD_STEMS
+        )
+        for stem in stems:
             source = FOLDER / f"{stem}.docx"
             document = application.Documents.Open(str(source), ReadOnly=True, AddToRecentFiles=False, Visible=False)
             try:
@@ -43,7 +46,8 @@ def main():
     try:
         if "--ppt-only" not in sys.argv:
             export_word()
-        export_powerpoint()
+        if "--word05-only" not in sys.argv:
+            export_powerpoint()
     finally:
         pythoncom.CoUninitialize()
 

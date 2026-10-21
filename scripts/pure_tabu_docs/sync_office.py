@@ -3,10 +3,14 @@
 import json
 import os
 import re
+from copy import deepcopy
 from pathlib import Path
 
 from docx import Document
-from docx.shared import Inches as DocInches, Pt as DocPt
+from docx.text.paragraph import Paragraph
+from docx.shared import Pt as DocPt
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
@@ -24,7 +28,7 @@ DOCS = [
     *sorted((ROOT / "docs/资料").glob("0[567]_*.docx")),
 ]
 PPTS = [p for p in sorted(OFFICE.rglob("*.pptx"))
-        if not p.name.startswith("~$") and not p.stem.endswith("_纯禁忌对照版")]
+        if not p.name.startswith("~$") and not p.stem.endswith(("_纯禁忌对照版", "_纯禁忌主表更新版"))]
 
 
 def comparison_rows():
@@ -35,6 +39,110 @@ def comparison_rows():
 
 def percent(row, key):
     return f"{row[key] * 100:.1f}%"
+
+
+def pure_32():
+    summary = json.loads(SUMMARY.read_text(encoding="utf-8"))
+    return next(row for row in summary["rows"] if row["set"] == "conf_d432_n150" and row["method"] == "PTS32")
+
+
+def insert_word_result(document, header, anchor, values):
+    for table in document.tables:
+        if [cell.text for cell in table.rows[0].cells][:len(header)] != header:
+            continue
+        if any("纯禁忌搜索32次" in cell.text or "纯禁忌搜索 32 次" in cell.text for row in table.rows for cell in row.cells):
+            return False
+        anchor_row = next(row for row in table.rows if anchor in row.cells[0].text)
+        new_tr = deepcopy(anchor_row._tr)
+        anchor_row._tr.addnext(new_tr)
+        new_cells = [cell for row in table.rows if row._tr is new_tr for cell in row.cells]
+        for cell, value in zip(new_cells, values):
+            cell.text = value
+            tc_pr = cell._tc.get_or_add_tcPr()
+            shade = tc_pr.find(qn("w:shd"))
+            if shade is None:
+                shade = OxmlElement("w:shd")
+                tc_pr.append(shade)
+            shade.set(qn("w:fill"), "E1F4EF")
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.bold = True
+        return True
+    return False
+
+
+def insert_word_main_sentence(document, anchor, pure):
+    sentence = (
+        "纯禁忌搜索32次从随机合法初解出发：同一88景SCA后满足率"
+        f"{percent(pure, 'after_W')}、最低10%飞机{percent(pure, 'after_aircraft_worst10')}、"
+        f"SGM {pure['after_SGM']:.3f}；单景总时间{pure['total_seconds']:.2f}秒"
+        "（初解＋搜索＋核验＋SCA）。"
+    )
+    if any(sentence in paragraph.text for paragraph in document.paragraphs):
+        return False
+    source = next(paragraph for paragraph in document.paragraphs if anchor in paragraph.text)
+    element = OxmlElement("w:p")
+    source._p.addnext(element)
+    paragraph = Paragraph(element, source._parent)
+    paragraph.style = source.style
+    paragraph.add_run(sentence)
+    return True
+
+
+def insert_ppt_result(presentation, pure):
+    table = next(shape.table for shape in presentation.slides[14].shapes
+                 if shape.has_table and shape.table.cell(0, 0).text == "方法"
+                 and any("直出T-SAC" in row.cells[0].text for row in shape.table.rows))
+    if any("纯禁忌搜索32次" in row.cells[0].text for row in table.rows):
+        return False
+    anchor = next(row for row in table.rows if row.cells[0].text == "容量感知贪心")
+    new_tr = deepcopy(anchor._tr)
+    anchor._tr.addnext(new_tr)
+    row = next(row for row in table.rows if row._tr is new_tr)
+    values = ["纯禁忌搜索32次（随机初解）", percent(pure, "after_W"),
+              percent(pure, "after_aircraft_worst10"), f"{pure['after_SGM']:.3f}"]
+    for cell, value in zip(row.cells, values):
+        cell.text = value
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor(225, 244, 239)
+        for paragraph in cell.text_frame.paragraphs:
+            paragraph.font.name = "Microsoft YaHei"
+            paragraph.font.size = Pt(14)
+            paragraph.font.bold = True
+            paragraph.font.color.rgb = RGBColor(13, 95, 77)
+    for index, existing in enumerate(table.rows):
+        existing.height = Inches(.49 if index == 0 else .5)
+    return True
+
+
+def insert_cc_ppt_result(presentation, pure):
+    slide = presentation.slides[15]
+    table = next(shape.table for shape in slide.shapes
+                 if shape.has_table and shape.table.cell(0, 0).text == "方法"
+                 and shape.table.cell(0, 1).text == "SGM")
+    if any("纯禁忌搜索32次" in row.cells[0].text for row in table.rows):
+        return False
+    anchor = next(row for row in table.rows if row.cells[0].text == "直出多层感知机")
+    new_tr = deepcopy(anchor._tr)
+    anchor._tr.addnext(new_tr)
+    row = next(row for row in table.rows if row._tr is new_tr)
+    values = ["纯禁忌搜索32次", f"{pure['after_SGM']:.3f}", percent(pure, "after_W"),
+              percent(pure, "after_aircraft_worst10"), "32", f"{pure['total_seconds']:.2f}秒*", "无需训练"]
+    for cell, value in zip(row.cells, values):
+        cell.text = value
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor(225, 244, 239)
+        for paragraph in cell.text_frame.paragraphs:
+            paragraph.font.name = "Microsoft YaHei"
+            paragraph.font.size = Pt(14)
+            paragraph.font.bold = True
+            paragraph.font.color.rgb = RGBColor(13, 95, 77)
+    for existing in table.rows:
+        existing.height = Inches(.4)
+    add_text(slide, .61, 5.04, 11.8, .18,
+             "*纯禁忌以随机合法解起步，3.65秒为同机新评；旧行耗时沿用历史口径。", 9,
+             color=(70, 85, 95))
+    return True
 
 
 METHOD = re.compile(r"(?<!纯)(?<!贪心＋)(?<!贪心加)禁忌(?:搜索)?(?=\s*(?:32|96|320)\s*次)")
@@ -115,6 +223,24 @@ def update_docx(path, rows):
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
                     changed = relabel_paragraph(paragraph) or changed
+    pure = pure_32()
+    if path.parent.name == "codex版" and path.stem == "01_导师汇报材料":
+        changed = insert_word_result(
+            document, ["方法", "飞机平均W", "服务最低10%", "SGM"], "容量感知贪心",
+            ["纯禁忌搜索32次（随机初解）", percent(pure, "after_W"),
+             percent(pure, "after_aircraft_worst10"), f"{pure['after_SGM']:.3f}"]
+        ) or changed
+    if path.parent.name == "cc版" and path.stem == "14_近期工作导师汇报材料":
+        changed = insert_word_result(
+            document, ["方法", "SGM", "满足率", "最差 10% 飞机"], "直出多层感知机版",
+            ["纯禁忌搜索 32 次（随机初解）", f"{pure['after_SGM']:.3f}",
+             percent(pure, "after_W"), percent(pure, "after_aircraft_worst10"),
+             "32", f"{pure['total_seconds']:.2f} 秒（新评）", "无需训练"]
+        ) or changed
+    if path.parent.name == "dsh版" and path.stem == "16_近期工作导师汇报材料":
+        changed = insert_word_main_sentence(document, "学习类算法的完整对照", pure) or changed
+    if path.parent.name == "codex版" and path.stem == "05_中期研究进展同步稿":
+        changed = insert_word_main_sentence(document, "当前43.2 Mbps、确认88景", pure) or changed
     if any(MARKER in p.text for p in document.paragraphs):
         if changed:
             document.save(path)
@@ -196,13 +322,22 @@ def update_pptx(path, rows):
             paragraph.font.size = Pt(10)
             paragraph.font.color.rgb = RGBColor(70, 85, 95)
             changed = True
+    if path.parent.name == "codex版" and path.stem == "02_导师汇报":
+        changed = insert_ppt_result(presentation, pure_32()) or changed
+    if path.parent.name == "cc版" and path.stem == "14_近期工作导师汇报":
+        changed = insert_cc_ppt_result(presentation, pure_32()) or changed
     if any(MARKER in shape.text for slide in presentation.slides for shape in slide.shapes if shape.has_text_frame):
         if not changed:
             return False
         pending = path.with_suffix(".syncing")
         presentation.save(pending)
-        os.replace(pending, path)
-        return path
+        try:
+            os.replace(pending, path)
+            return path
+        except PermissionError:
+            alternate = path.with_name(path.stem + "_纯禁忌主表更新版.pptx")
+            os.replace(pending, alternate)
+            return alternate
     slide = presentation.slides.add_slide(presentation.slide_layouts[6])
     add_text(slide, .55, .3, 12.2, .5, MARKER, 26, True)
     add_text(slide, .57, .85, 12, .42,

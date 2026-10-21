@@ -39,6 +39,31 @@ def main():
                         scroller = section.locator(".tabu-sync-scroll").first
                         assert scroller.evaluate("el => el.scrollWidth > el.clientWidth"), path
                     page.set_viewport_size({"width": 1280, "height": 800})
+                if path.parent.name == "codex版":
+                    page.locator('[data-search="PTS32"]').click()
+                    assert "90.0%" in page.locator("#searchKpis").inner_text()
+                    assert "56.3%" in page.locator("#searchKpis").inner_text()
+                    assert "0.963" in page.locator("#searchKpis").inner_text()
+                    assert "3.65秒" in page.locator("#searchInsight").inner_text()
+                    page.locator("#spectrum").scroll_into_view_if_needed()
+                    page.wait_for_timeout(1800)
+                    page.locator("#spectrum").screenshot(path=str(VISUALS / "codex版_main_pure32.png"))
+                elif path.parent.name == "dsh版":
+                    assert "纯禁忌搜索32次（随机初解）" in page.locator("#rankChart").inner_text()
+                    page.locator('[data-m="w10"]', has_text="最差一成").click()
+                    assert "56.3%" in page.locator("#rankChart").inner_text()
+                    assert "3.65 秒" in page.locator("#pure32-main-result").inner_text()
+                    page.locator("#rankChart").scroll_into_view_if_needed()
+                    page.mouse.move(1200, 700)
+                    page.wait_for_timeout(1800)
+                    page.locator("#stage2 .rank").first.screenshot(path=str(VISUALS / "dsh版_main_pure32.png"))
+                else:
+                    assert "纯禁忌搜索32次（随机初解）" in page.locator("#s2cchart").inner_text()
+                    assert "纯禁忌搜索32次（随机初解）" in page.locator("#s2dtab").inner_text()
+                    assert "3.65 秒" in page.locator("#s2dtab").inner_text()
+                    page.locator("#s2dtab").scroll_into_view_if_needed()
+                    page.wait_for_timeout(1800)
+                    page.locator("#s2dtab").screenshot(path=str(VISUALS / "cc版_main_pure32.png"))
             if path.name.startswith("09_"):
                 page.goto(path.as_uri() + "#tabu", wait_until="load")
                 page.wait_for_timeout(500)
