@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>三阶段算法实验台 · dsh 版</title>
+<style>
+:root{
+  --bg:#050d18; --bg2:#071426; --panel:#0a1a2d; --panel2:#0c2038;
+  --line:rgba(125,211,252,.16); --line2:rgba(125,211,252,.28);
+  --ink:#e8f4ff; --ink2:#b6cbe0; --muted:#7f9bb7;
+  --cyan:#38bdf8; --teal:#2dd4bf; --amber:#fbbf24; --violet:#a78bfa;
+  --rose:#fb7185; --green:#a3e635; --orange:#fb923c;
+  --mono:"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono",monospace;
+  --sans:"Segoe UI","Microsoft YaHei","PingFang SC","Noto Sans SC",sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;
+  background-image:
+    radial-gradient(1100px 700px at 12% -8%,rgba(56,189,248,.13),transparent 62%),
+    radial-gradient(900px 620px at 92% 4%,rgba(167,139,250,.10),transparent 65%),
+    radial-gradient(800px 700px at 50% 100%,rgba(45,212,191,.07),transparent 60%);
+  background-attachment:fixed;
+}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(125,211,252,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(125,211,252,.035) 1px,transparent 1px);
+  background-size:56px 56px;
+  mask-image:radial-gradient(ellipse at 50% 10%,#000 20%,transparent 78%);
+  -webkit-mask-image:radial-gradient(ellipse at 50% 10%,#000 20%,transparent 78%);
+}
+a{color:var(--cyan);text-decoration:none}
+button{font-family:inherit}
+.wrap{width:min(1240px,calc(100% - 40px));margin:0 auto;position:relative;z-index:1}
+.hero{padding:clamp(44px,7vw,92px) 0 34px;position:relative;overflow:hidden}
+.hero:after{content:"";position:absolute;right:-140px;top:-160px;width:520px;height:520px;border-radius:50%;
+  background:radial-gradient(circle,rgba(56,189,248,.14),transparent 65%);filter:blur(10px);pointer-events:none}
+.hero-top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:26px;flex-wrap:wrap}
+.edition{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:var(--cyan);
+  border:1px solid rgba(56,189,248,.32);background:rgba(56,189,248,.07);border-radius:999px;padding:7px 12px;text-transform:uppercase}
+.edition:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--teal);box-shadow:0 0 12px var(--teal)}
+.live{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--muted)}
+h1{font-size:clamp(42px,7.6vw,92px);line-height:1.03;letter-spacing:-.055em;margin:0 0 18px;font-weight:800}
+h1 span{display:inline-block;background:linear-gradient(100deg,var(--cyan) 0%,var(--teal) 48%,var(--violet) 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 28px rgba(56,189,248,.16))}
+.hero-sub{max-width:860px;color:var(--ink2);font-size:clamp(16px,1.55vw,20px);margin:0;line-height:1.75}
+.hero-sub b{color:var(--ink)}
+.hero-stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:26px}
+.stat{border:1px solid var(--line);background:rgba(10,26,45,.7);border-radius:12px;padding:10px 14px;min-width:132px}
+.stat b{display:block;font-family:var(--mono);font-size:22px;color:var(--ink);line-height:1.1}
+.stat span{font-size:11px;color:var(--muted);letter-spacing:.08em}
+.hero-note{margin-top:24px;padding:13px 16px;border-left:2px solid var(--amber);background:rgba(251,191,36,.055);
+  color:#d7cba8;font-size:13px;max-width:980px;border-radius:0 8px 8px 0}
+.topnav{position:sticky;top:0;z-index:40;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  background:rgba(5,13,24,.78);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.topnav .wrap{display:flex;align-items:center;gap:6px;height:54px;overflow-x:auto;scrollbar-width:none}
+.topnav .wrap::-webkit-scrollbar{display:none}
+.topnav .brand{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--muted);padding-right:14px;white-space:nowrap}
+.topnav a{font-size:13px;color:var(--muted);padding:7px 12px;border-radius:8px;white-space:nowrap;border:1px solid transparent}
+.topnav a:hover{color:var(--ink);background:rgba(56,189,248,.07)}
+.topnav a.on{color:var(--cyan);border-color:rgba(56,189,248,.28);background:rgba(56,189,248,.08)}
+main{position:relative;z-index:1}
+section{padding:clamp(48px,7vw,88px) 0}
+.section-head{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;margin-bottom:24px}
+.section-head .lead{max-width:790px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.2em;color:var(--teal);text-transform:uppercase;margin:0 0 10px}
+h2{font-size:clamp(28px,3.4vw,46px);line-height:1.15;letter-spacing:-.035em;margin:0 0 12px}
+h2 em{font-style:normal;color:var(--cyan)}
+.lead{color:var(--ink2);font-size:15px;margin:0}
+.small{font-size:12px;color:var(--muted)}
+.overview{padding-top:18px}
+.overview-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.ovcard{position:relative;border:1px solid var(--line);border-radius:16px;padding:20px;background:linear-gradient(180deg,rgba(12,32,56,.88),rgba(7,20,38,.86));
+  overflow:hidden;cursor:pointer;transition:.2s ease}
+.ovcard:before{content:"";position:absolute;inset:0 0 auto;height:2px;background:linear-gradient(90deg,var(--cyan),transparent)}
+.ovcard:hover{border-color:var(--line2);transform:translateY(-2px);box-shadow:0 18px 44px rgba(0,0,0,.32)}
+.ovcard .no{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.15em}
+.ovcard h3{font-size:20px;margin:6px 0 6px;letter-spacing:-.02em}
+.ovcard p{font-size:13px;color:var(--ink2);margin:0}
+.ovcard .big{font-family:var(--mono);font-size:30px;color:var(--cyan);margin-top:12px;line-height:1}
+.ovcard .big small{font-size:12px;color:var(--muted);font-family:var(--sans);margin-left:5px}
+.stage{border-top:1px solid rgba(125,211,252,.09)}
+.stage-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:26px;align-items:end;margin-bottom:20px}
+.stage-head .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:var(--muted)}
+.stage-caveat{margin:12px 0 0;padding:10px 12px;border-left:2px solid var(--cyan);background:rgba(56,189,248,.045);color:var(--ink2);font-size:12px;max-width:830px;line-height:1.65}
+.stage-caveat b{color:var(--ink)}
+.concept-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px;max-width:1060px}
+.concept{border:1px solid rgba(125,211,252,.14);border-radius:9px;padding:8px 10px;background:rgba(8,24,43,.62)}
+.concept b{display:block;color:var(--cyan);font-size:11.5px;margin-bottom:2px;letter-spacing:.01em}
+.concept span{display:block;color:var(--ink2);font-size:11px;line-height:1.55}
+.concept.hot{border-color:rgba(251,191,36,.28);background:rgba(251,191,36,.045)}
+.concept.hot b{color:var(--amber)}
+.rulechips{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:11px;color:var(--ink2);background:rgba(9,25,43,.65);white-space:nowrap}
+.chip b{color:var(--ink);font-family:var(--mono);font-weight:600}
+.chip.tabu{border-color:rgba(251,113,133,.3);color:#fecdd3;background:rgba(251,113,133,.07)}
+.chip.asp{border-color:rgba(251,191,36,.35);color:#fde68a;background:rgba(251,191,36,.07)}
+.alg-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:18px 0 20px}
+.alg-grid.six{grid-template-columns:repeat(3,minmax(0,1fr))}
+.alg-card{position:relative;text-align:left;appearance:none;border:1px solid var(--line);border-radius:13px;padding:14px 14px 13px;
+  background:rgba(8,24,43,.72);color:var(--ink);cursor:pointer;transition:.18s ease;min-height:154px;overflow:hidden}
+.alg-card:hover{border-color:var(--line2);background:rgba(12,35,61,.9);transform:translateY(-1px)}
+.alg-card.on{border-color:rgba(56,189,248,.65);background:linear-gradient(160deg,rgba(14,45,74,.95),rgba(8,24,43,.92));
+  box-shadow:0 0 0 1px rgba(56,189,248,.14),0 12px 34px rgba(0,0,0,.3)}
+.alg-card.on:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(var(--cyan),var(--teal))}
+.alg-no{font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.1em}
+.alg-tag{float:right;font-size:10px;color:var(--muted);border:1px solid rgba(125,211,252,.12);border-radius:5px;padding:2px 5px}
+.alg-card strong{display:block;font-size:15px;margin-top:9px;letter-spacing:-.01em;line-height:1.35}
+.alg-one{display:block;color:var(--muted);font-size:11.5px;line-height:1.55;margin-top:6px}
+.alg-badge{display:inline-block;margin-top:10px;font-family:var(--mono);font-size:11px;color:var(--cyan);
+  border:1px solid rgba(56,189,248,.22);border-radius:6px;padding:3px 7px;background:rgba(56,189,248,.06)}
+.demo{border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,rgba(10,27,47,.94),rgba(6,17,31,.94));
+  box-shadow:0 26px 80px rgba(0,0,0,.34);overflow:hidden}
+.demo-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:18px 20px;border-bottom:1px solid var(--line);
+  background:linear-gradient(90deg,rgba(56,189,248,.055),transparent 55%)}
+.demo-top .tag{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--teal);text-transform:uppercase}
+.demo-top h3{margin:3px 0 4px;font-size:22px;letter-spacing:-.025em}
+.demo-top p{margin:0;color:var(--ink2);font-size:13px;max-width:780px}
+.demo-badge{font-family:var(--mono);font-size:13px;color:var(--cyan);border:1px solid rgba(56,189,248,.28);
+  background:rgba(56,189,248,.07);padding:8px 11px;border-radius:9px;white-space:nowrap}
+.demo-grid{display:grid;grid-template-columns:minmax(0,1.32fr) minmax(340px,.68fr)}
+.viz-card{padding:16px 18px 18px;border-right:1px solid var(--line);min-width:0}
+.viz-top{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px}
+.viz-title{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.08em}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:10px;color:var(--muted)}
+.legend i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px;vertical-align:1px}
+.stage-svg{width:100%;height:auto;display:block;border-radius:12px;background:
+  radial-gradient(600px 300px at 50% 20%,rgba(56,189,248,.07),transparent 70%),rgba(3,11,21,.66);
+  border:1px solid rgba(125,211,252,.08)}
+.stage-svg text{font-family:var(--sans)}
+.side{padding:16px 18px 18px;min-width:0;display:flex;flex-direction:column;gap:12px}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.metric{border:1px solid var(--line);border-radius:9px;padding:8px 9px;background:rgba(6,19,35,.6)}
+.metric b{display:block;font-family:var(--mono);font-size:19px;line-height:1.05;color:var(--ink)}
+.metric span{display:block;font-size:10px;color:var(--muted);margin-top:3px;line-height:1.25}
+.stepno{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--teal);text-transform:uppercase}
+.side h4{margin:0;font-size:19px;line-height:1.35;letter-spacing:-.02em}
+.side p{margin:0;color:var(--ink2);font-size:13px;line-height:1.7}
+.extra{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.extra-title{font-size:10px;color:var(--muted);letter-spacing:.1em;font-family:var(--mono);margin-right:2px}
+.temp{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);width:100%}
+.temp-track{flex:1;height:5px;border-radius:4px;background:rgba(125,211,252,.12);overflow:hidden}
+.temp-track i{display:block;height:100%;background:linear-gradient(90deg,var(--rose),var(--amber),var(--cyan));border-radius:4px}
+.temp b{font-family:var(--mono);color:var(--ink);font-size:12px;font-weight:500}
+.attempt{border:1px dashed rgba(251,191,36,.26);background:rgba(251,191,36,.045);border-radius:8px;padding:7px 9px;font-size:11.5px;color:#e8d9ac;width:100%}
+.pop{display:grid;gap:4px;width:100%}
+@keyframes rowIn{from{opacity:0;transform:translateX(-5px)}to{opacity:1;transform:none}}
+.pop-row{display:flex;align-items:center;gap:5px;font-size:9px;color:var(--muted);animation:rowIn .35s ease both}
+.pop-row .mini{display:flex;gap:2px}
+.pop-row .mini i{width:11px;height:9px;border-radius:2px;display:block}
+.pop-row b{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--ink2);font-weight:500}
+.recipe{border-top:1px solid var(--line);padding-top:10px;margin-top:2px}
+.recipe-h{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--muted);margin-bottom:7px}
+.recipe ol{margin:0;padding:0;list-style:none;display:grid;gap:4px;counter-reset:r}
+.recipe li{font-size:11.5px;color:var(--ink2);padding-left:20px;position:relative;line-height:1.5}
+.recipe li:before{counter-increment:r;content:counter(r);position:absolute;left:0;top:1px;width:14px;height:14px;border-radius:4px;
+  background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.2);color:var(--cyan);font-family:var(--mono);font-size:9px;display:grid;place-items:center}
+.report{border:1px solid rgba(251,191,36,.16);background:rgba(251,191,36,.04);border-radius:9px;padding:8px 10px}
+.report span{font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--amber);text-transform:uppercase}
+.report p{margin:3px 0 0;font-size:11px;color:#d9cba6;line-height:1.55}
+.controls{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+.ctrl{border:1px solid var(--line2);background:rgba(8,24,43,.8);color:var(--ink2);border-radius:8px;padding:7px 10px;font-size:11px;cursor:pointer;transition:.15s}
+.ctrl:hover{border-color:var(--cyan);color:var(--ink)}
+.ctrl.primary{background:linear-gradient(100deg,var(--cyan),var(--teal));color:#04121f;border-color:transparent;font-weight:700}
+.ctrl.primary:hover{filter:brightness(1.08)}
+.ctrl.ghost{border-color:transparent;color:var(--muted)}
+.ctrl:disabled{opacity:.35;cursor:not-allowed}
+.timeline{display:flex;gap:4px;overflow-x:auto;padding-top:2px;scrollbar-width:none}
+.timeline::-webkit-scrollbar{display:none}
+.tdot{border:1px solid var(--line);background:rgba(7,20,36,.6);border-radius:6px;padding:4px 6px;font-size:9px;color:var(--muted);cursor:pointer;white-space:nowrap;font-family:var(--mono)}
+.tdot.on{border-color:var(--cyan);color:var(--cyan);background:rgba(56,189,248,.08)}
+.tdot.done{color:var(--ink2);border-color:rgba(45,212,191,.25)}
+.loadwrap{margin-top:10px;padding-top:10px;border-top:1px solid rgba(125,211,252,.1)}
+.loadhead{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:6px}
+.loadrow{display:grid;grid-template-columns:34px minmax(0,1fr) 30px;gap:7px;align-items:center;margin-top:3px}
+.loadrow .lbl{font-family:var(--mono);font-size:9px;color:var(--muted)}
+.loadtrack{height:7px;border-radius:4px;background:rgba(125,211,252,.09);position:relative;overflow:hidden}
+.loadtrack i{display:block;height:100%;border-radius:4px;transition:width .35s ease}
+.loadtrack em{position:absolute;top:-2px;bottom:-2px;width:1px;background:rgba(251,191,36,.7)}
+.loadrow .cnt{font-family:var(--mono);font-size:10px;color:var(--ink2);text-align:right}
+.flowchart{display:grid;gap:6px;margin-top:8px}
+.frow{display:grid;grid-template-columns:112px minmax(0,1fr) 88px;gap:9px;align-items:center;border:1px solid transparent;border-radius:8px;padding:5px 7px;cursor:pointer}
+.frow:hover{background:rgba(56,189,248,.045)}
+.frow.on{border-color:rgba(56,189,248,.25);background:rgba(56,189,248,.045)}
+.frow .fn{font-size:11px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.frow .fbar{height:8px;border-radius:4px;background:rgba(125,211,252,.08);position:relative;overflow:hidden}
+.frow .fbar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,rgba(56,189,248,.5),var(--cyan))}
+.frow .fv{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:right;white-space:nowrap}
+.compare{margin-top:22px;border:1px solid var(--line);border-radius:14px;background:rgba(8,22,39,.55);padding:16px 18px}
+.compare-head{display:flex;justify-content:space-between;gap:14px;align-items:baseline;margin-bottom:10px}
+.compare-head h3{margin:0;font-size:16px}
+.compare-head span{font-size:10px;color:var(--muted)}
+.frow .fbar em{position:absolute;top:-2px;bottom:-2px;width:1px;background:rgba(251,191,36,.65)}
+.power-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:end;padding:8px 2px 2px}
+.pcol{min-width:0}
+.ptop{display:flex;align-items:baseline;gap:3px;justify-content:center;margin-bottom:4px}
+.ptop b{font-family:var(--mono);font-size:16px;color:var(--ink);line-height:1}
+.ptop span{font-size:9px;color:var(--muted)}
+.ptrack{height:156px;border-radius:8px 8px 4px 4px;background:rgba(125,211,252,.06);border:1px solid rgba(125,211,252,.08);
+  display:flex;align-items:flex-end;padding:3px;position:relative;overflow:hidden}
+.ptrack i{display:block;width:100%;border-radius:6px 6px 3px 3px;background:linear-gradient(180deg,var(--cyan),rgba(56,189,248,.24));
+  transition:height .35s ease;position:relative;z-index:1}
+.pcol.hl .ptrack{box-shadow:0 0 0 1px rgba(251,191,36,.75),0 0 28px rgba(251,191,36,.12)}
+.pcol.hl .ptop b{color:var(--amber)}
+.pname{text-align:center;font-size:11px;color:var(--ink2);margin-top:7px}
+.pgain{text-align:center;font-family:var(--mono);font-size:9px;color:var(--muted)}
+.rate{margin-top:8px}
+.rate .rl{display:flex;justify-content:space-between;font-size:8.5px;color:var(--muted);gap:2px;white-space:nowrap}
+.rate .rt{height:5px;border-radius:3px;background:rgba(125,211,252,.08);margin-top:3px;position:relative}
+.rate .rt i{display:block;height:100%;border-radius:3px;background:var(--teal);transition:width .35s ease}
+.rate .rt i.short{background:var(--rose)}
+.rate .rt em{position:absolute;top:-2px;bottom:-2px;width:1px;background:rgba(251,191,36,.8)}
+.power-note{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:10px;color:var(--muted)}
+.notes-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:14px}
+.note-card{border:1px solid var(--line);border-radius:14px;padding:18px;background:rgba(8,22,39,.62)}
+.note-card h3{margin:0 0 8px;font-size:17px}
+.note-card p{font-size:13px;color:var(--ink2);margin:0 0 8px}
+.note-card ul{margin:8px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink2);line-height:1.8}
+.note-card li b{color:var(--ink)}
+.foot{border-top:1px solid var(--line);padding:26px 0 40px;color:var(--muted);font-size:11px}
+.foot .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.foot b{color:var(--ink2)}
+.kbd{border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-family:var(--mono);font-size:9px;color:var(--ink2)}
+@media(max-width:1080px){
+  .demo-grid{grid-template-columns:1fr}
+  .viz-card{border-right:0;border-bottom:1px solid var(--line)}
+  .alg-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .overview-grid{grid-template-columns:1fr}
+  .notes-grid{grid-template-columns:1fr}
+}
+@media(max-width:720px){
+  .wrap{width:calc(100% - 26px)}
+  .stage-head{grid-template-columns:1fr}
+  .alg-grid,.alg-grid.six{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .alg-card{min-height:164px}
+  .demo-top{flex-direction:column}
+  .demo-badge{align-self:flex-start}
+  .metrics{grid-template-columns:repeat(3,1fr)}
+  .frow{grid-template-columns:92px minmax(0,1fr) 76px}
+  .power-grid{gap:6px}
+  .section-head{display:block}
+  .concept-grid{grid-template-columns:1fr 1fr}
+  .hero{padding-top:34px}
+  .legend{font-size:9px}
+  .side h4{font-size:17px}
+}
+@media(max-width:520px){
+  .concept-grid{grid-template-columns:1fr}
+  .power-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 10px}
+  .ptrack{height:118px}
+  .pcol:nth-child(3) .ptrack,.pcol:nth-child(4) .ptrack{height:118px}
+  .rate .rl{font-size:9px}
+}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-top">
+      <div class="edition">DSH Edition · 三阶段算法解剖</div>
+      <div class="live">INTERACTIVE / OFFLINE / 14 ALGORITHMS</div>
+    </div>
+    <h1>三阶段<span>算法实验台</span></h1>
+    <p class="hero-sub">把近期汇报里出现的算法，放进三个小实验里，一步一步看清它在做什么。不是实验复现，而是<b>算法解剖</b>：同一个阶段共用一个小例子，才能看出差别。</p>
+    <div class="hero-stats">
+      <div class="stat"><b>14</b><span>个算法 / 4 + 6 + 4</span></div>
+      <div class="stat"><b>3</b><span>个阶段 / 覆盖 · 频率 · 功率</span></div>
+      <div class="stat"><b id="stepCount">51</b><span>个可点击步骤</span></div>
+      <div class="stat"><b>0</b><span>外部依赖 / 断网可开</span></div>
+    </div>
+    <div class="hero-note">小实验里的数字是教学用的（36 架飞机、7 个波束、4 束功率），<b>不是</b>汇报里的 88 景结果。每个算法卡片底部单列“汇报里”的真实数字，方便对照，不混用。<br><span style="color:#9fb3c8">动效：按“下一步”或“自动播放”，中心会移动、频点会变色、功率条会滑动。</span></div>
+  </div>
+</header>
+
+<nav class="topnav">
+  <div class="wrap">
+    <div class="brand">LAB / 00—03</div>
+    <a href="#s1" class="on">01 覆盖布局</a>
+    <a href="#s2">02 频率分配</a>
+    <a href="#s3">03 功率分配</a>
+    <a href="#notes">口径与说明</a>
+  </div>
+</nav>
+
+<main>
+<section class="overview" id="overview">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="lead">
+        <p class="eyebrow">先看全景</p>
+        <h2>每个阶段，只换一个<em>小实验</em></h2>
+        <p class="lead">同一个阶段里的算法，用同一个例子、同一把尺子。点任意算法卡片开始，按“下一步”看它怎么走。</p>
+      </div>
+      <div class="small">建议顺序：先看第一阶段的 4 种布局，再看第二阶段 6 种改法，最后看第三阶段 4 种功率分法。</div>
+    </div>
+    <div class="overview-grid">
+      <div class="ovcard" data-jump="#s1">
+        <div class="no">01 / COVERAGE</div>
+        <h3>覆盖布局</h3>
+        <p>36 架飞机、6 个波束，只盯一件事：最忙的波束装多少架。</p>
+        <div class="big">14 → 6<small>最忙 / 架</small></div>
+      </div>
+      <div class="ovcard" data-jump="#s2">
+        <div class="no">02 / SPECTRUM</div>
+        <h3>频率分配</h3>
+        <p>7 个波束、3 个频段，颜色就是频段；相邻波束不能同色。</p>
+        <div class="big">5 → 7<small>服务波束 / 7</small></div>
+      </div>
+      <div class="ovcard" data-jump="#s3">
+        <div class="no">03 / POWER</div>
+        <h3>功率分配</h3>
+        <p>4 个波束、100 W；看谁把功率放到“该放的地方”，而不是平均撒。</p>
+        <div class="big">86 → 96<small>匹配分 / 100</small></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="stage" id="s1">
+  <div class="wrap">
+    <div class="stage-head">
+      <div>
+        <p class="eyebrow">01 · 第一阶段</p>
+        <h2>先定波束摆在哪，<em>再谈频率</em></h2>
+        <p class="lead">同一个 3×2 的小地图：36 架飞机、6 个波束。下限是每束 6 架。四种布局，看谁能把最忙的波束压下来。</p>
+        <p class="stage-caveat"><b>先厘清：飞机位置是输入，不能移动。</b>这里说的“归格、换束、挪中心”，改变的是波束覆盖范围和飞机归属，不是飞机坐标；蜂窝网格这一步甚至没有优化，只是把固定格子套在固定飞机上，用来看基线有多不均。<br><b>图例：</b>KMeans 聚类图里的彩色虚线多边形只是“同一簇飞机”的凸包，用来分组和数数，<b>不是波束覆盖形状</b>；FLOW/Voronoi 不画簇边界。本页波束只画中心，不画轮廓。</p>
+        <div class="rulechips">
+          <span class="chip"><b>36</b> 架飞机</span>
+          <span class="chip"><b>6</b> 个波束</span>
+          <span class="chip"><b>6</b> 架 / 束下限</span>
+          <span class="chip">颜色 = 归属波束</span>
+        </div>
+      </div>
+      <div class="small">同一批点 · 只换布局算法</div>
+    </div>
+    <div id="algs-s1" class="alg-grid"></div>
+    <div id="demo-s1"></div>
+    <div id="compare-s1" class="compare"></div>
+  </div>
+</section>
+
+<section class="stage" id="s2">
+  <div class="wrap">
+    <div class="stage-head">
+      <div>
+        <p class="eyebrow">02 · 第二阶段</p>
+        <h2>给每个波束挑频段，<em>别让邻居撞车</em></h2>
+        <p class="lead">7 个波束、3 个频段、11 条干扰边。颜色就是频段；相邻的波束不能同色。分数 = 服务波束数 − 3 × 冲突数，满分 7。</p>
+        <p class="stage-caveat"><b>主线先说明：T-SAC 是论文主方法。</b>禁忌搜索、退火、遗传是搜索基线/对照；T-SAC 的直出式是主方法，改进式 L1 是压力档下的用法。小实验只演示机制，不是汇报里的性能排名。历史S1/S96/S2是“贪心初解+禁忌搜索”；新“纯禁忌搜索”使用随机合法完整初解，再按相同规则搜索。<a href="18_近期工作导师汇报网页.html#tabu-initialization-comparison">查看实测对照 ↗</a></p>
+        <div class="concept-grid">
+          <div class="concept"><b>动作（move）</b><span>一次只改一个波束的频段，别的不动。</span></div>
+          <div class="concept"><b>候选动作（邻域）</b><span>所有一次改法：7 个波束 × 另外 2 个频段 = 14 个。</span></div>
+          <div class="concept"><b>禁忌表 / 禁忌动作</b><span>记录刚动过的波束和剩余轮数（本例禁 2 轮）；碰到它的改法就是禁忌动作。</span></div>
+          <div class="concept hot"><b>非禁忌动作</b><span>现在允许走的候选。不是“好动作”，也不是“无冲突”，只是“没被禁”。</span></div>
+          <div class="concept"><b>最好的非禁忌动作</b><span>在允许的候选里按分数挑最高；它可能比当前差，也可能带冲突。</span></div>
+          <div class="concept"><b>特赦准则（aspiration）</b><span>禁忌动作若超过历史最好，破例允许；本例没有触发。项目当前禁忌实现没有特赦分支。</span></div>
+        </div>
+        <p class="small" style="margin:8px 0 0">例子：第 1 轮动过波束 2 后，“波束 2 改回频段 1”是禁忌动作；“波束 5 改成频段 1”是非禁忌动作。</p>
+        <p class="small" style="margin:6px 0 0;color:#9fb3c8">它和贪心的关系：每轮挑“最好的非禁忌动作”这一步很像贪心；但允许走差步、且有禁忌表记忆，所以整体不是贪心，而是局部搜索/元启发式。把这两条去掉，才会退化成普通爬山。</p>
+        <div class="rulechips">
+          <span class="chip"><b>7</b> 个波束</span>
+          <span class="chip"><b>3</b> 个频段</span>
+          <span class="chip"><b>11</b> 条干扰边</span>
+          <span class="chip">满分 <b>7</b> / 冲突 0</span>
+        </div>
+      </div>
+      <div class="small">同一张图 · 只换求解算法</div>
+    </div>
+    <div id="algs-s2" class="alg-grid six"></div>
+    <div id="demo-s2"></div>
+    <div id="compare-s2" class="compare"></div>
+  </div>
+</section>
+
+<section class="stage" id="s3">
+  <div class="wrap">
+    <div class="stage-head">
+      <div>
+        <p class="eyebrow">03 · 第三阶段</p>
+        <h2>功率只有 100 W，<em>给谁多一点</em></h2>
+        <p class="lead">4 个波束，需求 30/25/20/25，每束最多 40 W。只看功率分得好不好：匹配分越高，说明“该给的给了、不该给的没浪费”。</p>
+        <div class="rulechips">
+          <span class="chip"><b>4</b> 个波束</span>
+          <span class="chip">总功率 <b>100 W</b></span>
+          <span class="chip">每束上限 <b>40 W</b></span>
+          <span class="chip">匹配 = 1 − 总供需差 / 总需求</span>
+        </div>
+      </div>
+      <div class="small">同一份需求 · 只换功率算法</div>
+    </div>
+    <div id="algs-s3" class="alg-grid"></div>
+    <div id="demo-s3"></div>
+    <div id="compare-s3" class="compare"></div>
+  </div>
+</section>
+
+<section id="notes">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="lead">
+        <p class="eyebrow">口径与说明</p>
+        <h2>哪些是<em>教学简化</em>，哪些是汇报数字</h2>
+        <p class="lead">这个页面回答“算法每一步在干什么”，不替代实验报告。真实实验的场景规模、约束和评价口径，见 <a href="18_近期工作导师汇报网页.html">18 汇报网页</a>。</p>
+      </div>
+    </div>
+    <div class="notes-grid">
+      <div class="note-card">
+        <h3>三个小实验分别简化了什么</h3>
+        <ul>
+          <li><b>覆盖：</b>只保留“点、中心、容量”，没有真实波束宽度、重叠和间隔规则；格子用 3×2 方格代替蜂窝。</li>
+          <li><b>频率：</b>把“起点 + 槽数 + 干扰”压成“7 个点、3 种颜色”；一个波束只占 1 格，不考虑多槽和功率。</li>
+          <li><b>功率：</b>用 4 束、100 W、简化速率曲线；不含真实信道、SINR 和 SCA 的凸子问题。</li>
+          <li><b>目的：</b>把“看什么、怎么改、何时停”放大；真实算法参数更多，但判断顺序相同。</li>
+        </ul>
+      </div>
+      <div class="note-card">
+        <h3>汇报里覆盖的算法</h3>
+        <p><b>第一阶段：</b>蜂窝网格、He 2024 聚类、Voronoi 均衡、FLOW-AO。</p>
+        <p><b>第二阶段：</b>容量感知贪心、禁忌搜索、模拟退火、遗传算法、直出 T-SAC、改进式 L1。</p>
+        <p><b>第三阶段：</b>注水、按需求分满、两段式、SCA。</p>
+        <p class="small">PPO 动态重排未单列：汇报里的结论是它收敛成“每分钟修一次”的固定规则，不再是一个逐步求解的对比算法；该结论保留在汇报网页。</p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div><b>三阶段算法实验台</b> · 放在 <b>docs/Claude维护/导师汇报/dsh版/</b> · 单文件离线页 · <a href="18_近期工作导师汇报网页.html">对照 18 汇报网页</a></div>
+    <div>操作：点算法卡片切换 · <span class="kbd">←</span> <span class="kbd">→</span> 翻步 · 空格自动播放</div>
+  </div>
+</footer>
+
+<script>
+window.addEventListener('error',function(e){
+  var d=document.createElement('div');d.style.cssText='position:fixed;left:12px;bottom:12px;z-index:999;background:#7f1d1d;color:#fff;padding:10px 14px;border-radius:8px;font-size:12px;max-width:70vw';
+  d.textContent='页面脚本错误：'+(e.message||e.error);document.body.appendChild(d);
+});
+const DATA = {"stage1":{"points":[[95.1,136.5],[139.4,116.6],[186.7,131.9],[139.6,180.5],[131.2,94.6],[97.8,115.3],[175,153.9],[193.3,181.9],[215.5,148.7],[201.7,149.3],[129.9,154.4],[154,125.5],[228.3,153.2],[133.4,129.3],[375.3,105.7],[334.9,125],[329.3,124.3],[304.2,100.9],[312.3,103.3],[336.8,145.6],[494.7,165.2],[491.9,133.9],[514.4,154.1],[508.4,85.3],[563.8,144.5],[502.3,168.6],[503.5,115.2],[382.1,329.4],[328.7,342.2],[377.4,282.2],[433.2,324.8],[316.2,330.4],[367.3,346.2],[307.5,348.3],[400.4,337.8],[387,356.6]],"cells":[{"x":0,"y":0,"w":240,"h":220},{"x":240,"y":0,"w":240,"h":220},{"x":480,"y":0,"w":240,"h":220},{"x":0,"y":220,"w":240,"h":220},{"x":240,"y":220,"w":240,"h":220},{"x":480,"y":220,"w":240,"h":220}],"lowerBound":6,"algorithms":[{"id":"hex","name":"蜂窝网格","tag":"文献基线","color":"#64748b","kind":"hex","badge":"最忙 14 架","one":"先把天空切成均匀的格子，每架飞机按所在位置归格。","recipe":["铺 6 个规则格","每架归到所在格","每格一个波束，数负载"],"report":"汇报：白天 24 景、100 束，最忙波束 114 架。","takeaway":"格子均匀不等于负载均匀：最忙格超过平均值两倍，后面很难补。","steps":[{"short":"铺格子","title":"先铺 6 个大小一样的格子","text":"把地图切成 3×2 个格子，每格放一个波束。格子一样大，但飞机不是均匀分布的。","kind":"hex","centers":[[120,110],[360,110],[600,110],[120,330],[360,330],[600,330]],"assign":[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],"highlight":[],"maxLoad":0,"loads":[0,0,0,0,0,0],"avgDist":0},{"short":"飞机落格","title":"每架飞机归到它所在的格子","text":"这一步没有优化，只是按格子归属。格子边界不会因为飞机多就自动变大。","kind":"hex","centers":[[120,110],[360,110],[600,110],[120,330],[360,330],[600,330]],"assign":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,4],"highlight":[],"maxLoad":14,"loads":[14,6,7,0,9,0],"avgDist":58.8},{"short":"数负载","title":"最忙的格子有 14 架，最闲的 0 架","text":"平均每格 6 架，最忙却是 14 架，超过平均值两倍。后面频率分得再好，也补不回这个起点。","kind":"hex","centers":[[120,110],[360,110],[600,110],[120,330],[360,330],[600,330]],"assign":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,4],"highlight":[0,5],"maxLoad":14,"loads":[14,6,7,0,9,0],"avgDist":58.8}]},{"id":"kmeans","name":"He 2024 聚类","tag":"文献基线","color":"#d97706","kind":"cluster","badge":"最忙 9 架","one":"按距离把飞机分成 6 簇，每簇一个波束。","recipe":["放 6 个中心","按最近中心分簇，中心移到簇均值","重复到中心不动"],"report":"汇报：同样 24 景、100 束，最忙波束 61 架。","takeaway":"聚类只追'离中心近'，不管每簇人数；密度不均时，最忙簇仍然超载。","steps":[{"short":"放中心","title":"先摆 6 个中心：大致分两排，但不贴着飞机","text":"He 2024 聚类先选中心，再让中心自己找位置。这里故意把中心摆得偏一点：3 个在上、3 个在下。","kind":"cluster","centers":[[100,90],[330,80],[560,100],[180,300],[420,320],[620,300]],"assign":[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],"highlight":[],"maxLoad":0,"loads":[0,0,0,0,0,0],"avgDist":349.1},{"short":"第一次分","title":"按最近中心认领：左上角挤了 12 架","text":"中心还没动，飞机先按距离认领。左上角这一簇太密，一个中心吃不消。","kind":"cluster","centers":[[100,90],[330,80],[560,100],[180,300],[420,320],[620,300]],"assign":[0,0,0,0,0,0,0,3,0,0,0,0,1,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,4],"highlight":[],"maxLoad":12,"loads":[12,7,7,1,9,0],"avgDist":67.7},{"short":"移动中心","title":"中心被自己的簇拉过去，飞机不动","text":"每个中心挪到自己簇的平均位置。空心圆是上一步的位置，橙色箭头是移动方向；飞机坐标一个都没动。此时还沿用旧归属，所以最忙仍是 12。","kind":"cluster","centers":[[149.9,136.4],[317.3,122.6],[511.3,138.1],[193.3,181.9],[366.6,333.1],[620,300]],"assign":[0,0,0,0,0,0,0,3,0,0,0,0,1,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,4],"prevCenters":[[100,90],[330,80],[560,100],[180,300],[420,320],[620,300]],"highlight":[],"maxLoad":12,"loads":[12,7,7,1,9,0],"avgDist":36.7},{"short":"重新认领","title":"按新中心重新认领：最忙 12→10","text":"中心动完后，再按最近中心重新认领。左上角的一部分飞机改投旁边的中心，最忙从 12 降到 10。","kind":"cluster","centers":[[149.9,136.4],[317.3,122.6],[511.3,138.1],[193.3,181.9],[366.6,333.1],[620,300]],"assign":[0,0,0,0,0,0,0,3,3,3,0,0,3,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,4],"highlight":[],"maxLoad":10,"loads":[10,6,7,4,9,0],"avgDist":34.1},{"short":"再移动","title":"再挪一次中心：只动中心，不动飞机","text":"重新算每个簇的平均位置，中心再挪一次；这一步只改变中心位置，还没有重新认领。","kind":"cluster","centers":[[138.2,133.8],[332.1,117.5],[511.3,138.1],[209.7,158.3],[366.6,333.1],[620,300]],"assign":[0,0,0,0,0,0,0,3,3,3,0,0,3,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,4],"prevCenters":[[149.9,136.4],[317.3,122.6],[511.3,138.1],[193.3,181.9],[366.6,333.1],[620,300]],"highlight":[],"maxLoad":10,"loads":[10,6,7,4,9,0],"avgDist":31.6},{"short":"稳定","title":"再认领一次，最忙降到 9","text":"再按最近中心认领，最忙降到 9；中心也基本稳定。聚类只优化'飞机离中心近不近'，不会硬性规定每束最多几架。","kind":"cluster","centers":[[138.2,133.8],[332.1,117.5],[511.3,138.1],[209.7,158.3],[366.6,333.1],[620,300]],"assign":[0,0,3,0,0,0,3,3,3,3,0,0,3,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,4],"highlight":[],"maxLoad":9,"loads":[8,6,7,6,9,0],"avgDist":31.1}]},{"id":"voronoi","name":"Voronoi 均衡","tag":"文献基线","color":"#7c3aed","kind":"voronoi","badge":"最忙 8 架","one":"按最近中心分区，再用负载把边界往挤的地方推。","recipe":["按最近中心分区","把闲置中心挪到最挤处","重新分区，直到负载推不动"],"report":"汇报：同样 24 景、100 束，最忙波束 51 架。","takeaway":"Voronoi 能把明显的不平衡推平，但没有硬容量，峰值不一定到下限。","steps":[{"short":"起点","title":"从聚类结果出发：9 架对 0 架","text":"最忙波束 9 架，最闲波束 0 架。Voronoi 均衡先找这种明显的不平衡。","kind":"voronoi","centers":[[138.2,133.8],[332.1,117.5],[511.3,138.1],[209.7,158.3],[366.6,333.1],[620,300]],"assign":[0,0,3,0,0,0,3,3,3,3,0,0,3,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,4],"highlight":[4,5],"maxLoad":9,"loads":[8,6,7,6,9,0],"avgDist":31.1},{"short":"找缺口","title":"锁定最挤的波束和最闲的波束","text":"最挤的波束在下方，最闲的中心在右下。与其继续挪所有人，不如把这个闲着的中心挪到最挤的地方。","kind":"voronoi","centers":[[138.2,133.8],[332.1,117.5],[511.3,138.1],[209.7,158.3],[366.6,333.1],[620,300]],"assign":[0,0,3,0,0,0,3,3,3,3,0,0,3,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,4,4,4,4,4,4,4,4],"highlight":[4,5],"maxLoad":9,"loads":[8,6,7,6,9,0],"avgDist":31.1},{"short":"挪中心","title":"把闲置中心挪到最挤簇最远的那架飞机上","text":"这是负载推动边界：哪里挤，就把空着的中心往哪里送。虚线箭头是中心移动方向，飞机不动；重新分区后，最忙从 9 降到 8。","kind":"voronoi","centers":[[138.2,133.8],[332.1,117.5],[511.3,138.1],[209.7,158.3],[366.6,333.1],[307.5,348.3]],"assign":[0,0,3,0,0,0,3,3,3,3,0,0,3,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,5,4,4,5,4,5,4,4],"prevCenters":[[138.2,133.8],[332.1,117.5],[511.3,138.1],[209.7,158.3],[366.6,333.1],[620,300]],"highlight":[4,5],"maxLoad":8,"loads":[8,6,7,6,6,3],"avgDist":28.1},{"short":"再分区","title":"中心跟上新分区，最忙保持 8","text":"Voronoi 能推动边界，但它没有“每束最多 6 架”的硬规矩；所以能到 8，未必能到下限。","kind":"voronoi","centers":[[127.5,131.6],[332.1,117.5],[511.3,138.1],[200.1,153.2],[391.2,329.5],[317.5,340.3]],"assign":[0,0,3,0,0,0,3,3,3,3,0,0,3,0,1,1,1,1,1,1,2,2,2,2,2,2,2,4,5,4,4,5,4,5,4,4],"highlight":[],"maxLoad":8,"loads":[8,6,7,6,6,3],"avgDist":26}]},{"id":"flow","name":"FLOW-AO","tag":"本文","color":"#0d9488","kind":"flow","badge":"最忙 6 架","one":"先保每束不超载，再让中心跟着自己的飞机走。","recipe":["固定中心，每束容量 6","按距离+容量做指派","中心跟随，再平衡"],"report":"汇报：同样 24 景、100 束，最忙波束 17 架（加间隔 21）。","takeaway":"把'每束最多几架'变成硬约束，峰值就直接压到下限 6；代价是需要精确的指派。","steps":[{"short":"立规矩","title":"固定 6 个中心，先立规矩：每束最多 6 架","text":"36 架 ÷ 6 束 = 6 架，这是任何布局都绕不过去的下限。FLOW-AO 不让某个波束无限装。","kind":"flow","centers":[[138.2,133.8],[332.1,117.5],[511.3,138.1],[209.7,158.3],[366.6,333.1],[620,300]],"assign":[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],"highlight":[],"maxLoad":0,"loads":[0,0,0,0,0,0],"avgDist":349.1},{"short":"容量指派","title":"按距离从近到远装，每束装满 6 架就停","text":"先保证每束不超载，再在容量内挑最近的飞机。6 个波束第一次全部正好 6 架。","kind":"flow","centers":[[138.2,133.8],[332.1,117.5],[511.3,138.1],[209.7,158.3],[366.6,333.1],[620,300]],"assign":[0,0,3,4,0,0,3,3,3,3,0,3,1,0,2,1,1,1,1,1,2,2,2,2,5,5,2,4,4,5,5,4,4,4,5,5],"highlight":[],"maxLoad":6,"loads":[6,6,6,6,6,6],"avgDist":70.7},{"short":"中心跟随","title":"中心跟着自己的 6 架飞机走","text":"负载不变，但中心的位置更贴合自己的飞机。橙色箭头是中心移动方向；指派和中心开始交替改进。","kind":"flow","centers":[[121.1,124.5],[307.6,125.4],[481.4,126.6],[187.7,148.5],[306.9,312.8],[444,269.1]],"assign":[0,0,3,4,0,0,3,3,3,3,0,3,1,0,2,1,1,1,1,1,2,2,2,2,5,5,2,4,4,5,5,4,4,4,5,5],"prevCenters":[[138.2,133.8],[332.1,117.5],[511.3,138.1],[209.7,158.3],[366.6,333.1],[620,300]],"highlight":[],"maxLoad":6,"loads":[6,6,6,6,6,6],"avgDist":51.2},{"short":"再平衡","title":"再平衡一次：仍是每束 6 架，总路程更短","text":"容量硬约束保证峰值贴着下限，交替调整让总路程继续下降。这就是'先保不超载，再谈离得近'。","kind":"flow","centers":[[121.1,124.5],[287.4,125.9],[512.8,133],[175,153.8],[348.1,342.2],[404.2,227.4]],"assign":[0,0,3,3,0,0,3,3,1,3,0,3,1,0,5,1,1,1,1,5,5,2,2,2,2,2,2,4,4,5,5,4,4,4,5,4],"highlight":[],"maxLoad":6,"loads":[6,6,6,6,6,6],"avgDist":44.8}]}]},"stage2":{"nodes":[{"label":"1","x":105,"y":120},{"label":"2","x":350,"y":90},{"label":"3","x":350,"y":275},{"label":"4","x":555,"y":215},{"label":"5","x":555,"y":95},{"label":"6","x":105,"y":305},{"label":"7","x":555,"y":345}],"edges":[[0,3],[0,5],[1,2],[1,4],[1,5],[1,6],[2,3],[2,4],[2,6],[3,4],[3,6]],"algorithms":[{"id":"greedy","name":"容量感知贪心","tag":"基线","color":"#64748b","kind":"greedy","badge":"5 / 7","one":"按顺序给每个波束挑第一个不冲突的频段。","recipe":["按编号","每次选第一个不冲突的频段","没有可用频段就留空"],"report":"汇报：43.2 Mbps 确认集满足率 92.5%，SGM 0.973。","takeaway":"贪心快，但顺序一坏就会把后面的波束堵死；它不会回头改前面的选择。","steps":[{"short":"初始","title":"7 个波束、3 个频段，按编号依次上色","text":"颜色就是频段编号。相邻的波束不能同色。贪心从波束1走到波束7，每次选第一个不冲突的颜色。","kind":"greedy","colors":[-1,-1,-1,-1,-1,-1,-1],"highlight":[],"served":0,"conflicts":0,"score":0},{"short":"走完","title":"轮到波束6、7，三种颜色都被邻居占了","text":"波束1-5都分到了频段，但波束6、7的邻居已经用掉三种颜色，只能空着。得到 5/7，冲突 0。","kind":"greedy","colors":[0,0,1,2,-1,1,-1],"highlight":[5,6],"served":5,"conflicts":0,"score":5}]},{"id":"tabu","name":"贪心＋禁忌搜索（教学）","tag":"搜索基线","color":"#2563eb","kind":"tabu","badge":"7 / 7","one":"每轮改一个波束，挑最好的非禁忌动作；刚改过的先锁两轮。","recipe":["从容量感知贪心解出发","每轮改一个波束，挑最好的非禁忌动作","刚改过的波束禁 2 轮；允许暂时变差"],"report":"汇报：32 次 94.5%，320 次 94.9%；最差一成 81.6% / 83.9%。","takeaway":"禁忌表防止原地打转；允许走差一步，才能从 7/7 的局部最优里出来再看看。","steps":[{"short":"起点","title":"从贪心的 5/7 出发","text":"先把“动作”说清楚：动作 = 选一个波束、换一个频段。第一轮从贪心解出发，所有波束都没被禁，14 种一次改法都算非禁忌动作；在这些动作里挑分数最高的。","kind":"tabu","colors":[0,0,1,2,-1,1,-1],"highlight":[5,6],"tabu":[],"served":5,"conflicts":0,"score":5},{"short":"第 1 轮","title":"第 1 轮：先动波束2，分数没涨也走","text":"波束2从频段1改到频段3。分数还是 5，但它先离开了原来的解；波束2进入禁忌表：接下来两轮，任何“动波束2”的动作都不再是非禁忌动作。","kind":"tabu","colors":[0,2,1,2,-1,1,-1],"highlight":[1],"tabu":[{"node":1,"left":2}],"detail":{"picked":1,"color":2,"bestAll":1,"blocked":false},"served":5,"conflicts":0,"score":5},{"short":"第 2 轮","title":"第 2 轮：波束5从空改成频段1","text":"服务数 5→6。波束5进入禁忌表。注意：波束2还在禁忌期，“把波束2改回去”这类动作先被跳过，哪怕它看起来不错。","kind":"tabu","colors":[0,2,1,2,0,1,-1],"highlight":[4],"tabu":[{"node":1,"left":1},{"node":4,"left":2}],"detail":{"picked":4,"color":0,"bestAll":4,"blocked":false},"served":6,"conflicts":0,"score":6},{"short":"第 3 轮","title":"第 3 轮：波束7补上最后一个空位","text":"服务数 6→7，冲突 0，第一次到满分。波束7也进入禁忌表。","kind":"tabu","colors":[0,2,1,2,0,1,0],"highlight":[6],"tabu":[{"node":1,"left":0},{"node":4,"left":1},{"node":6,"left":2}],"detail":{"picked":6,"color":0,"bestAll":6,"blocked":false},"served":7,"conflicts":0,"score":7},{"short":"第 4 轮","title":"第 4 轮：所有改法都会变差，仍然走一步","text":"现在所有非禁忌动作都会变差，最好的也只能到 4 分：波束1从频段1改到频段2，制造 1 个冲突。“最好的非禁忌动作”不一定好，只是当前允许的里面最好；仍然要走，否则会卡在 7/7 不动。","kind":"tabu","colors":[1,2,1,2,0,1,0],"highlight":[0],"tabu":[{"node":0,"left":2},{"node":4,"left":0},{"node":6,"left":1}],"detail":{"picked":0,"color":1,"bestAll":0,"blocked":false},"served":7,"conflicts":1,"score":4},{"short":"第 5 轮","title":"第 5 轮：最想改波束1，但它还在禁忌期","text":"把波束1改回频段1能恢复 7/7，可波束1刚动过，不能走。于是改选波束6，同样到 7/7。禁忌表不是永远禁止，只是让你先换个人走。","kind":"tabu","colors":[1,2,1,2,0,0,0],"highlight":[5],"tabu":[{"node":0,"left":1},{"node":5,"left":2},{"node":6,"left":0}],"detail":{"picked":5,"color":0,"bestAll":0,"blocked":true},"served":7,"conflicts":0,"score":7}]},{"id":"sa","name":"模拟退火","tag":"文献基线","color":"#db2777","kind":"sa","badge":"7 / 7","one":"随机改一处；好就收，差也按温度给机会，温度慢慢降。","recipe":["随机改一个波束","更好就收；更差按温度概率收","温度慢慢降，最后收在好解"],"report":"汇报：32 次评价满足率 92.4%。","takeaway":"高温负责'敢走差棋'，降温负责'最后收住'；温度调度比单步贪心更重要。","steps":[{"short":"起点","title":"从 5/7 出发，温度很高","text":"模拟退火随机改一个波束。温度高时，变差的改法也有不小概率被接受，先到处走走。","kind":"sa","colors":[0,0,1,2,-1,1,-1],"highlight":[],"temp":3,"served":5,"conflicts":0,"score":5},{"short":"接受变差","title":"把波束7改成频段1：分数 5→3，却接受了","text":"服务数升到 6，但多了 1 个冲突，分数从 5 掉到 3。温度 3.0 时，接受概率 51%，这次掷骰子通过了。","kind":"sa","colors":[0,0,1,2,-1,1,0],"highlight":[6],"temp":3,"attempt":{"it":1,"T":3,"v":6,"col":0,"after":[0,0,1,2,-1,1,0],"delta":-2,"p":0.51,"accept":true},"served":6,"conflicts":1,"score":3},{"short":"跳上去","title":"第 4 步：波束2改频段3，分数 3→6","text":"温度降到 1.91，仍然接受更好的解。冲突消失，服务数到 6。","kind":"sa","colors":[0,2,1,2,-1,1,0],"highlight":[1],"temp":1.91,"attempt":{"it":4,"T":1.91,"v":1,"col":2,"after":[0,2,1,2,-1,1,0],"delta":3,"p":1,"accept":true},"served":6,"conflicts":0,"score":6},{"short":"收敛","title":"第 11 步：补上波束5，7/7","text":"温度降到 0.66，差的解越来越难被接受。补上波束5后得到 7/7、0 冲突；历史最好也是它。","kind":"sa","colors":[0,2,1,2,0,1,0],"highlight":[4],"temp":0.66,"attempt":{"it":11,"T":0.66,"v":4,"col":0,"after":[0,2,1,2,0,1,0],"delta":1,"p":1,"accept":true},"served":7,"conflicts":0,"score":7}]},{"id":"ga","name":"遗传算法","tag":"文献基线","color":"#65a30d","kind":"ga","badge":"7 / 7","one":"养一群方案，留好的、交叉、变异，一代代繁殖。","recipe":["养 12 个方案","留好的、交叉、变异","一代代繁殖，保留最好的"],"report":"汇报：32 次 92.6%；3200 次、换目标后最好 94.1%。","takeaway":"种群并行试很多组合，擅长拼片段；代价是评价次数多，且不保证单调变好。","steps":[{"short":"初始种群","title":"先随机养 12 个方案","text":"遗传算法不从一个解走，而是一开始就养一群解。先算每个方案的服务数和冲突数；最好的只有 5 分。","kind":"ga","colors":[0,0,1,2,-1,1,-1],"highlight":[],"population":[{"colors":[0,0,1,2,-1,1,-1],"score":5,"served":5,"conflicts":0},{"colors":[2,1,2,1,2,0,0],"score":4,"served":7,"conflicts":1},{"colors":[0,1,0,2,1,1,0],"score":-2,"served":7,"conflicts":3},{"colors":[0,0,0,1,2,1,0],"score":-2,"served":7,"conflicts":3},{"colors":[0,2,2,1,1,0,0],"score":-2,"served":7,"conflicts":3},{"colors":[0,1,1,2,2,1,0],"score":-2,"served":7,"conflicts":3}],"generation":0,"served":5,"conflicts":0,"score":5},{"short":"第 2 代","title":"留好的、交叉、变异","text":"保留最好的两个当父母，让每个波束的颜色随机从父母之一继承；再以一定概率变异。第 2 代最好仍是 5 分。","kind":"ga","colors":[0,0,1,2,-1,1,-1],"highlight":[],"population":[{"colors":[0,0,1,2,-1,1,-1],"score":5,"served":5,"conflicts":0},{"colors":[2,1,2,1,2,0,0],"score":4,"served":7,"conflicts":1},{"colors":[2,1,2,1,2,0,0],"score":4,"served":7,"conflicts":1},{"colors":[0,2,1,1,2,1,0],"score":1,"served":7,"conflicts":2},{"colors":[0,2,1,1,2,1,0],"score":1,"served":7,"conflicts":2},{"colors":[0,2,1,1,2,1,0],"score":1,"served":7,"conflicts":2}],"generation":2,"served":5,"conflicts":0,"score":5},{"short":"第 5 代","title":"凑出 7/7 的方案","text":"交叉把父母各自的好片段拼在一起，变异补上缺口。第 5 代出现 7/7、0 冲突，它成为新的种子。","kind":"ga","colors":[2,1,2,1,0,0,0],"highlight":[],"population":[{"colors":[2,1,2,1,0,0,0],"score":7,"served":7,"conflicts":0},{"colors":[0,2,1,2,-1,1,0],"score":6,"served":6,"conflicts":0},{"colors":[0,0,1,2,-1,1,-1],"score":5,"served":5,"conflicts":0},{"colors":[0,0,1,2,-1,1,-1],"score":5,"served":5,"conflicts":0},{"colors":[2,1,2,1,2,0,0],"score":4,"served":7,"conflicts":1},{"colors":[2,1,2,1,2,0,0],"score":4,"served":7,"conflicts":1}],"generation":5,"served":7,"conflicts":0,"score":7},{"short":"第 12 代","title":"7/7 被稳定保留","text":"最好的方案进入下一代，种群继续交叉变异。到第 12 代，7/7 已经被稳定保留。","kind":"ga","colors":[2,1,2,1,0,0,0],"highlight":[],"population":[{"colors":[2,1,2,1,0,0,0],"score":7,"served":7,"conflicts":0},{"colors":[2,1,2,1,0,0,0],"score":7,"served":7,"conflicts":0},{"colors":[2,1,2,1,0,0,0],"score":7,"served":7,"conflicts":0},{"colors":[2,1,2,1,0,0,0],"score":7,"served":7,"conflicts":0},{"colors":[2,1,2,1,0,0,0],"score":7,"served":7,"conflicts":0},{"colors":[2,1,2,1,0,0,0],"score":7,"served":7,"conflicts":0}],"generation":12,"served":7,"conflicts":0,"score":7}]},{"id":"direct","name":"直出学习 T-SAC","tag":"本文主方法","color":"#ea580c","kind":"direct","badge":"6 / 7","one":"把整张图输入网络，一次输出所有波束的频段。","recipe":["整张图输入网络","一次输出 7 个颜色","没有逐步修改"],"report":"汇报：压力档满足率 88.3%，SGM 0.919；最差一成 50.0%。","takeaway":"一次给全部答案，动作太大、反馈太晚；它能给出不错的初稿，但不会回头补最后一处。","steps":[{"short":"输入","title":"整张图作为输入：7 个波束、11 条干扰边","text":"网络看到的是整张图，而不是一步一步的当前解。它要一次决定 7 个波束分别用哪个频段。","kind":"direct","colors":[-1,-1,-1,-1,-1,-1,-1],"highlight":[],"served":0,"conflicts":0,"score":0},{"short":"一次输出","title":"一次前向，输出 6 个频段；波束1空着","text":"其余 6 个波束都没有冲突，但波束1没有分到频段。得到 6/7，分数 6。","kind":"direct","colors":[-1,0,1,0,2,1,2],"highlight":[0],"served":6,"conflicts":0,"score":6},{"short":"结束","title":"没有'再改一次'：一次输出就是最终答案","text":"直出式没有局部搜索的回路，也没有逐步奖励。它不会发现'波束1其实还能补'。","kind":"direct","colors":[-1,0,1,0,2,1,2],"highlight":[0],"served":6,"conflicts":0,"score":6}]},{"id":"l1","name":"改进式学习 L1","tag":"本文用法","color":"#0891b2","kind":"l1","badge":"7 / 7","one":"从直出解出发，每次只改一处，改完立刻评价。","recipe":["从直出解出发","找最该改的一个波束，试几种颜色","只留变好的那一步"],"report":"汇报：32 次评价 94.9%，SGM 0.990；与 320 次禁忌搜索并列。","takeaway":"动作小、反馈快：一次只补一个缺口，就能把直出的 6/7 拉到 7/7。","steps":[{"short":"起点","title":"从直出的 6/7 出发，波束1还空着","text":"改进式不重新解整张图，只盯着当前方案的缺口：哪个波束没服务，或哪个波束在制造冲突。","kind":"l1","colors":[-1,0,1,0,2,1,2],"highlight":[0],"served":6,"conflicts":0,"score":6},{"short":"找缺口","title":"波束1的邻居用了频段1和2，频段3还空着","text":"波束1只和波束4、6相邻，它们分别用了频段1和2。对波束1来说，频段3是合法且立刻可用的。","kind":"l1","colors":[-1,0,1,0,2,1,2],"highlight":[0,3,5],"served":6,"conflicts":0,"score":6},{"short":"改一处","title":"波束1→频段3：7/7，冲突 0","text":"只改这一处，服务数从 6 到 7。改进式每一步都立刻评价，所以它知道这一改是赚的。","kind":"l1","colors":[2,0,1,0,2,1,2],"highlight":[0],"served":7,"conflicts":0,"score":7},{"short":"停","title":"再扫一遍，没有更好的单点修改","text":"7 个波束全部有频段，0 冲突。单点修改不会让分数更高，停。","kind":"l1","colors":[2,0,1,0,2,1,2],"highlight":[],"served":7,"conflicts":0,"score":7}]}]},"stage3":{"beams":["波束1","波束2","波束3","波束4"],"demand":[30,25,20,25],"gain":[1,0.8,0.5,0.3],"total":100,"max":40,"algorithms":[{"id":"water","name":"注水功率","tag":"文献基线","color":"#64748b","kind":"water","badge":"86.3 分","one":"只按信道好坏分功率：好信道多拿，差信道少拿。","recipe":["只看信道好坏","好信道多分，差信道少分","总功率刚好用完"],"report":"汇报：满足率 92.1%，SGM 0.968，总功率 2019 W。","takeaway":"注水最大化的是'总速率'，不是'每束都够用'；它会把功率推向好信道，弱束仍然欠供。","steps":[{"short":"算水位","title":"先不看需求，按信道算一条'水位线'","text":"注水把功率想成水：信道好的地方水位高、分得多；信道差的地方分得少。总功率固定 100 W。","kind":"water","highlight":[],"powers":[25.9,25.6,24.9,23.6],"rates":[30.4,27.9,22.8,17.4],"served":92.4,"over":6.2,"under":7.6,"gap":13.7,"match":86.3,"total":100},{"short":"结果","title":"波束1过供，波束4欠供","text":"波束1拿到 25.9 W，速率超过需求；波束4只有 23.6 W，速率 17.4，离需求 25 还差一截。匹配分 86.3。","kind":"water","highlight":[0,3],"powers":[25.9,25.6,24.9,23.6],"rates":[30.4,27.9,22.8,17.4],"served":92.4,"over":6.2,"under":7.6,"gap":13.7,"match":86.3,"total":100}]},{"id":"demand","name":"按需求分满","tag":"基线","color":"#d97706","kind":"demand","badge":"87.6 分","one":"只按需求比例分功率，不管信道好坏。","recipe":["只看需求","按需求比例分功率","不按信道补短板"],"report":"汇报：满足率 91.9%，SGM 0.839，总功率 3000 W。","takeaway":"按需求分看似公平，但弱信道拿同样的功率也换不来同样的速率；不看信道，匹配度上不去。","steps":[{"short":"按需求分","title":"按 30:25:20:25 的比例，把 100 W 分完","text":"每个波束拿到的功率和它的需求成正比。看起来公平，但没有考虑'同样的瓦数在弱信道上只能换更少速率'。","kind":"demand","highlight":[],"powers":[30,25,20,25],"rates":[32,27.7,20.7,18],"served":93,"over":5.4,"under":7,"gap":12.4,"match":87.6,"total":100},{"short":"结果","title":"波束1、2过供，波束3刚好，波束4欠供","text":"强信道拿多了，弱信道拿少了，波束3只是刚好压线。匹配分 87.6，和注水的问题正好相反：一个只看信道，一个只看需求。","kind":"demand","highlight":[0,1,2,3],"powers":[30,25,20,25],"rates":[32,27.7,20.7,18],"served":93,"over":5.4,"under":7,"gap":12.4,"match":87.6,"total":100}]},{"id":"two","name":"两段式功率","tag":"文献基线","color":"#7c3aed","kind":"two","badge":"95.1 分","one":"先粗搜一个大致的功率分配，再在附近小步细调。","recipe":["先粗搜 10 W 档","再在附近 ±5 W 细调","取匹配度最高的"],"report":"汇报：满足率 92.9%，SGM 0.971，总功率 2104 W。","takeaway":"粗搜+细调已经能接近好解，但两段之间的粒度是固定的；它不会像 SCA 那样连续地挪。","steps":[{"short":"粗搜","title":"先按 10 W 一档粗搜：选出 20/20/20/40","text":"四束一共 100 W，每束 0-40 W。粗网格只看 10 W 的整数倍，找到当前最好的组合。","kind":"two","highlight":[],"powers":[20,20,20,40],"rates":[27.7,25.4,20.7,22.5],"served":95.1,"over":1,"under":4.9,"gap":5.9,"match":94.1,"total":100},{"short":"细调","title":"在粗解附近每束 ±5 W 再试","text":"把每一束在粗解附近上下挪 5 W，保持总和 100 W。找到 25/20/20/35，匹配分从 94.1 升到 95.1。","kind":"two","highlight":[],"powers":[25,20,20,35],"rates":[30,25.4,20.7,21.2],"served":96.2,"over":1.1,"under":3.8,"gap":4.9,"match":95.1,"total":100},{"short":"结果","title":"比注水和按需求都好，但还差一点","text":"两段式已经学会把功率往欠供的波束挪，但它的搜索粒度停在 5 W；再细就要换连续优化。","kind":"two","highlight":[3],"powers":[25,20,20,35],"rates":[30,25.4,20.7,21.2],"served":96.2,"over":1.1,"under":3.8,"gap":4.9,"match":95.1,"total":100}]},{"id":"sca","name":"SCA 连续优化","tag":"本文","color":"#0d9488","kind":"sca","badge":"96.3 分","one":"从均分出发，每轮把功率从过供的束挪给欠供的束，直到挪不动。","recipe":["先均分","每轮把功率从过供束挪给欠供束","挪不动就停"],"report":"汇报：满足率 92.5%，SGM 0.973，总功率 2095 W，单景 2.9 秒。","takeaway":"SCA 不猜粗网格，而是连续地挪功率；它把弱束从 16.4 拉到 21.7，过供几乎清零。","steps":[{"short":"均分","title":"先每束 25 W，看谁饿、谁撑","text":"均分后波束2、3过供，波束4只有 18.0 的速率，离需求 25 差 7。匹配分 87.4。","kind":"sca","highlight":[3],"powers":[25,25,25,25],"rates":[30,27.7,22.9,18],"served":93,"over":5.6,"under":7,"gap":12.6,"match":87.4,"total":100},{"short":"第 1 轮","title":"从波束2、3各挪一点给波束4","text":"波束2、3的速率已经够用，波束4还饿着。把功率往弱束挪，匹配分 87.4→91.2。","kind":"sca","highlight":[3],"powers":[25,23,22,30],"rates":[30,26.8,21.6,19.7],"served":94.7,"over":3.4,"under":5.3,"gap":8.8,"match":91.2,"total":100},{"short":"第 2 轮","title":"继续挪：25/21/21/33","text":"每挪一次都重新算 4 束的速率，只保留让匹配分变高的一步。匹配分 91.2→93.5。","kind":"sca","highlight":[3],"powers":[25,21,21,33],"rates":[30,25.9,21.2,20.6],"served":95.6,"over":2.1,"under":4.4,"gap":6.5,"match":93.5,"total":100},{"short":"第 3 轮","title":"停在 25/19/19/37：匹配分 96.3","text":"波束4到 21.7，几乎追平需求；波束1刚好 30.0。再挪一步会有人掉下去，停。","kind":"sca","highlight":[3],"powers":[25,19,19,37],"rates":[30,24.8,20.2,21.7],"served":96.5,"over":0.2,"under":3.5,"gap":3.7,"match":96.3,"total":100}]}]}};
+const COLORS = ['#38bdf8','#2dd4bf','#fbbf24','#a78bfa','#fb7185','#a3e635'];
+const CHANNEL = ['#38bdf8','#f59e0b','#34d399'];
+const STAGE = {
+  stage1:{name:'覆盖布局', short:'第一阶段', accent:'#38bdf8'},
+  stage2:{name:'频率分配', short:'第二阶段', accent:'#a78bfa'},
+  stage3:{name:'功率分配', short:'第三阶段', accent:'#2dd4bf'}
+};
+const state = {
+  stage1:{algo:'hex',step:0,playing:false},
+  stage2:{algo:'greedy',step:0,playing:false},
+  stage3:{algo:'water',step:0,playing:false}
+};
+let timer=null, timerStage=null, lastStage='stage1';
+
+function $(id){return document.getElementById(id)}
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function algOf(stage,id){
+  const list=DATA[stage].algorithms;
+  for(let i=0;i<list.length;i++){if(list[i].id===id)return list[i];}
+  return list[0];
+}
+function currentAlg(stage){return algOf(stage,state[stage].algo)}
+function pct(x){return Math.max(0,Math.min(100,x))}
+function fmt(x){return (Math.round(x*10)/10).toFixed(1)}
+function stopTimer(){
+  if(timer){clearInterval(timer);timer=null;}
+  if(timerStage){state[timerStage].playing=false;timerStage=null;}
+}
+
+function renderAlgGrid(stage){
+  const wrap=$('algs-'+stage.replace('stage','s'));
+  if(!wrap)return;
+  let h='';
+  DATA[stage].algorithms.forEach(function(a,i){
+    h+='<button class="alg-card '+(state[stage].algo===a.id?'on':'')+'" data-stage="'+stage+'" data-algo="'+a.id+'">'
+      +'<span class="alg-no">'+String(i+1).padStart(2,'0')+'</span>'
+      +'<span class="alg-tag">'+esc(a.tag)+'</span>'
+      +'<strong>'+esc(a.name)+'</strong>'
+      +'<span class="alg-one">'+esc(a.one)+'</span>'
+      +'<span class="alg-badge">'+esc(a.badge)+'</span>'
+      +'</button>';
+  });
+  wrap.innerHTML=h;
+}
+
+function renderMetrics(stage,a,s){
+  if(stage==='stage1'){
+    var ml=s.maxLoad>0?s.maxLoad:'—';
+    var ad=s.maxLoad>0?(s.avgDist||0).toFixed(1):'—';
+    return '<div class="metric"><b>'+ml+'</b><span>最忙 / 架</span></div>'
+      +'<div class="metric"><b>'+ad+'</b><span>平均距离 / px</span></div>'
+      +'<div class="metric"><b>6</b><span>理论下限</span></div>';
+  }
+  if(stage==='stage2'){
+    return '<div class="metric"><b>'+s.served+'<span style="font-size:11px;color:var(--muted)">/7</span></b><span>服务波束</span></div>'
+      +'<div class="metric"><b style="color:'+(s.conflicts?'var(--rose)':'var(--teal)')+'">'+s.conflicts+'</b><span>冲突边</span></div>'
+      +'<div class="metric"><b>'+s.score+'</b><span>分数</span></div>';
+  }
+  return '<div class="metric"><b>'+fmt(s.match)+'</b><span>匹配分 / 100</span></div>'
+    +'<div class="metric"><b>'+fmt(s.over)+'</b><span>过供</span></div>'
+    +'<div class="metric"><b>'+fmt(s.under)+'</b><span>欠供</span></div>';
+}
+
+function loadBars(stage,s){
+  if(stage!=='stage1')return '';
+  var maxScale=Math.max(14,6,Math.max.apply(null,s.loads||[0]))+1;
+  var lmt=pct(6/maxScale*100);
+  var h='<div class="loadwrap"><div class="loadhead"><span>每个波束的负载 / 架</span><span>虚线 = 下限 6</span></div>';
+  for(var i=0;i<6;i++){
+    var v=(s.loads&&s.loads[i])||0;
+    h+='<div class="loadrow"><span class="lbl">束'+(i+1)+'</span><div class="loadtrack"><i style="width:'+pct(v/maxScale*100)+'%;background:'+COLORS[i]+'"></i><em style="left:'+lmt+'%"></em></div><span class="cnt" style="color:'+(v>=12?'var(--amber)':'var(--ink2)')+'">'+v+'</span></div>';
+  }
+  return h+'</div>';
+}
+
+function convexHull(ps){
+  if(ps.length<=2)return ps;
+  ps=ps.slice().sort(function(a,b){return a[0]===b[0]?a[1]-b[1]:a[0]-b[0]});
+  function cross(o,a,b){return (a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0])}
+  var lo=[],up=[];
+  ps.forEach(function(p){while(lo.length>=2&&cross(lo[lo.length-2],lo[lo.length-1],p)<=0)lo.pop();lo.push(p)});
+  for(var i=ps.length-1;i>=0;i--){var p=ps[i];while(up.length>=2&&cross(up[up.length-2],up[up.length-1],p)<=0)up.pop();up.push(p)}
+  lo.pop();up.pop();return lo.concat(up);
+}
+function svgStage1(alg,s,prev){
+  var w=720,h=440, svg='<svg class="stage-svg" viewBox="0 0 '+w+' '+h+'" role="img" aria-label="覆盖布局示意图">';
+  svg+='<defs><marker id="s1arrow" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L6,3 L0,6 Z" fill="#fbbf24"/></marker></defs>';
+  svg+='<rect x="0" y="0" width="720" height="440" fill="none"/>';
+  if(alg.kind==='hex'){
+    DATA.stage1.cells.forEach(function(c,i){
+      svg+='<rect x="'+(c.x+10)+'" y="'+(c.y+10)+'" width="'+(c.w-20)+'" height="'+(c.h-20)+'" rx="24" fill="'+COLORS[i]+'" fill-opacity=".045" stroke="'+COLORS[i]+'" stroke-opacity=".42" stroke-dasharray="5 7"/>';
+      svg+='<text x="'+(c.x+28)+'" y="'+(c.y+36)+'" fill="'+COLORS[i]+'" font-size="11" font-family="monospace" opacity=".85">束 '+(i+1)+'</text>';
+    });
+  }else if(alg.kind==='cluster'){
+    for(var j=0;j<6;j++){
+      var hp=[];
+      s.assign.forEach(function(a,idx){if(a===j)hp.push(DATA.stage1.points[idx])});
+      var hull=convexHull(hp);
+      if(hull.length>=3){
+        svg+='<polygon points="'+hull.map(function(p){return p[0]+','+p[1]}).join(' ')+'" fill="'+COLORS[j]+'" fill-opacity=".04" stroke="'+COLORS[j]+'" stroke-opacity=".24" stroke-width="1" stroke-dasharray="4 5"><animate attributeName="fill-opacity" from="0" to=".04" dur=".45s" fill="freeze"/></polygon>';
+      }else if(hull.length===2){
+        svg+='<line x1="'+hull[0][0]+'" y1="'+hull[0][1]+'" x2="'+hull[1][0]+'" y2="'+hull[1][1]+'" stroke="'+COLORS[j]+'" stroke-opacity=".3" stroke-width="1.5" stroke-dasharray="3 4"/>';
+      }
+    }
+  }
+  if(s.prevCenters){
+    s.prevCenters.forEach(function(pc,i){
+      var nc=s.centers[i], dx=nc[0]-pc[0], dy=nc[1]-pc[1];
+      if(Math.sqrt(dx*dx+dy*dy)<2)return;
+      svg+='<line x1="'+pc[0]+'" y1="'+pc[1]+'" x2="'+nc[0]+'" y2="'+nc[1]+'" stroke="#fbbf24" stroke-width="1.4" stroke-opacity=".85" stroke-dasharray="4 4" marker-end="url(#s1arrow)"/>';
+      svg+='<circle cx="'+pc[0]+'" cy="'+pc[1]+'" r="13" fill="rgba(5,13,24,.55)" stroke="'+COLORS[i]+'" stroke-width="1.2" stroke-dasharray="3 3" opacity=".7"/>';
+      svg+='<text x="'+pc[0]+'" y="'+pc[1]+'" text-anchor="middle" fill="'+COLORS[i]+'" font-size="9" font-family="monospace" opacity=".85">旧</text>';
+    });
+  }
+  DATA.stage1.points.forEach(function(p,i){
+    var a=s.assign[i], col=a>=0?COLORS[a]:'#9fb3c8';
+    var pa=prev&&prev.assign?prev.assign[i]:a, pcol=pa>=0?COLORS[pa]:'#9fb3c8';
+    var anim=(pa!==a)?'<animate attributeName="fill" from="'+pcol+'" to="'+col+'" dur=".45s" fill="freeze"/>':'';
+    svg+='<circle cx="'+p[0]+'" cy="'+p[1]+'" r="4.4" fill="'+col+'" fill-opacity="'+(a>=0?1:.8)+'" stroke="#06111f" stroke-width="1.2">'+anim+'</circle>';
+  });
+  s.centers.forEach(function(c,i){
+    var hl=(s.highlight||[]).indexOf(i)>=0;
+    var anim='';
+    if(s.prevCenters&&s.prevCenters[i]){
+      var dx=s.prevCenters[i][0]-c[0], dy=s.prevCenters[i][1]-c[1];
+      if(Math.abs(dx)>1||Math.abs(dy)>1)anim='<animateTransform attributeName="transform" type="translate" from="'+dx+' '+dy+'" to="0 0" dur="0.65s" fill="freeze"/>';
+    }
+    svg+='<g>'+anim;
+    if(hl)svg+='<circle cx="'+c[0]+'" cy="'+c[1]+'" r="26" fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="3 4"><animate attributeName="r" values="23;28;23" dur="2.2s" repeatCount="indefinite"/></circle>';
+    svg+='<circle cx="'+c[0]+'" cy="'+c[1]+'" r="15" fill="'+COLORS[i]+'" stroke="#e8f4ff" stroke-width="2"/>';
+    svg+='<text x="'+c[0]+'" y="'+(c[1]+4)+'" text-anchor="middle" fill="#04121f" font-size="12" font-weight="700">'+(i+1)+'</text>';
+    if(alg.kind==='flow'&&s.loads&&s.loads[i]!=null){
+      svg+='<text x="'+c[0]+'" y="'+(c[1]+33)+'" text-anchor="middle" fill="'+COLORS[i]+'" font-size="9" font-family="monospace">'+s.loads[i]+'/6</text>';
+    }
+    svg+='</g>';
+  });
+  return svg+'</svg>';
+}
+
+function svgStage2(alg,s,prev){
+  var w=640,h=430, svg='<svg class="stage-svg" viewBox="0 0 '+w+' '+h+'" role="img" aria-label="频率分配示意图">';
+  DATA.stage2.edges.forEach(function(e){
+    var a=DATA.stage2.nodes[e[0]], b=DATA.stage2.nodes[e[1]];
+    var conflict=s.colors[e[0]]>=0 && s.colors[e[0]]===s.colors[e[1]];
+    var was=prev&&prev.colors[e[0]]>=0 && prev.colors[e[0]]===prev.colors[e[1]];
+    if(conflict&&!was)svg+='<line x1="'+a.x+'" y1="'+a.y+'" x2="'+b.x+'" y2="'+b.y+'" stroke="#fb7185" stroke-width="8" stroke-opacity=".35"><animate attributeName="opacity" from=".7" to="0" dur=".65s" fill="freeze"/></line>';
+    svg+='<line x1="'+a.x+'" y1="'+a.y+'" x2="'+b.x+'" y2="'+b.y+'" stroke="'+(conflict?'#fb7185':'#2b4660')+'" stroke-width="'+(conflict?3.2:1.3)+'" stroke-opacity="'+(conflict?.95:.8)+'"/>';
+  });
+  DATA.stage2.nodes.forEach(function(nd,i){
+    var c=s.colors[i], fill=c<0?'#13283e':CHANNEL[c], stroke=c<0?'#52657a':'#e8f4ff';
+    var pc=prev?prev.colors[i]:c, pfill=pc<0?'#13283e':CHANNEL[pc];
+    var hl=(s.highlight||[]).indexOf(i)>=0;
+    if(hl)svg+='<circle cx="'+nd.x+'" cy="'+nd.y+'" r="31" fill="none" stroke="#fbbf24" stroke-width="1.6" stroke-dasharray="3 4"><animate attributeName="r" values="28;34;28" dur="2.2s" repeatCount="indefinite"/></circle>';
+    var anim=(pc!==c)?'<animate attributeName="fill" from="'+pfill+'" to="'+fill+'" dur=".45s" fill="freeze"/><animate attributeName="r" values="22;25;22" dur=".45s"/>':'';
+    svg+='<circle cx="'+nd.x+'" cy="'+nd.y+'" r="22" fill="'+fill+'" stroke="'+stroke+'" stroke-width="'+(c<0?1.5:2)+'" stroke-dasharray="'+(c<0?'4 4':'none')+'">'+anim+'</circle>';
+    svg+='<text x="'+nd.x+'" y="'+(nd.y+5)+'" text-anchor="middle" fill="'+(c<0?'#9fb3c8':'#04121f')+'" font-size="14" font-weight="700">'+nd.label+'</text>';
+  });
+  return svg+'</svg>';
+}
+
+function renderPower(stage,s){
+  var h='<div class="power-grid">';
+  s.powers.forEach(function(p,i){
+    var hl=(s.highlight||[]).indexOf(i)>=0;
+    var hp=pct(p/DATA.stage3.max*100);
+    var r=s.rates[i], d=DATA.stage3.demand[i];
+    var short=r<d;
+    h+='<div class="pcol '+(hl?'hl':'')+'"><div class="ptop"><b>'+fmt(p)+'</b><span>W</span></div>'
+      +'<div class="ptrack"><i style="height:'+hp+'%;background:linear-gradient(180deg,'+COLORS[i]+',rgba(56,189,248,.18))"></i></div>'
+      +'<div class="pname">波束'+(i+1)+'</div><div class="pgain">g='+DATA.stage3.gain[i].toFixed(1)+'</div>'
+      +'<div class="rate"><div class="rl"><span>速率 '+fmt(r)+'</span><span>需求 '+d+'</span></div>'
+      +'<div class="rt"><i class="'+(short?'short':'')+'" style="width:'+pct(r/40*100)+'%"></i><em style="left:'+pct(d/40*100)+'%"></em></div></div></div>';
+  });
+  h+='</div><div class="power-note"><span>柱高 = 功率（上限 40 W）</span><span>细条 = 速率 / 需求（虚线），红色 = 欠供</span><span>总功率 '+fmt(s.total)+' W</span></div>';
+  return h;
+}
+
+function stepExtra(stage,alg,s){
+  if(stage==='stage1'){
+    var h1='';
+    if((s.highlight||[]).length){
+      h1+='<div class="extra"><span class="extra-title">橙圈</span><span class="chip">本轮被盯上的波束</span><span class="chip">最忙 <b>'+s.maxLoad+'</b> 架</span></div>';
+    }
+    if(s.prevCenters){
+      h1+='<div class="extra"><span class="extra-title">读图</span><span class="chip">空心 = 上一步中心</span><span class="chip">橙色箭头 = 中心移动</span><span class="chip">飞机坐标不动</span></div>';
+    }
+    return h1;
+  }
+  if(stage==='stage2'){
+    var h='';
+    if(s.tabu&&s.tabu.length){
+      h+='<div class="extra"><span class="extra-title">禁忌表</span>';
+      s.tabu.forEach(function(t){h+='<span class="chip tabu">波束'+(t.node+1)+' · '+(t.left===0?'最后一轮':'还剩'+t.left+'轮')+'</span>';});
+      h+='</div>';
+    }
+    if(s.temp!=null){
+      h+='<div class="temp"><span>温度</span><div class="temp-track"><i style="width:'+pct(s.temp/3*100)+'%"></i></div><b>'+s.temp.toFixed(2)+'</b></div>';
+    }
+    if(s.attempt){
+      h+='<div class="attempt">本轮随机：波束'+(s.attempt.v+1)+' → 频段'+(s.attempt.col+1)+'；Δ='+(s.attempt.delta>0?'+':'')+s.attempt.delta+'；接受概率 '+Math.round(s.attempt.p*100)+'%；'+(s.attempt.accept?'接受':'拒绝')+'</div>';
+    }
+    if(s.detail&&s.detail.blocked){
+      h+='<div class="attempt">最想走的“波束'+(s.detail.bestAll+1)+'”被禁忌表拦下，改走“波束'+(s.detail.picked+1)+'”。</div>';
+    }
+    if(s.population){
+      h+='<div class="pop">';
+      s.population.forEach(function(p){
+        h+='<div class="pop-row"><span>方案</span><span class="mini">';
+        p.colors.forEach(function(c){h+='<i style="background:'+(c<0?'#1e293b':CHANNEL[c])+'"></i>';});
+        h+='</span><b>'+p.score+' 分</b></div>';
+      });
+      h+='</div>';
+    }
+    return h;
+  }
+  if(stage==='stage3'){
+    var extra='<div class="extra"><span class="extra-title">读数</span><span class="chip">服务量 <b>'+fmt(s.served)+'</b></span><span class="chip">过供 <b>'+fmt(s.over)+'</b></span><span class="chip">欠供 <b>'+fmt(s.under)+'</b></span></div>';
+    return extra;
+  }
+  return '';
+}
+
+function recipeHtml(alg){
+  var h='<div class="recipe"><div class="recipe-h">这类算法在做什么</div><ol>';
+  alg.recipe.forEach(function(x){h+='<li>'+esc(x)+'</li>';});
+  return h+'</ol></div>';
+}
+
+function renderDemo(stage){
+  var wrap=$('demo-'+stage.replace('stage','s'));
+  if(!wrap)return;
+  var alg=currentAlg(stage), st=state[stage], s=alg.steps[st.step];
+  var n=alg.steps.length;
+  if(stage==='stage2'&&s.served==null){
+    var served=s.colors.filter(function(x){return x>=0}).length;
+    var conf=0; DATA.stage2.edges.forEach(function(e){if(s.colors[e[0]]>=0&&s.colors[e[0]]===s.colors[e[1]])conf++;});
+    s.served=served;s.conflicts=conf;s.score=served-3*conf;
+  }
+  var prev=st.step>0?alg.steps[st.step-1]:null;
+  var viz='';
+  if(stage==='stage1')viz=svgStage1(alg,s,prev);
+  else if(stage==='stage2')viz=svgStage2(alg,s,prev);
+  else viz=renderPower(stage,s);
+  var legend='';
+  if(stage==='stage1'){
+    legend=COLORS.map(function(c,i){return '<span><i style="background:'+c+'"></i>束'+(i+1)+'</span>'}).join('');
+    if(alg.kind==='cluster')legend+='<span><i style="background:transparent;border:1px dashed #7dd3fc"></i>虚线=同簇飞机凸包（非波束）</span>';
+    legend+='<span><i style="background:#e8f4ff;border-radius:50%"></i>数字圆=波束中心</span>';
+    if(s.prevCenters)legend+='<span><i style="background:transparent;border:1px dashed #fbbf24"></i>空心=旧中心</span><span><i style="background:#fbbf24"></i>箭头=移动</span>';
+  }else if(stage==='stage2'){
+    legend='<span><i style="background:'+CHANNEL[0]+'"></i>频段1</span><span><i style="background:'+CHANNEL[1]+'"></i>频段2</span><span><i style="background:'+CHANNEL[2]+'"></i>频段3</span><span><i style="background:#13283e;border:1px dashed #52657a"></i>未服务</span>';
+  }else{
+    legend='<span><i style="background:#38bdf8"></i>柱 = 功率（按波束着色）</span><span><i style="background:var(--rose)"></i>细条红 = 欠供</span><span><i style="background:var(--amber)"></i>虚线 = 需求</span>';
+  }
+  var timeline='';
+  alg.steps.forEach(function(x,i){timeline+='<button class="tdot '+(i===st.step?'on':'')+' '+(i<st.step?'done':'')+'" data-act="jump" data-step="'+i+'">'+esc(x.short)+'</button>';});
+  var html=''
+   +'<div class="demo-top"><div><span class="tag">'+STAGE[stage].short+' / '+esc(alg.tag)+'</span><h3>'+esc(alg.name)+'</h3><p>'+esc(alg.one)+'</p></div><div class="demo-badge">最终 · '+esc(alg.badge)+'</div></div>'
+   +'<div class="demo-grid"><div class="viz-card"><div class="viz-top"><span class="viz-title">'+(stage==='stage1'?'小地图 · 36 架 / 6 束':stage==='stage2'?'干扰图 · 7 个波束 / 3 个频段':'功率条 · 4 束 / 100 W')+'</span><div class="legend">'+legend+'</div></div>'
+   +viz+loadBars(stage,s)
+   +'</div><aside class="side">'
+   +'<div class="metrics">'+renderMetrics(stage,alg,s)+'</div>'
+   +'<div class="stepno">STEP '+String(st.step+1).padStart(2,'0')+' / '+String(n).padStart(2,'0')+' · '+esc(s.short)+'</div>'
+   +'<h4>'+esc(s.title)+'</h4><p>'+esc(s.text)+'</p>'
+   +stepExtra(stage,alg,s)
+   +recipeHtml(alg)
+   +'<div class="report"><span>汇报里</span><p>'+esc(alg.report)+'</p></div>'
+   +'<div class="controls"><button class="ctrl" data-act="prev" '+(st.step===0?'disabled':'')+'>← 上一步</button><button class="ctrl primary" data-act="next" '+(st.step===n-1?'disabled':'')+'>下一步 →</button><button class="ctrl" data-act="play">'+(st.playing?'⏸ 暂停':'▶ 自动播放')+'</button><button class="ctrl ghost" data-act="reset">重来</button></div>'
+   +'<div class="timeline">'+timeline+'</div>'
+   +'</aside></div>';
+  wrap.innerHTML=html;
+  if(stage==='stage3'&&prev)animateBars(prev,s);
+}
+
+function animateBars(prev,s){
+  var root=$('demo-s3');if(!root)return;
+  root.querySelectorAll('.pcol').forEach(function(col,i){
+    var b=col.querySelector('.ptrack i');
+    var rs=Math.max(0,Math.min(100,prev.rates[i]/40*100)),re=Math.max(0,Math.min(100,s.rates[i]/40*100));
+    var ps=Math.max(0,Math.min(100,prev.powers[i]/40*100)),pe=Math.max(0,Math.min(100,s.powers[i]/40*100));
+    if(b&&b.animate)b.animate([{height:ps+'%'},{height:pe+'%'}],{duration:650,easing:'cubic-bezier(.2,.8,.2,1)'});
+    var r=col.querySelector('.rate .rt i');
+    if(r&&r.animate)r.animate([{width:rs+'%'},{width:re+'%'}],{duration:650,easing:'cubic-bezier(.2,.8,.2,1)'});
+  });
+}
+
+function metricOf(stage,a){
+  var s=a.steps[a.steps.length-1];
+  if(stage==='stage1')return s.maxLoad;
+  if(stage==='stage2')return s.served;
+  return s.match;
+}
+function renderCompare(stage){
+  var wrap=$('compare-'+stage.replace('stage','s'));
+  if(!wrap)return;
+  var algs=DATA[stage].algorithms.slice();
+  var maxV=stage==='stage1'?14:(stage==='stage2'?7:100);
+  algs.sort(function(a,b){return stage==='stage1'?metricOf(stage,a)-metricOf(stage,b):metricOf(stage,b)-metricOf(stage,a)});
+  var title=stage==='stage1'?'同一批飞机：最忙波束 / 架（越低越好）':stage==='stage2'?'同一张图：服务波束 / 7（越高越好）':'同一份需求：匹配分 / 100（越高越好）';
+  var h='<div class="compare-head"><h3>'+title+'</h3><span>点一行可切到该算法 · 汇报数字见卡片</span></div><div class="flowchart">';
+  algs.forEach(function(a){
+    var v=metricOf(stage,a), w=pct(v/maxV*100);
+    var label=stage==='stage1'?v+' 架':stage==='stage2'?v+' / 7':fmt(v)+' 分';
+    h+='<div class="frow '+(state[stage].algo===a.id?'on':'')+'" data-stage="'+stage+'" data-algo="'+a.id+'"><span class="fn">'+esc(a.name)+'</span><div class="fbar"><i style="width:'+w+'%"></i>'+(stage==='stage1'?'<em style="left:'+pct(6/maxV*100)+'%"></em>':'')+'</div><span class="fv">'+label+'</span></div>';
+  });
+  wrap.innerHTML=h+'</div>';
+}
+
+function renderAll(){
+  ['stage1','stage2','stage3'].forEach(function(stage){
+    renderAlgGrid(stage);renderDemo(stage);renderCompare(stage);
+  });
+  var total=0;['stage1','stage2','stage3'].forEach(function(s){DATA[s].algorithms.forEach(function(a){total+=a.steps.length})});
+  var el=$('stepCount');if(el)el.textContent=total;
+}
+
+function selectAlgo(stage,id){
+  stopTimer();
+  state[stage].algo=id;state[stage].step=0;state[stage].playing=false;
+  lastStage=stage;
+  renderAlgGrid(stage);renderDemo(stage);renderCompare(stage);
+}
+function moveStep(stage,delta){
+  stopTimer();
+  var alg=currentAlg(stage), n=alg.steps.length;
+  state[stage].step=Math.max(0,Math.min(n-1,state[stage].step+delta));
+  renderDemo(stage);
+}
+function jumpStep(stage,i){
+  stopTimer();
+  state[stage].step=i;renderDemo(stage);
+}
+function togglePlay(stage){
+  if(state[stage].playing){stopTimer();renderDemo(stage);return;}
+  stopTimer();
+  var alg=currentAlg(stage), n=alg.steps.length;
+  if(state[stage].step>=n-1)state[stage].step=0;
+  state[stage].playing=true;timerStage=stage;
+  renderDemo(stage);
+  timer=setInterval(function(){
+    if(state[stage].step>=n-1){stopTimer();renderDemo(stage);return;}
+    state[stage].step++;renderDemo(stage);
+  },2200);
+}
+
+document.addEventListener('click',function(e){
+  var card=e.target.closest('[data-algo]');
+  if(card&&card.dataset.stage){selectAlgo(card.dataset.stage,card.dataset.algo);return;}
+  var jump=e.target.closest('[data-jump]');
+  if(jump){var target=document.querySelector(jump.dataset.jump);if(target)target.scrollIntoView({behavior:'smooth'});return;}
+  var act=e.target.closest('[data-act]');
+  if(!act)return;
+  var demo=act.closest('[id^="demo-s"]');if(!demo)return;
+  var stage=demo.id.replace('demo-s','stage');
+  lastStage=stage;
+  var a=act.dataset.act;
+  if(a==='prev')moveStep(stage,-1);
+  else if(a==='next')moveStep(stage,1);
+  else if(a==='reset'){stopTimer();state[stage].step=0;renderDemo(stage);}
+  else if(a==='play')togglePlay(stage);
+  else if(a==='jump')jumpStep(stage,parseInt(act.dataset.step,10));
+});
+
+document.addEventListener('keydown',function(e){
+  if(e.target&&/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;
+  if(e.key==='ArrowRight'){e.preventDefault();moveStep(lastStage,1);}
+  else if(e.key==='ArrowLeft'){e.preventDefault();moveStep(lastStage,-1);}
+  else if(e.code==='Space'){e.preventDefault();togglePlay(lastStage);}
+});
+
+if('IntersectionObserver' in window){
+  var links=document.querySelectorAll('.topnav a');
+  var obs=new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      if(en.isIntersecting){
+        links.forEach(function(l){l.classList.toggle('on',l.getAttribute('href')==='#'+en.target.id)});
+      }
+    });
+  },{rootMargin:'-30% 0px -60% 0px',threshold:0});
+  ['s1','s2','s3','notes'].forEach(function(id){var el=document.getElementById(id);if(el)obs.observe(el)});
+}
+renderAll();
+document.querySelectorAll('.stage').forEach(function(sec){sec.addEventListener('click',function(){lastStage=sec.id==='s1'?'stage1':sec.id==='s2'?'stage2':'stage3';});});
+</script>
+</body>
+</html>

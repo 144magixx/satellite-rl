@@ -8,7 +8,7 @@
 @media(max-width:400px){.hero-mainline a:first-child strong{font-size:15px;letter-spacing:-.4px}}
 .hero-foot{pointer-events:none}.hero-foot a{pointer-events:auto}.hero>.hero-foot>.wrap{display:flex;align-items:center;justify-content:space-between;padding:0;gap:20px}
 </style></head><body>
-<header><div class="wrap"><a class="brand" href="06_算法交互演示.html"><span class="mark"></span>算法 · 看见过程</a><nav><a href="#chapters">选择算法</a><a href="04_近期工作交互汇报.html">近期研究汇报 ↗</a></nav></div></header>
+<header><div class="wrap"><a class="brand" href="06_算法交互演示.html"><span class="mark"></span>算法 · 看见过程</a><nav><a href="#chapters">选择算法</a><a href="04_近期工作交互汇报.html">近期研究汇报 ↗</a></nav></div></header><p class="tabu-evidence-note" style="font-size:13px;line-height:1.7;margin:16px auto;padding:12px 16px;max-width:1180px;color:inherit;border:1px solid #64748b66;border-radius:8px">本页是原理示例；确认88景的纯禁忌搜索与贪心＋禁忌搜索成绩已完成。<a href="04_近期工作交互汇报.html#tabu-initialization-comparison" style="color:inherit;text-decoration:underline">查看同条件实测表与耗时 ↗</a></p>
 <section class="hero"><div class="wrap"><div class="reveal"><div class="eyebrow">FROM DECISION TO MOTION</div><h1>让算法动起来。<br><em>看见每一步。</em></h1><p class="source">来源：codex</p><p class="lead">先用 <strong>FLOW-AO v2</strong> 安排覆盖，<br>再用 <strong>T-SAC</strong> 分配频率，<br>最后用 <strong>SCA</strong> 精调功率。</p><div class="hero-actions"><a class="primary" href="08_第一阶段算法逐步演示.html#v2">从第一阶段开始 <span>→</span></a><a class="text-link" href="#chapters">浏览三个阶段 ↓</a></div><div class="hero-mainline" aria-label="三个阶段主算法"><a href="08_第一阶段算法逐步演示.html#v2"><small>01 · 覆盖主算法</small><strong>FLOW-AO v2</strong><span>进入演示 ↗</span></a><a href="09_第二阶段算法逐步演示.html#tsac"><small>02 · 频率主算法</small><strong>T-SAC</strong><span>进入演示 ↗</span></a><a href="10_第三阶段算法逐步演示.html#sca"><small>03 · 功率主算法</small><strong>SCA</strong><span>进入演示 ↗</span></a></div></div><div class="hero-visual"><svg id="heroArt" viewBox="0 0 700 540" role="img" aria-label="从飞机覆盖、频率分配到功率传送的三阶段示意"></svg><div class="figure-label"><span><i class="live-dot"></i><span id="visualTitle">把飞机，连到能覆盖它的波束</span></span><span>三阶段机制示意</span></div><div class="sequence" aria-label="三阶段动效"><button class="active" data-scene="0"><span>01</span>覆盖与归属</button><button data-scene="1"><span>02</span>频率分配</button><button data-scene="2"><span>03</span>功率细调</button></div></div></div><div class="hero-foot"><div class="wrap"><span>逐步推进 · 可回看 · 可自动播放 · 离线打开</span><a href="#chapters">继续向下 ↓</a></div></div></section>
 <main class="wrap" id="chapters"><section class="chapter-intro"><div class="eyebrow">START WITH A SMALL EXAMPLE</div><h2>先看主算法，再比较不同做法。</h2><p>每个阶段先进入主算法动效，其他方法在同一阶段继续切换。</p></section>
 <div id="chapterList"></div><details class="closing"><summary>演示范围、教学设定与数据来源</summary><p>三个阶段共32个方法入口，覆盖近期汇报的规则、搜索、学习和文献对比。不同预算、目标或网络版本在对应页中说明或切换。每页保留完整步骤，章节和公式可按需展开。</p><p>教学场景、动效与脚本由codex制作。动作、候选和数值之间的关系由页面计算或明确的教学设定给出；学习概率不冒充真实模型输出。实验结果见<a href="04_近期工作交互汇报.html">近期研究汇报</a>，各演示页中保留代码与报告依据。</p></details></main>
@@ -32,7 +32,7 @@ const items=[
  [2,'greedy','容量感知／按需贪心','规则逐束分配','先算需要多少槽，再按需求依次分配；附旧贪心差异。'],
  [2,'fixed','固定分配','固定配额','每束照同一份规则拿资源，观察欠供与过供。'],
  [2,'random','随机分配','在合法菜单中抽样','按固定随机数抽动作，逐步扣除剩余槽与功率。'],
- [2,'tabu','禁忌搜索（教学）','最近布局记忆','演示搜索规则；历史贪心初解与纯禁忌随机初解另做实测对照。'],
+ [2,'tabu','禁忌搜索规则（教学）','最近布局记忆','演示搜索规则；历史贪心初解与纯禁忌随机初解另做实测对照。'],
  [2,'anneal','模拟退火','带温度的接受规则','看变差多少、温度多高、随机数多大，决定接受还是拒绝。'],
  [2,'genetic','遗传算法','一群方案共同演化','依次看选择父母、交叉、变异、修复和保留精英。'],
  [2,'relax','松弛取整','先连续，后离散','先看小数槽数，再看取整为何超预算，以及怎样修复。'],
