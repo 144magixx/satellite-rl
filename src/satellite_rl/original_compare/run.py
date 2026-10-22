@@ -18,8 +18,10 @@ from .physics import greedy_allocation, make_scene, metrics, new_env, random_all
 from .search import SearchEnv, i0_search, load_i0_actor, tabu_search
 
 SAC_REPEATS = 3          # 直出模型按策略概率抽样，每景跑 3 次取平均（与 S2-FIX 相同）
-I0_SAMPLE_SEEDS = (1, 2, 3)
-TABU_BUDGETS = (32, 96, 320)
+# 主实验用默认值；环境/几何变体的快速检验用环境变量缩减（ORIG_TABU="32"、ORIG_I0_SAMPLES="1"）
+I0_SAMPLE_SEEDS = tuple(range(1, 1 + int(os.environ.get("ORIG_I0_SAMPLES", "3"))))
+TABU_BUDGETS = tuple(int(x) for x in os.environ.get("ORIG_TABU", "32,96,320").split(","))
+WITH_FREE8 = os.environ.get("ORIG_FREE8", "0") == "1"   # 主实验之后加入的"8组＋组内按干扰挑空位"规则
 _MODELS = {}
 
 
@@ -112,6 +114,20 @@ def run_scene(seed):
             runs.append(dict(search_record(beams, env, i0_search(env, actor, sample_seed), greedy_seconds, started),
                              model=model_seed, sample_seed=sample_seed, decisions=env.decision_count))
     rows["改进式SAC(I0)"] = runs
+
+    if WITH_FREE8:
+        started = time.perf_counter()
+        free8 = greedy_allocation(beams, fixed_groups=True, free_starts=True)
+        free8_seconds = time.perf_counter() - started
+        rows["8组任意空位"] = [record(beams, replay(beams, *free8), free8_seconds, init_seconds=free8_seconds)]
+        runs = []
+        for model_seed, actor in _MODELS["I0"].items():
+            for sample_seed in I0_SAMPLE_SEEDS:
+                started = time.perf_counter() - free8_seconds
+                env = SearchEnv(beams, free8, 32)
+                runs.append(dict(search_record(beams, env, i0_search(env, actor, sample_seed), free8_seconds, started),
+                                 model=model_seed, sample_seed=sample_seed, decisions=env.decision_count))
+        rows["8组任意空位+I0"] = runs
     return dict(seed=seed, methods=rows)
 
 

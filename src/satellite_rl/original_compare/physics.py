@@ -3,13 +3,36 @@
 评价器不改原环境：把整套 (组, 起点, 槽数, 功率) 按原版处理顺序逐束交给 Env.step，
 取回合结束时的逐束速率（含后来者干扰对先前波束的扣减）。
 """
+import importlib
+import os
 from types import SimpleNamespace
 
 import numpy as np
 
-from satellite_rl.envs.satellite import (AntennaPattern, BeamInfo, CurrentBeamState, Env,
-                                         SatelliteFreqState, R, beam_num, c, geo_to_cartesian,
-                                         k as BOLTZMANN, power_threshold, satellite_lon)
+# 环境版本（环境变量 ORIG_ENV）：
+#   original  45427b4 原版原样（默认）
+#   fixed     c4963ba 修正版：功率按槽分摊、干扰记账修正、方向图在 0.25° 处连续（尾部仍用 log10 算宽度）
+#   fixed_ln  fixed 再把方向图尾部宽度改用自然对数，即真正的 0.5° 半功率高斯
+ENV_VARIANT = os.environ.get("ORIG_ENV", "original")
+ENV = importlib.import_module("satellite_rl.envs.satellite" if ENV_VARIANT == "original"
+                              else "satellite_rl.original_compare.env_c4963ba")
+if ENV_VARIANT == "fixed_ln":
+    def _ln_tail(self, G_max, phi):
+        beamwidth = 0.5
+        sigma = beamwidth / (2 * np.sqrt(2 * np.log(2)))
+        phi = abs(phi)
+        if phi <= beamwidth / 2:
+            return G_max - 3 * (phi / (beamwidth / 2)) ** 2
+        edge = beamwidth / 2
+        return G_max - 3 - 10 / np.log(10) * (phi ** 2 - edge ** 2) / (2 * sigma ** 2)
+    ENV.AntennaPattern.transmitting_antenna_pattern = _ln_tail
+POWER_SPLIT = ENV_VARIANT != "original"
+# 场景几何（环境变量 ORIG_GEOMETRY）：cities 原版 100 城（默认）；jitter 每城加 1° 随机偏移；uniform 原版代码自带的中国范围内均匀随机
+GEOMETRY = os.environ.get("ORIG_GEOMETRY", "cities")
+
+AntennaPattern, BeamInfo, CurrentBeamState, Env = ENV.AntennaPattern, ENV.BeamInfo, ENV.CurrentBeamState, ENV.Env
+SatelliteFreqState, R, beam_num, c = ENV.SatelliteFreqState, ENV.R, ENV.beam_num, ENV.c
+geo_to_cartesian, BOLTZMANN, power_threshold, satellite_lon = ENV.geo_to_cartesian, ENV.k, ENV.power_threshold, ENV.satellite_lon
 
 SLOT_HZ = 2.5e7
 F0_HZ = 1.77e10 + 50 * SLOT_HZ          # 100 槽的中心频率，只用于贪心估算槽数
@@ -20,10 +43,26 @@ POWER_BUDGET = power_threshold * (1 - 1e-9)
 PATTERN = AntennaPattern()
 
 
-def make_scene(seed):
-    """原版的场景生成：随机抽 100 个城市、随机需求，按需求从大到小排序。"""
+def make_scene(seed, geometry=None):
+    """原版的场景生成：100 个城市（城市表正好 100 个，全部抽中）、随机需求，按需求从大到小排序。
+
+    geometry 不是 cities 时，需求与顺序照旧，只把波束位置换掉（另用一个随机数流，不影响需求）。
+    """
+    geometry = geometry or GEOMETRY
     np.random.seed(seed)
-    return BeamInfo()
+    beams = BeamInfo()
+    if geometry != "cities":
+        rng = np.random.default_rng(seed + 7919)
+        n = len(beams.beam_location)
+        if geometry == "jitter":
+            beams.beam_location = beams.beam_location + rng.normal(0, 1.0, (n, 2))
+        else:
+            beams.beam_location = np.column_stack((rng.uniform(ENV.LAT_MIN, ENV.LAT_MAX, n),
+                                                   rng.uniform(ENV.LON_MIN, ENV.LON_MAX, n)))
+        beams.cal_distance()
+        beams.beam_info['beam_location'] = beams.beam_location
+        beams.beam_info['distances'] = beams.distances
+    return beams
 
 
 def demand_of(beams):
@@ -91,7 +130,7 @@ def coupling_gain(locations):
 
 
 def slot_capacity(beams, power_w):
-    """单槽容量。原版每个槽都按整束功率计算（功率不按槽分摊），这里照原样。"""
+    """单槽容量。原版每个槽都按整束功率计算（功率不按槽分摊）；修正版传入的是每槽功率。"""
     distance = beams.beam_info['distances'].ravel() * 1e3
     received = power_w * 10 ** ((TX_GAIN_DBI + RX_GAIN_DBI) / 10) / (4 * np.pi * distance * F0_HZ / c) ** 2
     cinr = received / (BOLTZMANN * NOISE_K * SLOT_HZ) * 10 ** (-LOSS_DB / 10)
@@ -101,8 +140,13 @@ def slot_capacity(beams, power_w):
 def estimated_slots(beams):
     demand = demand_of(beams)
     estimated_power = np.minimum(power_threshold * demand / demand.sum(), 50.)
-    per_slot = slot_capacity(beams, estimated_power)
-    return np.clip(np.ceil(demand / per_slot).astype(int), 1, 10)
+    if not POWER_SPLIT:
+        return np.clip(np.ceil(demand / slot_capacity(beams, estimated_power)).astype(int), 1, 10)
+    slots = np.full(len(demand), 10, int)
+    for k in range(10, 0, -1):     # 与 S2-FIX 相同：取能满足需求的最少槽数，都不够则 10
+        enough = k * slot_capacity(beams, estimated_power / k) >= demand
+        slots[enough] = k
+    return slots
 
 
 def proportional_power(demand, budget=POWER_BUDGET, cap=50.):
@@ -178,6 +222,11 @@ def greedy_allocation(beams, fill_groups=False, fixed_groups=False, free_starts=
         other = np.flatnonzero(assigned & (groups % 2 == g % 2) & (groups != g))
         if free_starts:   # 诊断：组内任意空位都可选，不必首尾相接
             choices = np.array([s for s in range(101 - slots[i]) if not occupied[g, s:s + slots[i]].any()])
+            if len(choices) == 0:   # 空位被切碎、放不下整块时缩到最长空段（组较满时偶尔发生）
+                free = np.flatnonzero(~occupied[g])
+                longest = max(np.split(free, np.flatnonzero(np.diff(free) > 1) + 1), key=len)
+                slots[i] = len(longest)
+                choices = np.array([longest[0]])
         else:
             choices = np.arange(cursor[g], 101 - remaining[g])
         overlap = np.maximum(0, np.minimum(choices[:, None] + slots[i], starts[other] + slots[other]) -

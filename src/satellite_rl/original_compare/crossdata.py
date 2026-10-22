@@ -14,8 +14,8 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-import satellite_rl.envs.satellite as orig
 from . import physics
+orig = physics.ENV      # 按 ORIG_ENV 选的环境版本
 from .physics import greedy_allocation, metrics, random_allocation, replay
 from .search import SearchEnv, tabu_search
 
