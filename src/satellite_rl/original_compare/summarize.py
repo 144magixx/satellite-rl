@@ -18,7 +18,7 @@ ORDER = ["T-SAC", "MLP-SAC", "改进式SAC(I0)", "容量感知贪心", "纯禁�
          "贪心+禁忌32", "贪心+禁忌320", "贪心+禁忌96", "原版旧贪心"]
 LABEL = {"T-SAC": "直出T-SAC", "MLP-SAC": "去Transformer的MLP-SAC", "改进式SAC(I0)": "改进式SAC（I0）",
          "容量感知贪心": "容量感知贪心", "纯禁忌32": "纯禁忌搜索32次", "贪心+禁忌32": "贪心＋禁忌搜索32次",
-         "贪心+禁忌320": "贪心＋禁忌搜索320次", "贪心+禁忌96": "同耗时贪心＋禁忌搜索96次",
+         "贪心+禁忌320": "贪心＋禁忌搜索320次", "贪心+禁忌96": "贪心＋禁忌搜索96次",
          "原版旧贪心": "原版自带贪心（参照）"}
 KEYS = ("W", "SI", "worst10", "SGM", "power_w", "slots", "seconds")
 
@@ -68,8 +68,8 @@ def main(run_dir):
                             np.percentile(rng.choice(v, (4000, len(v))).mean(1), 97.5) - v.mean()] for v in values]).T
         y = np.arange(len(ORDER))[::-1]
         ax.barh(y, means, xerr=errors, color=colors, alpha=.85, capsize=3)
-        for yi, mean in zip(y, means):
-            ax.text(mean + 0.5, yi, f"{mean:.1f}%", va="center", fontsize=9)
+        for yi, mean, high in zip(y, means, errors[1]):
+            ax.text(mean + high + 0.8, yi, f"{mean:.1f}%", va="center", fontsize=9)
         ax.set_title(title)
         ax.set_xlabel("%")
         ax.grid(axis="x", alpha=.3)
@@ -99,18 +99,40 @@ def main(run_dir):
     plt.close(fig)
 
     # 图3：质量—耗时
-    fig, ax = plt.subplots(figsize=(8, 5.5))
+    fig, ax = plt.subplots(figsize=(8.5, 5.5))
+    offsets = {"改进式SAC(I0)": (-20, 10), "贪心+禁忌32": (-30, -16), "贪心+禁忌96": (-40, 10),
+               "贪心+禁忌320": (-90, -16)}
     for m in ORDER:
         ax.scatter(table[m]["seconds"].mean(), table[m]["W"].mean() * 100, s=60, color=colors[ORDER.index(m)])
         ax.annotate(LABEL[m], (table[m]["seconds"].mean(), table[m]["W"].mean() * 100),
-                    textcoords="offset points", xytext=(6, 4), fontsize=9)
+                    textcoords="offset points", xytext=offsets.get(m, (6, 4)), fontsize=9)
     ax.set_xscale("log")
+    ax.set_xlim(right=150)
     ax.set_xlabel("单景耗时（秒，对数轴；含初解构造与全部试算）")
     ax.set_ylabel("业务量加权满足率（%）")
     ax.set_title("质量与耗时")
     ax.grid(alpha=.3, which="both")
     fig.tight_layout()
     fig.savefig(figures / "f3_quality_vs_time.png", dpi=150)
+    plt.close(fig)
+
+    # 图4：事后诊断（diagnostics.py 的输出）
+    diag = [json.loads(line) for line in (run_dir / "diagnostics.jsonl").open(encoding="utf8")]
+    variants = [k for k in diag[0] if k != "seed"]
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), sharey=True)
+    y = np.arange(len(variants))[::-1]
+    for ax, key, title in zip(axes, ("W", "worst10"), ("业务量加权满足率", "最差10%波束平均满足率")):
+        means = [np.mean([d[v][key] for d in diag]) * 100 for v in variants]
+        ax.barh(y, means, color=["#2a9d8f" if "T-SAC" in v else "#8d99ae" for v in variants], alpha=.85)
+        for yi, mean in zip(y, means):
+            ax.text(mean + 0.8, yi, f"{mean:.1f}%", va="center", fontsize=9)
+        ax.set_title(title)
+        ax.set_xlim(0 if key == "worst10" else 60, 108)
+        ax.grid(axis="x", alpha=.3)
+    axes[0].set_yticks(y, variants)
+    fig.suptitle("事后诊断：贪心换槽数／分组／摆放／功率，T-SAC换功率")
+    fig.tight_layout()
+    fig.savefig(figures / "f4_diagnostics.png", dpi=150)
     plt.close(fig)
 
     for m in ORDER:
