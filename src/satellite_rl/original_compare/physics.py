@@ -135,8 +135,15 @@ def shrink_to_group(slots, members, demand):
         slots[members] = count
 
 
-def greedy_allocation(beams):
-    """容量感知贪心 G1，逐行对应 S2-FIX greedy.py，链路量换成原版物理。"""
+def greedy_allocation(beams, fill_groups=False, fixed_groups=False, free_starts=False):
+    """容量感知贪心 G1，逐行对应 S2-FIX greedy.py，链路量换成原版物理。
+
+    三个开关只用于诊断，正式对比不用：
+    fill_groups  分组后把每组剩余的槽按需求/槽数比逐个补给组内波束（每束≤10），
+                 检验"原版功率不按槽分摊、多给槽几乎不花代价"的影响；
+    fixed_groups 组号改为原版 SAC 的固定规则（处理顺序 %8），8 组都用上；
+    free_starts  起点可放在组内任意空位（原规则是组内首尾相接排）。
+    """
     demand = demand_of(beams)
     n = len(demand)
     gain = coupling_gain(beams.beam_info['beam_location'])
@@ -151,19 +158,32 @@ def greedy_allocation(beams):
                  penalty * max(0, used[g] + slots[i] - 100) for g in range(8)]
         groups[i] = g = int(np.argmin(costs))
         used[g] += slots[i]
+    if fixed_groups:
+        groups = np.arange(n) % 8
     for g in range(8):
         shrink_to_group(slots, np.flatnonzero(groups == g), demand)
+    if fill_groups:
+        for g in range(8):
+            members = np.flatnonzero(groups == g)
+            while len(members) and slots[members].sum() < 100 and np.any(slots[members] < 10):
+                score = np.where(slots[members] < 10, demand[members] / slots[members], -np.inf)
+                slots[members[np.argmax(score)]] += 1
     starts = np.zeros(n, int)
     cursor = np.zeros(8, int)
     remaining = np.bincount(groups, weights=slots, minlength=8).astype(int)
     assigned = np.zeros(n, bool)
+    occupied = np.zeros((8, 100), bool)
     for i in order:
         g = groups[i]
         other = np.flatnonzero(assigned & (groups % 2 == g % 2) & (groups != g))
-        choices = np.arange(cursor[g], 101 - remaining[g])
+        if free_starts:   # 诊断：组内任意空位都可选，不必首尾相接
+            choices = np.array([s for s in range(101 - slots[i]) if not occupied[g, s:s + slots[i]].any()])
+        else:
+            choices = np.arange(cursor[g], 101 - remaining[g])
         overlap = np.maximum(0, np.minimum(choices[:, None] + slots[i], starts[other] + slots[other]) -
                              np.maximum(choices[:, None], starts[other]))
         starts[i] = choices[np.argmin(overlap @ gain[i, other])]
+        occupied[g, starts[i]:starts[i] + slots[i]] = True
         cursor[g] = starts[i] + slots[i]
         remaining[g] -= slots[i]
         assigned[i] = True
