@@ -96,8 +96,8 @@ def cmd_sync(args):
             with c.open_sftp() as sftp:
                 sftp.put(str(bundle), bundle_remote)
         script = (f'set -e; if [ ! -d {REMOTE_REPO}/.git ]; then git clone -q {bundle_remote} {REMOTE_REPO}; fi; '
-                  f'cd {REMOTE_REPO}; git fetch -q {bundle_remote} HEAD; git checkout -q --detach {revision}; git rev-parse HEAD')
-        out = run(c, script).strip().splitlines()[-1]
+                  f'cd {REMOTE_REPO}; git fetch -q {bundle_remote} HEAD; git -c advice.detachedHead=false checkout -q --detach {revision}; git rev-parse HEAD')
+        out = [line.strip() for line in run(c, script).splitlines() if len(line.strip()) == 40][-1]
         if out != revision:
             raise RuntimeError(f'远端提交 {out} ≠ 本地 {revision}')
         print(json.dumps(dict(synced=revision)))
