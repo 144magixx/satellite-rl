@@ -13,7 +13,7 @@ from pathlib import Path
 
 from _common import ROOT  # noqa: F401
 from satellite_rl.s2lab.physics import PhysicsV3
-from satellite_rl.s2lab.scenes import DatasetConfig, build_scenes, make_splits, read_config, read_index
+from satellite_rl.s2lab.scenes import DatasetConfig, build_scenes, make_splits, read_config, read_index, write_index
 
 
 def main():
@@ -63,6 +63,7 @@ def main():
     else:
         dataset_dir.mkdir(parents=True, exist_ok=True)
         (dataset_dir / 'config.json').write_text(json.dumps(asdict(config), ensure_ascii=False, indent=1), encoding='utf-8')
+        write_index(dataset_dir)
     rows = read_index(dataset_dir)
     splits = make_splits(dataset_dir, config)
     summary = {k: len(v) for k, v in splits.items()}
