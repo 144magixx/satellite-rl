@@ -214,8 +214,9 @@ def cmd_status(args):
     extra = '\n'.join(lane_lines) + '\n\n## 标定表（规则直出，来自 calibration.md）\n\n' + calib
     text = render_state_markdown(rows, note, extra)
     STATE_DOC.parent.mkdir(parents=True, exist_ok=True)
-    header = (STATE_DOC.read_text(encoding='utf-8').split('<!-- AUTO_STATE_START -->')[0] if STATE_DOC.exists() else '')
-    STATE_DOC.write_text(header + '<!-- AUTO_STATE_START -->\n' + text + '<!-- AUTO_STATE_END -->\n', encoding='utf-8')
+    marker = '\n<!-- AUTO_STATE_START -->\n'
+    header = (STATE_DOC.read_text(encoding='utf-8').split(marker)[0] if STATE_DOC.exists() else '')
+    STATE_DOC.write_text(header + marker + text + '<!-- AUTO_STATE_END -->\n', encoding='utf-8')
     LOCAL_OUT.mkdir(parents=True, exist_ok=True)
     (LOCAL_OUT / 'state.json').write_text(json.dumps(dict(fetched_at=datetime.now().isoformat(timespec='minutes'), runs=rows, lanes=lanes), ensure_ascii=False, indent=1), encoding='utf-8')
     print(text)
