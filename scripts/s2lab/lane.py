@@ -1,6 +1,9 @@
-﻿"""鍗曞崱鎺掗槦鍣細鎸?queue.json 椤哄簭璁ら鍙繍琛岀殑 run锛岄€愪釜锛堟垨骞惰 k 涓級璁粌锛岀獥鍙ｅ埌鐐硅嚜鍔ㄨ璁粌瀛樼洏閫€鍑恒€?
+"""单卡排队器：按 queue.json 顺序认领可运行的 run，逐个（或并行 k 个）训练，窗口到点自动让训练存盘退出。
+
   python scripts/s2lab/lane.py --runs-dir R --dataset-dir D --lane 20654 --window-hours 21 --parallel 2
-鏀跺埌 SIGTERM 鏃惰浆鍙戠粰瀛愯繘绋嬶紙璁粌鍏堝瓨鍚庨€€锛夛紝鐒跺悗閫€鍑恒€傚涓鍣ㄥ叡浜悓涓€ runs 鐩綍鏃跺悇鑷棰嗕笉鍚?run銆?"""
+收到 SIGTERM 时转发给子进程（训练先存后退），然后退出。多个容器共享同一 runs 目录时各自认领不同 run。
+failed 的 run 不自动重试：看过 train.log 后把 status.json 的 state 改回 paused 即可重新排队。
+"""
 import argparse
 import json
 import os
@@ -8,11 +11,10 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 from _common import ROOT, default_device
-from satellite_rl.s2lab.matrix import read_queue, read_matrix, run_status, claimable
+from satellite_rl.s2lab.matrix import read_queue, run_status, claimable
 from satellite_rl.s2lab.train import write_json, now
 
 
@@ -33,10 +35,10 @@ def main():
     ap.add_argument('--runs-dir', required=True)
     ap.add_argument('--dataset-dir', required=True)
     ap.add_argument('--lane', required=True)
-    ap.add_argument('--window-hours', type=float, required=True, help='鏈獥鍙ｅ彲鐢ㄥ皬鏃舵暟锛堣皟鐢ㄦ柟宸插噺鍘诲畨鍏ㄤ綑閲忥級')
+    ap.add_argument('--window-hours', type=float, required=True, help='本窗口可用小时数（调用方已减去安全余量）')
     ap.add_argument('--parallel', type=int, default=1)
     ap.add_argument('--device', default=None)
-    ap.add_argument('--only', nargs='*', help='鍙棰嗚繖浜涘墠缂€鐨?run')
+    ap.add_argument('--only', nargs='*', help='只认领这些前缀的 run')
     ap.add_argument('--min-hours', type=float, default=.3)
     args = ap.parse_args()
     runs_dir = Path(args.runs_dir)

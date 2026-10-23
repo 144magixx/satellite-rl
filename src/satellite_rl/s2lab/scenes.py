@@ -1,8 +1,12 @@
-﻿"""鏁版嵁闆嗭細甯冨眬澶嶇敤/鐢熸垚銆佺墿鐞唙3寮犻噺鍖栥€侀渶姹傛娊鏍枫€佽礋杞藉垎灞備笌闆嗗悎鍒掑垎銆?
-鐩綍缁撴瀯 data/<dataset>/
-  config.json            鐗╃悊銆佸姛鐜囬绠椼€侀渶姹傚尯闂淬€佸垎灞傞槇鍊笺€侀泦鍚堝畾涔?  scenes/<key>.npz       姣忔櫙寮犻噺锛堜笌鍒嗛厤鏃犲叧锛?  scenes.csv             鍦烘櫙绱㈠紩锛坘ey銆佹棩鏈熴€乁TC銆侀鏈烘暟銆佹潫鏁般€佹潵婧愶級
-  splits.json            train/dev/confirm 鍚勮嚜鐨?(key, per_aircraft_bps, load_ratio, stratum) 鍒楄〃
-鍦烘櫙 key = 鏃ユ湡+UTC锛屽 20240112T1122銆?"""
+"""数据集：布局复用/生成、物理v3张量化、需求抽样、负载分层与集合划分。
+
+目录结构 data/<dataset>/
+  config.json            物理、功率预算、需求区间、分层阈值、集合定义
+  scenes/<key>.npz       每景张量（与分配无关）
+  scenes.csv             场景索引（key、日期、UTC、飞机数、束数、来源）
+  splits.json            train/dev/confirm 各自的 (key, per_aircraft_bps, load_ratio, stratum) 列表
+场景 key = 日期+UTC，如 20240112T1122。
+"""
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -14,8 +18,9 @@ import numpy as np
 
 from .physics import PhysicsV3, SceneTensors, build_scene_tensors
 
-BASE_REQUEST_BPS = 43_200_000     # 甯冨眬鐢熸垚鏃剁殑鍗曟満璇锋眰锛堝喅瀹氭瘡鏉熶笂闄怟=26锛夛紝鍐荤粨甯冨眬鍙敤瀹?N_BUDGET = 150
-STRATA = ('ample', 'marginal', 'short')   # 瀹借 / 鍕夊己 / 涓嶅
+BASE_REQUEST_BPS = 43_200_000     # 布局生成时的单机请求（决定每束上限K=26），冻结布局只用它
+N_BUDGET = 150
+STRATA = ('ample', 'marginal', 'short')   # 宽裕 / 勉强 / 不够
 
 
 @dataclass
@@ -25,15 +30,15 @@ class DatasetConfig:
     power_budget_w: float = 2000.
     beam_power_cap_w: float = 50.
     reserve_w_per_beam: float = .5
-    per_aircraft_bps_range: tuple = (30e6, 80e6)   # 璁粌鏃舵瘡鍥炲悎鎶芥牱锛涜瘎浠烽泦鍥哄畾
-    load_thresholds: tuple = (.35, .6)              # 蟻 < t0 瀹借锛宼0鈥攖1 鍕夊己锛屸墺t1 涓嶅
+    per_aircraft_bps_range: tuple = (30e6, 80e6)    # 训练时每回合抽样；评价集固定
+    load_thresholds: tuple = (.35, .6)              # ρ < t0 宽裕，t0—t1 勉强，≥t1 不够
     split_dates: dict = field(default_factory=lambda: dict(
         train=['2024-01-08', '2024-01-09', '2024-01-12'],
         dev=['2024-01-15'],
         confirm=['2024-01-18', '2024-02-23', '2024-02-24']))
     dev_per_stratum: int = 20
     confirm_per_stratum: int = 100
-    train_strata_share: tuple = (.15, .4, .45)      # 璁粌鎶芥牱鏃朵笁妗ｆ瘮渚嬶紙鎸?蟻 鍒嗗眰閲嶉噰鏍凤級
+    train_strata_share: tuple = (.15, .4, .45)      # 训练抽样时三档比例（按 ρ 分层重采样）
     seed: int = 20261024
 
     def physics_obj(self):
@@ -59,10 +64,10 @@ def scene_key(utc_iso):
     return stamp.strftime('%Y%m%dT%H%M')
 
 
-# ---------------------------------------------------------------- 甯冨眬鏉ユ簮
+# ---------------------------------------------------------------- 布局来源
 
 def existing_s2fix_records(s2fix_data_dir):
-    """璇诲彇 S2-FIX 宸茬敓鎴愮殑涓変釜闆嗗悎锛堥兘鏄?43.2 Mbps銆?50 鏉熴€並=26 鐨?FLOW-AO v2 甯冨眬锛夈€?""
+    """读取 S2-FIX 已生成的三个集合（都是 43.2 Mbps、150 束、K=26 的 FLOW-AO v2 布局）。"""
     from satellite_rl.s2fix.data import read_records
     rows = []
     for set_name in ('train_d432_n150', 'dev_d432_n150', 'conf_d432_n150'):
@@ -85,7 +90,7 @@ def frames_for_dates(frames_dir, dates):
 
 
 def _tensorize_job(job):
-    """瀛愯繘绋嬶細璇?case/layout锛堟垨鐜板満鐢熸垚甯冨眬锛夆啋 寮犻噺 鈫?npz銆傝繑鍥炵储寮曡銆?""
+    """子进程：读 case/layout（或现场生成布局）→ 张量 → npz。返回索引行。"""
     kind, key, payload, physics_dict, out_dir = job
     physics = PhysicsV3(**physics_dict)
     if kind == 'existing':
@@ -113,8 +118,17 @@ def _tensorize_job(job):
                 members_total=int(scene.members.sum()), max_members=int(scene.members.max()), source=source)
 
 
+def _iso_from_case_id(case_id):
+    parts = case_id.split(':')
+    for i, part in enumerate(parts):
+        if len(part) == 13 and part[10] == 'T' and part[4] == '-':
+            return ':'.join(parts[i:i + 3])
+    raise ValueError(case_id)
+
+
 def build_scenes(dataset_dir, config, s2fix_data_dir=None, frames_dir=None, workers=1, limit=None, per_date_limit=None, gen_dates=None):
-    """鐢熸垚/澶嶇敤甯冨眬骞跺紶閲忓寲锛屽彲閲嶅杩愯锛堝凡瀛樺湪鐨?npz 璺宠繃锛夈€俻er_date_limit锛氭瘡涓棩鏈熷彧鍙栧潎鍖€鍒嗗竷鐨?k 涓椂鍒伙紙鍐掔儫鐢級銆?    gen_dates锛氭湰娆″彧澶勭悊杩欎簺鏃ユ湡锛堝瀹瑰櫒鍒嗘棩鏈熷苟琛岋級锛屽彛寰勯噷鐨勬棩鏈熼泦鍚堜笉鍙樸€?""
+    """生成/复用布局并张量化，可重复运行（已存在的 npz 跳过）。per_date_limit：每个日期只取均匀分布的 k 个时刻（冒烟用）。
+    gen_dates：本次只处理这些日期（多容器分日期并行），口径里的日期集合不变。"""
     dataset_dir = Path(dataset_dir)
     scenes_dir = dataset_dir / 'scenes'
     scenes_dir.mkdir(parents=True, exist_ok=True)
@@ -125,7 +139,7 @@ def build_scenes(dataset_dir, config, s2fix_data_dir=None, frames_dir=None, work
     jobs, seen = [], set()
     if s2fix_data_dir:
         for row in existing_s2fix_records(s2fix_data_dir):
-            # case_id 褰㈠ r7:...:2024-01-12T00:37:00Z:uniform...:s2fix:43200000:n150
+            # case_id 形如 r7:...:2024-01-12T00:37:00Z:uniform...:s2fix:43200000:n150
             key = scene_key(_iso_from_case_id(row['case_id']))
             if row['date'] not in wanted_dates or key in seen:
                 continue
@@ -156,14 +170,6 @@ def build_scenes(dataset_dir, config, s2fix_data_dir=None, frames_dir=None, work
             results = list(pool.map(_tensorize_job, jobs, chunksize=1))
     write_index(dataset_dir)
     return results
-
-
-def _iso_from_case_id(case_id):
-    parts = case_id.split(':')
-    for i, part in enumerate(parts):
-        if len(part) == 13 and part[10] == 'T' and part[4] == '-':
-            return ':'.join(parts[i:i + 3])
-    raise ValueError(case_id)
 
 
 def write_index(dataset_dir):
@@ -198,10 +204,10 @@ def read_config(dataset_dir):
     return DatasetConfig(**raw)
 
 
-# ---------------------------------------------------------------- 闆嗗悎鍒掑垎
+# ---------------------------------------------------------------- 集合划分
 
 def make_splits(dataset_dir, config=None):
-    """鎸夋棩鏈熷垎 train/dev/confirm锛沝ev/confirm 鍥哄畾姣忔櫙鐨勫崟鏈洪渶姹傚苟鎸夎礋杞藉垎灞傚潎琛℃娊鍙栥€?""
+    """按日期分 train/dev/confirm；dev/confirm 固定每景的单机需求并按负载分层均衡抽取。"""
     dataset_dir = Path(dataset_dir)
     config = config or read_config(dataset_dir)
     rows = read_index(dataset_dir)
@@ -220,11 +226,13 @@ def make_splits(dataset_dir, config=None):
         per = config.dev_per_stratum if split == 'dev' else config.confirm_per_stratum
         candidates = {s: [] for s in STRATA}
         for r in pool:
-            # 姣忔櫙鎶?8 涓€欓€夐渶姹傚€硷紝鎸夊叾鍒嗗眰褰掔被锛屽悗闈㈡瘡妗ｅ潎琛℃娊鏍枫€佸悓涓€鏅渶澶氬嚭鐜颁竴娆?            for v in np.sort(rng.uniform(lo, hi, 8)):
+            # 每景抽 8 个候选需求值，按其分层归类，后面每档均衡抽样、同一景最多出现一次
+            for v in np.sort(rng.uniform(lo, hi, 8)):
                 ratio = load_ratio(r['members_total'], float(v), config)
                 candidates[stratum_of(ratio, config)].append(dict(key=r['key'], per_aircraft_bps=float(v), load_ratio=float(ratio)))
         chosen, used = [], set()
-        for s in reversed(STRATA):        # 鍏堝～鏈€绋€缂虹殑鈥滀笉澶熲€濇。锛屽闂村満鏅彧鑳借繘鈥滃瑁曗€?            options = candidates[s]
+        for s in reversed(STRATA):        # 先填最稀缺的“不够”档，夜间场景只能进“宽裕”
+            options = candidates[s]
             rng.shuffle(options)
             taken = 0
             for item in options:

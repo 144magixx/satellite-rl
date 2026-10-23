@@ -1,11 +1,15 @@
-﻿"""杩滅鍥涘崱鎿嶄綔锛坧aramiko锛屽彛浠ゅ彧璇荤幆澧冨彉閲?娉ㄥ唽琛?BUPT_PASSWORD锛夈€傛湰鍦扮敤 base anaconda 鐨?python 杩愯銆?
-  python scripts/s2lab/remote.py check                       # GPU銆佽В閲婂櫒銆佹暟鎹洰褰?  python scripts/s2lab/remote.py sync                        # 鎶婃湰鍦?HEAD 鍚屾鍒拌繙绔?repo锛堥渶鍏堟彁浜わ級
-  python scripts/s2lab/remote.py put-frames --dates ...      # 涓婁紶 frames_<date>.npz锛堢己鐨勬墠浼狅級
-  python scripts/s2lab/remote.py build-data --port 20654 --workers 16 [--extra "--power-budget 1500"]
+"""远端四卡操作（paramiko，口令只读环境变量/注册表 BUPT_PASSWORD）。本地用 base anaconda 的 python 运行。
+
+  python scripts/s2lab/remote.py check                       # GPU、解释器、数据目录
+  python scripts/s2lab/remote.py sync                        # 把本地 HEAD 同步到远端 repo（需先提交）
+  python scripts/s2lab/remote.py put-frames --dates ...      # 上传 frames_<date>.npz（缺的才传）
+  python scripts/s2lab/remote.py build-data --port 20654 --workers 16 [--extra "--dates 2024-01-15"]
   python scripts/s2lab/remote.py calibrate --port 20654 [--extra "..."]
   python scripts/s2lab/remote.py launch --window-hours 21 [--parallel 2] [--ports ...]
-  python scripts/s2lab/remote.py pause                       # 璁粌鍏堝瓨鍚庨€€銆佹帓闃熷櫒閫€鍑?  python scripts/s2lab/remote.py status                      # 姹囨€?runs 鐘舵€侊紝鍐欐湰鍦?STATE
-  python scripts/s2lab/remote.py fetch                       # 涓嬭浇鏇茬嚎/寮€鍙戦泦/鐘舵€?璇勪环缁撴灉鍒版湰鍦?  python scripts/s2lab/remote.py evaluate --port 20654 --split confirm [--extra "..."]
+  python scripts/s2lab/remote.py pause                       # 训练先存后退、排队器退出
+  python scripts/s2lab/remote.py status                      # 汇总 runs 状态，写本地 STATE
+  python scripts/s2lab/remote.py fetch                       # 下载曲线/开发集/状态/评价结果到本地
+  python scripts/s2lab/remote.py evaluate --port 20654 --split confirm [--extra "..."]
   python scripts/s2lab/remote.py ps | tail --port P --run-id X | sh --port P --cmd "..."
 """
 import argparse
@@ -29,7 +33,7 @@ REMOTE_DATA = f'{REMOTE_ROOT}/data/{DATASET_NAME}'
 REMOTE_RUNS = f'{REMOTE_ROOT}/runs'
 REMOTE_FRAMES = f'{REMOTE_ROOT}/frames'
 REMOTE_EVAL = f'{REMOTE_ROOT}/eval'
-STATE_DOC = ROOT / 'docs' / 'Claude缁存姢' / 'S2-LAB' / '01_鎺ユ墜鐘舵€?md'
+STATE_DOC = ROOT / 'docs' / 'Claude维护' / 'S2-LAB' / '01_接手状态.md'
 ENV = f'export PYTHONPATH={REMOTE_REPO}/src; export OMP_NUM_THREADS=4; cd {REMOTE_REPO}; '
 
 
@@ -40,7 +44,7 @@ def read_password():
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment') as key:
             password = winreg.QueryValueEx(key, 'BUPT_PASSWORD')[0]
     if not password:
-        raise RuntimeError('BUPT_PASSWORD 涓嶅彲鐢?)
+        raise RuntimeError('BUPT_PASSWORD 不可用')
     return password
 
 
@@ -59,7 +63,7 @@ def run(client, command, timeout=600, check=True):
     out, err = stdout.read().decode(errors='replace'), stderr.read().decode(errors='replace')
     status = stdout.channel.recv_exit_status()
     if check and status:
-        raise RuntimeError(f'杩滅鍛戒护澶辫触({status}): {command}\n{err or out}')
+        raise RuntimeError(f'远端命令失败({status}): {command}\n{err or out}')
     return out + (('\n[stderr]\n' + err) if err.strip() else '')
 
 
@@ -81,7 +85,7 @@ def cmd_check(args):
 def cmd_sync(args):
     dirty = subprocess.check_output(['git', 'status', '--porcelain', '--', 'src', 'scripts', 'tests'], cwd=ROOT).decode().strip()
     if dirty:
-        raise SystemExit('鏈夋湭鎻愪氦鏀瑰姩锛屽厛鎻愪氦锛歕n' + dirty)
+        raise SystemExit('有未提交改动，先提交：\n' + dirty)
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip()
     with connect(args.ports[0]) as c:
         run(c, f'mkdir -p {REMOTE_ROOT}/setup {REMOTE_RUNS} {REMOTE_ROOT}/logs {REMOTE_FRAMES}')
@@ -95,7 +99,7 @@ def cmd_sync(args):
                   f'cd {REMOTE_REPO}; git fetch -q {bundle_remote} HEAD; git checkout -q --detach {revision}; git rev-parse HEAD')
         out = run(c, script).strip().splitlines()[-1]
         if out != revision:
-            raise RuntimeError(f'杩滅鎻愪氦 {out} 鈮?鏈湴 {revision}')
+            raise RuntimeError(f'远端提交 {out} ≠ 本地 {revision}')
         print(json.dumps(dict(synced=revision)))
 
 
@@ -108,19 +112,19 @@ def cmd_put_frames(args):
             for date in args.dates:
                 name = f'frames_{date}.npz'
                 if name in have:
-                    print(f'{name} 宸插瓨鍦?); continue
+                    print(f'{name} 已存在'); continue
                 src = local / name
                 if not src.exists():
-                    print(f'{name} 鏈湴涓嶅瓨鍦?); continue
+                    print(f'{name} 本地不存在'); continue
                 sftp.put(str(src), f'{REMOTE_FRAMES}/{name}')
-                print(f'宸蹭笂浼?{name} ({src.stat().st_size // 1_000_000} MB)')
+                print(f'已上传 {name} ({src.stat().st_size // 1_000_000} MB)')
 
 
 def cmd_build_data(args):
     with connect(args.port) as c:
         pid = background(c, f'{REMOTE_PY} scripts/s2lab/build_data.py --dataset-dir {REMOTE_DATA} --s2fix-data {REMOTE_S2FIX_DATA} '
-                            f'--frames-dir {REMOTE_FRAMES} --workers {args.workers} {args.extra}', f'{REMOTE_ROOT}/logs/build_data.log')
-        print(f'build_data started on {args.port}, pid {pid}; log {REMOTE_ROOT}/logs/build_data.log')
+                            f'--frames-dir {REMOTE_FRAMES} --workers {args.workers} {args.extra}', f'{REMOTE_ROOT}/logs/build_data_{args.port}.log')
+        print(f'build_data started on {args.port}, pid {pid}; log {REMOTE_ROOT}/logs/build_data_{args.port}.log')
 
 
 def cmd_calibrate(args):
@@ -131,8 +135,8 @@ def cmd_calibrate(args):
 
 def cmd_launch(args):
     with connect(args.ports[0]) as c:
-        run(c, f'{ENV}{REMOTE_PY} -c "from satellite_rl.s2lab.matrix import write_matrix; write_matrix(\'{REMOTE_RUNS}\')"'
-               if not args.keep_queue else 'true')
+        if not args.keep_queue:
+            run(c, f'{ENV}{REMOTE_PY} -c "from satellite_rl.s2lab.matrix import write_matrix; write_matrix(\'{REMOTE_RUNS}\')"')
     for port in args.ports:
         with connect(port) as c:
             only = (' --only ' + ' '.join(args.only)) if args.only else ''
@@ -152,9 +156,9 @@ def cmd_pause(args):
     for port in args.ports:
         with connect(port) as c:
             out = run(c, 'pkill -TERM -f "scripts/s2lab/lane.py" ; pkill -TERM -f "scripts/s2lab/train_run.py"; sleep 1; '
-                         'ps -eo pid,etime,cmd | grep -E "s2lab/(queue|train_run)" | grep -v grep', check=False)
-            print(f'== {port} 宸插彂閫?SIGTERM锛涗粛鍦ㄨ繍琛岋紙瀛樼洏涓級锛歕n{out.strip()}')
-    print('璁粌杩涚▼浼氬湪褰撳墠姝ョ粨鏉熷悗淇濆瓨鏂偣鍐嶉€€鍑猴紱绋嶅悗鐢?status 纭鍏ㄩ儴涓?paused銆?)
+                         'ps -eo pid,etime,cmd | grep -E "s2lab/(lane|train_run)" | grep -v grep', check=False)
+            print(f'== {port} 已发送 SIGTERM；仍在运行（存盘中）：\n{out.strip()}')
+    print('训练进程会在当前步结束后保存断点再退出；稍后用 status 确认全部为 paused。')
 
 
 def cmd_ps(args):
@@ -170,6 +174,7 @@ def fetch_status_rows(c):
                  f'for f in _lanes/*.json; do [ -f "$f" ] && echo "=== $f" && cat "$f"; done', check=False)
     statuses, lanes = {}, {}
     current, buf = None, []
+
     def flush():
         if current and buf:
             try:
@@ -201,12 +206,12 @@ def cmd_status(args):
                          best_dev=st.get('best_dev'), last_dev=st.get('last_dev'),
                          stale=heartbeat_stale(st) if st.get('state') in ('running', 'starting', 'claimed') else False,
                          pause_reason=st.get('pause_reason', '')))
-    lane_lines = ['## 鎺掗槦鍣紙姣忓崱涓€涓級', '', '| 鍗?| 杩涚▼ | 鍦ㄨ窇 | 鍓╀綑灏忔椂 | 鏇存柊 | 缁撴潫 |', '| --- | --- | --- | --- | --- | --- |']
+    lane_lines = ['## 排队器（每卡一个）', '', '| 卡 | 进程 | 在跑 | 剩余小时 | 更新 | 结束 |', '| --- | --- | --- | --- | --- | --- |']
     for name, lane in sorted(lanes.items()):
-        lane_lines.append(f"| {lane['lane']} | {lane['pid']} | {', '.join(lane['running'])} | {lane['remaining_hours']:.2f} | {lane['updated_at'][:16]} | {'鏄? if lane.get('finished') else ''} |")
+        lane_lines.append(f"| {lane['lane']} | {lane['pid']} | {', '.join(lane['running'])} | {lane['remaining_hours']:.2f} | {lane['updated_at'][:16]} | {'是' if lane.get('finished') else ''} |")
     window = (LOCAL_OUT / 'window.json')
-    note = f'鏁版嵁闆?{REMOTE_DATA}锛氶泦鍚堣妯?{splits}銆? + (f" 鏈€杩戝惎鍔ㄧ獥鍙ｏ細{window.read_text(encoding='utf-8')}" if window.exists() else '')
-    extra = '\n'.join(lane_lines) + '\n\n## 鏍囧畾琛紙瑙勫垯鐩村嚭锛屾潵鑷?calibration.md锛塡n\n' + calib
+    note = f'数据集 {REMOTE_DATA}：集合规模 {splits}。' + (f" 最近启动窗口：{window.read_text(encoding='utf-8')}" if window.exists() else '')
+    extra = '\n'.join(lane_lines) + '\n\n## 标定表（规则直出，来自 calibration.md）\n\n' + calib
     text = render_state_markdown(rows, note, extra)
     STATE_DOC.parent.mkdir(parents=True, exist_ok=True)
     header = (STATE_DOC.read_text(encoding='utf-8').split('<!-- AUTO_STATE_START -->')[0] if STATE_DOC.exists() else '')
@@ -226,7 +231,7 @@ def cmd_fetch(args):
         with c.open_sftp() as sftp:
             sftp.get(archive, str(LOCAL_OUT / 'fetch.tgz'))
     subprocess.run(['tar', 'xzf', str(LOCAL_OUT / 'fetch.tgz'), '-C', str(LOCAL_OUT)], check=True)
-    print(f'宸蹭笅杞藉埌 {LOCAL_OUT}')
+    print(f'已下载到 {LOCAL_OUT}')
 
 
 def cmd_evaluate(args):
@@ -252,6 +257,7 @@ def cmd_sh(args):
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest='command', required=True)
+
     def common(p):
         p.add_argument('--ports', type=int, nargs='*', default=list(REMOTE_PORTS))
         p.add_argument('--port', type=int, default=REMOTE_PORTS[0])

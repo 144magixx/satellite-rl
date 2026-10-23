@@ -1,7 +1,14 @@
-﻿"""鐗╃悊v3锛欼TU-R S.672 鏃佺摚鏂瑰悜鍥俱€佷氦鍙夋瀬鍖栨硠婕忋€佸彲閰嶉璋辨晥鐜囧皝椤躲€?
-涓庨摼璺痸2鐨勫樊鍒細
-- 鍙戝皠鏂瑰悜鍥剧敱鏃犳梺鐡ｇ殑鐞冮潰楂樻柉鎹㈡垚 ITU-R S.672-4 鍗曢婧愬渾娉㈡潫鍙傝€冩柟鍚戝浘
-  锛堜富鐡ｆ姏鐗╃嚎 鈫?杩戞梺鐡ｅ簳 LN 鈫?鈭?5路log 琛板噺 鈫?0 dBi 鍦版澘锛夈€?- 寮傛瀬鍖栵紙缁勫彿濂囧伓涓嶅悓锛変笉鍐嶅畬鍏ㄩ殧绂伙紝鎸?XPD 娉勬紡銆?- 5 dB鈥滃叾瀹冩崯鑰椻€濆悓鏃朵綔鐢ㄤ簬鏈夌敤淇″彿鍜屽共鎵帮紙v2 鍙墸鏈夌敤淇″彿锛夈€?- 棰戣氨鏁堢巼灏侀《榛樿 5.5 bit/s/Hz锛坴2 涓?4.5锛夈€?鍏朵綑娌跨敤 v2锛氬嘲鍊煎鐩?50 dBi@0.5掳 鎸夌珛浣撹缂╂斁銆佹帴鏀?40 dBi銆佸櫔澹版俯搴?631 K銆?姣忔Ы 25 MHz銆乫0 17.7 GHz銆佹瘡鏉熷姛鐜囨寜妲藉潎鎽娿€? dB 瀹炵幇鎹熻€椼€侀€愰鏈虹杞村鐩婄殑鎴愬憳骞冲潎銆?"""
+"""物理v3：ITU-R S.672 旁瓣方向图、交叉极化泄漏、可配频谱效率封顶。
+
+与链路v2的差别：
+- 发射方向图由无旁瓣的球面高斯换成 ITU-R S.672-4 单馈源圆波束参考方向图
+  （主瓣抛物线 → 近旁瓣底 LN → −25·log 衰减 → 0 dBi 地板）。
+- 异极化（组号奇偶不同）不再完全隔离，按 XPD 泄漏。
+- 5 dB“其它损耗”同时作用于有用信号和干扰（v2 只扣有用信号）。
+- 频谱效率封顶默认 5.5 bit/s/Hz（v2 为 4.5）。
+其余沿用 v2：峰值增益 50 dBi@0.5° 按立体角缩放、接收 40 dBi、噪声温度 631 K、
+每槽 25 MHz、f0 17.7 GHz、每束功率按槽均摊、1 dB 实现损耗、逐飞机离轴增益的成员平均。
+"""
 from dataclasses import dataclass, asdict
 import numpy as np
 
@@ -14,10 +21,12 @@ K_BOLTZMANN = 1.380649e-23
 @dataclass(frozen=True)
 class PhysicsV3:
     version: str = 's2lab_physics_v3'
-    sidelobe_level_dB: float = -20.      # S.672 LN锛屽彲鍙?-20/-25/-30
-    xpd_dB: float = 20.                  # 浜ゅ弶鏋佸寲闅旂搴?    spectral_efficiency_cap: float = 5.5
+    sidelobe_level_dB: float = -20.      # S.672 LN，可取 -20/-25/-30
+    xpd_dB: float = 20.                  # 交叉极化隔离度
+    spectral_efficiency_cap: float = 5.5
     implementation_loss_dB: float = 1.
-    other_loss_dB: float = 5.            # 浣滅敤浜庡叏閮ㄦ帴鏀朵俊鍙?    reference_full_width_deg: float = .5
+    other_loss_dB: float = 5.            # 作用于全部接收信号
+    reference_full_width_deg: float = .5
     reference_peak_gain_dBi: float = 50.
     rx_gain_dBi: float = 40.
     noise_temperature_K: float = 631.
@@ -26,7 +35,7 @@ class PhysicsV3:
     slots: int = 100
     groups: int = 8
     max_slots_per_beam: int = 10
-    adjacent_deg: float = 1.             # 鈥滅浉閭绘尝鏉熲€濆垽瀹氳锛岀敤浜庤翰骞叉壈鎸囨爣
+    adjacent_deg: float = 1.             # “相邻波束”判定角，用于躲干扰指标
 
     def to_dict(self):
         return asdict(self)
@@ -48,13 +57,13 @@ class PhysicsV3:
 
 
 def peak_gain_dbi(width_deg, physics):
-    """宄板€煎鐩婇殢鍗婂姛鐜囧叏瀹界缉鏀撅細50 dBi@0.5掳锛岀獎涓€鍊嶉珮 6 dB銆?""
+    """峰值增益随半功率全宽缩放：50 dBi@0.5°，窄一倍高 6 dB。"""
     width = np.asarray(width_deg, np.float64)
     return physics.reference_peak_gain_dBi + 20 * np.log10(physics.reference_full_width_deg / width)
 
 
 def s672_gain_dbi(theta_deg, width_deg, physics):
-    """ITU-R S.672-4 鍗曢婧愬渾娉㈡潫鍙傝€冩柟鍚戝浘锛坉Bi锛夈€倀heta 涓虹杞磋锛寃idth 涓哄崐鍔熺巼鍏ㄥ銆?""
+    """ITU-R S.672-4 单馈源圆波束参考方向图（dBi）。theta 为离轴角，width 为半功率全宽。"""
     theta = np.asarray(theta_deg, np.float64)
     width = np.asarray(width_deg, np.float64)
     psi0 = width / 2.
@@ -76,20 +85,23 @@ def gain_linear(theta_deg, width_deg, physics):
 
 
 def angles_deg(rays_a, rays_b):
-    """涓ょ粍鍗曚綅鏂瑰悜鍚戦噺涔嬮棿鐨勫す瑙掔煩闃碉紙搴︼級锛宺ays_a[n,3] 脳 rays_b[m,3] 鈫?[n,m]銆?""
+    """两组单位方向向量之间的夹角矩阵（度），rays_a[n,3] × rays_b[m,3] → [n,m]。"""
     cos = np.clip(rays_a @ rays_b.T, -1., 1.)
     return np.rad2deg(np.arccos(cos))
 
 
 @dataclass
 class SceneTensors:
-    """涓€涓満鏅殑鍏ㄩ儴涓庡垎閰嶆棤鍏崇殑鐗╃悊閲忥紙numpy锛宖loat32锛夈€?""
+    """一个场景的全部与分配无关的物理量（numpy，float32）。"""
     scene_id: str
     date: str
-    members: np.ndarray        # [N] 姣忔潫椋炴満鏁?    width_deg: np.ndarray      # [N]
+    members: np.ndarray        # [N] 每束飞机数
+    width_deg: np.ndarray      # [N]
     lat_lon: np.ndarray        # [N,2]
-    distance_m: np.ndarray     # [N] 鍗槦鍒版潫涓績璺濈
-    sig: np.ndarray            # [N] 鏈夌敤淇″彿绯绘暟锛堟垚鍛樺钩鍧囧鐩娒楁帴鏀跺鐩娒楁崯鑰楋級锛屼箻 path脳P/c 寰楁瘡妲芥帴鏀跺姛鐜?    coupling: np.ndarray       # [N,N] 鎺ユ敹 i 鈫?鍙戝皠 j 鐨勮€﹀悎绯绘暟锛坖 鐨勬柟鍚戝浘鍦?i 涓績澶劽楁帴鏀跺鐩娒楁崯鑰楋級锛屼笉鍚矾寰?    adjacent: np.ndarray       # [N,N] bool 涓績澶硅 < adjacent_deg 涓?i鈮爅
+    distance_m: np.ndarray     # [N] 卫星到束中心距离
+    sig: np.ndarray            # [N] 有用信号系数（成员平均增益×接收增益×损耗），乘 path×P/c 得每槽接收功率
+    coupling: np.ndarray       # [N,N] 接收 i ← 发射 j 的耦合系数（j 的方向图在 i 中心处×接收增益×损耗），不含路径
+    adjacent: np.ndarray       # [N,N] bool 中心夹角 < adjacent_deg 且 i≠j
     aircraft_count: int
 
     @property
@@ -98,7 +110,7 @@ class SceneTensors:
 
 
 def build_scene_tensors(case, layout, physics, scene_id=None):
-    """浠?s2fix 鏍煎紡鐨?case/layout 瀛楀吀鏋勯€犲満鏅紶閲忋€?""
+    """从 s2fix 格式的 case/layout 字典构造场景张量。"""
     centres = np.asarray(layout['centres_lat_lon_deg'], np.float64)
     widths = np.asarray(layout['full_width_deg'], np.float64)
     ids = list(layout['beam_ids'])
@@ -115,8 +127,8 @@ def build_scene_tensors(case, layout, physics, scene_id=None):
     for i, group in enumerate(members):
         theta = angles_deg(aircraft_rays[group], rays[i:i + 1])[:, 0]
         sig[i] = gain_linear(theta, widths[i], physics).mean() * rx
-    theta_ij = angles_deg(rays, rays)                      # [i,j] i 涓績鐩稿 j 鐨勭杞磋锛堝绉帮級
-    coupling = gain_linear(theta_ij, widths[None, :], physics) * rx   # j 鐨勬柟鍚戝浘瀹藉害
+    theta_ij = angles_deg(rays, rays)                      # [i,j] i 中心相对 j 的离轴角（对称）
+    coupling = gain_linear(theta_ij, widths[None, :], physics) * rx   # j 的方向图宽度
     np.fill_diagonal(coupling, 0.)
     adjacent = (theta_ij < physics.adjacent_deg)
     np.fill_diagonal(adjacent, False)
@@ -127,13 +139,13 @@ def build_scene_tensors(case, layout, physics, scene_id=None):
 
 
 def path_gain(distance_m, physics):
-    """[N,100] 鑷敱绌洪棿璺緞澧炵泭锛堢嚎鎬э紝<1锛夈€?""
+    """[N,100] 自由空间路径增益（线性，<1）。"""
     f = physics.slot_frequency_hz()
     return (C_M_PER_S / (4 * np.pi * np.asarray(distance_m, np.float64)[:, None] * f[None, :])) ** 2
 
 
 def sgm_values(capacity_bps, demand_bps):
-    """璁烘枃 SGM锛氭瘡鏉熶竴涓?0鈥? 鐨勫€硷紱瀹归噺 0 璁?0銆?""
+    """论文 SGM：每束一个 0—1 的值；容量 0 记 0。"""
     capacity = np.asarray(capacity_bps, np.float64)
     demand = np.asarray(demand_bps, np.float64)
     beta = float(demand.mean())
@@ -149,7 +161,7 @@ def sgm_values(capacity_bps, demand_bps):
 
 
 def reference_capacities(scene, groups, starts, counts, powers, physics, interference=True):
-    """numpy 鍙傝€冨疄鐜帮細缁欏畾瀹屾暣鍒嗛厤绠楁瘡鏉熷閲忥紙bps锛夈€傜敤浜庢祴璇曞拰閫愭櫙鏍稿銆?""
+    """numpy 参考实现：给定完整分配算每束容量（bps）。用于测试和逐景核对。"""
     n = scene.n
     path = path_gain(scene.distance_m, physics)
     per_slot = np.zeros(n)
