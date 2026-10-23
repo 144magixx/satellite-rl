@@ -176,11 +176,9 @@ class SAC(AgentBase):
         torch.nn.utils.clip_grad_norm_(list(self.q1.parameters()) + list(self.q2.parameters()), 10.)
         self.opt_critic.step()
         pi_obs = self._policy(self.actor, obs)
-        with torch.no_grad():
-            (q1d, _), (q2d, _) = self.q1(obs), self.q2(obs)
         actor_loss, entropy = 0., 0.
-        for (pi, logp), a1, a2 in zip(pi_obs, q1d, q2d):
-            actor_loss = actor_loss + (pi * (self.alpha * logp - torch.minimum(a1, a2))).sum(1).mean()
+        for (pi, logp), a1, a2 in zip(pi_obs, q1, q2):      # 复用本步评论家前向（已分离），省两次前向
+            actor_loss = actor_loss + (pi * (self.alpha * logp - torch.minimum(a1.detach(), a2.detach()))).sum(1).mean()
             entropy = entropy - (pi * logp).sum(1).mean()
         self.opt_actor.zero_grad(set_to_none=True)
         actor_loss.backward()
