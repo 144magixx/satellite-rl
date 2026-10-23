@@ -20,9 +20,13 @@ def make_env(stage_input):
     return Power30Env(stage_input, 'P01', 'M1')
 
 
-def config_for(seed=51001, encoder='transformer', steps=150000, device='cpu'):
+def config_for(seed=51001, encoder='transformer', steps=150000, device='cpu', network=None):
+    """``network`` overrides embedding_dim/num_heads/num_layers/feedforward_dim; None keeps L2."""
     config = build_config('P01', 'M1', device=device, seed=seed)
     config.update(s2fix=True, encoder=encoder, version='s2fix_tsac_v1')
+    if network:
+        config['network'].update(network)
+        config['network_overrides'] = dict(network)
     config['training']['total_steps'] = steps
     return config
 
@@ -55,16 +59,19 @@ def rollout(stage_input, agent, seed):
 
 
 def train(records, output_dir, *, seed=51001, encoder='transformer', steps=150000,
-          device='cpu'):
+          device='cpu', network=None, save_every=10000):
     from .data import load_input
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     seed_all(seed)
-    config = config_for(seed, encoder, steps, device)
+    config = config_for(seed, encoder, steps, device, network)
     agent = Power30Agent(config)
+    write_json(output_dir / 'network.json', dict(network=config['network'], encoder=encoder,
+                                                 parameters=agent.parameter_counts()))
     scene_rng, order = random.Random(seed), []
     env, state, episode_return, episode = None, None, 0., 0
     recent, curve = deque(maxlen=100), []
+    act_seconds = update_seconds = 0.
     started = perf_counter()
     with (output_dir / 'episodes.jsonl').open('w', encoding='utf-8') as stream:
         for step in range(1, steps + 1):
@@ -76,12 +83,16 @@ def train(records, output_dir, *, seed=51001, encoder='transformer', steps=15000
                 env = make_env(load_input(record))
                 state, episode_return = env.reset(), 0.
             mask = env.action_mask()
+            clock = perf_counter()
             action = agent.act(state, env_step=step-1, action_mask=mask)
+            act_seconds += perf_counter() - clock
             next_state, reward, done, _ = env.step(action)
             agent.observe(state, action, reward, next_state, done, action_mask=mask,
                           next_action_mask=None if done else env.action_mask())
             if agent.ready(step, done):
+                clock = perf_counter()
                 agent.update()
+                update_seconds += perf_counter() - clock
             state, episode_return = next_state, episode_return + reward
             if done:
                 episode += 1
@@ -94,9 +105,11 @@ def train(records, output_dir, *, seed=51001, encoder='transformer', steps=15000
             if step % 10000 == 0 or step == steps:
                 curve.append(dict(step=step, updates=agent.update_step, episodes=episode,
                     mean_return=float(np.mean(recent)) if recent else episode_return,
-                    seconds=perf_counter()-started))
+                    seconds=perf_counter()-started, act_seconds=act_seconds,
+                    update_seconds=update_seconds))
                 write_json(output_dir / 'curve.json', curve)
-                save_policy(agent, config, output_dir / f'policy_{step}.pt', step)
+                if step % save_every == 0:
+                    save_policy(agent, config, output_dir / f'policy_{step}.pt', step)
                 print(json.dumps(curve[-1]), flush=True)
     save_policy(agent, config, output_dir / 'model.pt', steps)
     return curve[-1]
