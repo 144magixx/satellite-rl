@@ -39,10 +39,11 @@ class SearchEnv(ImprovementEnv):
         self.stage_input = None
 
     def reset(self, stage_input, seed=None):
-        from .greedy import greedy_allocation
+        from .greedy import greedy_allocation, spread_allocation
+        start = spread_allocation if self.config["start"] == "spread" else greedy_allocation
         self.stage_input = stage_input
         self.groups, self.current_starts, self.current_slots, self.power = [
-            np.asarray(x).copy() for x in greedy_allocation(stage_input)]
+            np.asarray(x).copy() for x in start(stage_input)]
         self.demand = np.asarray(stage_input.layout["request_bps_by_beam_int64"], float)
         self.locations = np.asarray(stage_input.layout["centres_lat_lon_deg"], float)
         self.scene = {"beam_location": self.locations}
