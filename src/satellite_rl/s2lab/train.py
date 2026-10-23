@@ -174,7 +174,7 @@ def train(run_dir, dataset_dir, run, device, max_hours=None, log=print):
             next_log += log_every
             sps = (step - step_log) / max(1e-9, time.time() - t_log)
             t_log, step_log = time.time(), step
-            agg = {k: float(np.mean([r[k] for r in recent])) for k in ('W', 'SGM', 'power_w', 'slots', 'objective', 'interference_loss')} if recent else {}
+            agg = {k: float(np.mean([r[k] for r in recent])) for k in ('W', 'SI', 'SGM', 'power_w', 'slots', 'objective', 'interference_loss')} if recent else {}
             record = dict(step=step, episodes=episodes, sps=sps, reward=float(np.mean(reward_recent)) if reward_recent else 0.,
                           elapsed_hours=(elapsed_before + time.time() - started) / 3600, **agg, **{f'loss_{k}': v for k, v in losses.items()})
             with (run_dir / 'curve.jsonl').open('a', encoding='utf-8') as stream:
@@ -199,6 +199,13 @@ def train(run_dir, dataset_dir, run, device, max_hours=None, log=print):
         save_checkpoint(final=True)
         status.update(state='done', step=step, episodes=episodes, elapsed_hours=elapsed_total / 3600, finished_at=now())
         log(f"[{now()}] done: {step} steps, {elapsed_total / 3600:.2f} h")
+        try:
+            from .plots import plot_training, setup_chinese_font
+            setup_chinese_font()
+            figure = plot_training(run_dir, title=f"{run['run_id']}（{run.get('label', '')}，seed {run['seed']}）")
+            log(f'training figure: {figure}')
+        except Exception as error:      # 画图失败不影响训练结果
+            log(f'training figure failed: {error!r}')
         return 'done'
     save_checkpoint()
     status.update(state='paused', step=step, episodes=episodes, elapsed_hours=elapsed_total / 3600, paused_at=now(), pause_reason=stop['reason'])
