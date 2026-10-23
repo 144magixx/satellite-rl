@@ -104,8 +104,9 @@ class ItemSampler:
 
 
 class BatchEnv:
-    def __init__(self, bank, config, options, device, sampler):
+    def __init__(self, bank, config, options, device, sampler, auto_reset=True):
         self.bank, self.config, self.opt, self.device, self.sampler = bank, config, options, device, sampler
+        self.auto_reset = auto_reset      # False：场景结束后保留分配供读取（元启发式评价用）
         self.physics = config.physics_obj()
         p = self.physics
         self.B, self.N, self.T, self.G = options.batch_size, bank.nmax, p.slots, p.groups
@@ -396,7 +397,7 @@ class BatchEnv:
             total_d = float(d.sum())
             cop = copol[b] & upper[0]
             metrics = dict(
-                key=key, per_aircraft_bps=float(v), beams=n, aircraft=float(self.bank.aircraft[self.scene[b]]),
+                key=key, slot=b, per_aircraft_bps=float(v), beams=n, aircraft=float(self.bank.aircraft[self.scene[b]]),
                 load_ratio=float(load_ratio(float(self.bank.members_total[self.scene[b]]), float(v), self.config)),
                 W=float(served[b, :n].sum() / total_d), W_noint=float(served_noint[b, :n].sum() / total_d),
                 SI=float(si[b, :n].mean()), SGM=float(sgm[b, :n].mean()),
@@ -410,7 +411,10 @@ class BatchEnv:
             metrics['interference_loss'] = 1 - metrics['W'] / max(metrics['W_noint'], 1e-9)
             metrics['adj_ratio'] = metrics['adj_overlap'] / metrics['adj_expected'] if metrics['adj_expected'] > 0 else float('nan')
             self.finished.append(metrics)
-            self._load(b)
+            if self.auto_reset:
+                self._load(b)
+            else:
+                self.alive[b] = False
 
     def _all_interference(self):
         parity = (self.grp % 2).clamp(min=0)

@@ -14,6 +14,7 @@ from satellite_rl.s2lab.agents import load_policy
 from satellite_rl.s2lab.env import EnvOptions, SceneBank
 from satellite_rl.s2lab.evaluate import run_policy, single_scene_timing, summarize, write_results
 from satellite_rl.s2lab.matrix import read_matrix
+from satellite_rl.s2lab.metaheuristics import run_meta
 from satellite_rl.s2lab.rules import make_rule
 from satellite_rl.s2lab.scenes import read_config, read_splits
 from satellite_rl.s2lab.train import env_options
@@ -27,6 +28,7 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--run-ids', nargs='*')
     ap.add_argument('--rules', nargs='*', default=[])
+    ap.add_argument('--meta', nargs='*', default=[], help='文献方法：sa32 sa320 ga32 ga320')
     ap.add_argument('--which', default='best', choices=['best', 'final', 'last'])
     ap.add_argument('--timing', action='store_true')
     ap.add_argument('--device', default=None)
@@ -61,6 +63,14 @@ def main():
             results = run_policy(lambda env, r=rule: make_rule(r, env, 0), bank, config, items, opts, device)
             timing = single_scene_timing(lambda env, r=rule: make_rule(r, env, 0), bank, config, items, opts, device) if args.timing else None
             record(f'rule-{rule}', results, dict(group='rule', label=rule, seed=0, mask_mode=mode), timing)
+    for name in args.meta:
+        from time import perf_counter
+        started = perf_counter()
+        results = run_meta(name, bank, config, items, EnvOptions(batch_size=args.batch), device)
+        per_scene = (perf_counter() - started) / max(1, len(results))
+        for r in results:
+            r['seconds_per_scene'] = per_scene
+        record(f'meta-{name}', results, dict(group='literature', label=name, seed=0, mask_mode='full'), (per_scene, 0.))
     if args.runs_dir and args.run_ids is not None:
         matrix = {r['run_id']: r for r in read_matrix(args.runs_dir)}
         wanted = args.run_ids or list(matrix)
