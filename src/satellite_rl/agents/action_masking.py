@@ -30,22 +30,25 @@ def mask_batch(masks, action_dims, device):
             torch.as_tensor(np.stack([mask["power"] for mask in masks]), device=device))
 
 
-def masked_policy(logits, frequency_slots, power):
-    """Return exact normalized probabilities and safe logs on feasible actions."""
+def masked_policy(logits, frequency_slots, power, check=True):
+    """Return exact normalized probabilities and safe logs on feasible actions.
+
+    ``check=False`` skips the host-side guards (each one waits for the GPU); the arithmetic is unchanged.
+    """
     f, slots, p = logits
-    if (f.ndim != 2 or slots.ndim != 2 or p.ndim != 2 or
-            frequency_slots.shape != (f.shape[0], f.shape[1], slots.shape[1]) or
-            power.shape != p.shape):
+    if check and (f.ndim != 2 or slots.ndim != 2 or p.ndim != 2 or
+                  frequency_slots.shape != (f.shape[0], f.shape[1], slots.shape[1]) or
+                  power.shape != p.shape):
         raise ValueError("batched mask shape does not match policy logits")
-    if not torch.isfinite(f).all() or not torch.isfinite(slots).all() or not torch.isfinite(p).all():
+    if check and (not torch.isfinite(f).all() or not torch.isfinite(slots).all() or not torch.isfinite(p).all()):
         raise FloatingPointError("Nonfinite policy logits")
-    if not frequency_slots.any(dim=(1, 2)).all() or not power.any(dim=1).all():
+    if check and (not frequency_slots.any(dim=(1, 2)).all() or not power.any(dim=1).all()):
         raise ValueError("active action_mask has no feasible action")
     joint_logits = (f.unsqueeze(2) + slots.unsqueeze(1)).masked_fill(~frequency_slots, -torch.inf)
     power_logits = p.masked_fill(~power, -torch.inf)
     log_fl = joint_logits.flatten(1).log_softmax(-1).reshape_as(joint_logits)
     log_p = power_logits.log_softmax(-1)
-    if not torch.isfinite(log_fl[frequency_slots]).all() or not torch.isfinite(log_p[power]).all():
+    if check and (not torch.isfinite(log_fl[frequency_slots]).all() or not torch.isfinite(log_p[power]).all()):
         raise FloatingPointError("Nonfinite masked policy normalization")
     fl = log_fl.exp()
     power_probability = log_p.exp()

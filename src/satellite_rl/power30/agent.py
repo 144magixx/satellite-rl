@@ -6,11 +6,11 @@ import random
 import numpy as np
 import torch
 from torch import nn
-from satellite_rl.agents.workbench_algorithms import WorkbenchAgent, _joint_q, _gather, _finite_loss, _grad_norm, _diagnostics
+from satellite_rl.agents.workbench_algorithms import WorkbenchAgent, _joint_q, _gather, _diagnostics, _state_tensor
 from torch.nn import functional as F
 from satellite_rl.t0_width.agent import build_config as t0_config
 from satellite_rl.t0_width.agent import WidthEncoder
-from satellite_rl.agents.action_masking import copy_action_mask, masked_policy, feasible_target_entropy, entropy_ratio
+from satellite_rl.agents.action_masking import copy_action_mask, mask_batch, masked_policy, feasible_target_entropy, entropy_ratio
 from .menus import power_table
 from .schema import GROUPS, observation_schema, state_width, schema_identity
 
@@ -149,14 +149,40 @@ class Power30Agent(WorkbenchAgent):
             self.call_counts['netforward']=self.call_counts.get('netforward',0)+1
         return meter
 
+    def _upload(self,tensor):
+        # 锁页内存异步上传：主机不必等GPU。多个进程共用一张卡时，每次等待都要排一轮GPU时间片。
+        return tensor.pin_memory().to(self.device,non_blocking=True) if self.device.type=='cuda' else tensor
+
     def act(self,state,deterministic=False,env_step=None,action_mask=None,**kwargs):
-        result=super().act(state,deterministic,env_step,action_mask,**kwargs)
-        legal=int(np.count_nonzero(action_mask['power']))
-        entropy=float(self.last_action_info['entropy_power']);maximum=math.log(legal)
-        self.last_action_info.update(legal_power_count=legal,power_maximum_entropy=maximum,
-                                    power_normalized_entropy=entropy/maximum if maximum else 0.,
-                                    alpha_times_power_entropy=float(self.train['fixed_alpha'])*entropy,
-                                    requested_power_w=self.power_table[result[2]])
+        # 计算与采样顺序同 WorkbenchAgent.act 的分解式掩码路径（结果逐位相同），
+        # 只是输入异步上传、动作和记录量一次取回。
+        mask=copy_action_mask(action_mask,self.action_dims)
+        was_training=self.actor.training
+        self.actor.eval()
+        with torch.no_grad():
+            x=self._upload(_state_tensor(state,'cpu').reshape(1,-1))
+            frequency_slots,power=(self._upload(t) for t in mask_batch([mask],self.action_dims,'cpu'))
+            fl,p,log_fl,log_p,entropy_fl,entropy_p,entropy_f,entropy_slots=masked_policy(
+                self.actor(x),frequency_slots,power,check=False)
+            flat_fl=fl.flatten(1)
+            fl_index=(flat_fl.argmax(1) if deterministic else
+                      torch.distributions.Categorical(probs=flat_fl,validate_args=False).sample())
+            power_index=(p.argmax(1) if deterministic else
+                         torch.distributions.Categorical(probs=p,validate_args=False).sample())
+            frequency,slots=fl_index//self.action_dims[1],fl_index%self.action_dims[1]
+            values=torch.stack((frequency[0].float(),slots[0].float(),power_index[0].float(),
+                                log_fl[0,frequency[0],slots[0]]+log_p[0,power_index[0]],
+                                (entropy_fl+entropy_p)[0],entropy_f[0],entropy_slots[0],entropy_p[0],
+                                feasible_target_entropy(frequency_slots,power,self.target_entropy_ratio)[0])).cpu().tolist()
+        self.actor.train(was_training)
+        result=tuple(int(v) for v in values[:3])
+        legal=int(np.count_nonzero(mask['power']));maximum=math.log(legal);entropy=values[7]
+        self.last_action_info=dict(log_prob=values[3],entropy=values[4],entropy_frequency=values[5],
+                                   entropy_slots=values[6],entropy_power=entropy,target_entropy=values[8],
+                                   legal_power_count=legal,power_maximum_entropy=maximum,
+                                   power_normalized_entropy=entropy/maximum if maximum else 0.,
+                                   alpha_times_power_entropy=float(self.train['fixed_alpha'])*entropy,
+                                   requested_power_w=self.power_table[result[2]])
         return result
 
     def observe(self,state,action,reward,next_state,done,action_mask=None,next_action_mask=None,**kwargs):
@@ -177,18 +203,23 @@ class Power30Agent(WorkbenchAgent):
             return self._update_temporal_sac()
         if self.sac_policy_structure != "factorized" or self.sac_critic_structure != "additive":
             return self._update_joint_action_sac()
-        s, a, r, ns, d, lengths, next_lengths, current_masks, next_masks = self._sample_masked_replay()
-        current_fl, current_power = current_masks
-        next_fl, next_power = next_masks
+        # 算术与原分解式掩码 SAC 更新逐位相同。改动只在主机与GPU的往来：回放在CPU组批后异步上传，
+        # 终止样本的行号在CPU上算好（原来用GPU布尔索引，每次都要等GPU），逐步的有限性检查
+        # 合并到最后一次取回诊断量时做。
+        batch = self.replay.sample(self.train["batch_size"], "cpu", self.action_dims)
+        active = torch.nonzero(batch[4] < 0.5).squeeze(1)
+        (s, a, r, ns, d, lengths, next_lengths, (current_fl, current_power),
+         (next_fl, next_power)) = (tuple(self._upload(t) for t in item) if isinstance(item, tuple)
+                                   else self._upload(item) for item in batch)
         alpha = self.log_alpha.exp().detach()
         with torch.no_grad():
             target = r.clone()
-            active = d < 0.5
-            if active.any():
+            if len(active):
+                active = self._upload(active)
                 (next_prob_fl, next_prob_power, _, _, next_entropy_fl,
                  next_entropy_power, _, _) = masked_policy(
                     self._sac_actor_logits(ns[active], next_lengths[active]),
-                    next_fl[active], next_power[active])
+                    next_fl[active], next_power[active], check=False)
                 next_min_q = torch.minimum(_joint_q(self._net(self.target1, ns[active], next_lengths[active])),
                                            _joint_q(self._net(self.target2, ns[active], next_lengths[active])))
                 next_expected_q = torch.einsum("bfl,bp,bflp->b", next_prob_fl,
@@ -198,34 +229,32 @@ class Power30Agent(WorkbenchAgent):
         q1 = _gather(self._net(self.critic1, s, lengths), a)
         q2 = _gather(self._net(self.critic2, s, lengths), a)
         loss1, loss2 = F.mse_loss(q1, target), F.mse_loss(q2, target)
-        _finite_loss(loss1 + loss2)
+        clip = self.train["gradient_clip"]
         self.critic1_opt.zero_grad(set_to_none=True)
         loss1.backward()
-        grad1 = _grad_norm(self.critic1, self.train["gradient_clip"])
+        grad1 = nn.utils.clip_grad_norm_(self.critic1.parameters(), clip)
         self.critic1_opt.step()
         self.critic2_opt.zero_grad(set_to_none=True)
         loss2.backward()
-        grad2 = _grad_norm(self.critic2, self.train["gradient_clip"])
+        grad2 = nn.utils.clip_grad_norm_(self.critic2.parameters(), clip)
         self.critic2_opt.step()
         (prob_fl, prob_power, _, _, entropy_fl, entropy_power,
          entropy_frequency, entropy_slots) = masked_policy(
-             self._sac_actor_logits(s, lengths), current_fl, current_power)
+             self._sac_actor_logits(s, lengths), current_fl, current_power, check=False)
         with torch.no_grad():
             min_q_actor = torch.minimum(_joint_q(self._net(self.critic1, s, lengths)),
                                         _joint_q(self._net(self.critic2, s, lengths)))
         expected_q_actor = torch.einsum("bfl,bp,bflp->b", prob_fl, prob_power, min_q_actor)
         entropy_actor = entropy_fl + entropy_power
         actor_loss = -(expected_q_actor + alpha * entropy_actor).mean()
-        _finite_loss(actor_loss)
         self.actor_opt.zero_grad(set_to_none=True)
         actor_loss.backward()
-        actor_grad = _grad_norm(self.actor, self.train["gradient_clip"])
+        actor_grad = nn.utils.clip_grad_norm_(self.actor.parameters(), clip)
         self.actor_opt.step()
         target_entropy = feasible_target_entropy(current_fl, current_power,
                                                   self.target_entropy_ratio)
         if self.alpha_mode == "adaptive":
             alpha_loss = self.log_alpha * (entropy_actor.detach() - target_entropy).mean()
-            _finite_loss(alpha_loss)
             self.alpha_opt.zero_grad(set_to_none=True)
             alpha_loss.backward()
             self.alpha_opt.step()
@@ -237,7 +266,9 @@ class Power30Agent(WorkbenchAgent):
             for target_net, source_net in ((self.target1, self.critic1), (self.target2, self.critic2)):
                 for target_p, source_p in zip(target_net.parameters(), source_net.parameters()):
                     target_p.lerp_(source_p, tau)
-        return _diagnostics({"actor_loss": actor_loss, "critic_1_loss": loss1,
+            finite = torch.isfinite(torch.stack((loss1 + loss2, actor_loss, alpha_loss.reshape(()),
+                                                 grad1, grad2, actor_grad))).all().float()
+        diagnostics = _diagnostics({"finite": finite, "actor_loss": actor_loss, "critic_1_loss": loss1,
                              "critic_2_loss": loss2, "alpha_loss": alpha_loss,
                              "alpha": self.log_alpha.exp(), "entropy": entropy_actor.mean(),
                              "entropy_frequency": entropy_frequency.mean(),
@@ -257,6 +288,9 @@ class Power30Agent(WorkbenchAgent):
                              "actor_grad_norm": actor_grad, "critic_1_grad_norm": grad1,
                              "critic_2_grad_norm": grad2,
                              **({"alpha_update_applied": 0} if self.alpha_mode == "fixed" else {})})
+        if diagnostics.pop("finite") != 1.0:
+            raise FloatingPointError("Nonfinite SAC loss or gradient")
+        return diagnostics
 
     def state_dict(self):
         data=super().state_dict()

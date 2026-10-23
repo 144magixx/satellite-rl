@@ -86,25 +86,42 @@ class Power30PureTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):env._newcall('phy')
         self.assertEqual(env.call_counts,{'phy':1})
 
-    def test_sac_update_ast_matches_frozen_formula_except_diagnostics(self):
-        import ast
-        from pathlib import Path
-        root=Path(__file__).resolve().parents[1]/'src'/'satellite_rl'
-        def method(path,classname):
-            tree=ast.parse(path.read_text(encoding='utf-8'))
-            cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name==classname)
-            return next(n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name=='_update_masked_sac')
-        old=method(root/'agents'/'workbench_algorithms.py','WorkbenchAgent')
-        new=method(root/'power30'/'agent.py','Power30Agent')
-        removed=[]
-        for node in ast.walk(new):
-            if isinstance(node,ast.Dict):
-                selected=[i for i,key in enumerate(node.keys) if isinstance(key,ast.Constant) and
-                          key.value in ('power_maximum_entropy','power_normalized_entropy','alpha_times_power_entropy')]
-                for i in reversed(selected):
-                    removed.append(node.keys[i].value);del node.keys[i];del node.values[i]
-        self.assertEqual(len(removed),3)
-        self.assertEqual(ast.dump(old,include_attributes=False),ast.dump(new,include_attributes=False))
+    def test_sac_update_and_act_match_workbench_formula_bitwise(self):
+        # Power30 的 act/更新只改了主机与GPU的往来（异步上传、一次取回）；同初值同回放，参数与动作应逐位相同。
+        import torch
+        from satellite_rl.agents.workbench_algorithms import WorkbenchAgent
+        from satellite_rl.power30.agent import Power30Agent
+        from satellite_rl.s2fix.tsac import config_for
+        size=dict(embedding_dim=32,num_heads=4,num_layers=1,feedforward_dim=64)
+        for device in ['cpu']+(['cuda'] if torch.cuda.is_available() else []):
+            agents=[]
+            for _ in range(2):
+                torch.manual_seed(0)
+                agents.append(Power30Agent(config_for(network=size,device=device)))
+            rng=np.random.default_rng(0)
+            for i in range(300):
+                state,following=rng.random(308).astype(np.float32),rng.random(308).astype(np.float32)
+                mask=dict(frequency_slots=rng.random((100,10))<.5,power=rng.random(11)<.5)
+                mask['frequency_slots'][3,2]=mask['power'][1]=True
+                done,reward=i%5==0,float(rng.random())
+                following_mask=None if done else dict(frequency_slots=rng.random((100,10))<.5,power=np.ones(11,bool))
+                for agent in agents:
+                    agent.observe(state,(3,2,1),reward,following,done,action_mask=mask,
+                                  next_action_mask=following_mask)
+            for _ in range(3):
+                old=WorkbenchAgent._update_masked_sac(agents[0])
+                new=agents[1].update()
+                self.assertEqual(old['actor_loss'],new['actor_loss'])
+            for name in ('actor','critic1','critic2','target1','target2'):
+                for a,b in zip(getattr(agents[0],name).parameters(),getattr(agents[1],name).parameters()):
+                    self.assertTrue(torch.equal(a,b),(device,name))
+            torch.manual_seed(1)
+            old=[WorkbenchAgent.act(agents[0],state,action_mask=mask) for _ in range(20)]
+            old_info=dict(agents[0].last_action_info)
+            torch.manual_seed(1)
+            new=[agents[1].act(state,action_mask=mask) for _ in range(20)]
+            self.assertEqual(old,new)
+            self.assertEqual({k:old_info[k] for k in old_info},{k:agents[1].last_action_info[k] for k in old_info})
 
     def test_mocked_step_and_restore_use_one_phy_no_replay(self):
         from satellite_rl.shared_interface.stages import UniformStage2Input
