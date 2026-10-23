@@ -1,4 +1,6 @@
-"""Evaluate G1/R/S1/S2/L1/L2/L3, with the same 50 W constrained SCA."""
+"""Evaluate G1/F8/R/S1/S2/L1/L2/L3, with the same 50 W constrained SCA.
+
+F8＝分散摆放规则（报告21）。L2 的模型可以是任何分组方式（贪心定组、顺序%8、自己选组），由模型配置决定。"""
 import argparse
 from concurrent.futures import ProcessPoolExecutor
 import csv

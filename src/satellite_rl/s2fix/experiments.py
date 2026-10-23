@@ -52,6 +52,10 @@ def evaluate_scene(job):
             probes, decisions = 0, 0
             if method == 'G1':
                 allocation = initial
+            elif method == 'F8':
+                # 分散摆放规则（报告21）：8 组都用、组内按干扰挑空位，不搜索
+                from .greedy import spread_allocation
+                allocation = spread_allocation(stage_input)
             elif method in ('R', 'S1', 'S2'):
                 from .search_env import run_search
                 allocation, info = run_search(stage_input, method, action_seed, return_info=True)

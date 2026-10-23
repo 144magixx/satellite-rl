@@ -84,6 +84,25 @@ class GroupingTests(unittest.TestCase):
                 self.assertLessEqual(taken.max(), 1)
 
 
+class SpreadRuleEvaluationTests(unittest.TestCase):
+    def test_f8_method_reproduces_report21_spread_rule(self):
+        import json
+        from satellite_rl.s2fix.experiments import evaluate_scene
+        record = read_records(DATA, "dev_d432_n150")[0]
+        earlier = {}
+        path = Path("D:/paper/outputs/experiments/s2_orig_compare_20261022/cross/free8_in_v2_dev_d432_n150.jsonl")
+        with path.open(encoding="utf8") as stream:
+            for line in stream:
+                row = json.loads(line)
+                earlier[row["case_id"]] = row["贪心＋8组＋任意空位"]
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / 'beams').mkdir()
+            row, = evaluate_scene((0, record, ['F8'], {}, directory, 'cpu', 1))
+        self.assertTrue(row['constraints_ok'])
+        self.assertAlmostEqual(row['before_W'], earlier[record['case_id']]['W'], places=12)
+        self.assertAlmostEqual(row['after_W'], earlier[record['case_id']]['after_W'], places=9)
+
+
 class ChooseAgentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
