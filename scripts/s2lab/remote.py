@@ -170,8 +170,8 @@ def cmd_ps(args):
 
 
 def fetch_status_rows(c):
-    out = run(c, f'cd {REMOTE_RUNS} 2>/dev/null && for d in */; do f="$d/status.json"; [ -f "$f" ] && echo "=== $d" && cat "$f"; done; '
-                 f'for f in _lanes/*.json; do [ -f "$f" ] && echo "=== $f" && cat "$f"; done', check=False)
+    out = run(c, f'cd {REMOTE_RUNS} 2>/dev/null && for d in */; do f="$d/status.json"; [ -f "$f" ] && printf "\\n=== %s\\n" "$d" && cat "$f"; done; '
+                 f'for f in _lanes/*.json; do [ -f "$f" ] && printf "\\n=== %s\\n" "$f" && cat "$f"; done', check=False)
     statuses, lanes = {}, {}
     current, buf = None, []
 
