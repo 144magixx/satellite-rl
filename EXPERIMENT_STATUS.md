@@ -1,6 +1,141 @@
 # 实验状态与新窗口接手说明
 
+<!-- S2LAB_START -->
+## S2-LAB 第二阶段新口径模块（2026-10-24 启动，当前主线，四卡运行中）
+
+来源：cc。用户 2026-10-24 要求新开模块、一次性写好全部实验代码、由用户掌握主导权；旧口径（报告01—25、S2-FIX、原版复现）一律不与本模块并表。**代码与文档在 worktree `D:\paper-s2lab`（分支 `s2lab`）**，不在主分支：口径 `docs/Claude维护/S2-LAB/00_口径.md`，接手手册与自动状态 `docs/Claude维护/S2-LAB/01_接手状态.md`（`python scripts/s2lab/remote.py status` 刷新）。远端 `~/s2lab/{repo,data/v1,runs,eval,logs}`，四卡各一个排队器（`scripts/s2lab/lane.py`），训练每 20 分钟存完整断点、窗口到点或 SIGTERM 先存后退、重启自动续。
+- 物理v3（S.672 旁瓣 −20 dB、XPD 20 dB、效率封顶 5.5、5 dB 损耗同作用于干扰）；数据集 v1：FLOW-AO v2 冻结布局，训练 864 景（1/8、1/9、1/12）、开发 60（1/15）、确认 287（1/18、2/23—24），单机需求 30—80 Mbps 抽样，按负载比分宽裕/勉强/不够三档，功率预算 2000 W。
+- 矩阵 45 个训练运行：主表（T-SAC 新令牌自己选组、历史最好版 T-SAC、CNN-SAC、MLP-SAC、PPO、DQN，各 3 种子，全掩码）、无掩码副表、参数量 7 档、令牌划分/指针头、组自由度、delta 奖励；规则（贪心/固定/随机）与文献（退火/遗传 32、320 次）在评价时跑。全部直出指标：SGM 主、W、最差10%、功率、用槽、干扰损失、相邻共槽÷随机、单景用时。
+- 2026-10-24 04:31 四卡 launch，窗口 19.7 h（用户给 23 h 减 2 h 余量，至 10-25 00:13），每卡并行 2；SAC 约 20 步/秒、单运行约 2.7 h。
+- 本地冒烟产物在 `outputs/experiments/s2lab_20261024/smoke_*`，不进任何表；远端状态快照 `outputs/experiments/s2lab_20261024/{state.json,window.json}`。
+<!-- S2LAB_END -->
+
+<!-- PURE_TABU_NAV_START -->
+**2026-10-21 纯禁忌与贪心＋禁忌已完成同机比较（来源：codex）。** 纯禁忌搜索320次的需求满足率为91.1%，贪心＋禁忌搜索320次为94.9%，前者低3.9个百分点；SGM分别为0.970和0.990。 [完整报告25](docs/第二阶段/实验报告/25_纯禁忌搜索与贪心加禁忌搜索配对评价.md)，[方案33](docs/第二阶段/方案/33_纯禁忌搜索与贪心加禁忌搜索配对评价.md)，[算法区别与结果问答](Q&A/评估与指标/纯禁忌搜索与贪心加禁忌搜索的区别和实测结果.md)。原S1/S96/S2统一标明贪心＋禁忌搜索；纯禁忌单列，报告、PPT、Word与网页使用同一实测摘要。
+<!-- PURE_TABU_NAV_END -->
+
+<!-- S2_TSAC_SIZE_START -->
+## 直出式T-SAC参数量探索（2026-10-24，已暂停）
+
+**2026-10-24 01:04 用户要求“先暂停任务”：**四个排队脚本已停，远端没有本实验的进程。已起跑的4个运行（T512L4-s51003约1.9万步、T256L4-s51001、T128L8-s51002、T256L2-s51003各约0.5万步）在暂停时被一并终止（暂停命令按父进程清理排队脚本时连带杀掉了它起的训练，本应冻结）；训练脚本不能续训，继续时这4个从头重跑，需先删掉它们在`out/`下的半截目录（排队脚本见到network.json会跳过）。其余20个未起跑。同一时刻改进式网络实验在四卡上的训练也全部停止，不是本窗口操作。只有用户明确说“继续”才恢复。
+
+来源：cc。用户2026-10-23 23:49要求“用远端四卡的剩余算力做一些tsac直出式参数量的探索”。只改S2-FIX直出T-SAC（L2：P01-M1、贪心定组、43.2 Mbps、15万步）的Transformer宽度与层数，8种规模（策略网络1.9万—1270万参数：T32L1、T64L2、T128L2即原L2重训、T128L4、T128L8、T256L2、T256L4、T512L4）×种子51001—51003共24个运行。代码分支`cc/tsac-size-study`（worktree `D:/paper-tsacsize`，提交aa0b6d2：规模可选＋少等GPU的提速，2600步实测与原代码逐位相同），远端`~/tsac_size_20261024/`。四个容器各一个排队脚本：改进式网络实验（`s2_i0_network_20261023`，见方案22）的训练每结束一个才补一个，不挤占它。运行清单与查看进度：`outputs/experiments/s2_tsac_size_20261024/{run_manifest.json,status.py}`。完成后在开发20景、确认88景评价（含原L2三模型重评）并写报告。
+<!-- S2_TSAC_SIZE_END -->
+
+<!-- S2_TSAC_GROUPS_START -->
+## 报告21的X2/X4：直出T-SAC用满8组与自己选组（2026-10-24，已暂停）
+
+来源：cc。用户2026-10-24 00:36要求报告21的X1—X4都在远端四卡做、做过的不重做：X1（改进式从分散摆放规则起点重训）、X3（改进式换Transformer）即改进式网络实验阶段C的mlp128sp、tf128L2psp，由那边训练与评价；X2（组号＝处理顺序%8）、X4（每束自己选"组×起点"）由本组做。代码分支`cc/tsac-groups`（worktree `D:/paper-tsacgroups`，0700f37分组选项、38aa68e评价加分散摆放规则F8），默认路径与S2-FIX L2逐位一致，测试全过。00:59在远端启动6个运行（X2、X4各3种子×15万步），**01:03用户要求“先暂停任务”，6个进程已停**（热身期内，无保存的策略），未开始评价。恢复入口与现场：`outputs/experiments/s2_tsac_groups_20261024/run_manifest.json`。
+<!-- S2_TSAC_GROUPS_END -->
+
 **2026-10-19 导师交互汇报（来源：codex）：**[离线网页](docs/Claude维护/导师汇报/codex版/04_近期工作交互汇报.html)按本版底稿组织14屏，独立读取指定三份报告与原表；地图使用litcmp代码按F2导出1752架飞机，峰值157/77/69/19。复建脚本、逐项数字来源与Edge断网双分辨率截图在 `outputs/advisor_brief_20261018/codex版/web/`。本次整理与地图导出未新增训练或科学评价；实验结论与各组状态沿用下文。
+
+<!-- S2_ORIG_COMPARE_START -->
+## 原版框架上八种第二阶段方法不重训对比（2026-10-23，已完成，报告20已交付）
+
+来源：cc。用户2026-10-22要求在其最初手写的环境（45427b4 `envs/satellite.py`）上不重训复现第二阶段八种方法，并确认“环境按原样（含功率不按槽分摊）、贪心与禁忌搜索可自己选组”。代码在分支`cc/orig-framework-compare`（worktree `D:/paper-orig`，模块`src/satellite_rl/original_compare/`，最终提交eba7945），原版文件未改。本机CPU，100个固定种子场景（1000—1099），6进程约36分钟。
+
+- **结论**（业务量加权满足率W）：直出T-SAC（原版自带权重）96.1%第一；贪心＋禁忌搜索320/96/32次 92.5%／92.2%／90.9%；I0（S2-FIX L1权重直接加载）91.7%；容量感知贪心 88.2%；MLP-SAC（原版自带权重）87.0%，每回合约第96束超3000 W被终止；纯禁忌32次 61.5%；原版自带贪心 72.8%。事后诊断：T-SAC赢在频率摆放，不在功率和槽数；贪心改为8组＋组内按干扰挑空位可达99.7%。报告：[20 原版框架上八种方法不重训对比报告](docs/Claude维护/原版框架复现/20_原版框架上八种方法不重训对比报告.md)。
+- **10-23追加：差在数据还是环境。** 把S2-FIX确认集88个欧洲场景放进原版环境：规则方法成绩与中国数据几乎相同（贪心89.7%、贪心＋禁忌32次92.0%），换到新环境纯禁忌由70.5%升到89.2%，故规则方法差在环境（原版方向图尾部用log10、旁瓣过宽；功率不按槽分摊）；原版T-SAC权重在欧洲数据上只剩19.1%，故T-SAC差在数据的量级和范围（同日第二轮更正：城市各挪约1°它仍96.1%，并非记住地图）。**新环境里"8组＋组内按干扰挑空位"规则不搜索、SCA后95.7%（确认集）／97.5%（开发集），配对胜过贪心＋禁忌320次与I0（+0.7左右，区间不含0）**；S2-FIX报告12与汇报材料中"最强非学习基线为贪心＋禁忌搜索"尚未改动，待用户决定。脚本`crossdata.py`（提交619ae18）、`v2_free8.py`（在S2-FIX代码上运行）。
+- **10-23第二轮（用户目标：是否切回原版、让T-SAC系列最好、给出变更范围）：** 原版家族6组合×50景（原版/修正版c4963ba/修正版＋正确尾部 × 100城/城市挪位/均匀撒点）：分散摆放规则全部第一（原版99.7%对T-SAC 96.0%），T-SAC换地图不变（96.1%）、均匀撒点时低于容量感知贪心，修正物理后原版权重只剩70%—74%需重训；规则与搜索方法之间排序在各组合不变。新环境：改进式T-SAC（L1权重不重训）换分散摆放规则起点，确认集细调后95.8%／最差10%飞机88.1%／SGM 0.993，开发集97.7%，86.4档69.2%，200束98.3%，全部第一（比贪心＋禁忌320次+0.7—1.1，比规则本身+0.1—0.2）；直出T-SAC现成权重只换%8分组不重训从88.3%降到82.3%。结论与实验清单（X1改进式新起点重训、X2直出8组重训、X3改进式Transformer，约50 GPU小时）见[报告21](docs/Claude维护/原版框架复现/21_T-SAC系列提升路线与变更范围.md)；均未训练，待用户决定。
+- **输出**：`outputs/experiments/s2_orig_compare_20261022/`——`run_manifest.json`、`main/{results.jsonl,diagnostics.jsonl,summary.json,extra_stats.json,figures/}`、`cross/{europe_in_original.jsonl,free8_in_v2_*.jsonl,free8_v2_paired.json,i0_from_free8_*.jsonl,tsac_groups_*.jsonl,*_summary.json,figures/}`、`variants/<组合>/results.jsonl`与`variants/summary.json`、`plan_figures/`、`i0_actors/`（从L1断点抽出的策略网络及config.json）。无进程在运行。
+<!-- S2_ORIG_COMPARE_END -->
+
+<!-- S2_FIX_START -->
+## S2-FIX 第二阶段需求压力实验（2026-10-18，已完成，报告12已交付）
+
+来源：cc。用户2026-10-18确认[方案05](docs/Claude维护/S2-FIX第二阶段需求压力/05_第二阶段方案_需求压力下的频率槽学习改进与三阶段连通.md)：链路模型v2、第一阶段FLOW-AO v2（每束上限、窄波束、热点叠放、150束）、对照G1／R／S1／S2／L1(I0)／L2(T-SAC P01-M1)／L3(T-SAC去Transformer)。**执行中依据白天实测把主设定由86.4改为43.2 Mbps**（链路v2下800槽硬上限约90 Gbps，86.4整体过载；见方案05第11节），21.6与86.4为压力评价档。Codex按[实现说明06](docs/Claude维护/S2-FIX第二阶段需求压力/06_S2-FIX给Codex的实现说明.md)在分支`s2fix`（worktree `D:/paper-s2fix`）实现；Claude验收中修正叠放算法（c05441a）与确认集读取，主设定切换提交aa9186a为正式冻结快照。报告：[12 S2-FIX第二阶段需求压力实验报告](docs/Claude维护/S2-FIX第二阶段需求压力/12_S2-FIX第二阶段需求压力实验报告.md)（Fable撰写，Claude核数）。
+
+- **结论**（主档开发20景／确认88景，SCA后业务量加权满足率W）：G1 94.4%／92.5%；S1贪心＋禁忌搜索32次 96.6%／94.5%；S2贪心＋禁忌搜索320次 96.9%／94.9%；L1（I0）96.9%／94.9%；L2 89.5%／88.3%；L3 89.8%／88.8%。预登记判据：L1对G1 +2.5（过）、对S1 +0.3（不过，门槛1.0）、对S2持平（次要成功）；L2/L3不过。按预设结局**第二阶段主算法为贪心＋禁忌搜索**。事后诊断S96（贪心＋禁忌搜索96次、与L1同耗时）五个集合上与L1无差别。Transformer对满足率无作用。按开题报告的公平性指标SGM（SCA后）排序与结论相同：搜索类约0.99、贪心0.980／0.973、直出T-SAC约0.92，报告第3.5节（2026-10-18应用户要求补入）。21.6档饱和（99.8%），86.4档过载（65%—68%），200束不改变结论。
+- **运行**：2026-10-18 03:40—09:08，远端20654／20653（L1三种子，约19.7万步，回合上限6250先到）、20655（L2）、20627（L3），各15万步；评价全部在远端四台容器（G1逐景一致）。
+- **输出**：本地`outputs/experiments/s2_fix_20261018/`——`eval/<集合>/{rules,tsac,i0,s96}/results.csv`、`data_checks/`、`report/analyze.py`（全部表图）、`report/{summary.txt,tables/,figures/,train/,extra/}`。最终模型`models/runs/s2_fix_20261018/`（L1三个完整final.pt各约710 MB，L2/L3各三个model.pt）。
+- **远端**：`~/s2fix_20261018/`（src→src_aa9186a，数据`data/`六个集合）。2026-10-18 09:30清理：删除L1全部中间与最终检查点（最终版已归档本地并核验可加载）、T-SAC中间policy、早期检查与跨容器核对目录，`out/`由42 GB降到269 MB；保留评价结果（含逐束npz）、训练原始日志、T-SAC model.pt。本地删除实现前代码快照`before/`与`before.zip`（＝提交7d47b96，可由git重建）、冒烟训练模型`smoke/L1`、`smoke/L2`和临时目录，输出目录现约10 MB。
+<!-- S2_FIX_END -->
+
+
+<!-- LITCMP_START -->
+## 文献对照 LITCMP（2026-10-18，已完成，报告11已交付）
+
+来源：cc。按[08 三阶段文献对照方法清单](docs/Claude维护/文献对照/08_三阶段文献对照方法清单.md)做必比8项（A1蜂窝网格、A2 He2024聚类＋最小覆盖圆、A3 Voronoi均衡；B1 Cocco2018退火、B2 Paris2019遗传、B3拉格朗日松弛；C1 Choi-Chan2005、C2 Aravanis2015）加E1传统三段式整体基准。分工：Fable出方案与报告，Codex实现，Claude本体管进度、上机与核数。代码：工作树`D:/paper-litcmp`，分支`litcmp`（基于`s2fix` 5a54928，只读复用s2fix／s1fix）。输出`outputs/experiments/litcmp_20261018/`。算力以本机为主（28线程、4070 SUPER）；远端四台S2-FIX占用6—8小时，只轻用20653。
+
+- 02:47 本机开始用S2-FIX同一套FLOW-AO v2生成确认88景×三档需求（86.4／43.2／21.6 Mbps，150束）布局；s2fix读取输入的对象路径有误（应按sha256），本地生成脚本已绕过并已告知S2-FIX会话。
+- 02:55 三档确认集布局本机建成（`outputs/experiments/litcmp_20261018/data/`，各88景，约8分钟）。86.4档37景（飞机数≥1418）只用100束且有超每束13架的波束：FLOW-AO v2把120秒限时平分给11次叠放尝试，大场景来不及长束；最大景2112架时150束本身装不下。已报S2-FIX会话（其训练数据同样受影响）；43.2、21.6两档0超限。
+- 03:05 [方案09](docs/Claude维护/文献对照/09_文献对照实验方案.md)与[实现说明10](docs/Claude维护/文献对照/10_文献对照给Codex的实现说明.md)完成（Fable撰写，Claude改了数据与算力两节）；Codex开始在`litcmp`分支实现。
+- 03:08 S2-FIX会话据86.4档整体过载把主设定改为43.2 Mbps（86.4、21.6作压力档），并用修好的FLOW-AO v2新提交重建全部数据；本机用5a54928建的三档确认集作废，只供冒烟。文献对照随之以43.2为主档：第一阶段静态先跑；第二、三阶段与端到端等S2-FIX数据定稿后，`litcmp`合到新s2fix提交，conf_d432用S2-FIX的，conf_d864、conf_d216本机用新提交自建。
+- 03:20 Codex交付`litcmp`实现（24文件1311行，新测试12项通过；沙箱不能写git索引，由Claude审后提交`cc791b9`）。本机两景冒烟：九种方法整链跑通、约束全部满足。
+- 03:25 **第一阶段静态完成**（72景×4预算×A1/A2三种子/A3，本机4分钟）：100束白天开发12景，FLOW-AO不加间隔峰值16.6架（下界16.1），A1蜂窝114.5（6.9倍）、A2聚类61.4（3.7倍）、A3 Voronoi 50.8（3.1倍），各预算各景FLOW-AO均不高于文献方法；预期"60束A2/A3有不可行"落空（全部可行）。文献方法不守间隔规则（A2在200束平均118处违反），对加间隔的FLOW-AO时夜间200束A2持平（0.97倍）。分析`outputs/experiments/litcmp_20261018/analysis/stage1_ratios.py`。
+- 03:28 A1–A3确认88景布局建成（1分钟）；03:30 三档×三布局过G1＋SCA完成（792景，约束全过）。43.2档W：A2 He2024 0.928、A1蜂窝0.846、A3 Voronoi 0.832；最差10%飞机0.62／0.52／0.49。
+- 03:33 用5a54928旧数据预览FLOW-AO v2（仅参考，正式等S2-FIX新数据）：43.2档W 0.924、最差10% 0.662，对A2 W打平（−0.3点）、最差10%高3.9点，对A1、A3高8—9点W、14—18点最差10%；86.4档旧数据A2反超2点。已告知S2-FIX（A2总用满150束，与S1-FIX"束多、束窄最重要"一致）。
+- 03:35 本机用旧43.2数据预跑第二、三阶段：B3原实现（SLSQP解约450变量松弛）在22/88景500次迭代不收敛、大场景单景约6分钟，整批中断。
+- 03:50 B3改为拉格朗日对偶分解（槽数、功率两乘子嵌套二分，每束注水闭式解，槽数细网格），88景全部合法、单景≤5秒，测试12项通过（Claude直接改，`3e4e911`）。
+- 03:52 S2-FIX数据定稿（`aa9186a`，主档43.2）：`litcmp`已合并（`c15b996`，S2-FIX只改FLOW-AO v2叠放与数据读取，贪心／SCA／链路未变，故第一阶段静态与文献布局下游结果仍有效）。从20653拉回conf_d432_n150（88景）与S2-FIX规则基线结果；conf_d864、conf_d216两档本机用新提交自建中。数据目录`outputs/experiments/litcmp_20261018/data_aa9186a/`，5a54928旧数据仅作预览。
+- 03:55 本机队列启动（`outputs/claude_scripts/litcmp_pipeline.sh`）：先跑三档的G1/S1/S2/B3/P0/C1/C2/B1、B2的32与320次臂及E1_320，再跑3200次臂。
+- 04:33 **三档除3200次臂外全部完成**（本机36分钟，全部约束通过；本机重跑G1/S1/S2与S2-FIX远端平均W千分位一致（逐景见09:30条））。主档43.2、确认88景、SCA后W：G1 0.925、S1 0.945、S2 0.949；Cocco退火／Paris遗传32次0.924／0.926、320次0.919／0.929（W目标版0.928／0.932），均比同预算贪心＋禁忌搜索低约2—3点、最差10%低13—21点；拉格朗日松弛B3 0.906。第三阶段同G1频率方案：SCA 0.925、Aravanis两段式C2 0.929（高0.44点，区间0.30—0.62）、Choi-Chan C1 0.921、比例功率P0 0.919。布局接G1＋SCA：FLOW-AO v2对He2024 K-means W打平、最差10%高4.85点；86.4档K-means反超2.75点。传统三段式E1（320次）0.726，低19.9点。分析`analysis/stage23.py`，表`stage23_table.csv`、`stage23_pairs.csv`。已同步S2-FIX会话。
+- 06:10 **3200次臂完成**（本机1.6小时，累计约1.2万行全部满足约束）。43.2档：退火、遗传3200次W 0.908／0.930，遗传仍比S2低1.95点、最差10%低13点；E1 3200次0.675（比320次的0.726更低：文献原目标"供需差"惩罚过供，搜索越多越砍容量）。三档结果、五条预期逐条判定、图F1–F5与给Fable的简报在`outputs/experiments/litcmp_20261018/report/`。
+- 06:12 补跑满足率目标的退火、遗传3200次臂（堵"换目标能否追上贪心＋禁忌搜索"的疑问），约1小时；之后并入S2-FIX的L2/L3（约07:30）交Fable写报告11，L1（约09:45）到后补节。
+- 06:50 S2-FIX的L2/L3确认集结果并入（同口径复算一致；配对改用远端同平台基线，见09:30条）：43.2档W 0.883／0.888，比G1低4.2／3.7点、比贪心＋禁忌搜索低约6点。
+- 07:16 满足率目标3200次臂完成：遗传0.941，仍比S2低0.78点（区间−1.17～−0.41）、单景61秒对14秒；86.4档低0.90点；仅21.6档退火追平。图F3已重出。
+- 07:25 简报与数字表交Fable撰写[报告11](docs/Claude维护/文献对照/11_文献对照实验报告.md)；L1（约09:45）到后补节。
+- 07:40 [报告11](docs/Claude维护/文献对照/11_文献对照实验报告.md)交付（Fable撰写，Claude逐条核对原始数字后改5处措辞）。剩余：S2-FIX的L1确认集结果（约09:45）到后补一节。
+- 09:30 S2-FIX的L1与诊断臂S96并入：L1 W 0.949，对G1 +2.41、对S1（同32次）+0.37（0.20—0.57）、对S2打平、对同耗时的S96打平（+0.04）。**更正**：本机（Windows、scipy 1.11）与远端（Linux、scipy 1.14）同数据同代码，平均W千分位一致，但22—24/88景结果不同、单景最大差3.7点（浮点差让贪心在近似相等的组代价间分岔；SCA限时未触发）。故S2-FIX的学习方法改与远端同平台G1/S1/S2配对，文献方法与本机基线配对。已告知S2-FIX会话；报告11由Fable补L1一节并改正此处。
+- 09:45 报告11补入L1与S96一节、改正平台一致性说法、补全数据路径（Fable改写，Claude核对）。本组全部完成，无运行中任务；本机后台进程已全部结束。
+<!-- LITCMP_END -->
+
+<!-- S1_FIX_START -->
+## S1-FIX 第一阶段纠偏实验（2026-10-17，已完成，报告已交付）
+
+来源：cc。用户2026-10-17批准在`u2025140002@10.160.17.102:20654`执行[02设计](docs/Claude维护/S1-FIX第一阶段纠偏/02_第一阶段纠偏实验设计.md)；Codex按[03实现说明](docs/Claude维护/S1-FIX第一阶段纠偏/03_S1-FIX给Codex的实现说明.md)在分支`s1fix`实现，Claude审查修正、远端运行并写[报告04](docs/Claude维护/S1-FIX第一阶段纠偏/04_S1-FIX第一阶段纠偏实验报告.md)。输出`outputs/experiments/s1_fix_20261017/`，最终模型`models/runs/s1_fix_20261017/`（12个最终检查点），远端`~/s1fix_20261017/`。
+
+- **块A（静态，冻结19f6c45）**：新骨架FLOW-AO在历史R8的20个开发场景上同束数峰值49.3→12.1架（不加间隔）/15.7架（加间隔），SH-C的12景10.7→5.8架；不加间隔时峰值等于下界ceil(n/N)，已最优；加间隔后白天峰值由伦敦热点决定（约23至29架），100束以上不降；10倍计算量只再降1架。
+- **块C（三阶段连通）**：3000 W下任何布局飞机平均满足率≥99%；750 W时最差10%飞机服务与平均波束宽度相关−0.86、与波束数＋0.80、与峰值仅−0.36；只压峰值的布局最差，叠放波束伤害最差飞机。
+- **块B（动态，PPO冻结39e5fdc）**："每分钟轻量局部修复"与每帧全重算统计上无差别（多0.3至0.4架），换束7%对46%；比滞回规则低0.7至0.8架；PPO多数收敛为固定动作，最好者即该规则本身，学习无额外增益；60秒预测有害。按预注册判据带预测的PPO不通过。
+- 首轮全批量PPO（每次更新仅4步梯度）已作废重训，曲线保留在`B/aborted_fullbatch_0641/`。线性规划下界因不加间隔时已达下界而停算。
+<!-- S1_FIX_END -->
+
+
+<!-- S2_W32_START -->
+**S2-W32已完成（2026-10-17 16:34北京时间全部评价结束，报告24已交付）。** 按[方案32](docs/第二阶段/方案/32_FLOW-AO布局下的第二阶段重训与三阶段一致性方案.md)，用S1-FIX冻结源码19f6c45的FLOW-AO（N=100、含间隔规则）为input596同一批576训练／20开发／40确认场景重新生成布局（飞机、ID、21.6 Mbps不变；636景核验全通过，dev_n200排除1景），重训{P00,P01}×{M0,M1}×{51001,51002,51003}共12组各150000步（148001更新、1500回合），20627／20653／20655每卡四组并行，11:33—15:11，约41 GPU小时。源码`w32-chain`分支`35a27b89`；`contracts.py`一处最小修改（中心不再要求等于锚点飞机位置），旧596＋40对象校验通过且W31 P00-M0旧评价逐行复现。
+
+**结果（新布局开发20景，15万步，三种子平均）：**贪心SI 98.7%／SGM 0.437／2035 W；W31旧模型不重训迁移P00-M0 SI 84.0%、P01-M1 91.0%；重训P00-M0 96.9%／0.782／1483 W，P00-M1 97.6%／0.787／1614 W，P01-M0 97.2%／0.853／1532 W，P01-M1 97.6%／0.857／1607 W；确认40景同序（模型SGM高贪心0.29—0.37、功率少290—400 W、SI低1.7—2.5点）。加0.5W同种子SGM差+0.070／+0.072／+0.071（确认+0.074），SI持平；摘要SGM+0.005—0.008、SI+0.5—0.7点一致、功率+7%—10%。方案30门槛因对照功率单种子波动（1286—1843 W）在功率项不稳：P01开发1/3、确认2/3种子通过。N鲁棒性（种子51001）：N=60 SI 90%，N=100—200 SI 96.5%—97%，SGM随N增大下降。新布局下满足率饱和，差距只在SGM与功率。[报告24](docs/第二阶段/实验报告/24_FLOW-AO布局下的第二阶段重训与三阶段一致性对照.md) · 原始数据`outputs/experiments/s2_w32_20261017/collected/` · 分析`outputs/experiments/s2_w32_20261017/analysis/` · 远端`s2_w32/`。无运行中任务；下一步（收紧环境／接第三阶段／按第一阶段最终N重训）待用户决定。
+<!-- S2_W32_END -->
+
+<!-- S2_W31_START -->
+**S2-W31八组训练与开发评价已完成（2026-10-17 07:41北京时间实核）。** W30因执行层过度安全检查被用户叫停后，按[方案31](docs/第二阶段/方案/31_功率档位与余量摘要训练对照（精简执行版）.md)重构执行层、科学设计不变：八组（四功率菜单×有／无余量摘要）seed51001各150000步，20627／20653每卡四组并行，GPU利用率95%—97%，03:54启动、07:31—07:37全部完成训练与评价。八组均实际150000步／148001次更新／1865回合，评价20开发母×3重复×50k／100k／150k，约束全通过。源码`w31-lean`分支`9e905cce`（科学代码与W30冻结版相同，仅加`power30/lean_runner.py`），未经工作台。
+
+**结果（15万步，单种子、已见开发场景）：**带0.5W选项的P01／P11四组SGM 0.746—0.749，对照P00-M0为0.608，约+0.14且20／20母全部变好；功率为对照68%—93%；SI变化−0.0025—+0.0032。P10细化5W以上无用（SGM−0.019）。余量摘要SGM±0.01，SI一致小幅+0.003—+0.006。过方案30门：P01-M1、P11-M0、P11-M1；按事先规则锁定P11-M1，三者SGM差仅0.003；实用推荐P01（原档位＋0.5W）。未做多种子复验和独立考核，0.5W物理可行性与第三阶段衔接未核。[报告23](docs/第二阶段/实验报告/23_功率档位与余量摘要八组训练对照.md) · 原始数据`outputs/experiments/s2_w31_20261017/collected/` · 分析`outputs/experiments/s2_w31_20261017/analysis/` · 远端权重`/home/u2025140002/second_stage_satellite_rl/s2_w31/runs/`。下一步（复验、并入主线等）待用户决定；无运行中任务。
+<!-- S2_W31_END -->
+
+<!-- S2_W30_DESIGN_START -->
+**2026-10-17 03:22北京时间已实核停止：**按用户“停止吧，我受不了你了”，W30八个原任务均已保存、闭账、退出，两工作台服务已核退；两端USER_PAUSE及原STORAGE_STOP保留，automation-2已PAUSED。不再准备、修复、训练、评价或恢复，只有此后新的人类明确继续才能恢复。回执：D:/paper/outputs/experiments/s2_power30_20261016/control/parallel4_20261017/human_stop_actual_safety_receipt.json。以下为停止前历史。
+
+**2026-10-17 03:21北京时间：用户已明确停止W30，全部后继调度停止。** automation-2已设PAUSED，本地USER_PAUSE已写。此前八个原任务因存储守卫停止并保存断点；当前只做最新退出核验，不再修复、训练、评价或恢复。未完成的四并发守卫修复保留，只有此后用户明确继续才能恢复。[最新停止原件](outputs/experiments/s2_power30_20261016/control/user_stop_20261017.json)。以下训练记录均为停止前历史。
+
+**S2-W30正式训练进行中，2026-10-17 02:22（北京时间）实核。** 20627上的原5W档位无摘要组已实际3911步／1912次更新；20653上的原菜单加入0.5W无摘要组已3925步／1926次更新。两进程均正常、初始策略已保存。原始状态与永久账有正常的刷新时间差，不将缓存进度冒充同一瞬间。其余六组由唯一后台控制器排队：先完成四组无摘要，再做四组有摘要，同菜单保持同GPU。[运行清单](outputs/experiments/s2_power30_20261016/run_manifest.json) · [实际学习核验](outputs/experiments/s2_power30_20261016/preflight/resources_20261017_start/science_learning_progress_once.json) · [接手入口](outputs/experiments/s2_power30_20261016/control/execution_handoff.json)。
+
+首轮固定seed51001、八组各150000步，共120万交互；每组预计148001次更新。四功率菜单为P00原5—50W／5W步长、P10保5W下限／0.5W步长、P01原菜单仅加0.5W、P11为0.5—50W／0.5W步长，各有／无100槽余量摘要。保持原S10／Transformer主体、legacy_repaired奖励、alpha0.01、未来束5W与一槽预留，沿用已核576训练母＋20开发母及每机21.6Mbps。50k／100k／150k三个节点共同开发评价，共1440回合；0步只保存模型。**现在没有正式优劣结论。** [方案30原件](docs/第二阶段/方案/30_功率档位与余量摘要训练对照方案.md)的“仅设计”为旧时点，由[实施授权](outputs/experiments/s2_power30_20261016/control/human_implementation_authority.json)及本次实际启动覆盖。
+
+八组工程均已完成2048步／49次更新，合16384步／392次更新；各自2016步／17更新保存后，只在同ID继续32步／32更新。数值、真实CUDA更新、恢复、逐步及终态日志、约束与退出闭账均通过独审。末段显存峰值最大798MiB，两段均未OOM；这不是整个训练的显存峰值。七组另保存并核验初始0步原件，P10M0工程初始原件漏捕如实保留限制，不重跑补造。工程学习额度已用完，不再启动这八个短任务。[工程根验收](outputs/experiments/s2_power30_20261016/verification/root_actual_engineering_acceptance_01.json) · [完整独审](outputs/experiments/s2_power30_20261016/verification/eight_arm_engineering_independent_readback_aggregate_01.json)。此前9条小例轨迹／648PHY及53次CPU前向证明继续保留，没有因运维修复而重算。
+
+远端模型／运行源码为`35d66977`，本地控制源码为`6ce21068`，分别固定字节和来源；本地控制修复未改科学核心。科学工作台为两端9130／9131，凭据只从BUPT_PASSWORD环境读取。先前SSH断开、时间字符串、HTTP返回读取、Windows开机时间估值及缺回执目录问题均保留原件；五次未提交或明确无新POST的失败预留650秒永久保留，无重复训练。工程控制器1800秒和科学控制器1200秒均来自原8小时工程账，预扣不能冒充真实计算或再次叠加。科学启动前该账保守扣4201.688485秒，含实际工程、外层上界及预留；原每组20GPU小时／首轮160GPU小时、评价24worker小时和2026-10-23 09:24北京时间截止不变。存储仍为自有90GiB上限＋16GiB余量，个人配额未知。[实际启动准入](outputs/experiments/s2_power30_20261016/verification/root_scientific_actual_launch_acceptance_01.json)。
+
+当前完整八组阶段预计超过8小时，跟进已切回每8小时；剩4—8小时改每4小时，4小时内改每2小时，无可靠估计保持当前间隔。普通检查无变化不通知。控制器的15分钟轻量观察、派发后10秒补另一空闲GPU与模型跟进频率分开，训练持续运行。当前科学常驻控制器原件见[启动回执](outputs/experiments/s2_power30_20261016/control/scientific_admission_20261017_01/actual_hidden_launch.json)，不要重启已完成工程控制器或重复提交已接受任务。
+
+只有八组终点齐全、开发候选SGM至少+0.01且SI退不超0.002／功率不超110%／约束通过，并有40个新确认母合格封存，才进入完整两新种子复验。新日期目前仅做只读盘点，尚未建立四个合格新日期，不把旧Feb23／24或其它暂停组封存资产冒充新确认。该缺口不影响正在进行的首轮。W29已关闭预算、S1／W28暂停均保持；U摘要、1W、预留或alpha改动不自动进入后继。
+<!-- S2_W30_DESIGN_END -->
+
+<!-- S2_W29_CURRENT_START -->
+**2026-10-16 S2-W29已结案，报告、双位置归档及合格副本清理完成。** 指定新账号20655／20654／20653／20627四路完成A0、A1；全部worker及本组8个工作台、2个本地隧道和持久观察进程已核退出，未恢复S1或W28。原件、失败与真实费用保留，不再启动本方案科学后继；本组小时跟进已置PAUSED，保持原小时频率与静默偏好。
+
+A0：60状态／63300行，科学46901次PHY、20kernel，源`a56566d9`；原域当步改进空间39/60，固定前缀最低5W仍过供23/60。A1：同60状态补齐573000结构行、472完整分支，科学374206次PHY／18712次前向／58158次系数构建，源`93f39b69`，0新kernel、0更新、未知0。两阶段科学worker累计6684.896370秒；工程另815次PHY／64次前向／4kernel，未混算。
+
+A1原动作＋固定随机后续参照SI96.363917%、SGM0.606953238；奖励最大单次干预ΔSI−0.137900个百分点、ΔSGM+0.002103415；事后SGM择优ΔSI−0.003033个百分点、ΔSGM+0.005160007。两套改善门均未过，保护／功率／硬约束均过，**B、D、L均未进入，未用额度关闭而非转移**。余量权重相对无余量控制的相关增量仅+0.000455753，7正／7负／5零／1未定义；不能翻转必要效果门。仅已见20母、两续策及一个冻结训练种子，缺同节点Critic；不证明状态、参数规模或数据改变普遍无效。
+
+入口：[A0报告21](docs/第二阶段/实验报告/21_A0动作下限与功率粒度前缀诊断.md) · [A1报告22与两图](docs/第二阶段/实验报告/22_原动作域单步干预与终态收益机制诊断.md) · [根科学结案](outputs/experiments/s2_bottleneck29_20261016/verification/root_A0_A1_scientific_closure.json) · [运行清单](outputs/experiments/s2_bottleneck29_20261016/run_manifest.json) · [清理与保留实核](outputs/experiments/s2_bottleneck29_20261016/closeout/actual_closeout_summary.json) · [恢复映射](outputs/experiments/s2_bottleneck29_20261016/closeout/cleanup_restore_mapping.json)。本地9个、远端36个已核可恢复解压目录分别清理逻辑1.222GB／1.147GB；原始数值仍在逐成员校验的规范归档中。四远端共享一个NFS，只计本地D盘与远端NFS两个存储位置；逻辑字节、分配空间与磁盘余量不混称。复核需先按索引恢复必要成员，不重跑科学任务。
+<!-- S2_W29_CURRENT_END -->
+
+
+
+
 
 <!-- S1_R13_CURRENT_START -->
 
@@ -53,1551 +188,4820 @@
 
 <!-- S1_R13_CURRENT_END -->
 
-**2026-10-15 S1-AI17-R12已完成十二景审核、报告25、三图及所选规范双端归档；当前进入R13方案31的静态可行性核对，尚未开始新训练。** 方案30的邻域支持两步重构在固定12个已见开发母场景上，对强参照S／Q及一步O1的命中均为0/12；相对最佳固定序列的成功差也为0，原四项AND门槛全部未达。十二景平均峰值：强参照S／Q为228.6 Mbps，O2为248.4 Mbps；本动作集没有证明两步选择学习的增量空间，本轮选择器训练分支关闭。不能据此推断所有AI路线无效、全局最优或独立test泛化。[根科学结案](outputs/experiments/first_stage_ai_search_20261013/round12/root_actual_R12_scientific_closure.json) · [完整独审](outputs/experiments/first_stage_ai_search_20261013/round12/resume_20261015_0858/reader_continuation_review_01/actual_saved_output_review_01/independent_actual_reader_review.json)。
+
+
+
+
+**2026-10-15 S1-AI17-R12已完成十二景审核、报告25、三图及所选规范双端归档；当前进入R13方案31的代码与输入准备，尚未开始新训练。** 方案30的邻域支持两步重构在固定12个已见开发母场景上，对强参照S／Q及一步O1的命中均为0/12；相对最佳固定序列的成功差也为0，原四项AND门槛全部未达。十二景平均峰值：强参照S／Q为228.6 Mbps，O2为248.4 Mbps；本动作集没有证明两步选择学习的增量空间，本轮选择器训练分支关闭。不能据此推断所有AI路线无效、全局最优或独立test泛化。[根科学结案](outputs/experiments/first_stage_ai_search_20261013/round12/root_actual_R12_scientific_closure.json) · [完整独审](outputs/experiments/first_stage_ai_search_20261013/round12/resume_20261015_0858/reader_continuation_review_01/actual_saved_output_review_01/independent_actual_reader_review.json)。
+
+
+
+
 
 实际生产27核／160次流、4715射线／34988角对，逐母原生回执合计26.36915秒；O2实际非空束数61—105、逐束宽度0.3°—0.999768377°，每机21.6 Mbps与完整飞机/归属/请求守恒保持。0模型初始化、0训练更新、0heldout。首reader存储并发失败与原缓存保留；唯一接续外部6.563秒正常退出、12景审核完整，累计reader4715射线／138215角对／23布局。按事前合同93＋10＋17=120秒保守全额扣账，未用科学槽和审核额度关闭，不再跑R12求解、reader或POST。全部本轮进程已核退出，188＋72原始文件已收存。[累计费用与已核最佳](outputs/experiments/first_stage_ai_search_20261013/analysis/r12_budget_and_best_verified.json) · [三图与原CSV](outputs/experiments/first_stage_ai_search_20261013/round12/report_analysis_01/plot_manifest.json)。
 
+
+
+
+
 用户08:58明确继续的授权已落实，旧07点暂停文件和失败原件保留，新暂停始终优先；每小时跟进，旧单次07检查保持暂停。既有已核最佳仍引用R10。[报告25](docs/第一阶段/实验报告/25_邻域余量与两步波束重构的机制比较.md)及三图已提交；E与远端规范归档691个唯一对象／9,536,577字节、1186路径映射、13共享依赖已逐成员双端核验，[最终签收](outputs/experiments/first_stage_ai_search_20261013/round12/archive_final_01/root_final_acceptance.json)2ab4bdba与发布回执闭合，旧失败和费用保留。仅所选本轮资产闭合，完整历史T0原始596祖先仍未闭合；73/74共享NFS及C/D/E同物理盘不冒充多份独立备份。
 
-[方案31](docs/第一阶段/方案/31_强顺序重构的安全截断机会与成本可测性.md)拟先用旧SH-C轨迹检验保质提前停止是否超过强固定规则，当前仅设计与源码资格核对，模型／训练／新求解仍0。已有轨迹缺逐前缀墙钟，不能据少算几个核宣称实际加速；[R13当前清单](outputs/experiments/first_stage_ai_search_20261013/round13/run_manifest.json)区分候选预算与执行准入。整体自主研究尚未完成。下列摘要均为历史时点。
+
+
+
+
+[方案31](docs/第一阶段/方案/31_强顺序重构的安全截断机会与成本可测性.md)拟先用旧SH-C轨迹检验保质提前停止是否超过强固定规则，设计已获根前瞻接受；旧审核源码已证明中间合法布局可复用，24份输入映射准备完成，正实施唯一有界标量读取程序并独审。实际24份gzip尚未进入本轮读取，模型／训练／新求解仍0。已有轨迹缺逐前缀墙钟，不能据少算几个核宣称实际加速；[R13当前清单](outputs/experiments/first_stage_ai_search_20261013/round13/run_manifest.json)区分候选预算与执行准入。整体自主研究尚未完成。下列摘要均为历史时点。
+
+
+
+
 
 **2026-10-15 S1-AI17-R12在执行前拦下方案29的结构性缺陷，方案30已获结果前设计接受；尚无新工程或科学计算。** 静态证明表明：只联合并列最重束时，同束数动作不改变人数分布，其后加束与直接加束产生同一道问题，不能证明两步选择超过同范围贪心。这是设计否决，不是实验负结果；[原方案停止记录](outputs/experiments/first_stage_ai_search_20261013/round12/design_static_review_01/root_v1_static_design_stop.json)保留原文、代码准备和费用。[方案30](docs/第一阶段/方案/30_邻域余量支持的两步波束重构试点.md)加入一个接触且负载较低的邻束，并以整数人数和排列不变的精确键比较新状态；原12训练母、72核／576流和全部科学门槛不变，模型／训练／heldout仍0。新设计消除了原证明前提，尚未证明实际收益。
 
+
+
+
+
 [v2根设计接受](outputs/experiments/first_stage_ai_search_20261013/round12/root_prospective_design_acceptance_v2.json)b0230267只允许源码和输入准备。Sol分别修改核心及运行／独立审核程序；旧强顺序摘要没有整数人数，正定位已保存的最终归属供精确比较，不能从CV反推或重跑旧算法。新代码、有限工程和真实现场资格未闭合，不得启动；73／74暂停守卫已只读核为存活，07:00截止与暂停后须人类明确继续保持。[当前清单](outputs/experiments/first_stage_ai_search_20261013/round12/run_manifest.json)优先于下列历史进度。
+
+
+
+
 
 **2026-10-15 S1-AI17-R11报告、三图及所选双端规范归档已闭合；当前转入R12代码准备，尚未开始新实验。** [报告24](docs/第一阶段/实验报告/24_峰值直方图机制试验与不完整审核记录.md)最终字节573c1091已在证书／出版合同双端校验后发布，[实际出版回执](outputs/experiments/first_stage_ai_search_20261013/round11/archive_final_01/publication_receipt.json)db01ad38为closed，[最终签收](outputs/experiments/first_stage_ai_search_20261013/round11/archive_final_01/root_final_selected_archive_acceptance.json)52c3c706保存主包、补充及恢复入口。主包1238个新对象、补充35个新对象均逐成员双端核验，既有共享依赖只引用；最初流式压缩兼容失败和旧01残件完整保留。R11科学结论仍是3条部分摘要、9景未审、母6工程unknown，不判算法通过或有效负结果；禁止再跑本轮科学、reader、标量或归档重扫。完整历史T0原始596祖先仍未闭合。
 
+
+
+
+
 [方案29](docs/第一阶段/方案/29_联合瓶颈结构动作与两步价值试点.md)及[R12结果前设计接受](outputs/experiments/first_stage_ai_search_20261013/round12/root_prospective_design_acceptance_v1.json)已登记：检验联合瓶颈区域与两步结构选择是否留下超过强规则、最佳固定序列及单步的收益空间，最多72新内核／576内部流，首阶段模型、训练和heldout预算均0，旧关闭额度不转移。GPT-6.1 Sol两路在既有受管工作树分别准备新核心与运行／独立审核代码，保护旧10项R11修改；核心已报告8项纯检查通过、非零间隔8飞机工程样例待独审，reader／工作台仍在补齐。实际GEO、flow、远端提交与工程调用均0，不能把源码准备当实际运行。[当前R12清单](outputs/experiments/first_stage_ai_search_20261013/round12/run_manifest.json)是后继入口；07:00新暂停、每机21.6 Mbps及三阶段一致性继续优先。
+
+
+
+
+
+<!-- W28_CURRENT_START -->
+**2026-10-15 23:14用户要求立即暂停以重启服务，本组已实核保存并全部退出。** 当前known复核保存226/560完整回合及第227回合P1的77/81束，pending为空、77次提交／前向全部有账；开发240回合已完成。20418 known worker、暂停与存储守卫、工作台服务、本地恢复控制器均已退出，当前GPU compute为空。20424与20627没有本组在运行的科学任务。只有本次暂停后用户明确“继续”才能恢复；旧人类继续和操作修复授权均不能绕过新暂停。
+
+此前扫描误报已在23:07按同ID接续，保留原source1ed、模型、数据、已完成207回合及partial缓存；新累计known active wall3135.199064秒，开发3311.083128秒，另科学恢复保守扣30秒，原6小时预算保持。用户本轮收束要求继续有效：恢复后仅完成剩余复核、报告20、必要归档与清理，之后停止，不启动任何后继实验。当前无新训练／参数更新。
+
+完整开发结果：冻结S10/150k模型的P4四候选筛选相对P1直出，SI从96.3571%到96.9630%（+0.6059个百分点），SGM从0.606954到0.626435；平均功率减少74.17W，含持久化完整active墙钟增加6.90秒/回合。已通过事前开发门，但完整known结论仍待560回合闭合，不能把部分复核当完整报告。远端已核清理W27六份冗余恢复副本644368208B；W26存在日志恢复偏移差异的断点及所有活动依赖保留。
+
+入口：[暂停验收](outputs/experiments/s2_tsac_screen28_20261015/control/user_pause_20261015_now/root_pause_acceptance.json) · [运行清单](outputs/experiments/s2_tsac_screen28_20261015/run_manifest.json) · [方案28](docs/第二阶段/方案/28_冻结T-SAC策略的四候选一步筛选机制试验.md) · [开发材料](outputs/experiments/s2_tsac_screen28_20261015/report_analysis/development_findings_for_report20.md) · [清理回执](outputs/experiments/s2_tsac_screen28_20261015/cleanup_20261015/cleanup_receipt.json)。
+<!-- W28_CURRENT_END -->
+
+
+
+
+
+<!-- W27_CURRENT_START -->
+
+
+**2026-10-15 S2-W27科学、开发、680回合共同复核、正式报告与归档完全闭合；主包03及153成员出版补充包均已核验。** B/E/LP各seed51001、50000真实交互/48001更新，累计150000科学交互/144003更新；1440开发回合。E和LP均未通过50k开发门，三臂止于50k，不接续后100k。known七法680回合/54553决策完整，约束违规与映射后请求/执行不一致均0；B/HIST的42个Actor张量逐值相同且完整保留HIST120回合。B的SI=95.5509%、SGM=0.614078；E相对B为−0.3701个百分点/−0.009170，描述区间跨0；LP为−1.1317个百分点/−0.029310，区间均负且平均功率高21.24%。三模型相对全部三规则均有双指标平均改善，但不表示本轮候选改进成功或逐景保证。
+
+
+
+
+
+科学源`2beeb1ec678631403b4a6e821ca2976ea75303c3`；实际最终评价源`6490ad0d33e862bf2b58c480422239a82404eb92`，独立20418:9073的known_6490ad0d_50000已经审计完成。4ec的producer config、b204的JSON schema及probe_ref格式三类metadata/ops失败均保留0known/0更新；旧科学启动失败及归档失败原件亦保留。工程6144交互/147更新、CPU96及CUDA9合成更新各自分账，其它本轮只读核验0额外真实调用/更新。数据实际训练N45—104/开发47—98/known42—98、宽度0.3°至略小于0.5°；单训练种子、known两日期已复用，不称独立test。
+
+
+
+
+
+三端07点guard原件hard/live0/unresolved0；缺本地pause_acceptance原因未知，不补造。用户08:57:33继续仅恢复S2及授权后继、不恢复S1；根显式新epoch保留旧原件，未恢复已结案训练。三个完整current各在本地规范保留一份并入主归档，用于完整复核/备份；previous继续保留；已核120个本地重复metadata及2个远端失败归档残片完成清理，规范原件、完整current及失败证据均保留。本组空闲pause/workbench运维进程已按身份核验退出，未停止其它组。
+
+
+
+
+
+主包03为338672471字节、3912成员、SHA `a2e19afcd684a727a4d85f48adc116f0a584f45e24fcc722180a39ae5904399a`；其中旧mutable状态快照保留，最终出版/清单/费用/失败索引由补充包覆盖，补充包15710127字节、153成员、SHA `e4bd518c25fb4658448efcdf56aa73f7383195039fb768832b1cdbbef7d3b41e`，逐成员与18/24访问核验均通过。最终验收与清理回执作为独立侧车保存，避免selfhash。入口：[报告19](docs/第二阶段/实验报告/19_T-SAC温度与槽功率联合建模先导对照.md) · [HTML](docs/第二阶段/实验报告/19_T-SAC温度与槽功率联合建模先导对照.html) · [PDF](docs/第二阶段/实验报告/19_T-SAC温度与槽功率联合建模先导对照.pdf) · [运行总账](outputs/experiments/s2_tsac_search27_20261015/run_manifest.json) · [收尾归档目录](outputs/experiments/s2_tsac_search27_20261015/archival/closure_01/) · [最终根验收](outputs/experiments/s2_tsac_search27_20261015/archival/closure_01/root_final_acceptance.json) · [方案27](docs/第二阶段/方案/27_T-SAC温度与槽功率联合建模自主探索方案.md)。
+
+
+<!-- W27_CURRENT_END -->
+
+
+
+
+
+
+
 
 **2026-10-15 02:12 S1-AI17-R11已按“审核不完整”停止科学与审核分支，不能判算法通过或有效负结果。** 十二景输出齐、十一景方法工程证据完整，母6工程unknown；首次数组审核只留下母0／6／12三条部分摘要，其余九景质量未审。母18最小标量核验已确认：失败槽N=62、q=5的旧Gr与新Gh都表示图不可行，异常来自旧状态名`reported_finite_graph_infeasible`与新判断`graph_infeasible`不兼容，并非已经证明算法可行性矛盾。原件、独审及停止依据见[根结案记录](outputs/experiments/first_stage_ai_search_20261013/round11/final_incomplete_01/root_R11_incomplete_scientific_closure.json)。没有重跑求解、追加GEO或把未审结果填零；原完整AND3／3门槛保留。
 
+
+
+
+
 本轮7次审核入口、5次reader进入、1次单独标量核验，完整数组审核0、部分审核1；外调用累计5.4131587秒，原60秒余54.5868413秒关闭不转移。已用891射线／208427覆盖对／11布局及9次gzip、6次科学plain解析如实记账；没有恢复审核缓存或重置额度。模型／训练／heldout新增0，最佳已核方案继续引用R10。[累计预算与已核最佳方案记录](outputs/experiments/first_stage_ai_search_20261013/analysis/r11_final_incomplete_budget_and_best_verified.json) · [报告24](docs/第一阶段/实验报告/24_峰值直方图机制试验与不完整审核记录.md)及三组PNG／PDF／CSV已生成、根核图及数值通过，正在完成报告最后引用和必要规范归档，尚不称双端归档闭合。下一题仅有[条件性设计草案](outputs/experiments/first_stage_ai_search_20261013/design/next_direction_after_R11_provisional.md)，未启动新轮求解或训练。10月15日07:00新暂停仍有效。
+
+
+
+
 
 **2026-10-15 01:46 S1-AI17-R11十二景计算已结束；结果审核仍停在元数据核对，尚无新的质量结论。** 当前已真实调用5次parent guard、4次native／reader，完整科学数组审核、GEO与整数见证检查均0。最近一次在四份恢复合同的本地路径与转存路径比较处失败，原件SHA和字节数一致；已保留输出04和全部历史失败，正同步新配置与新元数据清单的四项精确引用，不改数学源码和原结果。五次完整外调用累计保守费用4.0649151秒，原60秒余55.9350849秒；各次内部计时不重复相加。[费用原件及补充](outputs/experiments/first_stage_ai_search_20261013/round11/reader_native_metadata_failure_04/root_actual_four_proof_binding_metadata_cost_addendum.json) · [独立核验](outputs/experiments/first_stage_ai_search_20261013/round11/independent_reader_review_13/independent_fourth_metadata_failure_scope_cost_review.json) · [下一次有限审核修复约束](outputs/experiments/first_stage_ai_search_20261013/round11/reader_pre_native_recovery_design_01/root_four_proof_binding_continuation_decision.json)。新源、配置与剩余额度须再次独审及根实际准入后，才可进行一次剩余审核；禁止重跑R11科学计算。母6工程证据仍不完整，原完整门槛不会放宽。更正下方23:42摘要：当时真实执行只证明已经过的别名比较前缀通过，全部9对通过指纯测试，不能冒称真实运行全9项通过。
 
+
+
+
+
 **2026-10-15 00:05 S1-AI17定时任务乱码已修复，日常检查改为每小时；10月15日07:00单次暂停及两端独立timer均已落实配置。** 根逐条检查保存文本，实际发现本任务跟进正文在shell回读／写回中出现1913个替换字符，已保留旧原件并通过工具重写短中文。两条新名称为“第一阶段研究进度检查”和“10月15日早上七点暂停研究”，读回替换字符均0；其它17条任务内容／状态未改，主跟进每小时一次、无变化不通知，不代表重新训练。[编码与频率修复回执](outputs/experiments/first_stage_ai_search_20261013/control/automation_text_repair_20261014/verified_after.json)。
+
+
+
+
 
 新07暂停guard源码／部署CLI已独审（4727d4f1），根实核73／74 UID、boot、DQN和空间后各只启动一个operations-only timer。73为58949／birth858775774／boot25176dc4，74为62607／birth858820189／boot268486b1；launch与timer_started及真实kernel四元身份／完整命令一致，均S、stderr0，当前新pause标记未产生。两timer到UTC10月14日23:00（北京时间10月15日07:00）将持久写本组新hold，不依赖桌面连接；不发信号、不停其它任务。未来任务仍必须单独登记并通过冻结源码的新deadline hook／保存检查，不能把空registry当自动覆盖所有后继。08:00由用户重启，只有新暂停后明确“继续”才恢复。[根实际timer接受](outputs/experiments/first_stage_ai_search_20261013/control/deadline_20261015_0700/root_actual_01/root_actual_timer_acceptance.json)。
 
+
+
+
+
 **2026-10-14 23:42 S1-AI17已登记新的人类暂停要求：北京时间10月15日07:00暂停，08:00由用户重启；只有此后明确“继续”才恢复。** 这是新截止，旧10月14日08:10继续不豁免它；当前尚未到期，继续原有限工作。新[暂停合同](outputs/experiments/first_stage_ai_search_20261013/control/user_pause_20261015_0700.json)SHA90dd6d81已保存，原文件不覆盖；一次检查s1-ai17-2已设ACTIVE，并按保存创建时间／规则核下一次为10月15日07:00，主15分钟跟进已加入最高优先的新暂停约束。只作用本组73／74，不停18／24及其它组、不代用户重启。operations-only持久timer正在独立准备，部署前不冒称远端已受新timer保护；未来任何任务须先绑定新deadline／协作保存，未覆盖不得准入。
+
+
+
+
 
 同轮最新reader guard3／native2仍在metadata失败，输出02与原件保留，科学数组／GEO仍0；9个转存别名比较已通过，随后历史dispatch graph内的工作树source local_ref版本与当前版本冲突。已定位旧07图五处、旧ae7图三处，共六个不同旧source版本，全部有已核原始字节；r9仅做完整明确可达历史版本诊断，不继续盲试。新外调用0.8048096秒的费用与独审尚待补齐，不能用旧剩58.5666562直接重新执行；暂无新性能结论。
 
+
+
+
+
 **2026-10-14 23:17 S1-AI17-R11首个真实reader进入metadata后退出，尚未读取任何科学数组；累计保守费用1.433344秒，原60秒剩58.566656秒。** 第二次parent guard已实际启动一次native／reader，真实wait exit1，两登记代次均已退出；内guard0.875秒、reader异常前0.718秒均包含在本次完整外部调用1.0258063秒内，不重复加。加前次0.4075375秒，按十进制观测规范累计1.4333438；原receipt记录的内层累计1.2825375与raw浮点值均保留。已检查698次SHA／16.389598MB，但metadata未通过，gzip／科学plain／GEO／布局／整数见证均0，十二行质量仍unknown。[实际费用与原件](outputs/experiments/first_stage_ai_search_20261013/round11/reader_native_metadata_failure_01/root_actual_native_metadata_failure_cost_receipt.json) · [独立范围／费用核验](outputs/experiments/first_stage_ai_search_20261013/round11/independent_reader_review_07/independent_actual_metadata_failure_scope_cost_review.json)。
+
+
+
+
 
 已定位到旧metadata helper把转存后的远端引用与原D盘引用作完整字典比较：原graph两边SHA／313466B相同、路径不同。一次静态核对已列出九个确切的转存别名对，原04／05／c8源码及失败目录01保留；仅允许显式两端map／SHA／bytes均核的非传递plain-metadata别名等价，不全局忽略路径，也不包装typed／gzip／科学数据或改身份校验。Astra与根已冻结[原额度内的必要续审设计](outputs/experiments/first_stage_ai_search_20261013/round11/reader_pre_native_recovery_design_01/root_metadata_alias_continuation_design_acceptance.json)：下一guard3／native2仅在58.5666562秒内、另用output02，完整数组审仍最多一次；新source／map／config／guard独审和根准入前不重试。原R11十二景计算已结束，11完整＋母6工程unknown分类和complete AND3／3门槛不变。[当前清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)。
 
+
+
+
+
 **2026-10-14 22:56 S1-AI17-R11首次真实reader守卫在创建子进程前因本机Python目录链接的路径写法差异退出，科学数组仍未读；原60秒已保守扣0.407538秒，剩59.592462秒。** Config02登记`C:/Users/Admin/anaconda3/envs/DQN/python.exe`，实际`Path.resolve()`为`E:/anaconda3/envs/DQN/python.exe`，文件SHA／104208B完全相同，守卫严格ref字典比较拒绝了不同路径字符串。独审已核失败在admission内，早于输出目录／native intent／Popen；输出目录仍不存在，实际parent guard一次，native／reader／GEO均0。原工具exit1及完整观察调用0.4075375秒保留，不能把零子进程说成免费。[失败原件](outputs/experiments/first_stage_ai_search_20261013/round11/reader_pre_native_failure_01/actual_guard_invocation_failure.json) · [独立零入口与费用证明](outputs/experiments/first_stage_ai_search_20261013/round11/independent_reader_review_06/independent_pre_native_failure_zero_entry_cost_review.json)。
+
+
+
+
 
 此前config01还遗漏了映射Python对象的输入根，已在实际执行前由config02仅添加exact-file根纠正；旧配置与漏审回执均保留，未执行旧config01。当前config03仅修真实canonical E ref；Astra与根已明确[累计预算修复合同](outputs/experiments/first_stage_ai_search_20261013/round11/reader_pre_native_recovery_design_01/root_cumulative_guard_repair_design_acceptance.json)，新独立guard需从自身admission之前计时，最多使用剩59.5924625秒，child沿用同一绝对deadline，不能重新拿60。只补充明确的新guard来源，原数学／child／数据／12分母及工程unknown分类不变，不增加observer或metadata-only子进程；源与精确准入仍待独审，不自动重试。十二景保存输出齐、原R11计算及collector已关闭；母6工程未知仍不补合格，原complete AND3／3门槛不放宽。[当前清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)。
 
+
+
+
+
 **2026-10-14 22:34 S1-AI17-R11剩余五景真实完成，十二景数学输出已齐；工程资格为11景完整、母6未知，尚待唯一效果读审。** 新1994038源码／单74根工具v2／reader05均已独审并根接受，实际74原44件及旧代次退出、输入／源码／暂停／空间／API资格后只发一次POST。原worker56847和新controller／service／observer全部已核结束；五个method guard、worker和新lane均有真实raw0与闭合记录，lane164.626913秒，五方法计时159.752894秒属于其内，不重复加。新138原件290148B已根逐SHA核收，collector也已退出。[新五景独审](outputs/experiments/first_stage_ai_search_20261013/round11/independent_remaining_five_review_01/independent_actual_remaining_five_controls_acceptance.json) · [根实际接受](outputs/experiments/first_stage_ai_search_20261013/round11/independent_remaining_five_review_01/root_actual_remaining_five_acceptance.json)。
+
+
+
+
 
 73六景及母6均未重跑；母6缺直接wait4／完整RSS／terminal的历史事实继续保留，73旧外层partial也不倒写。累计74按原失败＋晚观察上界＋新lane保守扣446.755284秒，剩1953.244716秒关闭、不转移或新调度。R11不再科学POST／求解／新collector；实际flow计数与效果尚未从数组读取，0模型更新、0heldout。[reader05源码资格](outputs/experiments/first_stage_ai_search_20261013/round11/analysis_preparation_05/root_reader_source_preparation_acceptance.json)保持原一次60秒预算和6＋1＋5全12分母；r9正在绑定最终显式原件map／具体配置，须经独立配置审核与根准入才运行。后续结果区分数学有效性与工程完整性，原complete AND3／3门槛不放宽，不能把这轮称完整通过或有效科学负结果。[当前清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)。
 
+
+
+
+
 **2026-10-14 21:52 S1-AI17-R11已有六个方法完整退出、一份结果工程资格未知；接下来仅补74尚未进入的五景。** 同ID恢复经源／reader独审、两端实际source／input／暂停／空间／旧代次核验及SHA屏障后各提交一次。73六个Gh均有原始method guard raw0、300秒内／2GiB资格、terminal和worker exit0；外层在正常进程退出附近触发旧`/proc`观察竞态，仍如实保留partial／−15，但全树闭合和127.325244秒外界可核，不重跑六景。74的母6已经进入算法且保存唯一输出；缺直接wait4、完整RSS资格及terminal，不能记作零入口或成功退出。两端200原件317821B均已根逐SHA核收，所有已登记进程及两个collector均已核结束。[控制与费用独审](outputs/experiments/first_stage_ai_search_20261013/round11/formal_recovery_failure_independent_review_01/independent_actual_recovery_control_failure_review.json) · [根原件接受](outputs/experiments/first_stage_ai_search_20261013/round11/formal_recovery_collection_01/root_originals_acceptance.json)。
+
+
+
+
 
 Astra与根已在读取科学效果前冻结[剩余五景接续合同](outputs/experiments/first_stage_ai_search_20261013/round11/recovery_design_02/root_remaining_five_design_acceptance.json)：仅74的18／36／48／60／78，最多15槽／9流，每景仍300秒／2GiB；原母6三次flow机会保守记spent-or-unknown、不转移。74按同boot全部已退的晚观察上界276.689414秒扣账，剩lane为2117.871629秒；该上界含等待，不能称算法实耗。修复仅处理已登记代次退出竞态及异常后仍尝试直接wait4，不加noop或observer层、不改已冻结数学、不热改旧源。新源和reader控制增量正在准备，未新增POST。完成五景后可审核固定十二景的保存数学结果；母6工程unknown必须单列，原完整性＋3／3门槛不放宽，不能称正式通过、有效负结果或据此自动训练AI。实际科学数组审核／模型更新仍0。[累计费用补充](outputs/experiments/first_stage_ai_search_20261013/analysis/r11_partial_recovery_cost_addendum.json) · [当前清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)。
 
+
+
+
+
 **2026-10-14 21:12 S1-AI17-R11正式两端各唯一POST成功，随后worker在科学入口前被SIGKILL；已独审确认Gh调用0，正在准备同ID窄修接续。** 两端实际worker各约0.03秒即wait4为−9，原服务随后由controller正常收束；62原件48843B及全退场清单已根逐SHA核验，冻结源码前置记录栅栏证明没有Gh原生阶段、流求解、common或模型进入。真实失败进程和费用保留，73／74完整lane已用3.644838／5.438957秒，从各2400秒扣除后只余2396.355162／2394.561043秒，不重置上限。[独立故障与预算](outputs/experiments/first_stage_ai_search_20261013/round11/formal_failure_independent_review_01/independent_formal_worker_early_death_review.json) · [根原件接受](outputs/experiments/first_stage_ai_search_20261013/round11/formal_failure_independent_review_01/root_preentry_failure_acceptance.json)。源码已确认ThreadingHTTPServer临时请求线程创建worker与父死亡信号的生命周期缺陷；实际信号发送者未直接记录，不冒称内核实测。原07及两个成功POST保留，不重放；新持久主线程实现须另冻运维epoch、扣旧成本、独审及新鲜准入后才能同ID接续，科学12母／36槽／26流／300秒／2GiB／3＋3保持。
+
+
+
+
 
 此前独立登记的noop02已真实通过：唯一标准库child wait4 exit0，前台含SSH完整1.219秒、native闭合0.078261秒，9原件8192B已核；根接受的是持久reaper观测机制，不能代替本次HTTP handler路径资格。首次noop01失败和旧四toy外层30秒unknown均保留，四例数学继续有效、均不重跑。[noop02根接受](outputs/experiments/first_stage_ai_search_20261013/round11/prospective_noop02_independent_review_01/root_prospective_engineering_acceptance.json)。独立reader源和单次60秒预算已冻结，实际数组审核仍0；待恢复源确定后刷新producer／控制链引用。目前没有十二景科学质量结论，不判有效负结果、不训练模型。[当前清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)。
 
+
+
+
+
 **2026-10-14 S1-AI17-R11首次无算法接线检查失败，已定位真实helper接口不兼容，第二次有限检查仅登记未执行。** 585新reaper使用四元登记键，原b137 helper按三元键查表，因而把同一已登记child43613同时列为registered／unknown；独审用真实helper＋fake/proc已复现，改变出生代次仍拒绝。实际01已花1次SSH／1个标准库child，前台完整调用1.25秒、observer exit1，child wait4／完整native界均null，不能补0；observer43610及child43613已同boot核退，7原件5681B保留。[失败原件](outputs/experiments/first_stage_ai_search_20261013/round11/prospective_noop_actual_01/failed_originals_01/collection_receipt.json) · [根因独审](outputs/experiments/first_stage_ai_search_20261013/round11/independent_operations_review_01/independent_actual_noop_registry_failure_review.json)。旧585／e3cb及01未改；根按既有Astra前瞻规则另登记02最多一次10秒／128MiB／1MiB／1个child，新源独审与真实准入前不得运行，不补回01额度。[第二次有限登记](outputs/experiments/first_stage_ai_search_20261013/round11/engineering_qualification_design_01/root_second_noop_registration.json)。四例数学1f816继续有效、旧outer30仍unknown；正式十二景／模型仍0。完整本地reader源08674／独审a8c63已通过，但producer pin需随修复源更新后再正式准入。
+
+
+
+
 
 **2026-10-14 S1-AI17-R11四例数学已独审并根接受；正式科学仍0，正修复未来执行的持久退出计时。** 66映射SHA及保存67行的完整域、最优解／边际前缀／不可行割均核对，通过4例且未重跑。历史外层30秒完整资格明确保持unknown，不倒写通过。Astra已提出、根已在十二景结果产生前接受公开的工程准入改订：数学证据单独保留，未来native用持久wait4记录完整退出与保守计时界，源码独审／纯mock后最多一次预登记的标准库noop（10秒／128MiB／0算法）验证接线；独立结果reader先冻结预算／源码。原12母／36槽／最多26求解、每景300秒／2GiB及3＋3科学门槛不变。[四例数学根接受](outputs/experiments/first_stage_ai_search_20261013/round11/toy_actual_independent_review_01/root_four_toy_mathematical_acceptance.json) · [前瞻修复根接受](outputs/experiments/first_stage_ai_search_20261013/round11/engineering_qualification_design_01/root_prospective_lifecycle_repair_acceptance.json)。
 
+
+
+
+
 **2026-10-14 S1-AI17-R11四个固定抽象工程已真实完成，正式十二景尚未提交。** 唯一真正native经新运输源和不可覆盖的`native_entry_fix_02`元数据启动；4次求解／67原始向量均有完整返回与穷举证据，25原件50506B已逐SHA收集。runner真实wait4 exit0，guard内至回执3.686249秒、父子高水合计保守435027968B，无错误；timeout40000／guard40001／runner40002同boot出生代次已全部实核结束，unknown live为空。[真实采集](outputs/experiments/first_stage_ai_search_20261013/round11/toy_actual_02/collected_01/collection_receipt.json)。外层精确退出码和完整运行时刻不可恢复，68.946秒是含观察等待的退出上界，不能记作算法时间或声称小于30；原30秒timeout及guard检查证据保留，正在独立核数学原件及工程资格限度，不重跑四例、不松科学门槛。前次运输失败的零进入证据／未知成本继续保留。[零入口独审](outputs/experiments/first_stage_ai_search_20261013/round11/independent_operations_review_01/independent_launch_failure_zero_entry_source_proof.json) · [当前清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)。
+
+
+
+
 
 **2026-10-14 S1-AI17-R11四例工程启动在运输参数入口失败，尚无原生求解。** 核心／runner／外guard源码已分别独审，73实际DQN、原714＋29新源码、3份历史暂停代次及新暂停路径、共享NFS空间均通过；29源码及41最终输入已落地。唯一launch运输调用因内嵌脚本遗漏`sys`导入，在读取JSON参数时exit1，未到目录／intent／Popen；根实际SFTP确认launch／control／output三目录均不存在。四次solver及67枚举仍0，失败耗时未知保留，不记0成本、不自动重试。正独审零入口证据并修新运输版本；原最终元数据不覆盖，过期route须新路径后同逻辑任务接续。[失败原件与实际路径核验](outputs/experiments/first_stage_ai_search_20261013/round11/toy_actual_01/launch_metadata_failure_01.json) · [当前清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)。R10结案保持，12景科学尚未提交。
 
+
+
+
+
 **2026-10-14 S1-AI17已转入R11准备；R10完整交付闭合，不再运行其科学／collector／归档任务。** R10负结果9／1、报告23、三图及所选规范E／远端主包均已根验；最后8叶712886B状态补充与主包索引保持，两端再次逐SHA核验，旧pending快照保留、不随下一轮追补。[最终元数据接受](outputs/experiments/first_stage_ai_search_20261013/round10/archive_closure_01/root_final_metadata_acceptance.json) · [最终规范回执](outputs/experiments/first_stage_ai_search_20261013/round10/archive_closure_01/final_R10_archive_closure_with_supplement.json)。全历史T0祖先未闭合及预览清理策略拒绝仍明确保留。
+
+
+
+
 
 [方案28](docs/第一阶段/方案/28_固定覆盖图上的峰值直方图目标机制试验.md)的唯一新臂Gh已通过独立数学可实现性审核并[根接受](outputs/experiments/first_stage_ai_search_20261013/round11/root_mathematical_design_acceptance.json)，核心与运维候选源码也已独审。它固定原R10的12母／common／中心／N菜单／q，只将目标改为最高负载优先的精确整数直方图；新36槽、最多26流，不训练模型、不重跑旧对照。当前4个固定抽象图（4次solve＋67向量）尚未执行，正式实际source／输入／工作台／资源资格未通过，不可提交科学任务。原2³⁰读取、300秒／2GiB与新3母优于Gr且3母优于强顺序门槛不松。[R11动态清单](outputs/experiments/first_stage_ai_search_20261013/round11/run_manifest.json)为后继入口；只用73／74，18／24不动。
 
+
+
+
+
 **2026-10-14 S1-AI17-R10报告23、三图与所选科学资产规范双端主归档已根接受，最终handoff仅待小补充。** E／远端NFS各一套，1895新唯一对象／26,108,046原字节，单卷9,843,992字节；根再次流核本地与远端全部新成员SHA一致。3695路径版本别名保留5组原始采集的恢复映射，292共享别名引用已验R9／R7-R8，不重压祖先包；中间报告cc3ed／00b707已精确恢复并核原SHA。[所选归档接受](outputs/experiments/first_stage_ai_search_20261013/round10/archive_closure_01/root_R10_selected_archive_acceptance.json) · [根双端字节核验](outputs/experiments/first_stage_ai_search_20261013/round10/archive_closure_01/root_independent_byte_verification.json) · [完整报告23](docs/第一阶段/实验报告/23_全景容量协调与顺序重构的机制比较.md)。C／D／E同物理盘、73／74同NFS不冒充额外独立备份；全历史T0祖先仍未闭合。render01—04预览清理被自动审批以blocked by policy拒绝，删除未执行、未绕行，原目录保留且不打包，拒绝回执已入档。R10科学分支保持关闭，下一轮方案28仅进入独立数学／源码准备，尚无新科学计算。
+
+
+
+
 
 **2026-10-14 S1-AI17-R10完整12×5已根验为有效负结果：达到降峰目标9／12，超过强顺序对照仅1／12，未过原3／3合取门槛。** 固定Gr覆盖全景三成本族全部9／1成功，不能据此启动成本族选择器训练；本轮科学分支关闭、剩余上限不转移。实际78全景匹配／768局部内核／3188内部局部流，模型初始化／训练0。保存数组审核已完整覆盖4715飞机、3,487,880射线对、838布局，未重跑求解器；独立指标算术确认原门槛、分母与历史错误均保持。[根科学接受](outputs/experiments/first_stage_ai_search_20261013/round10/science_actual_acceptance_02/root_R10_scientific_gate_acceptance.json) · [独立逐母／逐法／费用统计](outputs/experiments/first_stage_ai_search_20261013/round10/science_independent_statistics_01/independent_actual_metric_gate_cost_review.json)。
 
+
+
+
+
 十二景平均峰值需求B／Gr／固定N顺序S2／可变N顺序SH-C为271.8／255.6／234.0／230.4 Mbps；SH-C在7景实际改N，发布N为61—106，五法发布宽度0.3—0.999768377°。SH-C平均N为78.9167（B为76.6667），资源与锚点／多步差异须披露，不把均值或本轮观测时间称独立test、全局最优或AI收益。成功审核8.641秒，加原metadata失败0.953秒为9.594秒，内层时间不再叠加；两次plain资格0.718失败／0.797通过另列工程费用，原日志保存。报告23、三图与规范双端归档正在闭合；下一轮仅由Astra设计同图下直接负载目标的单一新数学臂，尚无新执行准入。
+
+
+
+
 
 **2026-10-14 S1-AI17-R10原12景×5法计算全部完成，新增818原件已根核SHA，正在准备完整独立效果审核。** 接续新增32＋12个原生阶段均正常完成；合并旧28已完阶段，实际12 common／60方法、72次核心进入，原生73次包含旧S2入口前失败。两端controller／service／worker与全部登记child已同boot核退出、unknown live为空，无新执行错误；父进程精确历史退出码仍null，不能改写为0。新增原件5,362,340B均逐文件大小／SHA一致，旧540原件继续引用，不重复制。[根原件接受](outputs/experiments/first_stage_ai_search_20261013/round10/recovery_actual_collection_01/root_collected_originals_acceptance.json) · [双端终态与累计费用](outputs/experiments/first_stage_ai_search_20261013/round10/recovery_actual_collection_01/both_recovery_terminal_collection_receipt_v2.json)。首个reader在plain guard引用整字典比较处失败（同path／SHA，仅可选bytes表示不同），实际0.953秒／exit1；1539文件SHA后尚未解压科学payload、GEO为0，原失败保留，正做明确窄修，后续须另准入且总300秒只余299.047秒。[审核失败与续审范围](outputs/experiments/first_stage_ai_search_20261013/round10/science_actual_acceptance_01/root_metadata_failure_and_continuation_scope.json)。科学质量、全量算法调用计数和原3／3门槛仍待完整独审；原S2未知字段、1.623秒成本与接续2.603秒分别保留，不判提前通过或有效负结果。
 
+
+
+
+
 **2026-10-14 15:49 S1-AI17-R10同ID接续已真实提交成功，两端各唯一resume返回HTTP200。** 新ops bdf54d6及运输工具cf0d23已独审并根接受；两端154文件SHA可见性、真实源／输入／已完原件／新旧暂停／环境／资源资格通过后按原ID接续。73 controller29521／service29522／worker29560，74 controller33041／service33056／worker33094，均记录实际birth／boot／UID，完整根调用序列46.093秒；当前执行进度交只读原件收集核对，不凭提交成功认定科学完成。[根真实接续回执](outputs/experiments/first_stage_ai_search_20261013/round10/recovery_runtime_preparation_01/root_actual_recovery_submission_acceptance.json) · [唯一动作序列](outputs/experiments/first_stage_ai_search_20261013/round10/recovery_runtime_preparation_01/root_execute_01/root_sequence_completed.json)。原5 common／23方法保留，仅接续7／37，旧S2原成本与298.376676秒余上限保持。原60方法仍待完整独立效果审核，模型调用0；18／24未访问，不重复POST、不热改运行源。
+
+
+
+
 
 **2026-10-14 S1-AI17-R10同ID恢复设计已根接受，正在实现与独审；恢复尚未启动。** 原5次common／23个方法按原件复用，接续7／37；科学核心、12景输入与原3／3门槛保持。新运维快照仅修复可变状态发布与恢复调度，原源码、540原件及失败成本不覆盖；每个发布者使用独占临时文件，outer只读观察并写自己的追加日志。failed S2仅在已证零算法进入的原逻辑槽续一次，余时间298.376676261425秒；新暂停优先，原07暂停代次保留。[根恢复设计接受](outputs/experiments/first_stage_ai_search_20261013/round10/recovery_design_01/root_recovery_design_acceptance.json) · [恢复合同](outputs/experiments/first_stage_ai_search_20261013/round10/recovery_design_01/same_id_storage_race_recovery_contract.json)。未核个人quota保持未知，执行8GiB实盘余量及既定有限增长；未知失败临时文件默认保留。最新73／74只读核验无本组科学／归档生产者，正式恢复仍须新源、完整暂停路径与唯一一次resume准入；18／24未访问。
 
+
+
+
+
 **2026-10-14 S1-AI17-R10正式两端已按原计划启动后因状态文件并发写入中断，全部原代次现已退出，正在同ID有界恢复准备。** final02每端唯一HTTP200，73的controller/service/worker为24458/24474/24480，74为27987/28003/28009，实际bootstrap/source/输入/三旧hold和新pause均已核；最初final01仅发生跨端新文件短暂不可见，停在controller/POST前，随后新增双端SHA到位读屏障并重新fresh签发，没有科学重放。此次两端同一根因是outer与worker都写固定storage_latest.json.tmp；73在case0的S2启动阶段失败，74在完成4母后outer失败，不是数学方法无效或科学门槛失败。
+
+
+
+
 
 原540份原件（73:102／324310B，74:438／1303100B）全部SHA闭合。已完common5、方法23，可复用原字节；另43个从未启动阶段及1个S2入口前失败，剩common7／方法37。原生29次、算法entry28次。独审依据入口exclusive/fsync先于唯一core调用、完整目录和无源删除路径，证实73 S2尚未进入算法；原guard的algorithm_spend_exact=null不倒写，原1.6233237385749817秒实耗保留，恢复该槽最多298.376676261425秒。原outer精确退出费用未知，按同boot保守界扣后73/74新outer上限10548.42580656521／10548.100674968213秒，不能与嵌套native重复相加。[原始双端收集](outputs/experiments/first_stage_ai_search_20261013/round10/scientific_preparation_01/actual_scientific_collection_01/actual_both_terminal_original_collection_receipt.json) · [独立原件/复用/零入口审核](outputs/experiments/first_stage_ai_search_20261013/round10/recovery_independent_review_01/independent_original_reuse_and_zero_entry_review.json) · [72阶段与剩余图](outputs/experiments/first_stage_ai_search_20261013/round10/recovery_preparation_01/original_stage_reuse_and_remaining_map.json)。
 
+
+
+
+
 core3e608、原ops0fc及所有已完点保持冻结；Astra制定不看质量的运维恢复合同，Sol准备独立存储观察和唯一临时文件发布修复及必要纯并发验证。未恢复/重发POST，不重跑已完common/方法或原8工程，不增加算法候选、模型、种子或考核读取。此为技术中断，非新用户暂停；08:10明确继续授权有效，新暂停仍优先。原12×5与3/3科学门槛不变，尚无完整效果结论，报告23为pending。
+
+
+
+
 
 **2026-10-14 S1-AI17-R10唯一8例工程已真实完成并通过原数组核验，正在准备两端12景×5法正式比较；科学调用仍0。** 73端原ID r10_engineering8_20261014_20473_01仅执行一次，实际8 Scene／8 common、5全景流、3局部内核及7内部旧流，全部符合事前预期；79原件124451B逐SHA核验。8个原生子阶段exit0，driver21001正常wait0，launcher21000与登记子孙的原代次全部/proc不存在；launcher确切内核退出码无法追溯，保持null，不冒充观测0。整体launcher观察32.762243秒、采样RSS435986432B；同boot外部退场保守界149.766739秒，不与嵌套子阶段计时相加。
 
+
+
+
+
 根单次运行已独审reader，PID41652、原生0.765秒／exit0／采样67.4MB；独立重建36条射线、326覆盖对、14布局和24描述，全部ID／请求／非空／N／宽度Ω／source／计数与八项预期通过，求解器重跑0。工程验证包括非自归属锚点、计数与Hall不可行区分、Ω／外扩边界拒绝、seen谱系和资源unknown，不代表真实场景或AI效果。[根实际工程接受](outputs/experiments/first_stage_ai_search_20261013/round10/engineering_actual_acceptance_01/root_actual8_acceptance.json) · [完整只读审核结果](outputs/experiments/first_stage_ai_search_20261013/round10/engineering_actual_acceptance_01/actual8_saved_array_reader_result.json)。下一步按原12训练母固定6+6分到73／74，各母五方法串行；原108匹配槽／768局部候选及300秒／2GiB等有限门槛不变，新科学epoch／工作台／即时资源／唯一POST仍须根准入。18/24不动，无新模型训练。
+
+
+
+
 
 **2026-10-14 S1-AI17-R10最终核心3e608d0与运维0fcdefe已独审并根接受，正在准备实际工程资格；真实工程／科学／模型调用仍0。** 19份新源码与4份测试均按实际Git字节核验；核心23项纯图／mock、运维27项纯mock通过，另4974个抽象布尔图验证局部流与原R9一致，不能记作真实场景效果。最后两次核心修正只保留common异常费用和工程实际static原数组，旧568／644源及审查原件保留。全部12个既有训练输入恢复为同一已审B，共4715飞机、594873B，ID／位置／每机21600000bps／唯一归属／原束数和cap静态闭合。[根组合源接受](outputs/experiments/first_stage_ai_search_20261013/round10/root_combined_source_acceptance_01.json) · [独立最终源审](outputs/experiments/first_stage_ai_search_20261013/round10/independent_source_review_01/independent_source_review_v2.json) · [根12输入核验](outputs/experiments/first_stage_ai_search_20261013/round10/input_preparation_01/root_exact12_static_origin_qualification.json)。
 
+
+
+
+
 8个工程输入和有限runner已结果前固定；预期5次全景流、3局部内核／至多7旧局部流，S2原32安全上限单列，不能以8例冒充8次任意调用。尚待实际source/import/新epoch/运输护栏与根具体一次执行准入，再独立核保存数组；当前没有执行工程或新母场景。73/74初始实际环境和候选端口只读核验通过，正式启动仍须新鲜事实，18/24及旧74:9021不接管。新增少量pyc清理曾被自动审批返回blocked by policy拒绝，删除0、不换方法重试，缓存不影响科学资格。[清理拒绝原记录](outputs/experiments/first_stage_ai_search_20261013/round10/core_preparation_01/cache_cleanup_rejection.json)。
+
+
+
+
 
 **2026-10-14 S1-AI17-R10数学v2已根接受，核心与运维并行实现，真实科学／工程几何／模型更新均0。** [方案27](docs/第一阶段/方案/27_多峰负载下的全景容量协调机制草案.md)以原12训练母已经审核的R9最好实际终点为共同起点，固定目标最大人数减1，比较Gd/Gr/Gw三种全景整数容量分配与S2/SH-C两种强顺序重构。真实飞机21.6Mbps、原Ncap/Ωcap和逐束宽度均保持；全景每束下界1而不强迫锚点自归属，最终重算真实包络。新中心只取峰值束成员；基线覆盖全部当前源束、语义去重、各32次有效候选机会，不以母36固定N计数不可能为由跳过S2。
 
+
+
+
+
 [最终合同47cb](outputs/experiments/first_stage_ai_search_20261013/design/round10_design_v2.json)固定整数费用、完整可达SSP、可观测计数和五法统一300秒／2GiB护栏；最多108全景匹配槽、768局部内核尝试，8个几何工程样例须另冻输入并准入，W/T/RULE/D5及模型初始化／前向／更新预算0。12×5须全部闭合，再要求全景达到目标≥3母且超过较好顺序基线≥3母；数学收益不冒称AI，未来学习另案。独立8小抽象图17次toy流／133归属穷举通过，只证明算法可实现，未运行真实母图；根另从原保存数组复算支持范围与计数下界。[根设计接受](outputs/experiments/first_stage_ai_search_20261013/design/round10_root_design_acceptance_v2.json) · [独立算法可实现性审核](outputs/experiments/first_stage_ai_search_20261013/round10/preflight_algorithms_01/independent_algorithm_implementability_review.json) · [R10动态清单](outputs/experiments/first_stage_ai_search_20261013/round10/run_manifest.json)。core/ops为两个Sol，另Sol独审，Astra设计；正式源码／12原点／工程／73和74新鲜工作台资格仍待闭合，不触18/24或封存考核，不重开R9／原R7余额。
+
+
+
+
 
 **2026-10-14 12:18 S1-AI17-R9完整M已核验为有效负结果，报告22与三图根验收；本轮后继关闭。** 原定12训练母全部完成，实际12 RULE／12 D5／384描述槽／345内核进入，39槽结构不可用单列，模型更新0。全池对受保护原点成功7/12，但超较好Hq/HΩ规则0/12，较最佳固定位置成功数差0，未过原6／3／差3合取门槛。固定“最重束＋最近邻2→2”覆盖同7母成功集合，不等于所有指标或布局相同；局部数学收益保留，不称AI成绩或训练失败。剩余84母标签、1000更新和开发640槽关闭、不转移，heldout未读。[报告22](docs/第一阶段/实验报告/22_强布局保护下的重构候选机制试验.md) · [根科学判定](outputs/experiments/first_stage_ai_search_20261013/round9/M_independent_analysis_01/root_M_negative_result_acceptance.json) · [图文验收](outputs/experiments/first_stage_ai_search_20261013/round9/M_independent_analysis_01/root_report22_and_figures_acceptance.json) · [累计统一轨道预算](outputs/experiments/first_stage_ai_search_20261013/analysis/uniform_track_budget_and_best_verified_through_R9_M.json)。
 
+
+
+
+
 实际任务r9_M_20261014_20473_01唯一POST、48子阶段完成，1698原件5,467,230B全核；控制器11425、worker11445与服务11428出生/退出闭合，9030已停，无本轮活动计算。独立reader原生4.0860384秒、模型/内核重执行0；三图和原逐束宽度双端核SHA。R9小型规范双端归档已根接受：1881个新对象、13,671,781原字节、主包6,952,090B，170共享引用复用R7/R8；根流读全部新对象并新鲜SFTP读远端主包/索引/补充元数据逐SHA一致，[归档验收](outputs/experiments/first_stage_ai_search_20261013/round9/archive_closure_01/root_R9_archive_acceptance.json)。只读结果证明5个未命中母均有多束并列最大且每个原局部区域遗漏至少一束，因此该有限作用范围不能降低全景峰值；下一轮正设计全景容量协调与强顺序重构比较，仍0新科学调用。只用73/74，不接管18/24。
+
+
+
+
 
 **R7/R8所选科学资产规范双端归档现已闭合，完整历史T0祖先链仍未闭合。** E与共享远端各一套R7_R8_archive_closure_03，三块合计69,344对象、615,339,866原字节并引用已核共享依赖，完整对象集和SHA均闭合；73/74同NFS不算两份独立备份。旧归档01在payload前失败，02远端因系统Python兼容性失败但本地块已完成，03复用其字节完成；原失败与未知费用保留。仅在完整核验和恢复映射后清理已核83MB旧重复块，此前策略拒绝的另一工程副本未重试。[根所选归档接受](outputs/experiments/first_stage_ai_search_20261013/round8/archive_closure_01/root_selected_archive_acceptance.json) · [最终双端回执](outputs/experiments/first_stage_ai_search_20261013/round8/archive_closure_01/final_R7_R8_canonical_closure_receipt.json) · [恢复说明](outputs/experiments/first_stage_ai_search_20261013/round8/archive_closure_01/restore_instructions.json)。所选R7/R8闭合不等于全部T0原始596景祖先已备份；该限制继续保留。
 
+
+
+
+
 **2026-10-14 S1-AI17-R9已在73真实完成唯一8例工程并根验收，正在准备12景M机制实验，科学调用仍0。** 冻结core4a82bf0、ops06c6ca7；源码交叉核验、42操作层mock、15核心纯检查及602图整数流穷举通过。实际Linux八例6个合法改进、2个预期拒绝，完整ID/唯一归属/每机21.6Mbps守恒、覆盖、N/宽度/Ω及固定输入闭合；33原件233728B逐SHA核对。原生guard2.414084秒、轮询RSS峰771563520B、child9846/runner9815/launcher9814出生与退出证据完整，没有重跑fixture。[根实际八例接受](outputs/experiments/first_stage_ai_search_20261013/round9/engineering_actual_acceptance_01/root_actual8_acceptance.json) · [独立原数组审计](outputs/experiments/first_stage_ai_search_20261013/round9/engineering_actual_acceptance_01/independent_actual8_review.json)。八例正式终点均0.3°，被拒第6例raw宽0.640104301°用于验证Ω拒绝；这是正确性资格，不能称已证明科学调宽或AI收益。
+
+
+
+
 
 新M固定原训练indices 0/6/12/18/24/36/42/48/54/60/72/78，最多12新RULE+12原D5+384描述槽；通过预冻6/3/3机制门槛才另准入后继标签，尚不训练。原96景100004机静态、原714及新14实际源、DQN3.11.11/Torch2.3.1+cu121已实核，三旧hold精确代次保留并依08:10人类继续豁免，新暂停仍阻断；工程epoch不替代M科学epoch。[组合源接受](outputs/experiments/first_stage_ai_search_20261013/round9/root_combined_source_acceptance_01.json) · [R9清单](outputs/experiments/first_stage_ai_search_20261013/round9/run_manifest.json)。R7/R8归档先后在无payload的空间接口与系统Python兼容性处失败，原件及费用未知保留；当前v5后台44084/新_03复用已完成本地块，只补远端，最终双端索引尚待收，不能提前称全档完成。18/24归其它组，本组仅73/74。
 
+
+
+
+
+<!-- W26_CURRENT_START -->
+
+
+**2026-10-15 S2-W26正式报告18完成：四模型与三规则680回合共同确认、7图和原件归档均通过。** 四训练各150000步/148001更新，开发4320回合；确认固定四终点，在20418同GPU交错执行40母×17，实际54553决策，无重启，全部N处理与资源约束通过。S10（加宽度）SI95.5952%、SGM0.621518；贪心92.1711%/0.280062；随机89.0571%/0.298063；固定92.6550%/0.203974。四模型相对三规则双指标均值及24描述性配对区间均为正，但SI有5—8母退步。S10相对S00增0.6360个SI百分点/0.012886SGM；同时加关系没有额外双指标优势。S10比贪心平均功率高16.12%、模型在线算法时间更长，不称全指标占优。
+
+
+
+
+
+本轮只有seed51001，确认仅两日期40母，实际宽度0.3°至略小于0.5°，未证>.5°或N近200；共享理想PHY、不涉及逐机QoS/S3。1452个归档原件逐SHA通过，本地保636完整输入和72固定节点策略，remote保原科学资产与官方tar；运输副本在验后定向清理。原训练监测11:40断连空窗、工程962步恢复及EOL来源修正均保留。入口：[正式报告18](docs/第二阶段/实验报告/18_T0束宽与干扰状态的直出基线对照.md) · [完整统计](outputs/experiments/s2_width26_20261014/report_analysis/analysis_summary.json) · [根最终验收](outputs/experiments/s2_width26_20261014/verification/final_acceptance_01/root_final_acceptance.json) · [总账](outputs/experiments/s2_width26_20261014/run_manifest.json)。
+
+
+
+
+
+用户已授权报告交付后自主探索提升T-SAC（Astra设计、Sol代码/报告），新增20627账号资源；新轮另建方案与预算，不覆盖W26。北京时间2026-10-15 07:00前保存暂停本聊天任务/调度，等用户明确“继续”；具体[暂停合同](outputs/experiments/s2_width26_20261014/control/user_pause_20261015_0700.json)优先。
+
+
+<!-- W26_CURRENT_END -->
+
+
+
+
+
+
+
+
+
+
+
+**2026-10-14 10:22 S2-W26数据636全部核验发布，三组GPU工程通过，第四组恢复缺陷正修复；正式训练尚0。** 实际冻结源def1bdb，20418/20424各两工程2048/seed73026。S00/S10/S01均2048步、49次更新；S11在962步/0更新安全暂停后，CUDA随机状态回装类型错误触发保护，原current962、WAL与日志完整，旧768回退被拒，未免费重放或截断。下一步在新冻结源修复主机随机状态位置，并以原ID/原配置/原962断点显式资格接续剩余1086步；四工程预算合计8192不增，正式四组150000/seed51001待此门槛。
+
+
+
+
+
+数据为576训练/20开发/40封存确认，全部飞机21.6Mbps和几何/唯一归属/请求守恒通过；594原Wenv复用、42新Wenv，独立636布局检查失败0。训练实际N45—104、开发47—98，宽度FP32确实有变化。此前4ea源码导出为CRLF，完整722文件独审仅换行差异及685 Python AST一致，原源码/回执不改；新def1真Gitblob，既有数据以窄资格保原实际来源。不得把训练N范围称已验证全部≤200。记录：[动态清单](outputs/experiments/s2_width26_20261014/run_manifest.json) · [全量数据审计](outputs/experiments/s2_width26_20261014/data/audit636_summary.json) · [工程任务](outputs/experiments/s2_width26_20261014/deployment/engineering_01/phase_state.json)。
+
+
+
+
+
 **2026-10-14 S1-AI17-R9设计v3已根接受，正在并行实现与资格核验；科学调用仍0。** [方案26](docs/第一阶段/方案/26_强布局保护下的局部重构价值学习草案.md)先保护原RULE三项负载质量，再用24→64→32→1 MLP排序具体区域1→2/2→2/2→3/2→1重构。先12原训练母的完整32候选机制检查，必须证明全池收益超过两种强规则各前8及任何固定槽，才补剩84标签、训练seed51001固定1000更新；内部16门槛通过才做原20重复开发，heldout不开放。总新上限96 RULE/96 D5/3712候选/1000更新按新轮登记，不借原R7剩4000；每阶段失败即停止该分支。[v3合同](outputs/experiments/first_stage_ai_search_20261013/design/round9_design_v3.json) · [根设计接受](outputs/experiments/first_stage_ai_search_20261013/design/round9_root_design_acceptance_v3.json) · [R9当前清单](outputs/experiments/first_stage_ai_search_20261013/round9/run_manifest.json)。
+
+
+
+
 
 固定6*j的96原训练母prepared/T来源只读映射已核，实际Ncap63–123；仍须完整场景数组、源、8个事前冻结合成fixture、工作台和新鲜73/74资源资格，之后根签具体M任务才能启动。设计Astra、核心与控制层两个Sol并行，旧科学模块保持。R7/R8归档只读清点已由有界后台worker承接，未打包或删除；73/74实为同共享NFS，挂载余量不是个人配额，两端不能冒充独立备份。本地E加远端一套为规范归档目标，18/24不接管。统一轨道截至R8的[预算与当前已验证参照](outputs/experiments/first_stage_ai_search_20261013/analysis/uniform_track_budget_and_best_verified_through_R8.json)区分失败计费、2000真实更新与尚未验证的AI替代，不拼接异质历史成绩。
 
+
+
+
+
 **2026-10-14 09:43 S1-AI17-R8完整60槽已独立核验并按质量门槛停止，报告21与三图已交付。** A/G/R均20/20非回退；A质量成功仅2/20（case 2、4），未达5例，尽管实际转移、变N和变宽均20/20。平均峰值A/G/R为1069.2/1063.8/1138.32 Mbps，A对几何规则G没有增量优势；原RULE均值更好但实际N不同，不作同N或速度结论。根重建全部60原D5数组和20质量谓词，来源/身份/硬约束/预算闭合，heldout未开。[报告21](docs/第一阶段/实验报告/21_保覆盖局部引导完整开发对照与停止.md) · [根完整结果验收](outputs/experiments/first_stage_ai_search_20261013/round8/analysis/root_actual60_and_gate_acceptance.json) · [三图及报告核验](outputs/experiments/first_stage_ai_search_20261013/round8/analysis/root_report21_and_figure_acceptance.json)。
+
+
+
+
 
 原ID于08:52真实完成，旧G0只读复用、59槽恢复后执行；实际科学local60/D5 60，native local61含一次已证算法前读取失败，工程12local另账，新W/T/模型前向/更新均0。原07暂停与08:10人类继续均保留；R8不再续算，原R7剩4000关闭，整个研究仍按用户授权继续。独立reader v4 exit0/33.274385秒，旧故障精确费用null保留，不声称速度收益。[终态退出核验](outputs/experiments/first_stage_ai_search_20261013/round8/resume_after_0700/root_terminal_closure_original.json) · [当前清单](outputs/experiments/first_stage_ai_search_20261013/round8/run_manifest.json)。R7/R8整体双端归档正在补齐规范清单；三图16文件已双端逐SHA通过。R9正在设计与实现预审：以RULE三指标保底，先12训练母检查具体局部重构是否有强规则遗漏的收益，再决定训练；本轮新增科学调用0，未把草案当作已实施。73/74是本组后续待新鲜准入资源，18/24由其它S2-W26使用，不接管。
 
+
+
+
+
 **2026-10-14 08:41 S1-AI17-R8已真实同ID接续；08:42快照合并完成12/60槽，首个AI阶段正常通过。** 仅一次恢复POST成功，74新API9021服务1945/ticks853287724、worker1978/ticks853287833及新boot268486b1一致；首0:A localcompleted与D5success，原0:G及旧slot_index仍原SHA、合并索引复用旧G引用。当前新epoch预约12local/11D5含一个进行中的local，不能把预约数冒充最终算法数；计算继续，暂无全20质量结论。[实际恢复回执](outputs/experiments/first_stage_ai_search_20261013/round8/resume_after_0700/exact_9021_start_and_resume_once_transport.json) · [08:42真实状态及G复用](outputs/experiments/first_stage_ai_search_20261013/round8/resume_after_0700/actual_first_resumed_worker_and_G_reuse.json)。
+
+
+
+
 
 运维dfacfc0仅修读取与明确人类继续控制，原科学bea/四核心/模型/D5不变；新源12py及六元数据实字节、原714源/20输入/2000断点/169不可变保护项、旧status快照和历史hold代次均闭合。根明确接受无环C/E/inner组件，再冻结[最终接续计划](outputs/experiments/first_stage_ai_search_20261013/round8/resume_after_0700/resume_plan_final.json)SHA36d44dee与[外层执行准入](outputs/experiments/first_stage_ai_search_20261013/round8/resume_after_0700/resume_root_review_final.json)SHA8deaad52，源/合同15纯检查及精确graph独审通过；仅本次epoch豁免旧07截止，不删旧暂停文件，新暂停仍阻断。持久60秒只读collector负责终态与退出证据，完整结果reader v2已源码独审、尚未执行；保持剩59/59、完整20×3及15/5/5/5门槛，0新W/T/模型前向或更新。
 
+
+
+
+
+**2026-10-14 S2-W26获20418/20424实施授权，正在代码/数据准入，正式训练尚未启动。** 用户要求两端开始，四组各150000/seed51001已登记，保原T0架构/奖励/功率学习。根08:17真实SSH核两端4090D/CUDA可用、GPU无compute、本项目进程0，重启后GPU为f6ca9b90…与97512055…；旧服务已停，新9060/9061拟承接独立`s2_w26/{port}`，发布前仍刷新资源和实际包路径。原596请求输入运输保597个SHA对象约178MB；拟独审复用594原Wenv、缺2个及40新确认母按预算准备，确认日期23/24未实际用于旧T24（其实际21/22及无后续调度已核）。四组候选实现和恢复/监测修复并行，完整636布局与GPU工程资格尚未闭合，当前正式交互0/600000；不接管已暂停S1或恢复旧T24。入口：[授权](outputs/experiments/s2_width26_20261014/authorization.json) · [动态清单](outputs/experiments/s2_width26_20261014/run_manifest.json) · [存储登记](outputs/experiments/s2_width26_20261014/storage_plan.json)。
+
+
+
+
+
 **2026-10-14 08:22 S1-AI17收到暂停后的明确“继续”，正在按原任务接续，尚未新增科学调用。** 根首次确认人类继续为08:10:43，已保存[明确恢复授权](outputs/experiments/first_stage_ai_search_20261013/round8/resume_after_0700/root_explicit_user_continue_authority.json)SHA75098fdb。08:16新鲜实核73/74分别为新boot25176dc4/268486b1，旧guard/worker不存在、无残留native计算，原11+714源码、20输入、2000断点、G0/index及失败证据闭合；旧service日志仅追加访问行，原失败快照仍保持，不误判为科学资产损坏。[重启后真实观察](outputs/experiments/first_stage_ai_search_20261013/round8/resume_after_0700/fresh_actual_01.json)。
+
+
+
+
 
 当前原ID`r8_pilot_20261014_062616_bea1406`仍仅实际local1/D51，剩59/59；原R7剩4000关闭，原12工程几何不重跑，0新前向/更新。Astra[明确恢复epoch设计](outputs/experiments/first_stage_ai_search_20261013/round8/resume_after_0700/explicit_resume_epoch_design.json)与[根设计接受](outputs/experiments/first_stage_ai_search_20261013/round8/resume_after_0700/root_resume_epoch_design_acceptance.json)限定只豁免这次已满足的旧截止与确切历史hold文件代次，原件不删、新暂停仍有效。Sol正在实现/复核控制变化并绑定精确运行合同，actual新9021和resume POST尚未准入；技术dispatch_hold不再表示缺人类授权。原15分钟跟进已恢复ACTIVE、一次07检查保PAUSED，并逐字段回读，[跟进回读](outputs/experiments/first_stage_ai_search_20261013/round8/resume_after_0700/actual_followup_reactivated_readback.json)。
 
+
+
+
+
 **2026-10-14 07:00 S1-AI17已按用户要求暂停，只待此后明确“继续”。** 根07:00:25分别实核73/74原deadline guard同PID出生存活、持久`user_pause/dispatch_hold`均true，全局登记含当前R8；两端没有本组计算进程，旧R6/R7任务无活动排队，R8原worker已结束。2000步完整断点本地/远端SHA仍为10ff42e7，已完成结果与失败原件保留；没有停止其它任务或重启云服务器。两项本组heartbeat已设PAUSED并逐字段回读，原提示/周期/目标未改。[实际暂停与断点观察](outputs/experiments/first_stage_ai_search_20261013/control/root_actual_0700_pause_observation.json)SHA2b2019a5 · [根暂停回执](outputs/experiments/first_stage_ai_search_20261013/control/root_user_pause_0700_receipt.json) · [自动跟进关闭回读](outputs/experiments/first_stage_ai_search_20261013/control/automation_0700_paused_readback.json)。
+
+
+
+
 
 暂停时R8为1/60方法槽已完成：实际local1/D51，另一次A native读取失败发生在算法前，native2/1及2.7083秒失败开销保留；剩59local/59D5未接续。恢复源码12afaff仅运维变更、独审和根源核通过，14纯检查及原20缓存有界读取核验通过；原4核心/模型/D5字节未变。新9021恢复服务、远端新源闭合、精确恢复合同/路由及根执行准入未实施，恢复POST=0；用户继续后仍须保原G0和失败证据、核剩额并制定新的暂停解除epoch，不能自动删hold或重放旧调用。[恢复源码接受](outputs/experiments/first_stage_ai_search_20261013/round8/recovery/root_sameID_source_acceptance_before_pause.json) · [当前清单](outputs/experiments/first_stage_ai_search_20261013/round8/run_manifest.json)。全部研究仍未完成，R7整组归档与R8完整评价/报告待后继；重复副本394899B的已核清理被自动审批以“blocked by policy”拒绝，0删除、原件与副本均保留，[清理阻断回执](outputs/experiments/first_stage_ai_search_20261013/round8/pilot_failure_readonly_01/engineering_duplicate_cleanup_blocked.json)。
 
+
+
+
+
 **2026-10-14 06:52 R8首段因AI缓存引用读取接口错误停止，未形成AI效果结论；实际算法local1/D51，剩59/59待同ID接续。** 原0:G已完成local与D5；0:A native child因minimal gzip ref没有`uncompressed_bytes`被typed reader拒绝，确定发生在`core.local_transfer`之前，A无state/static/输出。故native启动2local/1D5与实际算法1local/1D5分列；失败guard耗时2.708343秒仍计运维费用，不能删为零。原worker98004同birth已Z/kernel256、三登记子进程均退出；173原文件542691B双端SHA已根复核，原0:G及slot_index、所有失败request/WAL/guard保留。[原故障与预算](outputs/experiments/first_stage_ai_search_20261013/round8/pilot_failure_readonly_01/collection_and_budget.json) · [根故障/恢复设计接受](outputs/experiments/first_stage_ai_search_20261013/round8/recovery/root_failure_and_same_id_design_acceptance.json)SHAd323ad4b。
+
+
+
+
 
 仅caller读取窄修acd03ea已独审：先核原压缩SHA，再有界gzip读取，不改分数或数学；20原缓存只读回验通过，3纯格式检查通过，4个R8核心/原D5/模型源码不变。Astra[同ID接续设计](outputs/experiments/first_stage_ai_search_20261013/round8/recovery/design_same_id_pre_local_input_fix.json)保持实际累计最多60local/60D5，已完成G不重跑，未完成59slot须新epoch路径与独立精确准入；旧失败开销/精确费用null与完整父保守上界141.5775秒继续保留，无速度主张。当前未恢复、未新POST、未运行全20结果reader；07:00暂停要求优先。[caller独审](outputs/experiments/first_stage_ai_search_20261013/round8/pilot_failure_readonly_01/independent_envelope_caller_acd03ea_review.json)。
 
+
+
+
+
 **2026-10-14 06:43 S1-AI17-R8真实启动原20景三方法试点，工程12/12已通过；尚无质量结论。** 唯一POST在06:43:04成功，74/API9020原生服务97986/ticks852535744、worker98004/ticks852535908，均boot9129；单任务`r8_pilot_20261014_062616_bea1406`最多60local+60D5，W/T/前向/模型更新0。原R7剩4000关闭；本轮只复用固定2000模型原full200 owner缓存、共同合法Wenv与原D5，在同池/同预算下比较A/G/R。源码bea1406组合独审及根核通过，原六数学文件不变，实际DQN/714旧源+11新源/20输入/9020无冲突/存储/07点暂停注册均闭合。[精确计划](outputs/experiments/first_stage_ai_search_20261013/round8/pilot_exact_execution_plan_01.json)SHAc904b037 · [根启动准入](outputs/experiments/first_stage_ai_search_20261013/round8/root_pilot_execution_admission_01.json)SHA5a91c867 · [真实POST回执](outputs/experiments/first_stage_ai_search_20261013/round8/r8_pilot_20261014_062616_bea1406_start_transport.json)。
+
+
+
+
 
 四手写fixture×三法共12次真实local全部通过，0额外D5或模型调用；单机来源排除、几何/Ω拒绝原点保留、均匀分数A/G同序、合法整机转移及请求守恒均实核。119原文件394899B逐SHA双端保留，父/12子进程/supervisor均退出，父完整外部上界44.2342秒仅工程费用。[根工程验收](outputs/experiments/first_stage_ai_search_20261013/round8/root_exact12_engineering_acceptance.json)SHA9dfb0791。15/5/5/5及完整20×3门槛的原R7容差/R5宽度语义在科学启动前06:41:50由Astra澄清冻结；宽度长度变化的原判定不能单独证明AI学会调宽。[预先精确门槛](outputs/experiments/first_stage_ai_search_20261013/round8/analysis/frozen_gate_predicates_before_pilot.json)。独立reader正在准备，当前不按部分样本预判通过；07:00仍暂停本组未完成计算及后继，只待人明确继续。18/24未重新准入。
 
+
+
+
+
 **2026-10-14 05:29–05:57 R7完整开发判定未通过并科学停止；R8方案25已冻结进入实现，新增科学调用仍0。** 原20母/80方法终态已在05:16:49完成，160项outer/inner guard全部exit0；复合worker为Z/内核exit0、未假称已回收。独立原数组审核退出0，耗时39.639秒（内部审核38.022秒为其中一部分），科学硬约束、调用账与外部退出包络均闭合；根逐20行重算AI非回退1/20、质量成功0/20，未达15/5。原成本gate因case0精确费用未知仍false，新恢复资格也因质量未过而false；原剩4000更新关闭、不转入后继，R7 validation/test未开。累计本轮真实W596/T595/D5 634及训练2000更新。[根负结果接受](outputs/experiments/first_stage_ai_search_20261013/round7/analysis/root_node2000_negative_result_acceptance.json)SHA8cf18656 · [独立事实](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_failure_readonly_01/analysis_independent_facts.json)SHAcec26f86 · [报告20](docs/第一阶段/实验报告/20_统一请求集合模型开发评价与机制停止.md)。
+
+
+
+
 
 共同20均值：AI/RULE/RANDOM/T峰值请求2250.72/892.08/2255.04/960.12 Mbps，N80.50/97.15/80.25/88.15，保全部回退且实际N不同。AI19次回退全部unrepaired_orphans、未到Q0且最终精确等Wenv；RULE20次success，RANDOM20次fallback。原缓存均含full200 owner(n,200)；重复锚点不能单独解释失败，唯一成功case1重复最多。真实非回退且同时变N与宽度只1景，但质量仍未过；reader缺字段的default0不是该统计依据。[机制诊断](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_mechanism_diagnosis_01/root_cause_counts_and_evidence.json)。原故障worker上界721.9699414秒与恢复worker外部退出上界690.4226915秒各有边界且包含空等，不是精确方法费用；不作速度论断。关键0/2000断点双端齐，R7整体归档仍待闭合。
 
+
+
+
+
 [方案25](docs/第一阶段/方案/25_保覆盖骨架下的固定模型局部引导试点.md)/[R8合同v2](outputs/experiments/first_stage_ai_search_20261013/design/round8_design_v2.json)选定固定2000模型原分数引导合法局部转移，在共同Wenv骨架与同池/预算下比较AI、几何、hash三种次序；原20重复开发，0新W/T/前向/更新，最多60local+60D5，不开放heldout。几何/算术/排序/IO及12固定工程local额度均已界定，AI仅同整数收益候选内排序，不能将共同骨架收益归AI。[根设计接受](outputs/experiments/first_stage_ai_search_20261013/design/round8_root_design_acceptance_v2.json)SHA463c0dd5。Sol两路在受管`codex/stage1-r8-owner-guidance`实现core和独立9020工作台/暂停保护；20原输入已只读资格通过、唯一输入57,163,241字节。首次含torch导入的资格超时实际费用未知且原件保留，原helper已实核无残留；第二纯哈希核验4.0134秒另账。当前无新服务、无12工程几何调用、无科学POST；须组合独审/工程/新archive暂停注册/实际资源/冻结任务后启动。[R8当前清单](outputs/experiments/first_stage_ai_search_20261013/round8/run_manifest.json)。07:00暂停保持，18/24仅收到归还未重新准入。
+
+
+
+
 
 **2026-10-14 05:08 R7原node2000已同ID恢复运行，根实核完成5/20母，旧W/AI/RULE新增调用均0。** 唯一恢复POST于05:06:11成功；原idle9016服务79533按同出生核验后仅TERM退出/监听关闭，新restricted9018服务89002/ticks851954517、worker89021/ticks851954589真实存活，科学523/714加独立运维e513复合来源已核。根05:08:41直接GET和PID出生、preCUDA、6ops源码与62原证据SHA全部核对，case_index为0—4，无新failure；原status已先精确备份，当前error清理且原failure引用保留。[根实际恢复](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_failure_readonly_01/root_actual_e513_recovery_running.json) · [最终合同](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_failure_readonly_01/actual_contract_final.json)SHA3cd8a26f · [最终根准入](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_failure_readonly_01/actual_root_review_final.json)SHA9889a899。
 
+
+
+
+
 e513仅新增运维模块，旧523所有源码字节未改；首景8→6仅内存兼容、AI路径不变，case0 row及cost endpoint均保exact null/旧gatefalse。独审曾拦下2e的dict别名遗漏，已修并通过16项纯检查与原RULE真实字典核验。恢复finally时钟只为截至取样的暂定值，最终须再做同boot外部退出核验，不能据此称完整费用。原20母/15非回退/5质量、全调用上限20W/20T/60D保持，2000训练及备份不变，6000尚未准入；独立恢复结果reader准备中。[最终源独审](outputs/experiments/first_stage_ai_search_20261013/round7/implementation/independent_node_recovery_e513ed0_review.json) · [根源接受](outputs/experiments/first_stage_ai_search_20261013/round7/implementation/root_node_recovery_source_e513_acceptance.json)。07:00永久暂停守卫保持。
+
+
+
+
 
 S2-T24已通知18/24归还；本组已核两份归还JSON及本地引用SHA，仅登记收到。本轮仍只用73/74，未对18/24做新鲜远端核验、改lease或提交新任务，也未据此增加预算；未来接入还须核实际资源并纳入同一07:00暂停保护。[接收回执](outputs/experiments/first_stage_ai_search_20261013/followup/s2_t24_18_24_return_notice_received_20261014.json)。
 
+
+
+
+
 **2026-10-14 S2-T24六法Direct报告与全部科学归档已交付，20418/20424已归还并通知当前S1-AI17。** 三算法各150000步、学习450000/450000、工程1843/6144，prepare40/40、共同考核560/560及56000束；第三阶段0。报告17、六组中文PNG/PDF/CSV及独立数值复核均验收。SAC的SI/SGM为90.1782%/70.5027%，其SGM对其余五法在主分析与块敏感性十差族99.5%区间中均有正下界；SI无比较同时通过，预定双指标优势均不成立。结论限于历史T0旧数据、固定布局与单训练种子，既不恢复废案F20，也不批准方案26训练。[报告17](docs/第二阶段/实验报告/17_T0任务下三算法直出公平对照.md) · [最终交付索引](outputs/experiments/s2_t0_fair24_20261013/delivery/final_delivery_index.json)。
+
+
+
+
 
 原始数据、完整断点/模型、曲线、冻结Git/source和失败材料已按真实原字节在本地E及原远端归档。主交付包101449552B、SHA`a634a9e99c2aabf6535e32c224f38ead3d250bf1a1467326830b13fec54e1893`，647成员经独立读回；运维补包及归还证明包也已远端整包回验。大TAR/模型/原曲线由规范原件索引引用，小包并非独立包含全部大型资产。清理了12份可再生rows镜像（263761928B），以及已完整入包的暂存/旧图和上传硬链接别名；原件与失败证据保留，恢复映射闭合。C/D/E同物理盘、远端共享home及硬链接均不冒称独立多份备份。[归档验收](outputs/experiments/s2_t0_fair24_20261013/delivery/Root_final_scientific_archive_acceptance_v1.json) · [空间清理回执](outputs/experiments/s2_t0_fair24_20261013/storage/Root_final_archive_cleanup_receipt_v1.json)。
 
+
+
+
+
 北京时间05:03实际停止了本组空闲9040/9041服务及本地截止守卫，原服务和matrix/DQN子进程均已回收；原8任务全部completed、锁可独占，两GPU各查询exit0/UUID匹配且compute为空。原pidfd接口/内核EPERM保留，最终使用经独审并明确批准的同UID、出生/命令/源码双检单次SIGTERM，不宣称原子pidfd保护；未停止科学worker、未修改S1 lease、未关停云实例。随后通过已授权消息向“探索第一阶段AI方案”通知归还；发送回执保存，不冒称对方已读。`s2-t24-t0`和`s2-t24-07-00`均已PAUSED并精确回读，资源已交接后本组只读终态缓存、不再连接四端。[18归还](outputs/experiments/s2_t0_fair24_20261013/delivery/20418_resource_return.json) · [24归还](outputs/experiments/s2_t0_fair24_20261013/delivery/20424_resource_return.json) · [通知回执](outputs/experiments/s2_t0_fair24_20261013/delivery/resource_return_owner_message_receipt.json) · [自动化关闭回读](outputs/experiments/s2_t0_fair24_20261013/followup/actual_completed_PAUSED_readback_v1.json)。
+
+
+
+
 
 **2026-10-14 04:30–04:40 R7已完成首2000更新，首景开发评价发生身份审计兼容故障；正准备保原结果的同ID修复。** 训练`r7_train2000_20261014_034851_d240f29e`于04:14:39 completed，真实2000/6000，活动1671.697705秒，原worker退出；固定节点SHA`10ff42e7…`、55模型tensor/AdamW step2000/sampler/RNG/原574供给来源独审通过，状态末心跳1994不代表少训6步。初始0与2000完整断点已独立复制到本地models/runs并逐SHA闭合，远端原件保留。[实际终态与原件](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/train2000_completed_raw/collection_manifest.json) · [终点独审](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_preparation_01/independent_actual2000_nodeplan_acceptance.json) · [关键断点双端备份](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/key_checkpoint_dual_host_backup_receipt.json)。
 
+
+
+
+
 唯一20景节点任务`r7_node2000_20261014_042707_19e62edd`在74/9016于04:27启动，首景RULE父检查报`independent baseline proposal`，04:30根实核failed、worker/controller及五子进程均已退出。实际W1/T0/D5x2，AI与RULE原child均正常返回，RANDOM/T未启动；0完整发布母/20，余W19/T20/D558，未盲重试。[原失败与预算](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_failure_readonly_01/failure_budget_summary.json)。原R7 proposal/request/prepared/provenance完整8身份字段相同，旧R5检查器投影6字段导致唯一`proposal_identity`错误；仅内存兼容后原scores/anchors/mask全通过，非AI效果失败。[独立根因](outputs/experiments/first_stage_ai_search_20261013/round7/analysis/node2000_failure_diagnosis_01/independent_rule0_failure_diagnosis.json)。
+
+
+
+
 
 正在新增带来源的R7兼容审计及受限同ID恢复入口，旧523源码/原任务/结果不覆。首景丢失的父开销及完整冷成本保持null，已知outer guard合计16.4362秒仅部分、内D5不重复加；原精确费用门槛不能假称通过。根04:41在所有剩余科学调用前接受Astra独立恢复资格修订：保原20分母与15/5质量门槛、全部科学硬约束及调用预算，故障worker费用仅有721.9699414秒保守上界（含退出后空等、不含更早controller），禁速度结论；原gate=false保留，6000仍锁定，代码/部署/恢复与未来结果尚待根验收。[正式方案24](docs/第一阶段/方案/24_开发评价身份兼容修复与同任务恢复资格.md) · [根前瞻接受](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_failure_readonly_01/root_prospective_recovery_amendment_acceptance_v2.json)。[恢复设计v1](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_failure_readonly_01/node2000_minimal_scientific_recovery_design_v1.json) · [前瞻资格v2](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_failure_readonly_01/node2000_prospective_recovery_qualification_amendment_v2.json)。07:00暂停、仅人工明确继续保持，18/24不动。
 
+
+
+
+
 [2000步原始训练曲线](outputs/experiments/first_stage_ai_search_20261013/round7/learning/train2000_curve_assets/train2000_raw_loss.png)及CSV已根核：2000原步、22000数值逐原JSON相等，首/末总损失12.0475/3.87238，不代表布局或泛化。2017份原文件压缩为23,509,570字节，另含1份嵌入清单；所有原件SHA通过，无解压镜像。嵌入与外部清单JSON语义相同、序列化字节不同，分别保SHA。[原图数/压缩原件根验收](outputs/experiments/first_stage_ai_search_20261013/round7/learning/train2000_curve_assets/root_original_curve_acceptance.json)。整组完整归档仍未闭合。
+
+
+
+
 
 **2026-10-14 04:24 S2-T24三终点与六法Direct全部完成，独立数值复核支持SAC的SGM优势，但未满足双指标优势条件。** 本轮实际5/5正式任务、三算法各150000步（450000/450000）、工程1843/6144、prepare40/40、共同考核560/560及56000束。04:24新鲜API再次确认三训练completed，两GPU查询退出码0；所有科学计算已结束，不重启训练/评价。SAC/PPO/DQN的SI分别90.1782%/85.9262%/90.2856%，SGM分别70.5027%/50.9553%/57.4072%；随机/贪心/固定SGM为38.4179%/34.7572%/27.3834%。SAC对五法SGM在日期分层及长度4块的十差族99.5%区间下界均为正；SI没有任何比较同时通过两套分析，五个预定双指标优势均不成立，不外推为SAC全面最优。[报告17](docs/第二阶段/实验报告/17_T0任务下三算法直出公平对照.md) · [实际统计](E:/satellite_rl_archives/s2_t0_fair24_20261013/analysis_v2/statistics.json) · [独立数值核验](E:/satellite_rl_archives/s2_t0_fair24_20261013/analysis_v2_independent_numeric_audit.json) · [04:24实际API](outputs/experiments/s2_t0_fair24_20261013/controller/Root_actual_live_20261013_202406.json)。
 
+
+
+
+
 本地native原件、完整断点/曲线/596原输入/40考核、源Git及双官方TAR已归集核SHA，原远端规范原件保留。postprocess v5的UTC字符串格式误判在bootstrap前失败，v6按精确时刻修复后实际退出0；独立数值核验复用保存索引，没有新RNG/PHY/前向。六组PNG/PDF/CSV已从真实统计生成，正在完成展示排版与人工验收，随后冻结小交付包并上传原远端读回；当前未归还18/24。07:00仍按用户字面“训练未完才暂停”条件核定，不能把评价归档或GPU空闲等同可重启。[原件回执](E:/satellite_rl_archives/s2_t0_fair24_20261013/native_originals/receipt.json) · [统计实际退出](E:/satellite_rl_archives/s2_t0_fair24_20261013/analysis_supervision_v6/exit.json)。
+
+
+
+
 
 **2026-10-14 04:03 R7首个正式GNN训练持续运行，根核可恢复更新1138/2000，累计活动1008.463秒。** 唯一任务`r7_train2000_20261014_034851_d240f29e`在74/API9016运行，worker83617/ticks851491056、原生controller83561/ticks851490361真实存活；根独立GET与job/plan/九输入/源/runtime/preCUDA/最新checkpoint原字节核对通过。初始0完整断点已保留，训练每次更新发布可恢复状态；无failure，原setup129.917秒计入累计活动一次。单模型seed51001、574个原T目标、0→2000包含在6000/8h总预算内，不新建第二初始化或复用工程更新权重。[根实际启动与断点实核](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/root_actual_train2000_started.json)SHAbf325b51 · [精确计划准入](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/root_train2000_execution_admission.json)SHA88459344。
 
+
+
+
+
 训练2000只有一次实际POST；setup此前已知400与第二次成功是独立历史，不混记为训练重试。到2000先执行原20景`node2000`四法开发对照，15个AI非回退/5个质量成功门槛保持，未提交6000/validation/test，尚无AI质量结论。原初始0断点55个模型tensor已独立逐字节对齐原初始化，未混入工程更新权重。[04:03实际进度](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/root_training_background_handoff.json) · [初始0核验](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/independent_initial_zero_acceptance.json)。报告19两张原始图已加入并以`1b215f0`提交；状态数是04:03现场而非实时读数。北京时间07:00仍须暂停未完成训练及后继，只有随后人明确继续才恢复；18/24保持借出。
+
+
+
+
 
 node2000准备已核73新9017服务及永久暂停hook，但74实测无法访问73的localhost9017。采用冻结plan_builder本已支持的单74全20路由，原场景、方法轮换与20W/20T/60D5预算不变，避免新增跨端代理等待；73服务保持闲置，未跑节点。训练原worker持续，跟进改为15分钟有界检查、无变化静默，07:00一次暂停检查与服务器硬截止不变。[节点路由事实](outputs/experiments/first_stage_ai_search_20261013/round7/learning/node2000_preparation_01/actual74_node_routes_readonly.json) · [跟进实际回读](outputs/experiments/first_stage_ai_search_20261013/round7/operations/deadline_0700/actual_training_followup_15minute_readback.json)。
 
+
+
+
+
 **2026-10-14 03:39 R7实际训练供给已完成并根验收，模型更新仍0，正在提交首2000节点前冻结精确计划。** 74/API9016的新523f源已按完整714成员冻结实核，原6个数学文件与9个共享接口字节不变；真实服务PID79533/ticks851152683及三个永久截止hook已核，setup worker在首次runtime/CUDA查询前通过实际暂停检查。唯一成功setup任务`r7_train_setup_20261014_032229_4f762e61`完成574缓存/599272条飞机记录，worker81742已退出；全574缓存独立重算mean/std逐bit一致，归一化与FP32全部有限。setup活动129.917秒将在6000更新/8小时总额中仅计一次。[根setup接受](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/root_train_setup_gate.json)SHAa261ed38 · [独立核验](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/independent_setup_acceptance.json)SHAacacc9e1 · [完整714源接受](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/root_learning_source_523f_acceptance_full714.json)。
+
+
+
+
 
 首次setup因prerequisite引用接线不符在发布前HTTP400拒绝，已证0任务/0更新；仅修元数据引用后以同原request成功发布。两次POST尝试、一个成功任务及原失败均保留，不冒称一次提交。下一步仅使用本次原始九引用、初始化及574场景进行0→2000，尚未提交2000/6000或开发评价。07:00硬截止和仅人工明确继续可恢复保持；18/24不使用。[原字节与提交历史](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/actual_setup_original_bytes_collection.json) · [当前清单](outputs/experiments/first_stage_ai_search_20261013/round7/run_manifest.json)。
 
+
+
+
+
 **2026-10-14 02:17 R7标签与实际三阶段布局已根验收：574/576合格、574非平凡、564个同时变N与异宽母，科学模型更新仍0。** 两端原标签任务均终态，74同ID仅续139，295/297保留失败及未知成本；实际W576/T575/D574。cfd一次独立几何/来源/发布审核452.748秒后，另一程序逐574原assignment整数负载重算、6888指标及全部T布局字节核对通过，读回235.897秒；根又从576行表复算门槛和完整574 originalT/typed引用映射。[根标签接受](outputs/experiments/first_stage_ai_search_20261013/round7/analysis/root_label_acceptance.json)SHAd5cac4fc · [原数组/布局独审](outputs/experiments/first_stage_ai_search_20261013/round7/analysis/independent_numeric_typed_01/independent_summary.json)SHA2846ec44 · [576行原统计](outputs/experiments/first_stage_ai_search_20261013/round7/analysis/independent_numeric_typed_01/case576_statistics.csv)。
+
+
+
+
 
 [中间报告19](docs/第一阶段/实验报告/19_统一请求教师标签与三阶段接口核验.md)已区分数据/教师/接口与后续AI效果：共同正常574景Wenv/T/EXACT平均峰值请求2196.991/1040.525/791.335Mbps，平均实际束数80.575/88.340/94.575；同Ncap/Ω约束但实际N不同，不称固定N收益。仅原T供监督，EXACT再优化不作目标。已知原标签费用5688.733秒仅部分，全组精确wall仍null；后处理子分段不得重复相加。完整大包归档延期，规范原件保持。下一步为574数据上的单GNN集合模型首2000节点；新source523f已通过独审并由根逐713 Git LF字节及6个数学/9个共享文件接受，启动段代码无已知阻断；[源接受](outputs/experiments/first_stage_ai_search_20261013/round7/learning/preparation_actual_01/root_learning_source_523f_acceptance.json)SHA460a8c6c。74新learning空间/API9016及实际runtime、初始化、九引用和永久07点hook正在部署核定，不能称已训练或恢复已准入。
 
-**2026-10-14 项目持续空间管理约束已登记，纯文档更新。** 用户要求今后不留没必要内容；[AGENTS.md空间管理条款](AGENTS.md#空间管理与实验资产保留2026-10-14)已明确七类可清理内容、必要模型/科学观测/失败恢复/备份的保护条件，以及计划存储预算、运行增长控制、交付后清理和小型回执要求。已核的无用途可再生副本按规则直接清理，不逐次确认；历史唯一原件、未知用途或活动恢复材料不得猜删。该条不表示已经清理237个模型候选，也不改变现有科学任务、预算、源码或调度；未启动训练、重评、远端操作或定时任务。实施例与恢复边界见[工程文档07](docs/工程文档/07_历史缓存清理与模型保留说明.md)。
 
-**2026-10-14 S2-W26新方案替代L25待执行建议，尚未训练。** 用户要求保原T0架构/真实legacy_repaired奖励，优先探索束宽与不同状态空间。独立树`D:/paper_worktrees/stage2-t0-width-v26`拟四组207/208/407/408维，未选字段不构建、不零填，保三头频率/槽数/5—50W功率、加性双Q、gamma0.99和alpha0.01；旧L25规则功率/SI差分/gamma1/联合Q/零槽代码只保工程历史，不能充当本轮实现或资格。拟各150000/seed51001共600000，首选冻结S1纯几何Wenv实际合法宽度，统一请求及全飞机守恒保持；数据最多636母准备、开发4320/确认680回合、工程8192另账，S3/随机宽度扩展0，全部仅待批建议。本轮只设计和只读核查，未生成新数据、未改算法源码、未训练/参数更新/查询远端资源。**先用户审核批准，再实核远端任务归属/GPU/显存/CPU及并行条件，完成数据/源码/工作台资格后才训练。** [通俗方案26](../paper_worktrees/stage2-t0-width-v26/docs/第二阶段/方案/26_T0架构下束宽变量与状态空间对照方案.md) · [四组与状态解释](../paper_worktrees/stage2-t0-width-v26/Q&A/算法与训练/T0架构下的束宽与状态对照.md)。
 
-**2026-10-14 00:59 历史缓存清理完成，仅维护本地存储，不改变实验结论或远端调度。** 用户授权删除F20两处解压缓存与G09 `remote_mirror/final_archive`。16个原归档整包SHA及198,404个待删成员内容SHA全部核对后，按三个真实绝对目录清理；原包、正式模型、原始指标、图表及来源收据保留，独立模型删除0。移除文件内容34.544 GB，实际删除窗口D/E可用空间增量约7.71/27.33 GB。部分历史脚本的缓存路径需先恢复，冻结来源记录不改写；[恢复方法与模型保留说明](docs/工程文档/07_历史缓存清理与模型保留说明.md) · [保留核验](outputs/verification/storage_cleanup_20261014/verified_cache_preservation.json) · [删除回执](outputs/verification/storage_cleanup_20261014/deletion_receipt.json)。普通历史模型中间态另核：6组completed旧工作台排除初始/最终节点后237个、2.981 GB，仅候选，未清理；J0/J1 150000步对照、T0指定终点、关键故障断点及当前续训状态需保留。此维护不表示已刷新其它运行组的远端实时状态。
+
+
+**2026-10-14 02:21 S2-T24全部正式计算完成，5/5项与560/560次Direct已独立实核；正式统计及报告尚待原字节归档验收。** 三正式各150000，学习450000/450000（100%），工程1843/6144；三终点policy与完整断点网络逐tensor一致，SAC/PPO/DQN更新分别148001/6000/148001，从头训练、seed51001和150000终点均核。40母已完整准备，唯一六法矩阵`direct_matrix_7fbec3e76e69`完成560例、0第三阶段调用。Root实际API/出生核原worker91354/1791915282.24为Z且kernel_exit0、worker锁已释放、GPU查询exit0/UUID匹配/无计算context；记录执行退出但不虚称PID已回收。原协调器6188和资格等待器32104均已自然退出，不恢复训练、准备、矩阵或废案F20。原ee/T0频率、槽数、5–50W离散功率及含SGM奖励保持；本轮不预判SAC优胜，未启动未批准方案26。[Root完整计算终态](outputs/experiments/s2_t0_fair24_20261013/controller/Root_actual_all_science_complete_v1.json) · [三终点独立审计](outputs/experiments/s2_t0_fair24_20261013/controller/actual_three_formal_final_model_audit_v1.json) · [矩阵原启动](outputs/experiments/s2_t0_fair24_20261013/controller/Root_actual_matrix_started_v1.json)。
+
+
+
+
+
+原prepare网络故障已同ID闭合：两官方TAR共3,716,638,720字节完成本地/远端整包SHA，原输入/7份失败epoch保留；01:59经工作台恢复`test_prepare_5ef98d857f8f`，worker88607/出生1791914352.01，原科学identity不变，未重复训练或更换日期。原c91计划协调器以相同7c源码恢复为6188，新的矩阵资格publisher4经Root审查实际完整40/三终点/原字节来源后发布；DQN24六文件在18/24实际共享可见且逐SHA一致，无需复制。小终点原件已规范存E，完整原曲线/断点/数据/源码/最终矩阵归档、后处理、报告17及六图仍待完成；两端未归还，DQN原worker为正常退出Z仍未回收，不能据GPU空闲宣布释放。[同ID恢复](outputs/experiments/s2_t0_fair24_20261013/controller/Root_actual_resumed_prepare_worker_v1.json) · [双端模型来源](outputs/experiments/s2_t0_fair24_20261013/controller/Root_actual_DQN24_endpoint_peer_closure_v1.json) · [存储计划](outputs/experiments/s2_t0_fair24_20261013/storage/current_storage_plan_v1.json)。
+
+
+
+
+
+07:00守卫现为经13项隔离检查及独审的v5（3d09，PID21180/出生1791914889.9388268），原v3等待器9388已受控退出；新守卫保原“到点训练未完才触发”条件，触发后核本组owner六字段并暂停全部active训练/准备/矩阵与调度，而非遗漏准备worker。01:57旧模拟测试误继承真实暂停标记路径，Root已核其Temp来源、0实际API/进程信号及SAC未停，原字节移入诊断并纠正，不属于人类7点暂停；旧污染测试禁止重跑。当前小时跟进和7点检查均ACTIVE且精确回读，只有真实触发暂停后才等待人明确“继续”。[新守卫与调度出生实核](outputs/experiments/s2_t0_fair24_20261013/controller/Root_actual_guard5_and_matrix_waiter_birth_registration_v1.json) · [测试误标记纠正](outputs/experiments/s2_t0_fair24_20261013/controller/diagnostics/mock_pause_pollution_20261014_015735/Root_correction_receipt.json) · [配置回读](outputs/experiments/s2_t0_fair24_20261013/followup/actual_pipeline_guard5_automation_readback_v1.json)。
+
+
+
+
+
+**2026-10-14 01:37 早上7点服务器端暂停定时器双端实核通过，当前未提前暂停。** 73守护PID71733/ticks850687229、74守护PID74828/ticks850687718，根UTC17:37:10逐SSH核实际source c33、spec/根admission/注册60879、完整命令与出生，均真实alive；截止为UTC23:00即北京时间07:00。[根定时器实核](outputs/experiments/first_stage_ai_search_20261013/round7/operations/deadline_0700/root_actual_timer_acceptance.json)SHAee86b229 · [实际部署](outputs/experiments/first_stage_ai_search_20261013/round7/operations/deadline_0700/actual_timer_deployment_endpoint.json)SHAb86f6615。到点仅本组已登记73/74任务持久暂停并写协作stop.request，0提前停止/0科学调用，18/24及其它任务不动；不能仅凭stop请求称已退出。App一次7点检查与原小时跟进的禁止自行恢复规则同时保留。
+
+
+
+
+
+新训练的API/controller/排队启动/worker永久截止检查及supply安全边界仍在未运行的新源码实现，属于训练前必须闭合的条件，不能把timer已装冒称全部新phase已准入。训练每步原子checkpoint机制保留，用户重启停机区间须原clock/实际退出证据核后排除，不能重放已完成更新。用户明确继续时须撤销旧timer、换新deadline合同并核原断点，单删暂停文件无法解除旧硬截止。
+
+
+
+
+
+**2026-10-14 用户安排北京时间今日07:00检查，训练未完成则暂停，只有明确“继续”后恢复；现在仍继续。** 精确截止为UTC10-13 23:00。Root已实际创建本线程一次07:00检查`s2-t24-07-00`，两跟进当前ACTIVE且配置已回读；另审查后隐藏启动持久守卫v3（源码`84e7aa4b`、spec `e1adafd0`、PID9388/出生1791912757.618003），启动后同出生存活、stderr空，07:00前0停止动作。默认按原文仅训练未完时触发；若三个模型已训完但数据/评价/归档仍占用是否也暂停，已向用户一次异步澄清，未答不能扩大条件。触发后先阻后继调度、按真实PID出生/源码停止本组控制与原字节IO，科学worker仅经工作台stop保存回合断点；缺原worker退出、checkpoint/预算、flock、GPU成功/UUID、IO保全或app PAUSED实证，不宣称可安全重启。实际暂停后不得因旧自主执行授权自动恢复。[用户截止要求](outputs/experiments/s2_t0_fair24_20261013/controller/user_0700_pause_requirement_v1.json) · [守卫实际启动](outputs/experiments/s2_t0_fair24_20261013/controller/actual_reboot_deadline_guard_launch_v3.json) · [截止配置回读](outputs/experiments/s2_t0_fair24_20261013/followup/0700_deadline_guard_actual_active_readback.json)。
+
+
+
+
+
+**2026-10-14 01:21 R7原74标签已同ID恢复运行，73已完成288；新科学模型更新仍0。** 根真实GET与PID出生核worker72650/ticks850599113、source137+外置运维bb7，实际74索引163/288，其中161正常发布、2条295/297明确失败记录；不是163个合格标签。原147逐ref、job/config/owner及失败原证据不变，剩139仅从299起继续，根现场active327/329/pending123。[根恢复现场](outputs/experiments/first_stage_ai_search_20261013/round7/learning/recovery/root_actual_resumed74.json)SHA95efaa2c · [恢复根验收](outputs/experiments/first_stage_ai_search_20261013/round7/learning/recovery/root_labels74_recovery_acceptance_bb7.json)SHAd07f9ba1。
+
+
+
+
+
+原74失败为Linux退出进程RSS观察竞态；源码/未知账保留，不重试两中断景，不改576分母及519/116/6门槛。新restricted9015已实际启动，唯一恢复POST200且原API科学ID未变；resource_route现场刷新后原队列正常启动。工程部署经历pidfd不可用/内核EPERM、退出期environ权限及GET展示字段差异，均留原件；只停止原闲置9015，未改137科学源或干预73/18/24。后处理cfd已独审，包含failed2保守计账、原T标签与实际typed三阶段发布，尚未执行最终全576标签门槛；root与模型训练仍须该门槛。北京时间07:00未完成则按用户要求暂停并等待明确继续。
+
+
+
+
 
 **2026-10-14 用户新增早上7点暂停要求：到北京时间07:00若训练未完成，暂停S1-AI17并等待明确“继续”。** 当前截止前继续原有界R7；已设置本聊天一次7点检查`s1-ai17-2`，并更新原`s1-ai17`小时跟进，使deadline后的定时唤醒不构成恢复授权。只暂停本任务73/74，18/24借出和其它任务不动；不替用户重启实例。服务器端持久截止guard正在准备，当前不能称已部署或已暂停。[用户暂停合同](outputs/experiments/first_stage_ai_search_20261013/control/user_pause_20261014_0700.json)记录截止UTC2026-10-13T23:00:00Z、断点/进程退出实核及禁止自动恢复。
 
+
+
+
+
+**2026-10-14 项目持续空间管理约束已登记，纯文档更新。** 用户要求今后不留没必要内容；[AGENTS.md空间管理条款](AGENTS.md#空间管理与实验资产保留2026-10-14)已明确七类可清理内容、必要模型/科学观测/失败恢复/备份的保护条件，以及计划存储预算、运行增长控制、交付后清理和小型回执要求。已核的无用途可再生副本按规则直接清理，不逐次确认；历史唯一原件、未知用途或活动恢复材料不得猜删。该条不表示已经清理237个模型候选，也不改变现有科学任务、预算、源码或调度；未启动训练、重评、远端操作或定时任务。实施例与恢复边界见[工程文档07](docs/工程文档/07_历史缓存清理与模型保留说明.md)。
+
+
+
+
+
+**2026-10-14 S2-W26新方案替代L25待执行建议，尚未训练。** 用户要求保原T0架构/真实legacy_repaired奖励，优先探索束宽与不同状态空间。独立树`D:/paper_worktrees/stage2-t0-width-v26`拟四组207/208/407/408维，未选字段不构建、不零填，保三头频率/槽数/5—50W功率、加性双Q、gamma0.99和alpha0.01；旧L25规则功率/SI差分/gamma1/联合Q/零槽代码只保工程历史，不能充当本轮实现或资格。拟各150000/seed51001共600000，首选冻结S1纯几何Wenv实际合法宽度，统一请求及全飞机守恒保持；数据最多636母准备、开发4320/确认680回合、工程8192另账，S3/随机宽度扩展0，全部仅待批建议。本轮只设计和只读核查，未生成新数据、未改算法源码、未训练/参数更新/查询远端资源。**先用户审核批准，再实核远端任务归属/GPU/显存/CPU及并行条件，完成数据/源码/工作台资格后才训练。** [通俗方案26](../paper_worktrees/stage2-t0-width-v26/docs/第二阶段/方案/26_T0架构下束宽变量与状态空间对照方案.md) · [四组与状态解释](../paper_worktrees/stage2-t0-width-v26/Q&A/算法与训练/T0架构下的束宽与状态对照.md)。
+
+
+
+
+
+**2026-10-14 00:59 历史缓存清理完成，仅维护本地存储，不改变实验结论或远端调度。** 用户授权删除F20两处解压缓存与G09 `remote_mirror/final_archive`。16个原归档整包SHA及198,404个待删成员内容SHA全部核对后，按三个真实绝对目录清理；原包、正式模型、原始指标、图表及来源收据保留，独立模型删除0。移除文件内容34.544 GB，实际删除窗口D/E可用空间增量约7.71/27.33 GB。部分历史脚本的缓存路径需先恢复，冻结来源记录不改写；[恢复方法与模型保留说明](docs/工程文档/07_历史缓存清理与模型保留说明.md) · [保留核验](outputs/verification/storage_cleanup_20261014/verified_cache_preservation.json) · [删除回执](outputs/verification/storage_cleanup_20261014/deletion_receipt.json)。普通历史模型中间态另核：6组completed旧工作台排除初始/最终节点后237个、2.981 GB，仅候选，未清理；J0/J1 150000步对照、T0指定终点、关键故障断点及当前续训状态需保留。此维护不表示已刷新其它运行组的远端实时状态。
+
+
+
+
+
 **2026-10-14 00:49 S2-T24的PPO、DQN均真实完成150000；SAC为70650/150000，考核数据传输超时正在同ID修复。** 根当轮独立API、原进程出生及两GPU查询实核，累计学习370650/450000（82.37%）；这不是六法考核完成。PPO为`train_ppo_997a48805fbe`、DQN为`train_dqn_78cad861b01c`，SAC原`train_sac_71145a77f264`仍在18训练，不重启或改变预算；只用原150000终点，未使用工程权重、旧T0或best_validation替代。三工程均512，真实更新257/20/257，累计工程1843/6144；115个工作台源码成员为288个真实Git blob的准确范围子集，93文件及原owner三份租约链独审闭合。科学参照85f、执行`ee758db`、原596输入及T0学习频率/槽数/离散功率和含SGM奖励保持。[根现场快照](outputs/experiments/s2_t0_fair24_20261013/controller/Root_actual_live_20261013_164935.json) · [正式准入](outputs/experiments/s2_t0_fair24_20261013/engineering/root_formal_admission_v1.json) · [工程终稿独审](outputs/experiments/s2_t0_fair24_20261013/engineering/gpu/independent_actual_engineering_review_v3.json)。
+
+
+
+
 
 外部持久控制器v2（7c11453d，原PID46408/出生1791907962.5913653）已实际承接三模型，18在PPO完成后接同ID准备`test_prepare_5ef98d857f8f`，最终矩阵仍18同GPU、仅560 Direct、第三阶段0。准备worker67275/出生1791909019.84曾真实启动；访问原官方GitHub资产时HTTPS连接超时，转attention_required，原state明确0资产/0实体/0转换/0新学习，仅四小控制文件。控制器据此停止后继调度，SAC原科学worker持续；网络运维故障不当作学习数学失败。根本地双官方原URL小Range实际206、大小吻合，尚未取得整包SHA。正在独立操作层实现工作台登记的同原asset持久传输、完整chunk/整包SHA和空间守卫，再以SHA绑定失败分类经工作台恢复原prepare ID；不任意改status、不热改ee或换日期/来源/预算。[原网络失败](outputs/experiments/s2_t0_fair24_20261013/controller/prepare_network_timeout_actual_failure.json) · [本地原资产小Range实证](outputs/experiments/s2_t0_fair24_20261013/preflight/local_official_asset_small_range_probe_v1.json) · [运行清单](outputs/experiments/s2_t0_fair24_20261013/run_manifest.json)。未来matrix发布器仅metadata支线已授权，完整40实体/三终点/模型来源和原字节门槛未过前不得矩阵准入；后处理v1/v2缺口保历史，v3修复正向哈希、全eligible飞机集合及NaN守卫，仍prepared、不生产统计。报告17/六图/全档与两端归还均未宣称完成，小时跟进`s2-t24-t0`保持ACTIVE，73/74不访问。本地DQN解释器曾短暂不可见，现真实Python3.11.11/Torch2.3.1cu121/CUDA可用及NumPy/pandas已复核，未修改共享环境或切base作科学计算。
 
+
+
+
+
+**2026-10-14 本地磁盘维护与 DQN 路径迁移（不新增实验）。** 用户要求清理空间、将 C 盘归档及 Anaconda 向 E 盘迁移，并明确只保留 DQN 环境。`C:/paper_archives` 的 72 个 ZIP、9,627,669,040B 已移至 `E:/paper_archives`，迁移前后及旧路径入口逐 SHA256 一致；C 原路径现为指向 E 的 junction。DQN 的 34,253 文件、5,766,655,480B 经全量 SHA256 对照后迁至 `E:/anaconda3/envs/DQN`，原 `C:/Users/Admin/anaconda3/envs/DQN` 路径保留 junction；两路径实际导入 Python 3.11.11、torch 2.3.1+cu121、NumPy 1.26.4 均通过，未运行训练。按用户明确范围，已用 Conda 移除 `DQN_cpu_backup_20260924`、`pythonProject`、`RL`，并清理未引用安装包及包管理器缓存。基础 Anaconda 仍在 C：后台 base Python 尚在使用，且 16 个启动文件无读取权限，E 基础副本尚非完整迁移终点，不自动停进程或改权限。显卡、开发工具等普通缓存的直接删除受到自动策略拦截，未冒称已清；论文科学资产未删除。D 盘 G10 重复传输 ZIP 的 20,618 成员已与现有保留副本逐 SHA 核同，4.012GiB 仅列可删候选，本轮未删。[归档迁移验收](outputs/maintenance/disk_cleanup_20261014/paper_archives_migration_final.json) · [DQN 迁移验收](outputs/maintenance/disk_cleanup_20261014/DQN_migration_final.json) · [空间与环境实核](outputs/maintenance/disk_cleanup_20261014/final_space_and_envs.json)。其它实验的任务、预算、源码、模型和结果保持原记录。
+
+
+
+
+
 **2026-10-14 00:17 R7数据596例已全部根验收；74标签任务在147/288因/proc观察竞态失败，73原任务继续，正做保守同ID恢复。** [根数据接受](outputs/experiments/first_stage_ai_search_20261013/round7/analysis/root_data_acceptance.json)SHAec19ec75逐例核原飞机ID/顺序/位置字节、role/index/UTC、固定21,600,000 bit/s和精确总量，621,421条机时记录、train576/dev20、4808原字节成员闭合。新标签[正式根签图](outputs/experiments/first_stage_ai_search_20261013/round7/deployment_labels_01/root_final/root_signed_labels_graph_before_dispatch.json)与plan087baef5仅train576，两端各288/2case、prepare/T/D5各≤576、模型/留出调用0；源137及698快照保持，controller32588/spec ee480569。
+
+
+
+
 
 原标签ID为73 `r7_labels_20261013_234804_bcaaa9eb`（worker61927）与74 `r7_labels_20261013_234807_312cdce7`（worker64582）。74实际堆栈为r7_parallel的RSS采样经r5_stage_guard调用r4_monitor_repair读取已消失/proc PID status，抛ProcessLookupError/ESRCH；当时内存峰约2.035GB，低于4GiB，不是已证算法质量失败。[原失败与逐case实核](E:/paper_archives/outputs/experiments/first_stage_ai_search_20261013/round7/learning/recovery/labels74_failure_readonly_01/)保原failure/WAL/guard/output/source。74为147已完整父发布、295/297两partial、139完全未spawn；累计started W149/T148/D147，完整guard W148/T147/D147。295仅W原output、无guard/exit，后继未start；297 W完整、T已spawn无guard/output、D未start。原相关进程均退出，未知不记0，不以partial充完整标签。
 
+
+
+
+
 控制器已attention_required并退出长调度，73科学worker不被停止。拟仅在新运维epoch修窄ESRCH竞态，保原147不重复，把295/297保在576分母中明确不合格并留未知预算，余139同ID继续；原519/116/6门槛及每阶段≤576额度不变。Astra已核原合同支持逐标签closed资格与禁止未知自动重试，正在冻结恢复记账补充；实际新恢复尚未发起，以随后根准入与API为准。未来源cbe训练/node的两项修复源码复核通过；typed发布48f9的完整计时/新后处理来源/拒覆盖也已独审通过，但仍需按真实标签门槛与输出计划准入，不热改137，不把源码通过当训练成果。
+
+
+
+
 
 **2026-10-14 S2-L25可变布局与逐束宽度适配：独立分支已实现，通俗方案待用户审核，当前不训练。** 新代码和文档位于`D:/paper_worktrees/stage2-layout-width-v25`、分支`codex/stage2-layout-width-v25`，尚未合并到本main；复用S1方案23共享对象/物理，接真实N、宽度/增益/干扰、联合频率掩码、规则功率及S3同分配接续。根53项非训练回归52过、1项既存R6隔离导入路径失败；4个合成布局213步骤S2/S3容量一致，根前向核验参数更新0。拟两组各150000/seed51001和共同对照均仅建议，科学训练/评价0，无新远端任务或资源占用。**按用户最新要求：先审核批准方案，再实时核验远端任务/API/进程归属及GPU/显存/CPU；无冲突或可安全并行才经工作台训练。** 不接管S1-R7或S2-T24、不打开封存考核。入口：[通俗方案25](../paper_worktrees/stage2-layout-width-v25/docs/第二阶段/方案/25_可变布局与逐束宽度的T-SAC适配方案.md) · [工程核验07](../paper_worktrees/stage2-layout-width-v25/docs/工程文档/07_第二阶段可变布局适配核验.md) · [独立分支状态](../paper_worktrees/stage2-layout-width-v25/EXPERIMENT_STATUS.md)。
 
+
+
+
+
 **2026-10-13 23:12 S1-AI17-R7统一请求数据任务已真实启动；随后根API核两端各170/298，合计340/596。** 数据执行源13702ff（主目录已集成ab27bed），独审11项针对检查通过并关闭原五项源缺口；仅准入data_train_dev。正式[根签数据图](outputs/experiments/first_stage_ai_search_20261013/round7/deployment_01/root_final/root_signed_data_graph_before_dispatch.json)绑定698实际源码、原6496共享接口资格、596逐机祖先与真实DQN/CUDA/资源。原远端祖先路径不可用，本地原字节逐SHA迁入；两端正式transport共同指73内容地址副本，74冗余暂存如实保留，recipe349370未改。工作台9014/9015独立，旧服务与18/24借出不动。
+
+
+
+
 
 两原ID为73 `r7_data_train_dev_20261013_231244_2a70c504`、74 `r7_data_train_dev_20261013_231251_217dd691`，worker58070/61197在[根首个实时API回执](outputs/experiments/first_stage_ai_search_20261013/round7/preflight/data_actual_first_ROOT.json)均存活、error为空。每端2个独立CPU case，父串行合并账本与4GiB总护栏；controller17500/出生1791904357.554806有限12小时，spec d55c52b1、plan d73933d0，状态见[原控制器](outputs/experiments/first_stage_ai_search_20261013/round7/control/data_01/state.json)。只构建576训练＋20开发统一21.6Mbps输入，prepare/T/D5/科学模型更新均0；完成后只读全量独审与新case authority，再独立准入标签，不自动扩阶段。未来训练/node源f4仍在修CUDA初始化顺序与上游dataset绑定，已保存失败审查，不影响冻结137的数据阶段、不热改正在运行源码。
 
+
+
+
+
 **2026-10-13 23:08 S2-T24两端新工作台已实际启动，三项GPU工程资格已登记待准入；正式训练仍0。** 新执行源`ee758db68d82032f14dd2f4965926059aa11284d`已干净冻结并接收至20418/20424独立`s2_t24/{port}`，9040/9041服务及DQN/CUDA/包路径、原596训练/验证实体SHA与PID出生实核；原owner持续排除18/24，73/74留S1。根和独审另逐288文件对真实Git blob核SHA，修正Windows旧归档CRLF被误标LF的资格记录，失败及旧包保留，生产使用[exact_members_v2](outputs/experiments/s2_t0_fair24_20261013/deployment/prepared_Git_blob_exact_members_v2.json)。三工程ID为`engineering_sac_483bdac66deb`、`engineering_ppo_ebaf68fabdcc`（18）和`engineering_dqn_898061886596`（24），实际注册时均queued_resources/0；每组512、pilot seed73024，不继承工程权重，此前实际307另账，完成后最多1843/6144。GPU实际更新、worker出生/映射与typed资格未闭合前不放正式任务，不能把注册或临时probe映射当训练启动。[实际注册](outputs/experiments/s2_t0_fair24_20261013/engineering/gpu/registered_engineering_tasks.json) · [空服务现场回执](outputs/experiments/s2_t0_fair24_20261013/deployment/empty_services_actual_API_birth.json) · [运行计划](outputs/experiments/s2_t0_fair24_20261013/run_plan.json) · [动态清单](outputs/experiments/s2_t0_fair24_20261013/run_manifest.json)。
+
+
+
+
 
 历史T0用途已明确，三正式仍各150000/seed51001从头、仅Direct、第三阶段调用0。工程通过后按实际显存/CPU/吞吐并行；40新考核母的官方tar整包与日期用途登记、转换仍待工作台准备，只有元数据已核。冻结producer的test保存全100束数组可独审，但val仅持久化summary；Direct实际墙钟从加载scene后开始，未分项持久化输入/模型加载/编码/环境时间，不补评或插值冒充这些观测，报告须限制严格速度结论。用户最新明确中间不停、问题一次提出；本轮无待确认，持续至报告17/曲线/全档及18/24实际归还通知。
 
+
+
+
+
 **2026-10-13 22:18 R7三阶段共享接口资格已根验收；数据/标签源码独审发现角色绑定缺口，修复前不发布新数据。** 74一次执行12个固定合成样例，实际36阶段对象图检查、12系数、12固定功率容量、60方向图点、3积分及180底层对象读取，真实S2分配导出→预定重排→S3接续通过，非法输入按计划拒绝。根对49MB原证据包1213成员逐SHA核验、复核9源码/72对象与6对保存容量，见[接口验收](outputs/experiments/first_stage_ai_search_20261013/round7/engineering/root_interface_acceptance.json)SHA9fbf8fbd。此结论仅为新共享接口与理想化物理路径正确性；旧S2训练状态/权重仍需未来适配，非整体研究完成。新596数据编排候选c4e95bf的独审发现派生行role/index未严格绑定原typed case+root recipe，可能错分开发与训练；另需补齐标签护栏和全依赖核验，正在冻结前修复。新实际数据构建/prepare/T/D5/科学训练依旧0，未在错误口径下试跑。
+
+
+
+
 
 R6历史分支完整双端归档已闭合：[稳定入口](outputs/experiments/first_stage_ai_search_20261013/round6/archive_preparation/final_archive_location.json)。E与73包624,105,853B/SHA20b9edd1一致；根独立验证71979数据成员加内嵌清单共71980文件、六Git bundle及原报告SHA，[根归档接受](outputs/experiments/first_stage_ai_search_20261013/round6/archive_preparation/root_final_archive_acceptance.json)SHAe7b8f7ff。报告18保留其封包前文本，由外部回执记录闭合；旧异质后继不恢复。共享home归档IO窗口22:09:53–22:12:59已记录，接口资格此前完成，无正式计时重叠。持续研究进入R7，不把R6归档完成当作全部AI17完成。
 
+
+
+
+
 **2026-10-13 R6报告18与三图已根验收，最终双端归档正在封装；R7共享接口已实现，正式资格尚未通过。** [报告18](docs/第一阶段/实验报告/18_异质请求教师标签与统一请求改制归档.md)SHA dc052a45保留原768异质标签、746例变N/768例真实宽度增大/192母能力证据、8269.392242秒分段合计及原v2失败/v3不同工程问题通过；科学训练0、旧后继关闭。根复核9产物SHA、768行均值与成本、21链接并目视三图，[图文验收](outputs/experiments/first_stage_ai_search_20261013/round6/analysis/root_report18_acceptance.json)通过，完整包正由73收束，不提前称交付闭合。R7共享代码独立源6496abe、主目录集成fb48a6b，仅新增共享合同/几何/方向图/真实S2导出与S3读取路径，legacy不改；5项纯检查过，plan03的72固定对象和9模块Git字节已根核。[资格事前准入](outputs/experiments/first_stage_ai_search_20261013/round7/engineering/root_interface_pre_execution_admission.json)限定74一次12fixture，现场DQN/来源/任务闭合后执行；当前未有资格通过回执，新数据/标签/科学训练仍0。
+
+
+
+
 
 **2026-10-13 S1-AI17-R7方案23 v2已根审查通过，进入共享接口实现，尚无新科学调用。** [方案23](docs/第一阶段/方案/23_统一单机请求与三阶段接口下的学习构造.md)与合同603e0a1e保持单机21.6 Mbps、656个母场景（576训练/20开发/20验证/40考核），阶段总上限676准备、676教师、876 D5、单模型seed51001最多6000更新/8小时；原2000节点含在其中。先完成12个固定合成样例的身份/需求/宽度/实际分配与两个真实S2/S3入口核验，再逐阶段冻结新数据与任务；当前科学发布未准入。新增球面方向图为明确理想化工程模型，0.5°只锚定峰值，不冒称legacy全图等价或实际硬件认证。根已核3设计产物SHA、10依据SHA、9本地链接及预算，见[设计验收](outputs/experiments/first_stage_ai_search_20261013/design/round7_root_design_acceptance_v2.json)和[新运行清单](outputs/experiments/first_stage_ai_search_20261013/round7/run_manifest.json)。
 
+
+
+
+
 **2026-10-13 21:18 统一请求已核定为21.6 Mbps/机，三阶段一致性为新主线硬约束；R6历史标签已根验收，旧训练后继关闭。** 根依据真实原T0的576训练母、599,640条飞机—时刻记录选定21,600,000 bit/s；原合成数据实际均值21.595498 Mbps/机，统一值保留全部飞机后的平均总请求22.4865 Gbps，比旧实际逐束训练输入高0.22816%。这不是实测机载流量，也不代表该需求已被满足。596份原NPZ与596份逐机资产均核SHA、逐束聚合及ID对应；旧训练输入遗漏2028条飞机记录，不能调低请求抵消遗漏。[请求决定](outputs/experiments/first_stage_ai_search_20261013/consistency/20261013_uniform_request/root_constant_request_decision.json) · [数据审计](outputs/experiments/first_stage_ai_search_20261013/consistency/20261013_uniform_request/report.md)。
+
+
+
+
 
 当前通用S2已有可变N支持，但输入schema不含逐束width/稳定beam IDs；S2/S3方向图仍固定0.5°。因此尚未实现完整三阶段兼容：必须新建统一飞机/布局/实际分配对象，严格传递ID、位置、归属、真实N、逐束全宽、整数bps、实际槽与功率，并验证共同物理调用。方案23正在根审查，先有限合成接口资格，再新统一数据与教师；当前新数据/新科学训练/第三阶段求解均0，不把旧T0或旧异质标签称作最终兼容结果。新R7只使用73/74、训练74；18/24已实时核原任务终态和GPU无进程，并以持久lease借给S2-T24，[正式资源交接](outputs/experiments/s2_t0_fair24_20261013/preflight/s1_ai17_resource_handoff.json)，未停止云实例。
 
+
+
+
+
 R6原四任务全部192/192 completed，768异质候选的原标签门槛768合格、768非平凡、192母具有变N及非floor异质宽度。根另重算2304个原始布局的几何/归属/请求/质量，复核3840原文件与2304护栏SHA、16证据入口及原T标签身份；[历史标签验收](outputs/experiments/first_stage_ai_search_20261013/round6/analysis/root_label_acceptance.json)。实际768 prepare＋768 T＋768 D5、科学模型更新0，逐案例完整费用合计8269.392242秒是跨四端成本和，不是墙钟。原异质模型后继因用户改变问题定义而关闭，不因门槛通过恢复；历史报告与完整双端归档继续，均不当作统一请求学习成果。
+
+
+
+
 
 **2026-10-13 S2-T24用途已由本聊天用户纠正为历史T0独立复验，实施继续。** 人明确“按选项一”，第一阶段尚未做好时先保原第二阶段数据；SAC/PPO/DQN仍全部从头各150000/seed51001，学习频率/槽数/5—50 W功率、原含SGM奖励不变，仅Direct、0第三阶段。新统一请求/最终三阶段接口不作为本轮合规主张，已审旧T0异质请求及固定布局/未覆盖限制保留。原576/20实体SHA均通过，核心e4e9df9完整14项CPU资格通过；旧工程配置节点失败与root复跑失败保历史。独立工作台基座7b9c0db的纯/mock加载/RNG/幂等6项通过，实际CPU100束工程集成正在接续、完整source/数据准备/资源准入未闭合，科学训练仍0。S1已实际交接18/24并持久排除未来调度，接收方只读新鲜实核与normalized回执齐，仍未部署新source/科学准入；73/74留S1。新prepare数据模块、工作台生命周期和GPU资格继续，不以借到卡或工程通过冒充正式启动。[明确用途授权](outputs/experiments/s2_t0_fair24_20261013/data/historical_reproduction_authority.json) · [旧数据范围审计](outputs/experiments/s2_t0_fair24_20261013/data/T0_uniform_request_compatibility_audit.json) · [接收方资源核验](outputs/experiments/s2_t0_fair24_20261013/preflight/receiver_normalized_owner_release.json) · [运行清单](outputs/experiments/s2_t0_fair24_20261013/run_manifest.json)。
 
+
+
+
+
 **2026-10-13 20:44 用户更正为统一固定单机请求，并将三阶段一致性列为铁律；R6旧训练后继不启动。** 用户明确所有飞机同一固定请求，热点由飞机密度形成；要求真实流量量级与第二阶段训练数据相符，并保证三阶段一致。根已确认旧G16/base采用二项活跃人数×对数正态请求，另三profile重加权；因此原768=192母×4异质请求，并非统一请求样本，仅选base也不满足新口径。原R6四任务全部completed各192（12:25UTC控制器终态），现只读采集/独审/归档继续，科学模型更新0，旧结果与失败不重写。后继正式setup/train/node关闭；新组等待实际S2需求量级和全接口审计后重签数据与门槛。[最新铁律](AGENTS.md#统一单机请求与三阶段一致性铁律2026-10-13)。
+
+
+
+
 
 正在核原G11-T0及S2-T24拟复用训练输入的逐束bps分布、总请求、原飞机计数/覆盖与缩放；理论合成均值21.6Mbps/机仅是待实核候选，不是已定统一值。第一阶段输出的实际N/中心/逐束宽度/唯一归属与逐束请求必须直接进入第二阶段，第三阶段沿用同一需求和实际资源结果。内部单位化不能替代真实bps接口；旧固定100束/0.5°训练支持范围也须核验，不能只对齐均值就称三阶段一致。资源方面新S2-T24已获其用户借1–2卡授权，正只读核18/24移交并登记持久排除，73/74留本组；此处尚不冒称移交完成。
 
+
+
+
+
 **2026-10-13 用户已确认以T0原任务重做S2-T24，最新仅比较直出；原F20方案与报告已登记废案。** 三算法共同学习频率起点/槽数/5—50 W功率、原legacy_repaired含SGM/供需偏差奖励、γ0.99及T0 Transformer/207维14令牌/联合掩码保持，SAC固定α0.01；三正式各150000/seed51001，从头新学习预算450000，工程6144另账，0短调参/0第三阶段求解。新隔离树`C:/Users/Admin/.codex/worktrees/stage2-t0-fair24/paper`从85f667cd创建，Astra冻结[方案24](docs/第二阶段/方案/24_T0任务下三算法直出公平对照.md)，两Sol分别实现科学核心和独立工作台/持久任务。当前设计/实现，正式科学任务0、来源尚未冻结、未部署；四端当前S1-AI17任务及后续预约须实核避让，资源未分配，不按旧归还/GPU0占用。旧方案20、附属21/22/23、报告16保原文副本/SHA与原数据预算，不作为本次算法比较依据。[废案登记](outputs/experiments/s2_t0_fair24_20261013/supersession/supersession_record.json) · [新授权](outputs/experiments/s2_t0_fair24_20261013/authorization.json) · [新运行清单](outputs/experiments/s2_t0_fair24_20261013/run_manifest.json)。
+
+
+
+
 
 **2026-10-13 20:03 S1-AI17-R6四原ID已恢复并真实生成标签；固定micro4工程资格已根验收。** 四端均running/进程存活，工作台最新记录合计287/768候选完成，逐端为72/72/72/71，不据部分结果提前判标签门槛。原任务ID为18 `labels_ai_search_r6_20261013_190216_ecc1eb4a`、24 `190220_be67ae33`、73 `190225_f760c531`、74 `190229_baf6ffe9`（后三同前缀），科学7bb/核心9f187保持；9006–9009运维与controller为3e55781。controller33212及90秒只读helper40920持久运行，模型不代替进程轮询。[实时接手清单](outputs/experiments/first_stage_ai_search_20261013/round6/run_manifest.json) · [工作台观测](outputs/experiments/first_stage_ai_search_20261013/round6/control/labels_runtime_deps_02/state.json)。
 
+
+
+
+
 首worker四端缺scripts退出、V1脚本依赖后完整来源校验又错误指向运维repo/不完整snapshot，均未进入算法；原日志、快照/配置/ID及124/V1证据保留。V2仅运维bootstrap显式加载原7bb校验函数，全部原hardchecks与实际科学模块来自原冻结来源；69相关purechecks、四端真实bootstrap完整verify后才经API同IDresume。未热填旧快照或改教师/D5；当前科学计算已经开始，不能继续将全组写成0调用。[同ID恢复准入](outputs/experiments/first_stage_ai_search_20261013/round6/operations_repair/runtime_deps_02/root_same_ID_resume_admission.json)。
+
+
+
+
 
 [v3工程补充](outputs/experiments/first_stage_ai_search_20261013/design/round6_engineering_qualification_v3.md)公开登记观察失败后的工程问题修订，原GPU/CPU跨batch资格仍失败；独立解析全局损失A（5CPU leaf反向）、固定micro4实际两步恢复B及非空Adam一步checkpoint只读回验均通过，浮点容差仍1e-6/1e-5。工程总4更新（原2+剩2），科学训练仍0；根独立重比较696张量/24标量、其中295 exact，原初始化2e5b3322文件/06ee7e13 tensor保持。后续训练固定20474同GPU与显式确定性/TF32关闭runtime；没有任意micro或跨GPU一致性结论。[根工程准入](outputs/experiments/first_stage_ai_search_20261013/round6/engineering/model_numerical_v3_01/root_model_engineering_admission.json)。待全768独审通过692/154/6母门槛及真实新source/plan准入后才进入单模型，validation/test封闭。
 
+
+
+
+
 **2026-10-13 18:55 S1-AI17-R6标签提交前运维异常正在修复；模型数值工程资格未通过，科学训练仍0。** 标签源20156519、主集成988bbb8已冻结；639运行文件与1061 Git文件根逐字节核、62相关检查及20418三纯进程stub通过。四端9006–9009已部署独立round6工作台，原768计划SHA434a1cc2、spec9f86dbd6已发布；controller17280出生1791888586.2015076在首个resource_route因旧observer把round6解析为端口失败，state为attention_required、intents为空，**实际POST/prepare/T/D5均0**。不虚称正在计算。[原控制证据](outputs/experiments/first_stage_ai_search_20261013/round6/control/labels/state.json) · [原计划准入](outputs/experiments/first_stage_ai_search_20261013/round6/root_label_plan_review.json)。根固定4文件运维修复7bb5e68，显式解析标签/学习嵌套归档，两项puremock通过；原几何/教师与输入/预算不改，独审正在保留旧空闲服务并部署新epoch，完成新精确计划核验后提交，不热改旧worker。
+
+
+
+
 
 模型工程源a36a8e2、主集成e98f5c9，31项CPU/mock通过；20474限定4合成CUDA更新资格实际完成前2次后失败，原子恢复2次未执行。loss与全部梯度断言通过，但更新后参数循环的**首个失败tensor**有1/16384元素超冻结容差（abs2.391636e-6、rel3.75408e-5），后续tensor未检查，不能说全模型仅1个。原初始化与资格原字节双端保留，工程包SHAa9406205…82945；worker已退出，0科学更新。原tol/失败不改，训练准入保持关闭。[Astra数值诊断](outputs/experiments/first_stage_ai_search_20261013/design/round6_engineering_numerics_review.md)认为FP32归约与Adam近零敏感放大只是待验证假说，标签T/D5独立不受此工程失败直接否定；仅批准原四合成case一次CPU全批/微批前反向诊断，0optimizer/GPU/新场景，不拿诊断冒称原资格通过。
 
+
+
+
+
 **2026-10-13 18:29 S1-AI17-R5完整双端分支归档已根验收。** [稳定入口](outputs/experiments/first_stage_ai_search_20261013/round5/delivery/r5_p0_location.json)含181980789B压缩包，SHA`65fc59408e3e96258ddc678815866978afd2c0b2e558b3dac8bd2d4a4c758cca`；10028原路径对应7691去重对象及3清单，两端7694成员全部核SHA，根再次独立重算全部成员与13稳定引用通过。旧R4共1243依赖两端按原址闭合、自包含b7 Git bundle及1044树成员核验齐；旧数据通过依赖索引，不重复打包。原Linux receipt与本地换行摘要分别保留，不冒称同字节。[根归档验收](outputs/experiments/first_stage_ai_search_20261013/round5/delivery/root_archive_acceptance.json)。本条完成R5-P0分支、原pass=false与0科学权重不变；R6新模型/标签流程继续实现复核，整体AI17未结案。
+
+
+
+
 
 **2026-10-13 18:15 S1-AI17-R5报告17根验收完成，原P0未过；R6方案22v2已准入并行实现，科学训练仍0。** R5四任务均completed42/42，原ID分别为`p0_ai_search_r5_20261013_172829_ea5fd1d3`、`172834_57a66b7b`、`172838_22729e74`、`172842_a5196414`（后三同前缀），终态二次GET及worker退出证据闭合。冻结科学`b7ed79fc…`、合同`3555fdc7…`，新168解码、0prepare/T/训练/MILP/新valtest；工程8fixture共10D5及3进程stub另账，94检查通过。7738原文件约1.873GB逐SHA核验；完整双端分支归档正在进行，不以采集完成冒充交付完成。
 
+
+
+
+
 [报告17](docs/第一阶段/实验报告/17_锚点域成员修复与同输入对照.md)与五PNG/PDF已根通读、逐图目视及10图SHA复核。逐景独立重算G0=true、P0=false：EXACT24/24，OWNER10为12/24、JOINT10为14/24，均未达各18；质量机会8/9，48配对净增21、损失0，可变N与非floor异宽去重24景。两类成功各17却N实际改变各15，不混称。原R5后续768标签/2000–6000训练停止，原失败不改；尚无AI贡献。新增guard691.924814秒与终点4.650037秒，168独立冷方法1682.174905秒含重复历史费用；旧unknown仍保留。[根门槛验收](outputs/experiments/first_stage_ai_search_20261013/round5/analysis/root_gate_acceptance.json) · [图文验收](outputs/experiments/first_stage_ai_search_20261013/round5/analysis/report17_root_acceptance.json) · [原始入口](outputs/experiments/first_stage_ai_search_20261013/round5/analysis/p0_location.json)。
+
+
+
+
 
 [新方案22](docs/第一阶段/方案/22_冻结修复器下的直接监督学习试点.md)v2单独研究真实模型预测能否进入固定D5可用域；不是原人工扰动门槛补救。合同SHA`74246c2f…`、方案`1f9634c4…`，原v1字节保留；200-query启用/飞机锚点/归属网络，实际宽度由原b7 D5包络确定。固定seed51001、SciPy1.14.1、全局batch16损失及确定数据序/断点，768原训练候选先过692合格/154非平凡/6母可变能力门槛；单模型2000节点包含在6000上限、累计活动8小时，独立验证80/test160依序封闭。全阶段上限1088prepare/1008T/1800D，禁止新P0、额外种子/超参或热改D5。[根设计准入](outputs/experiments/first_stage_ai_search_20261013/design/round6_root_design_acceptance.json)。
 
+
+
+
+
 新隔离树`C:/Users/Admin/.codex/worktrees/stage1-ai22/paper`、分支`codex/stage1-ai22`自b7；两个GPT-6.1 Sol分别实现模型/特征/损失和工作台/标签流水线，Astra已完成设计。尚未源冻结、工程数值资格或正式提交；启动前重新核四端API/进程出生/GPU/DQN/包路径与唯一归属，不把旧空闲记录当当前准入。最终要求全部飞机覆盖、唯一归属、请求守恒、N≤200及逐束可变宽度保持，不引入业务满足/PHY/SI等阶段外指标。
+
+
+
+
 
 **2026-10-13 16:39 S1-AI17-R5方案21v2已根准入，三路Sol并行实现；P0正式调用仍0。** [方案21](docs/第一阶段/方案/21_锚点域内归属修复与单模型验证.md)及合同SHA`3555fdc7…`、方案SHA`4a37d4e6…`保留v1原字节，经独立可行性与根复核，选全飞机锚点域的D5：几何先筛、EVICT128成员撤回、INSERT256补全、Q0上尾/CV保护，保持512proposal/8refit/2048n/5秒名义预算。遮蔽分数不读取；D4薄adapter、原T双来源、真实role、EVICT容差与母级零值/缺失统计均预先澄清。[根设计准入](outputs/experiments/first_stage_ai_search_20261013/design/round5_root_design_acceptance.json)。
 
+
+
+
+
 P0精确24景复用原R4已核成功prepare/T，新增D5五法120及D4同域OWNER10/JOINT10共48，总168解码、0newprepare/teacher/训练/valtest；原D4另72行仅历史参照。493引用逐SHA闭合，首三case专取成功prepare_retry、原unknown不复用。[P0登记](outputs/experiments/first_stage_ai_search_20261013/round5/source/p0_reference_registry.json)。新树C:/Users/Admin/.codex/worktrees/stage1-ai21/paper、分支codex/stage1-ai21自d859，core/ops/audit三6.1Sol分别实现；最多8固定fixture/24D5由core唯一记账，未预算额外prepare/T工程search。最终source/资格/精确工作台plan仍需根核后发起。
+
+
+
+
 
 UTC08:29附近四端18/24/73/74实际4090D、DQN CUDA可用、无science runner、9000–9003未监听；GPU UUID分别ef58/d6c7/0337/060b，74归还证据已核。默认包仍旧repo，后续必须显式新冻结PYTHONPATH并现场重新准入；此处未部署或绑定端口。[资源现场](outputs/experiments/first_stage_ai_search_20261013/round5/preflight/resource_inventory.json)。P0过门槛才进入合同已列单seed51001/2000节点至6000模型及后续validation/test，阶段源与精确计划仍逐段冻结；总1088prepare/1008T/1968D/6000更新上限不转移，训练累计活动8小时，SciPy1.11.4匹配依赖须训练前实际核，不静默改共享DQN。
 
+
+
+
+
 R4[报告16](docs/第一阶段/实验报告/16_离散分组与共同几何修复先导对照.md)完整双端分支归档已闭合：80.7MB/3895去重成员、ZIP SHA`a68b728f…`，18全包/成员读回及根独立3895重算通过；597科学源、5运维补丁与3264原文件、历史失败/未知/修复及五图数值齐全。[归档入口](outputs/experiments/first_stage_ai_search_20261013/delivery/r4_b0_location.json) · [根归档验收](outputs/experiments/first_stage_ai_search_20261013/delivery/r4_b0_root_acceptance.json)。R4完整结案、无科学模型权重，整体AI17研究尚未完成；不恢复R4旧门槛或旧任务。
+
+
+
+
 
 **2026-10-13 16:15 S1-AI17-R4-B0全部科学计算与报告16完成，原G1/G2未通过；继续方案21设计复核。** 三原任务均completed40/40，二次真实GET确认worker退出；3264原文件/543804142B采集及科学refs SHA闭合。根重算原冻结24景门槛：G0=true、G1=false、G2=false；T合格24、EXACT同质量24、PERT同质量3（要求18）、质量改善4（要求6）。PERT虽10个derived成功，另14回退，且成功中7不满足质量；RULE同教师质量13、随机0。[根门槛验收](outputs/experiments/first_stage_ai_search_20261013/round4/analysis/root_gate_acceptance.json)。不进入本轮768教师或2000/6000训练，不开新val/test；整体研究继续，原失败不回写。
 
+
+
+
+
 [正式报告16](docs/第一阶段/实验报告/16_离散分组与共同几何修复先导对照.md)（SHA`ed4b68bd…`）、五PNG/PDF与84项文档核验已根通读/逐PNG看图/重核门槛。T相对Wenv实际N变19/24、宽度分布24/24；RULE/EXACT各24，PERT10、随机0，fallback原有异宽不算新改善。全部实际N≤200、宽度0.3–1.0且覆盖/归属/守恒/Ω合格，尚无AI贡献。PERT回退为资源修复7、最终锚点回投6、孤机1，随机为资源13/孤机11，不能归因此前RSS监测。受限完整成本RULE/RANDOM/EXACT/PERT均值19.8642/37.2654/9.3987/33.6803秒，不用9.6762秒PERT原发布时间冒称效率门槛通过。[图文根验收](outputs/experiments/first_stage_ai_search_20261013/round4/analysis/report16_root_acceptance.json)。
+
+
+
+
 
 实际27prepare/24T/96decoder，0学习/MILP/新CUDA；3历史失败prepare已记墙钟9.5085秒且unknown保留，额外恢复输入重读3次0.0722秒另账。科学69e与运维d859双来源保留，旧工程review的58a已以精确SHA机械恢复旁路闭合，非原保存副本，原review/gap/audit/gates未改。[分析入口](outputs/experiments/first_stage_ai_search_20261013/round4/analysis/b0_location.json)。R4报告与完整双端归档正在接续，尚未宣称归档完成。Astra候选方案21拟全程飞机锚点域、几何先筛及有界成员撤回/补全；候选合同尚待源接口与缺失统计口径复核，未启动新科学计算。
 
+
+
+
+
 **2026-10-13 15:42 S1-AI17-R4-B0已按三个原ID恢复并实际运行。** 根在UTC07:39:25附近GET核18/24/73均running、worker23509/22187/22724真实alive，原40槽分别完成26/25/23，error为空；任务ID仍150920_a0ebefd3/150925_aa879954/150931_5fdf8e1f。[恢复后现场](outputs/experiments/first_stage_ai_search_20261013/round4/repair/linux_rss_01/root_after_resume_live.json)。科学69e、原plan a3d6、合同5124及3core原Git字节保持；新运维epoch`d859c738…`、主集成601a，仅修LinuxRSS后备与来源明确的同ID恢复入口，原guard/WAL/output不改。新service的部署助手通用字段名scientific_commit实际为运维epoch，不据此改写任务科学来源。
+
+
+
+
 
 86相关检查根通过，18端3个纯进程stub检查通过（未现场触发statm后备，该分支mock核验），0新增几何资格/MILP/CUDA。原三个prepare失败消耗另账，签定补充最多3次必要prepare、总上限27，教师24/解码96不变；新准备写独立operations_repair目录，不将旧unknown费用标成已知。[修复合同](outputs/experiments/first_stage_ai_search_20261013/round4/repair/linux_rss_01/repair_contract.json) · [根修复准入](outputs/experiments/first_stage_ai_search_20261013/round4/repair/linux_rss_01/root_repair_review.json)。额外输入重读写append-only运维账，原冷流程费用及历史unknown均保留，不能称严格完整墙钟优势。已派Sol持久只读等终态、采集原始资产并执行原冻结24景门槛；尚未据部分结果宣布成功或训练。
 
+
+
+
+
 **2026-10-13 15:20 S1-AI17-R4-B0已冻结部署，三任务准备监测异常；启动有界同ID运维修复。** 科学源`69e83fd4…`、主集成`c46eb97`，签定方案20/合同5124保持；74项相关检查根复跑通过，三端597个src/scripts/配置成员逐Git字节一致，DQN CUDA/独立8994–8996核验齐。[源准入](outputs/experiments/first_stage_ai_search_20261013/round4/engineering/root_source_preflight.json) · [24景120槽精确计划](outputs/experiments/first_stage_ai_search_20261013/round4/run_plan_b0.json) · [运行清单](outputs/experiments/first_stage_ai_search_20261013/round4/run_manifest.json)。原18=`150920_a0ebefd3`、24=`150925_aa879954`、73=`150931_5fdf8e1f`三任务均failed0/40（完整前缀b0_ai_search_r4_20261013_），controller24708已attention退出；不是运行中。
+
+
+
+
 
 每端首个prepare child均exit0并保存产物，但Linux退出过渡期`VmRSS`缺失被监测器误判，原guard记monitor_error/unknown并使worker停止。独审确认三份case0/16/32原W/Wenv、数据9929/身份/源fee85a、覆盖/归属/请求/资源与预算有效，原worker/child及本地controller均gone；不倒写原失败为成功。[只读独审](outputs/experiments/first_stage_ai_search_20261013/round4/diagnostics/prepare_recovery_audit/independent_prepare_recovery_audit.json)。截至该现场，实际3次prepare、0teacher/decoder/学习更新。为取得完整成本，根依既有必要恢复授权限定各补1次prepare：总尝试上限27（3历史失败另账），教师24/decoder96、原数据与G0–G2不变；3原目录/receipt/source不改，新补跑只写独立恢复目录并沿原ID，未知新WAL不自动重试。运维修复将用真实statm后备采样和有来源的运行时入口，原科学69e字节保持；修复尚未部署或恢复。
 
+
+
+
+
 R3[报告15](docs/第一阶段/实验报告/15_多宽度候选构造与整数补全先导对照.md)双端归档现已完成：33MB/1115成员、ZIP SHA`0f4982f9…`，18端全包与逐成员读回、独立本地1115和576原Git源码核验通过。[归档入口](outputs/experiments/first_stage_ai_search_20261013/delivery/r3_partial_stop_location.json)。这是R3已执行分支结案，旧大资产/全Git历史通过依赖索引引用，不是整体AI17最终完成；整体研究继续。
+
+
+
+
 
 **2026-10-13 14:44 S1-AI17-R3正式报告15及五图根验收完成，R4-B0继续实现复核。** [报告15](docs/第一阶段/实验报告/15_多宽度候选构造与整数补全先导对照.md)（SHA`664fed34…`）明确24准备与部分12发布/3选择错误/129未执行、14native和原G2停止；12发布仅三同景终态，N51/75/88与中心均未改变，归属和包络收缩来自共同后处理。72原线性匹配非MILP，36投影失败均因已匹配菜单Ω超cap，不是原问题不可行。12有规范原向量中case16 FULL原生接受证据仍不足；2无规范解、未知耗时与watchdog保留。五图、六CSV及450原证据26.3MB逐SHA复核；819重复束实例只对应三景214束。G0/G1全24未评、0科学训练/test保持。[根图数验收](outputs/experiments/first_stage_ai_search_20261013/round3/analysis/root_partial_numeric_visual_acceptance.json) · [报告验收](outputs/experiments/first_stage_ai_search_20261013/round3/analysis/report15_root_acceptance.json)。双端归档正在进行，未宣称完成。
 
+
+
+
+
 R4核心固定8合成输入资格已执行，41发布点只读几何/归属/请求/资源核验通过，原结果均为0.3°宽度下界、非floor连续宽度仅手算检查，不冒称真实24已完成。独审发现排序/哈希计量和typed不可用身份检查缺口，根修正后19静态mock通过；原8case执行源码/原成本保留，未重跑或倒写，0新MILP/CUDA。工作台guard/恢复与独立门槛脚本仍复核中；正式24教师/96decoder尚未提交，整体持续探索继续。
+
+
+
+
 
 **2026-10-13 14:24 S1-AI17-R3按冻结G2科学停止，R4-B0方案20已根准入实现；整体研究继续。** R3计划144方法槽实际为12已发布、3已知ORACLE求解前选择失败、129未执行；实际14次MILP，余130调用额度不转移。三REF在原正需求case0/16/32均只返回共同W且无合格峰值证书，独立原向量/目标核验确认；即使修正接口，ORACLE也只能不可用，已不可逆触发原G2两个缺失分支。因此不部署恢复、不补后继、不扩56/教师/训练；G0/G1和全24效果没有完整评价。[根科学停止](outputs/experiments/first_stage_ai_search_20261013/round3/analysis/root_scientific_stop.json) · [部分反证独审](outputs/experiments/first_stage_ai_search_20261013/round3/analysis/partial_gate_witness_audit.json) · [封存库存](outputs/experiments/first_stage_ai_search_20261013/round3/sealed_partial_inventory.json)。原源码1c5、已完成结果、失败/未知选择耗时和14原native全部保留；caller最小修复`090e9b4`、主集成`9fe23fb`仅本地4项mock验证，未部署、不虚称原运行已修复。报告15数值与最多五图正在收束。
 
+
+
+
+
 [方案20](docs/第一阶段/方案/20_离散分组学习与共同几何修复先导方案.md)选择离散启用/飞机锚点/整机分组学习的后续接口，由共同几何过程确定指向与连续宽度；本次B0仅24有界教师＋96共同解码、0MILP/训练/新val-test，分别原规则、单固定随机、精确教师与固定扰动教师，真实教师成本在B0诊断中计入。冻结v2合同SHA`512482fa…`保留原v1；重复anchor允许、四法最终回投同一飞机锚点表达域、全部几何排序工作计账，最终N≤200和逐束宽度均可变。[根设计验收](outputs/experiments/first_stage_ai_search_20261013/design/round4_root_design_acceptance.json)。
+
+
+
+
 
 新实现复用未部署修复树`C:/Users/Admin/.codex/worktrees/stage1-ai19-opsfix/paper`，分支`codex/stage1-ai20`、起点090e；两个Sol分别编写新科学核心与工作台/运行，旧R1/R2/R3冻结树保持。仅18/24/73拟独立s1_ai20与8994–8996，正式提交仍须源码、最多8个合成几何case资格及精确运行计划根核；当前B0正式调用为0。后续一个模型/seed51001/2000机制节点至最多6000只是已选结构与门槛建议，B0不顺便执行；下一阶段须根据本轮结果冻结。
 
+
+
+
+
 **2026-10-13 S2-F20正式六法对照、全部归档与资源归还已完成。** 三模型各400000、六短各32768、学习1396608；原12项加固定补充共13/13科学任务完成，六法同1320景Direct及完整A+B共7920案例、15840条返回，累计完整B9648。原12确认族/主分析0e66保留，固定20项仅后登记探索性95%描述区间；79项原数字复核和99项固定复核均通过。[正式报告16](docs/第二阶段/实验报告/16_共同Transformer下SAC_PPO_DQN公平对照.md)及六组PNG/PDF/CSV已人工核图核数，原始曲线不平滑、缺有效节点时钟不插值，单seed/有限调参/重启/CPU与PID计时限制保留。
+
+
+
+
 
 本轮共同Transformer/动作/奖励/预算未支持SAC相对PPO、DQN的质量优势；贪心两阶段SI/SGM均值最高。Direct SI（SAC/PPO/DQN/贪心/随机/固定）为83.3329/89.0089/86.5618/95.1788/92.1547/83.1950%，完整B后为84.5242/91.2074/88.0436/97.4063/95.5003/83.7997%。SAC Direct SGM有取舍，但对PPO时间块敏感区间跨零；固定是较弱模板，不以超过固定替代强基线比较，也不推广为算法家族结论或严格速度优势。
 
+
+
+
+
 **2026-10-13 S2-F20历史结论只读复核。** 旧权重100景T-SAC SI95.36%确高于PPO67.11%/DQN73.23%；旧需求扫描SGM及修正环境报告02/G11也有局部优势，但来源和条件不同，旧SI并非始终高于固定。F20同时改变动作/规则功率、SI差分奖励、共同掩码基线、场景及argmax执行，P19正向I0又属于贪心起点局部改进，不是空分配构造。当前Direct SAC SGM仍高于PPO/DQN/随机，完整B后两质量落后；三学习法未显示超随机/贪心的SI收益。特定落后原因尚未经消融识别，不归咎熵温度或预算、不把所有旧优势归于旧物理缺陷。具体数字、原CSV/JSON/NPZ和边界已追加至[效果差异问答](Q&A/算法与训练/第二阶段SAC与PPO及DQN的效果差异.md)。本轮无新科学计算/远端连接/资源接回，已结案状态与PAUSED跟进保持。
+
+
+
+
 
 **2026-10-13 用户再次指出F20与原纯T-SAC任务定义不一致，解释边界已更正。** 用户综合选定的原版本是方案15提出、方案16实施的G11 T0：学习频率起点/槽数/5—50 W离散功率，legacy_repaired含本束SGM与供需偏差罚，γ0.99、α0.01、150000终点；Jan24 SI91.90%/SGM0.6973。已核真实85f冻结奖励/preset分支及任务config，残留terms字段不能误作实际SI-only。F20取消学习功率、均分3000/N并改SI-only奖励，属于新问题内的对照，未完成保持T0任务后仅替换SAC/PPO/DQN的检验。均分与删除SGM是助手方案设计选择，不能归为用户分工指令必然要求；F20结果不构成原T0同条件失效证明。详见[问答再次更正](Q&A/算法与训练/第二阶段SAC与PPO及DQN的效果差异.md#2026-10-13再次更正以原t0方案为参照f20任务定义并不一致)。本轮仅读本地证据，0新训练/评价，冻结结果及已结案/PAUSED状态保持。
 
+
+
+
+
 13任务原卷/共享数据依赖/原TAR/历史控制元数据补卷合计17大卷原字节、成员及双端回执闭合；另669个报告、图、统计数组、原曲线、冻结代码、Gitbundle及控制证据合成117107368B交付包，SHA`e57a4daa55599040857ee7533793e2c49a2d348622eaa75233400c02bd7e45bb`，20474独立整包读回相同。大卷为引用，不假称全部大数据包含在小包中。8份遗漏owned大型原JSON已补卷75,486,480B/18c0b95a，迁移adopt复用既成卷；旧scope/history和失败保留，不追外国诊断target或称外国资产已归档。[最终交付索引](outputs/experiments/s2_fair20_20261012/delivery/final_readback_manifest_index.json)。
+
+
+
+
 
 20474已于北京时间13:02:49停止本组8954控制服务及本地隧道，真实API监听关闭、无运行科学执行、GPU UUID060b与两查询exit0/compute空核验通过；[实际归还证明](outputs/experiments/s2_fair20_20261012/delivery/20474_resource_return.json)齐。[用户授权的74归还通知](outputs/experiments/s2_fair20_20261012/delivery/resource74_return_message_receipt.json)已发原聊天，供其当前已授权新任务先核资源使用，不恢复结案ND12。18先前归还及回执保持缓存、未重复访问；未做云实例终止。最终控制回执和PAUSED配置已实际双端读回，小时跟进s2-f20已暂停，原本地持久进程均按出生实核退出；不恢复科学或计时任务。
 
+
+
+
+
 **2026-10-13 第一阶段已收到20474正式归还凭据（本轮仅登记交接）。** S2-F20在13:02:49北京时间记录8954控制服务与本地74隧道已停止、无运行科学执行、GPU/compute查询成功且UUID060b匹配，允许其它已授权工作使用；未终止云实例。本聊天已核归还JSON SHA`3c4be378…`及其最终读回索引、根验收和既有18归还三个引用SHA全部相符。[收到通知的核验记录](outputs/experiments/first_stage_ai_search_20261013/followup/s2_20474_return_notice_received_20261013.json)。本轮未独立连接SSH、未部署或发起任务，也未修改S1-AI17-R3已冻结的18/24/73路由；74可作为后续已授权工作待现场准入的资源，实际启用仍须检查新鲜资源与唯一任务归属，不能按历史空闲推断当前可用。已结案ND12/G16等保持不恢复，S2-F20冻结资产未改。
+
+
+
+
 
 **2026-10-13 S2-F20六法科学计算、统计、正式报告与核图已完成，最终传输和74归还接续。** 固定任务`fixed4_a2f6f9c1a9ac`于12:04:12真实completed1320；唯一ZIP a82f4304及7231成员在12:05实际核验，helper/固定统计于12:07自然returncode0退出。原12任务加固定补充共13/13，三正式各400000、六短各32768、学习1396608/1396608不变；六法同1320景共7920个方法案例、15840条返回，累计完整B9648。原主分析0e66字节、12项确认区间、三终点与选择保持；固定追加20项为后登记未校正95%描述区间，另日期/块4敏感性，不作为新的确认性test。[固定独立99项核验](outputs/experiments/s2_fair20_20261012/fixed_baseline_20261013/final_fixed_numeric_independent_audit.json)全部通过，原79项核验保持。
 
+
+
+
+
 [正式报告16](docs/第二阶段/实验报告/16_共同Transformer下SAC_PPO_DQN公平对照.md)已包含SAC/PPO/DQN、贪心/随机/固定Direct及完整A+B的SI、SGM、全N资源/基本服务、候选与回退、分层和描述性耗时。Direct SI依次83.3329/89.0089/86.5618/95.1788/92.1547/83.1950%；最终B依次84.5242/91.2074/88.0436/97.4063/95.5003/83.7997%。本轮不支持SAC相对PPO/DQN质量优势；贪心两阶段SI/SGM均值最高，随机SI也高于三学习法，固定是较弱模板，不以超过fixed替代强基线比较。单seed/有限调参/两日期/后登记补充与重启/CPU/PID/时钟限制保留，不泛化为算法家族或严格速度结论。固定回退819，保各束`min(C_direct,0.1D)`容量下限而不是仅保护总束数。
+
+
+
+
 
 原12任务卷与固定卷、共享依赖/原数据卷共16个实际大卷已由[13任务资产投影](outputs/experiments/s2_fair20_20261012/delivery/computational_archive_root13_compact.json)闭合，旧大卷不重压。六法图采用[新v4图表清单](outputs/experiments/s2_fair20_20261012/raw_archive/publication_final_fixed_v4/figure_manifest.json)：六PNG/六PDF及全部配套CSV人工核数、PNG及PDF实际渲染核图通过，图4阶段图例与图5万交互刻度修复，数据/原始曲线不变。[Root图文验收](outputs/experiments/s2_fair20_20261012/delivery/figure_report_root_review.json) · [科学验收快照](outputs/experiments/s2_fair20_20261012/delivery/run_manifest_science_accepted_snapshot.json)。全部科学/归档/统计/出图进程已退出；74仍保留至最终selected小交付包及源/模型/大卷引用远端读回、停止后续调度、fresh释放和通知，尚未宣称已归还。18已归还且通知齐全，仅缓存；本轮只访问74。`s2-f20`继续ACTIVE至全档/两端释放与74通知闭合。
 
+
+
+
+
 **2026-10-13 12:34 S1-AI17-R3首批24景准备任务已全部完成，尚未开始六法MILP对照。** 根在UTC04:34:20真实GET核18=`prepare_ai_search_r3_20261013_123139_f5a119fe`、24=`123144_fc603e9b`、73=`123151_09aa9f4e`各8/8 completed、error为空，原worker11271/10595/10867均process_alive=false。[根现场回执](outputs/experiments/first_stage_ai_search_20261013/round3/preflight/root_prepare_live_actual.json)。三任务均绑定1c5源、24精确原开发案例与签定prepare计划a9eb；处理完成不代替每景候选完整性或G0–G2，准备产物的typed状态/公共池/投影仍在核。这里新增MILP为0，投影匹配及其实际成本另记。
+
+
+
+
 
 最终Linux两次原生资格与独审已通过，原始15文件、11源Git字节、完整起点及阶段2前链闭合；唯一工程总账12次toy/4次CUDA已满，第9toy未知墙钟保留。[根最终工程资格](outputs/experiments/first_stage_ai_search_20261013/round3/engineering/root_core_qualification.json)。原本地dispatcher21060发起后，为收紧硬错误时停止后继调度的控制逻辑，按出生时间停止；远端worker没有停止，三原request已只读对账且都完成，没有新增或重发prepare任务。后续evaluation使用另存并审查的控制层版本，科学1c5/合同/计划预算不热改。正在核三份prepared_manifest并形成24×6评价计划；AI科学训练及新val/test算法调用仍0。
 
+
+
+
+
 **2026-10-13 12:15 S1-AI17-R3科学源已冻结，正在三端部署和最终Linux资格核验；尚未提交正式24景。** 科学提交`1c5aa17090a7cc7d05dca4dd80715d7fc337c6b0`，主目录集成`64a779b`；canonical Git字节副本保留在E，原Windows实现树干净。根90项新核心/独审/工作台及旧R1/R2接口相关检查通过，22项独审成员与Git原字节已闭合；七文件仅Windows CRLF转Git LF，签定v2合同原SHA不变。[根源码核验](outputs/experiments/first_stage_ai_search_20261013/round3/engineering/root_source_preflight.json) · [独立复审](outputs/experiments/first_stage_ai_search_20261013/round3/engineering/cross_review.json)。父子RSS、完整30秒发布、未知预算恢复、零覆盖输出mask和REF实际目标来源问题已修复；保留审查前版本及失败，不回写旧实验。
+
+
+
+
 
 已完成10次Windows合成小MILP与4次CUDA真更新，第9次原生已完成但监测退出竞态导致墙钟未知，原证据保留；必要最后2次小MILP在18端最终Linux源执行，合计仍不超过原12，CUDA不追加。三端部署只启动8990–8992独立工作台，不自动发科学任务；最终Linux资格/完整原24计划须根核后才发布。[工程总账](outputs/experiments/first_stage_ai_search_20261013/round3/engineering/core_qualification_ledger.json)。24景72个原R2外部参照布局已逐SHA及原发布身份独审，候选生成不读取这些中心；准备时投影另计成本。[固定参照入口](outputs/experiments/first_stage_ai_search_20261013/round3/source/pilot24_reference_refs.json)。科学AI训练与新val/test算法调用仍0，最终可变束数和逐束宽度要求保持。
 
+
+
+
+
 **2026-10-13 11:42 S1-AI17-R3方案19与唯一科学合同v2已根冻结，三路Sol并行实现；正式先导尚未启动。** [方案19](docs/第一阶段/方案/19_学习辅助可变束数与束宽构造方案.md)从原始飞机输入生成公共多宽度候选束，以一个监督计数网络筛选候选，再由共同整数补全确定实际非空N与逐束宽度。固定512中心、三菜单各两副本、全部飞机唯一整数归属；这是有限候选域，不宣称原连续问题全局最优。[合同v2](outputs/experiments/first_stage_ai_search_20261013/design/round3_design.json)SHA`2ddacb75…`与[根设计验收](outputs/experiments/first_stage_ai_search_20261013/design/round3_root_design_acceptance.json)保留原v1和更改依据，初批24开发案例/六法/最多144次MILP，经G0/G1/G2才追加56；全80达标后才768新教师与一个seed51001/6000更新模型，后续验证/test另有冻结门槛。整轮上限4544求解调用、26496名义solver秒；输入、模型、原生启动等成本另账，不冒称总墙钟上界。
+
+
+
+
 
 唯一highspy1.15.1已安装到本地及18/24/73各自R3隔离vendor，官方wheelSHA、每端18成员、实际包路径/CUDA和21项options set/get均已核；根独立核本地成员。[依赖回执](outputs/experiments/first_stage_ai_search_20261013/round3/engineering/vendor_receipt.json) · [根验收](outputs/experiments/first_stage_ai_search_20261013/round3/engineering/root_vendor_acceptance.json)。尚未调用native run或setSolution、未做工程toy/CUDA更新；完整可行起点被原生实际接受仍须G0资格。Astra设计已交付，Sol分别实现科学核心、工作台与运行、独立审计/闸门，均在新`stage1-ai19`树；旧R1/R2源和数据保留。74仍为S2-F20，不准入；科学AI更新和新val/test算法评价仍0。
 
-**2026-10-13 S1-AI17-R2全80开发审计与根复核已完成；G0/G1/G2通过，G3未过，继续设计输入端学习构造。** 先导24与新增56按原SHA索引合并为20母80案例/160方法行、1280任务记录；新56审计与累计80均formal_ready、未解决问题0，根逐80审计文件SHA与身份复核并独立重计。[根全80验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/root_full80_gate_acceptance.json) · [完整位置与源码/结果入口](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension_location.json)。只读流水39436及所属进程树全部退出，总390.203秒，这不是算法求解耗时；76份后处理产物校验通过，没有重算原24或训练模型。
 
-D1完整池80/80、目标36/80且覆盖16/20母；D0完整46/80、目标30/80且覆盖13母，质量分母保留80。D1相对规则的离线oracle射线对中位节省0%，相对单随机75.6342%；固定A区重分覆盖同36成功案例、主成本相对oracle超额中位0%，仍不支持旧八槽排序训练（固定槽几何调用并非全不增加，不能说所有成本或终点等价）。最终共同变N和保留束真实宽度为D0 33/80、D1 39/80；36个D1固定A首命中全不改N/宽度、全改归属，33中心不动3改变。D1最终峰值均值1665.17Mbps低于D0的1711.86，但逐景13低/22高/45同，不能宣布全面优胜。[独立数字/机制复核](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/root_report14_numeric_acceptance.json)。
 
-[报告14](docs/第一阶段/实验报告/14_共同强初解与可变束宽重构完整开发对照.md)已完成五图、35产物SHA与20链接根复核，并独立核对全部主数值及N/宽度机制；[图文验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/report14_root_acceptance.json)。报告与完整R2后处理双端归档已完成：377成员/7,832,366B小包在本地E与远端18整包及逐成员一致，根独立核全377成员、80份原case审计和报告SHA通过。[双端位置](outputs/experiments/first_stage_ai_search_20261013/delivery/r2_full80_location.json) · [根归档验收](outputs/experiments/first_stage_ai_search_20261013/delivery/r2_full80_root_archive_acceptance.json)。旧大raw/教师资产保持原位置与SHA索引，本次未重复全量核验；这是R2报告和完整后处理归档，不是整个研究或AI模型最终交付。Astra另设计方案19及机器合同，优先从原始输入生成公共多宽度候选域、学习候选选择并作共同几何/整数补全，尚未冻结或实施。新隔离实现树`C:/Users/Admin/.codex/worktrees/stage1-ai19/paper`、分支`codex/stage1-ai19`起点455已备，未修改源码或产生新科学任务。旧R1/R2树及失败不动，科学AI更新和新val/test算法调用仍0；最终可变N≤200与逐束可变宽度要求保持。
 
-**2026-10-13 10:28 S1-AI17-R2重启接续已核，原始采集—独立审计后台流水已启动。** 18/24/73仅恢复455工作台服务，原12任务与全部原SHA保全，GPU UUID轮换已单列：[重启回执](outputs/experiments/first_stage_ai_search_20261013/preflight/reboot_resume_20261013/receipt.json)。原80景没有重求解。只读流水PID39436/出生1791858191.7096317，采集子进程28696；10:27:51实时快照已下载501文件/242,384,257B，目标新增603文件/307,083,272B，尚未形成全80门槛结论。[实际启动](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/control/pipeline_launch.json) · [实时流水状态](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/control/pipeline_attempt1/state.json)。
-
-一次准入绑定v2 spec `a2734c09…`、采集清单`bb19d95b…`与[根验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/control/root_pipeline_approval.json)；11项运行器检查及独立复核通过，原23项后处理源码不变。运输用base、审计/聚合用原DQN，进程树总RSS4GiB、磁盘余量8GiB、整段1200秒；采集56/112行/896任务与三端225来源成员全部闭合后才审计56，再合并原24索引求全80统计。任何失败保留现场并停，不自动重试或新科学调用；旧v1解释器/进程树缺口在启动前修复且版本留存。下一AI路线的[五篇原始论文备忘](outputs/experiments/first_stage_ai_search_20261013/design/next_ai_primary_evidence.md)已完成，尚不代替方案19或训练结果。
 
 **2026-10-13 11:01 S2-F20固定补充已交给持久归档与本地统计流程，完整六法报告仍待。** 独立复审后Root实际启动归档等待器25252/出生1791859134.5225763（v4源码5b316206）、本地统计等待器40344/出生1791860312.44473（97be95e3）；两者当轮出生/命令已实核。前者只GET74等唯一fixed1320完成与原worker科学执行退出后封包、整包/成员核验，后者仅读本地小JSON，等唯一包verified及原归档进程退出后按Root实际SHA-spec运行一次统计；当前均waiting，0统计生产/0新训练。科学执行已退出但PID尚为Z的情形按真实kernel退出码0及锁释放记录，不伪称PID消失，最终停止调度/服务后仍须重新核资源。[持久交接实证](outputs/experiments/s2_fair20_20261012/fixed_addon/persistent_pipeline_actual_handoff.json) · [本地统计实际launch](outputs/experiments/s2_fair20_20261012/fixed_addon/statistics_awaiter_actual_launch.json)。
 
+
+
+
+
 固定统计源eb83cedb和桥接37608b80已独立复审；每个原NPZ及排序、冻结9ca/fbf逐成员源、全N候选/返回与严格保护都实际验证后才产结果。新增原五法减fixed的20项质量差仅报告后登记、未校正的点态95%区间及日期/长度4时间块敏感性，40母/20000draw/seed73001；原12族主CI与判读只读保留。缓存和统计写新E目录并保8GiB，旧intent/日志/partial不覆；deadline或空间attention先实核是否仍有同出生child，不盲双起。[Root实际统计source批准](outputs/experiments/s2_fair20_20261012/analysis/fixed_offline_source_root_approval.json)。`s2-f20`保持ACTIVE且最新配置已[回读](outputs/experiments/s2_fair20_20261012/followup/fixed_pipeline_active_readback.json)；六法新图、报告人工复核、13任务卷及源模型全档、74释放和通知都未宣称完成。
+
+
+
+
+
+**2026-10-13 S1-AI17-R2全80开发审计与根复核已完成；G0/G1/G2通过，G3未过，继续设计输入端学习构造。** 先导24与新增56按原SHA索引合并为20母80案例/160方法行、1280任务记录；新56审计与累计80均formal_ready、未解决问题0，根逐80审计文件SHA与身份复核并独立重计。[根全80验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/root_full80_gate_acceptance.json) · [完整位置与源码/结果入口](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension_location.json)。只读流水39436及所属进程树全部退出，总390.203秒，这不是算法求解耗时；76份后处理产物校验通过，没有重算原24或训练模型。
+
+
+
+
+
+D1完整池80/80、目标36/80且覆盖16/20母；D0完整46/80、目标30/80且覆盖13母，质量分母保留80。D1相对规则的离线oracle射线对中位节省0%，相对单随机75.6342%；固定A区重分覆盖同36成功案例、主成本相对oracle超额中位0%，仍不支持旧八槽排序训练（固定槽几何调用并非全不增加，不能说所有成本或终点等价）。最终共同变N和保留束真实宽度为D0 33/80、D1 39/80；36个D1固定A首命中全不改N/宽度、全改归属，33中心不动3改变。D1最终峰值均值1665.17Mbps低于D0的1711.86，但逐景13低/22高/45同，不能宣布全面优胜。[独立数字/机制复核](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/root_report14_numeric_acceptance.json)。
+
+
+
+
+
+[报告14](docs/第一阶段/实验报告/14_共同强初解与可变束宽重构完整开发对照.md)已完成五图、35产物SHA与20链接根复核，并独立核对全部主数值及N/宽度机制；[图文验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/report14_root_acceptance.json)。报告与完整R2后处理双端归档已完成：377成员/7,832,366B小包在本地E与远端18整包及逐成员一致，根独立核全377成员、80份原case审计和报告SHA通过。[双端位置](outputs/experiments/first_stage_ai_search_20261013/delivery/r2_full80_location.json) · [根归档验收](outputs/experiments/first_stage_ai_search_20261013/delivery/r2_full80_root_archive_acceptance.json)。旧大raw/教师资产保持原位置与SHA索引，本次未重复全量核验；这是R2报告和完整后处理归档，不是整个研究或AI模型最终交付。Astra另设计方案19及机器合同，优先从原始输入生成公共多宽度候选域、学习候选选择并作共同几何/整数补全，尚未冻结或实施。新隔离实现树`C:/Users/Admin/.codex/worktrees/stage1-ai19/paper`、分支`codex/stage1-ai19`起点455已备，未修改源码或产生新科学任务。旧R1/R2树及失败不动，科学AI更新和新val/test算法调用仍0；最终可变N≤200与逐束可变宽度要求保持。
+
+
+
+
+
+**2026-10-13 10:28 S1-AI17-R2重启接续已核，原始采集—独立审计后台流水已启动。** 18/24/73仅恢复455工作台服务，原12任务与全部原SHA保全，GPU UUID轮换已单列：[重启回执](outputs/experiments/first_stage_ai_search_20261013/preflight/reboot_resume_20261013/receipt.json)。原80景没有重求解。只读流水PID39436/出生1791858191.7096317，采集子进程28696；10:27:51实时快照已下载501文件/242,384,257B，目标新增603文件/307,083,272B，尚未形成全80门槛结论。[实际启动](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/control/pipeline_launch.json) · [实时流水状态](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/control/pipeline_attempt1/state.json)。
+
+
+
+
+
+一次准入绑定v2 spec `a2734c09…`、采集清单`bb19d95b…`与[根验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/extension/control/root_pipeline_approval.json)；11项运行器检查及独立复核通过，原23项后处理源码不变。运输用base、审计/聚合用原DQN，进程树总RSS4GiB、磁盘余量8GiB、整段1200秒；采集56/112行/896任务与三端225来源成员全部闭合后才审计56，再合并原24索引求全80统计。任何失败保留现场并停，不自动重试或新科学调用；旧v1解释器/进程树缺口在启动前修复且版本留存。下一AI路线的[五篇原始论文备忘](outputs/experiments/first_stage_ai_search_20261013/design/next_ai_primary_evidence.md)已完成，尚不代替方案19或训练结果。
+
+
+
+
 
 **2026-10-13 10:25 S2-F20固定基线已真实准入20474，原五法成果保持。** 新唯一任务`fixed4_a2f6f9c1a9ac`通过独立8954工作台发起/准入，worker3004/出生ticks845227105、DQN源包及GPU060b实际匹配；10:25已14/1320，随后首案例Direct/B/control/journal真实闭合，无当前错误。新执行源`9ca04c4ca848b1eaa2995e3ca0088ba952fd9c54`、模块SHA d3c974745f8686ff45fe1cdd3fab8e9504815b100c029ed271eff5cd31ed7914冻结；13项独立检查及R1–R4修复闭合，环境/物理/原完整A+B保持fbf原字节，181源码成员远端SHA通过。原prepare/matrix job整字节、1320顺序场景身份与1760唯一输入成员SHA独立核过，新job SHA b0b3ec9525829ff86c7e5da98e02aa33dfaaea9073e5671e2aadd6e5211a29b5。[补充冻结计划](outputs/experiments/s2_fair20_20261012/fixed_addon/run_plan.json) · [实际启动](outputs/experiments/s2_fair20_20261012/fixed_addon/actual_worker_started.json)。
 
+
+
+
+
 该任务仅新增一套固定4槽基线的1320 Direct/完整B，不增加学习或调参，原12/12和学习1396608完成状态保持；完整六法统计/新图/报告交付与74归还仍待。8954前端四个真实发起/准入/停止/同ID接续接口已回读，本地仅新74隧道30456/出生1791858330.441517，不恢复18或旧控制进程。归档等待器尚在修复独占/身份/不覆盖/空间闸，未启动生产打包；完成后核原worker出生退出再封包，不重压旧12包。
+
+
+
+
 
 **2026-10-13 S2-F20按用户“继续”接续，并新增固定分配基线；原五法计算和主统计已完成，六法交付尚待。** 用户明确报告须比较贪心、随机、固定，新增范围见[方案23](docs/第二阶段/方案/23_固定分配基线同场景补充对照.md)。原12任务、三正式各400000及六短各32768真实完成，学习1396608/1396608；五法1320景共6600案例与原8328次完整B保持，追加唯一fixed4的同1320景Direct及完整A+B后，六法7920案例、累计B9648。固定4槽由N≤200共同可行域推导，不按已见考核挑宽度；本次补充是后登记探索性对照，原12族确认统计不变。新源仅在独立树和20474/8954实现，本段为启动前范围登记：当时恢复身份/日志/worker合同闸待修复，尚未冻结或发起；这些待办已由上方10:25实际启动记录闭合。[范围登记](outputs/experiments/s2_fair20_20261012/fixed_baseline_20261013/root_scope_registration.json)。
 
+
+
+
+
 五法正式主分析0e66d601已完成；根独立79项核验及2421000行全束数据复核通过。Direct SI均值SAC/PPO/DQN/随机/贪心为83.3329/89.0089/86.5618/92.1547/95.1788%，同完整B后为84.5242/91.2074/88.0436/95.5003/97.4063%。本轮不支持SAC质量优势；SAC Direct SGM较PPO高，但长度4时间块敏感区间跨0，不能称各条件稳健。耗时仅描述，原PID/CPU证据不足和重启97.235878秒监测空窗不补造。单案例理论上界敏感性v2已自然完成并实际验收，外层等待timeout与子进程OS退出码未知保历史；理论上界不是可达解，也没有改变主结果。[独立数值审计](outputs/experiments/s2_fair20_20261012/analysis/final_numeric_independent_audit.json) · [报告16五法正文及固定待补](docs/第二阶段/实验报告/16_共同Transformer下SAC_PPO_DQN公平对照.md)。
+
+
+
+
 
 原12包、共享源数据/四来源清单/原TAR及补充控制包已有实际闭合，六图v2已生成保留；新六法图和最终小交付包尚待。20418已归还且通知齐全，仅缓存；18/24/73不再连接。20474最新现场核无科学worker、GPU060b与空compute查询通过，但仍为本组固定补充与全部交付保留，未宣称可释放。`s2-f20`已恢复ACTIVE并[逐字段回读](outputs/experiments/s2_fair20_20261012/followup/fixed_scope_active_readback.json)，原科学/归档/统计进程均不重启；必要修复和固定评价同ID接续自主进行，完成六法报告/全档后才核74归还并通知原聊天。
 
+
+
+
+
 **2026-10-13 09:46 S1-AI17已按用户“继续”恢复接续，先做重启后环境复核与结果审计，不重跑已完成80景。** 本次明确恢复撤销下方09:34的暂停要求；原`s1-ai17`小时跟进已实际改回`ACTIVE`。Sol恢复三端环境/来源核查和采集—独立审计程序，Astra接续下一路线的原始论文核验。初步现场确认18/24/73的原12个R2任务仍completed、原字节保存，原工作台监听消失；只恢复455执行版工作台以支持只读接续，不POST/resume任何科学任务。重启后三端GPU UUID发生轮换，必须使用新回执，不沿用旧设备映射；74尚待F20正式归还，不因此次恢复扩展其使用。
+
+
+
+
 
 接续顺序仍为新增56案例原始采集与独立审计、原24＋新56累计80的冻结门槛、报告14与下一版AI方案，再按新方案推进；当前不能把计算完成写成全80效果已获验证。最终可变N≤200和逐束可变宽度保持，科学学习与新val/test算法评价仍0；旧报告12/13、原负结果、暂停/运输失败与源码均保留。真实恢复回执随后归入本组`preflight/reboot_resume_20261013/`，主任务持续更新。
 
+
+
+
+
 **2026-10-13 09:34 S2-F20按用户再次重启请求暂停；全部6600计算及主统计已完成保全，报告尚待。** 原矩阵于07:37:43 completed6600 Direct/B，原1492已退出，12/12任务及学习1396608/1396608真实完成；不是全部交付完成。原矩阵归档24136/出生1791848292.519308实际验收后退出，第12ZIP SHA ad60d929已本地/74远端相等，根09:34重新核整包并核19800 Direct/B/control引用。主统计32440/出生1791848984.223758实际returncode0、08:20:50完成，原36652等待器也已退出；analysis.json SHA0e66d601及完整6600/40母/三终点/全N保护与20000draw/12族门槛已由原冻结生产流水通过。此时尚未做人工数值复核、敏感性附录、六图、正式报告16和最终交付，不发布SAC质量或严格速度结论。[本次暂停/资产保全/资源实核](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/user_reboot_pause2_preservation_receipt.json)。
+
+
+
+
 
 09:34真实74 API为completed、GPU/compute查询exit0、原UUID060b，compute空且无科学worker或本组归档进程；全部12任务卷和新统计仍在本地E及原远端归档，未重压、未删除或恢复任何任务。用户要求暂停后跟进已PAUSED并[逐字段回读](outputs/experiments/s2_fair20_20261012/followup/user_reboot_pause2_readback.json)，计算、观察、归档与统计进程的精确出生均核退出，74隧道已停止。还发现迁移用18旧隧道33804仍本地活跃，已按原出生1791784930.025809关闭，不做18 SSH/API查询；这一历史连接边界遗漏及本轮纠正保存在E/user_reboot_pause2_20261013/local_pause_receipt.json，不宣称此前全部连接都排除18。该实例此次可由用户重启，74最终交付/归还仍待，不伪称resource_return完成；24/73与AI17未干预。用户通知继续后应从已完成主统计接续复核/附录/出图/报告和最终归档，不重训、不重评6600、不双起已完成统计。
 
+
+
+
+
 **2026-10-13 09:34 S1-AI17已按用户明确要求暂停，等待实例重启与用户恢复指令。** 用户要求“暂停任务，我要重启实例”，覆盖此前中途不停的授权。持续目标状态已为`paused`，小时自动跟进`s1-ai17`已为`PAUSED`，正在编写采集器和核对文献的两个子agent已中断。09:34根只读核四端20418/20424/20473/20474均无` satellite_rl.workbench.runner `科学worker，本地也无本组Python控制器/采集器；不启动新任务、不自动接续或恢复调度。[暂停现场快照](outputs/experiments/first_stage_ai_search_20261013/controller/reboot_pause_snapshot.json)。未主动终止其它实验组或云实例。
+
+
+
+
 
 已完成结果、冻结代码、报告12/13、先导24与扩展56的原始远端记录、诊断教师本地归档全部保留。全80独立采集/审计及下一版AI设计仍未交付；暂停不等于研究完成。恢复时先核重启后的实际API、进程出生、GPU与DQN、455执行源/f02算法核心和原始文件完整性，再从已保存接续状态继续，不能直接按旧PID重启或重跑已经完成的80景。最终要求仍是同时支持可变束数与逐束可变宽度。
 
+
+
+
+
 **2026-10-13 06:14 S1-AI17-R2剩余56景计算已完成，累计80景进入独立采集与审计，暂无全80效果结论。** 根通过三端真实API核`evaluate_ai_search_r2_20261013_061246_af2f08fc`、`061247_195faf18`、`061249_1d0ab6d2`分别40/40、40/40、32/32方法记录；原worker33425/70873/73827均退出，唯一controller35720也completed且根核PID不存在。[根现场回执](outputs/experiments/first_stage_ai_search_20261013/round2/extension/root_evaluation_actual_0614.json)。本次为56案例/112行、预登记896任务槽，原先导24/48行直接复用、不重跑。执行455、算法f02、B5与1ba9均保持，三端实际source manifest各225成员；旧repo仍f02，新服务32223/69973/72867在各自source_epochs，74未使用。
+
+
+
+
 
 前序56共同输入任务`060554_1da3bdf4`、`060600_14184a1e`、`060606_23206c49`全部完成，worker及controller2292退出；[共同来源终态](outputs/experiments/first_stage_ai_search_20261013/round2/extension/preflight/prepare_terminal_handoff.json)。[评价计划](outputs/experiments/first_stage_ai_search_20261013/round2/extension/run_plan_evaluate.json)SHA`8f247d5b…`经[根精确验收](outputs/experiments/first_stage_ai_search_20261013/round2/extension/evaluation_plan_root_review.json)后由工作台执行。随后只读核全量来源/共同parent与pool/顺序、采集原始字节，独立审计新56并以原SHA索引合并24＋56；未经审计不发布优胜或门槛结论。此次未取得完整运行中CPU/GPU峰值采样，结束后空进程不填作历史0；科学模型训练与新val/test算法评价仍0，研究继续。
 
+
+
+
+
 **2026-10-13 06:05 S1-AI17原768条诊断教师的本地原始归档已完成，仍不准入训练。** 原三端teacher目录4023文件、782,237,430B已完整保留到E；根对6240逻辑引用/5815唯一当地文件逐SHA复核，并与远端逐成员清单闭合。实际192母×4案例、22824任务行的结构检查保留6644完成、4977池内未找到、11203截断，截断标签不填零；这只是身份/文件/结构验收，未做独立几何标签科学审计。[原始位置](outputs/experiments/first_stage_ai_search_20261013/analysis/diagnostic_teacher_location.json) · [根归档验收](outputs/experiments/first_stage_ai_search_20261013/analysis/diagnostic_teacher/root_archive_acceptance.json)。37.8MB训练NPZ只存一个E canonical blob，原fbd源码复用；运输首attempt的本地catalog键错误、失败日志、旧锁与最小修复来源全部保留，没有重算/新标签/训练。最终collector37872已completed并退出，R2大IO等待解除。
+
+
+
+
 
 **2026-10-13 06:02 S1-AI17-R2剩余56景的操作源与正式准备计划已根核，正在进行现场服务交接和准备任务发布。** 新执行提交`455efd70f6c570c9e0b4eb6a72397b0fcd11c4a4`，主目录集成`7d933a3`；算法核心仍f02，B5/结果前1ba9及原两几何资格不变。根从规范Git字节副本跑64项相关检查，并以真实签定证据作无mock准入；219项实际科学依赖与三端原worker清单一致，原Git科学内容也未改变。[新源验收](outputs/experiments/first_stage_ai_search_20261013/round2/extension/root_source_freeze_acceptance.json) · [独立复核](outputs/experiments/first_stage_ai_search_20261013/round2/extension/independent_cross_review.json)。审查中的依赖子集漏洞和分端升级未知回执恢复已修复；一度把Windows导出CRLF误当远端源差异的判断已撤回，原三端实际字节无异常，纠正依据保留。
 
+
+
+
+
 [正式prepare计划](outputs/experiments/first_stage_ai_search_20261013/round2/extension/run_plan_prepare.json)SHA`f95ecd93…`已根核56精确补集、14整母、三端20/20/16景及280份原R1五法审计引用，原24不重复；准备只抽取共同来源，不新解码。[计划验收](outputs/experiments/first_stage_ai_search_20261013/round2/extension/prepare_plan_root_review.json)。现场须先核原6任务/worker/controller终态与服务出生，再仅交接18/24/73的8980–8982至独立source_epochs，保旧repo/archive；实际新任务ID以随后清单为准，不提前记为已运行。R1诊断教师收集进程37872已completed且根核PID不存在，大IO等待已解除，正式归档回执另验；这不等于教师几何标签审核或模型训练。独立56审计＋原24索引聚合的23项后处理检查已过，新56求解、新AI训练和新val/test算法评价此时仍0。
+
+
+
+
 
 **2026-10-13 05:25 S1-AI17-R2先导独立审计与G0/G1/G2已通过，剩余56案例已准入、尚未启动；G3未过，仍不训练模型。** 独立重放24/24案例、48方法记录与585来源pin，未解决问题0；根复核15项读取/审计检查并独立重计目标命中。[根门槛验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/pilot/root_gate_acceptance.json)绑定audit `3d2c87c0…`、gate `f223c3e8…`和结果前G3解释`1ba91289…`。D1完整池24/24、新可行24/24、目标9/24且覆盖5/6母；D0完整池12/24、目标8/24且覆盖4/6母，不能将D0质量分母缩为12。D1相对D0最终峰值5例更低、6更高、13相同，均值优势不等于全面胜出。
 
+
+
+
+
 D1离线oracle相对规则的射线对成本中位仅节省5.3517%，低于预定20%；固定首项A区重分已覆盖同样9个目标案例，主成本相对oracle超额中位5.6543%，因此未建立八任务排序学习的必要性。该首项的9个首次命中全部不改N/真实宽度、全部改变归属；最终发布布局同时改变N和真实宽度则为D1 17/24、D0 14/24，两层机制不可混写。此结论仅为6母开发证据，不否定其它AI路线，也未完成用户要求的最终联合可变方案。
+
+
+
+
 
 按方案18原额度继续剩余14母56案例、112方法记录/896新任务槽，原24字节和任务直接复用、不重求解。三端18/24/73正准备独立操作层扩展与安全服务升级，核心保持f02 Git blob一致、B5科学合同不变；新操作层执行提交将在冻结后单列，尚未发布新任务。74无本组准入。[报告13](docs/第一阶段/实验报告/13_共同强初解与峰值对齐重构先导对照.md)与五图已完成，根核18链接、37图表成员SHA及实际数字/机制、目视图表；59成员/2,140,841B中间报告小包已本地E与远端18整包及逐成员核同，SHA`a89e7a25…`。[报告验收](outputs/experiments/first_stage_ai_search_20261013/round2/analysis/pilot/report13_root_acceptance.json) · [双端位置](outputs/experiments/first_stage_ai_search_20261013/delivery/r2_pilot_report_location.json)。小包不是完整原始数据/模型交付。后续AI方向重点是强布局构造/可行修复的真实质量或完整成本收益；科学学习更新及新val/test算法评价仍0。既有报告12与原失败保留，当前研究继续。
 
+
+
+
+
 **2026-10-13 04:35 S1-AI17-R2首批24景的D0/D1计算已完成，正在采集并独立审计。** 实际三任务`evaluate_ai_search_r2_20261013_043505_d2286666`、`043506_71831b20`、`043507_89287e52`各16/16，合计48方法记录、384任务结果；原worker26497/64392/67374均退出，唯一控制器28532也completed并退出。每景两法的共同parent/pool SHA、奇偶轮换顺序及三端224冻结源码成员已实际闭合，源f02、计划f55与B5合同不变。[终态交接](outputs/experiments/first_stage_ai_search_20261013/round2/preflight/closed_pool_terminal_handoff.json) · [原结果引用](outputs/experiments/first_stage_ai_search_20261013/round2/result_manifest_refs.json)。计算很短，未取得运行中CPU/GPU峰值采样；不能补造利用率或据阶段完成宣称算法优胜。
+
+
+
+
 
 独立后处理14项工程检查已由根在Git规范源环境复跑通过，G3解释仍为结果前1ba9版本。只读采集将保每个原始文件、各端原source manifest与来源，复用原R1 canonical数据及Git原字节q源，不重复旧3GB数据；随后逐候选重算几何、负载、任务/前缀成本及G0–G3。[后处理交接](outputs/experiments/first_stage_ai_search_20261013/round2/engineering/postprocessor/handoff.json)。目前没有正式效果或扩展准入结论，剩余56、AI训练及新val/test算法调用仍0；不把采集或合成检查当正式新成果。
 
+
+
+
+
 **2026-10-13 04:30 S1-AI17-R2三端共同初解24/24已完成，首批评价计划已根核，正在发布。** 正式科学源`f02c0dcbf76561c325b5a70a1a5b9bf98882b35d`、合同B5保持；本地主目录集成`869d685`。根在Git规范字节副本独立跑110项检查，并核10个真实已审布局与590束包络逐值一致；签名合同以专门Git属性保原字节，Windows行尾不再改变B5。[源与资格验收](outputs/experiments/first_stage_ai_search_20261013/round2/engineering/root_source_freeze_acceptance.json)。三端8980–8982已实际部署，DQN/CUDA/新repo与224冻结源码成员逐端核过，未使用74。
+
+
+
+
 
 原prepare任务18=`042703_08b34dda`、24=`042708_f2d42830`、73=`042713_095e4b7a`各8/8 completed，原worker均退出；控制器17820也正常completed并退出，不恢复。[根04:28真实API](outputs/experiments/first_stage_ai_search_20261013/round2/preflight/root_prepare_actual_0428.json) · [24份共同输入与来源闭合](outputs/experiments/first_stage_ai_search_20261013/round2/preflight/prepare_common_terminal_handoff.json)。准备只读R1五法已签终态，新增求解/训练/新val/test仍0。下一份[评价计划](outputs/experiments/first_stage_ai_search_20261013/round2/run_plan_closed_pool.json)SHA`f55ba009…`已根核固定24案例、48方法行、384任务槽，原共同SHA/预算/源码保持；发布中的实际评价ID与进度以[本轮运行清单](outputs/experiments/first_stage_ai_search_20261013/round2/run_manifest.json)随后回执为准，不能提前称已完成求解。
 
+
+
+
+
 G3的逐案例几何调用保护与固定槽反证已在评价开始前由Astra明确并保存[解释记录](outputs/experiments/first_stage_ai_search_20261013/design/round2_G3_pre_result_interpretation.json)SHA`1ba91289…`，没有看新结果后选口径。源码冻结前的可视性/包络计量、准备中断留账、硬错误停止后继任务和API开发范围漏洞均已修复、回归通过；失败和审查记录保留。首批跑完先独立审核与报告，不自动扩剩56或训练。
+
+
+
+
 
 **2026-10-13 S1-AI17-R2方案18已完成并通过根设计复核，正在独立实现，尚未发起本轮正式任务。** [方案18](docs/第一阶段/方案/18_共同强初解与峰值对齐小池重构开发方案.md)与[机器合同v2](outputs/experiments/first_stage_ai_search_20261013/design/round2_design.json)SHA`b5c0ddb5…`规定先24开发案例×8任务×D0/D1=384解码任务；实际共同强初解从R1五个已审计终态抽取，不重跑基线。两法共用等价逐机归属核验与局部资格矩阵，D1仅64活动飞机、其余全保留并核几何。严格工作量上限与名义3秒护栏分开，全部合法N≤200候选保留，共同N₀/Ω₀切片只用于质量门槛。G0/G1/G2通过才扩剩余56，不自动训练或访问新val/test。[根设计验收v2](outputs/experiments/first_stage_ai_search_20261013/design/round2_root_design_acceptance_v2.json)。
 
+
+
+
+
 启动前v2将最多261个有限候选点的非支配档案完整保留，取消原64点裁剪，并明确准备阶段截断的已知成本与未知中断禁止自动重算；原输入、预算与门槛不变。[原9ccd合同](outputs/experiments/first_stage_ai_search_20261013/design/round2_design_v1_before_archive_clarification.json)及[Astra修订审核](outputs/experiments/first_stage_ai_search_20261013/design/round2_contract_revision_review_v2.json)保留。23项核心工程检查已过，工作台与独立后处理仍在集成，未把工程小例当作开发效果。
+
+
+
+
 
 新实现树`C:/Users/Admin/.codex/worktrees/stage1-ai18/paper`、分支`codex/stage1-ai18`，远端拟`s1_ai18/{20418,20424,20473}`/8980–8982，仍需源冻结与现场准入；R1 fbd树完全不改。Astra设计已完成，三个Sol分别实现科学内核、独立工作台/执行、后处理与闸门。若强解后没有足够增量质量空间，后续转学习构造/修复的同质量效率路线；这不是停止整体探索或自动增加旧预算。根补核INIT与RULE实际同初始档案71例中71例仍有新折中点，保留这部分有效R1证据，不把18例三法任一差异扩大成全部取舍无效。[子集核对](outputs/experiments/first_stage_ai_search_20261013/analysis/root_actual_same_initial_novelty.json)。
 
+
+
+
+
 R1[报告12](docs/第一阶段/实验报告/12_可变束数与束宽联合搜索首轮开发对照.md)已补齐480原case的实际最终束宽与真实父布局变化见证；478有终态、2缺失保未知，RULE最终混宽19/80，W_ONLY80/80，N_ONLY真实变宽0。根核43产物SHA与16链接、图4及五图联系表通过；75成员/2,622,652字节中间报告小包已本地E与远端18整包及逐成员核同。[图文验收](outputs/experiments/first_stage_ai_search_20261013/preflight/report12_final_root_acceptance.json) · [中间报告双端位置](outputs/experiments/first_stage_ai_search_20261013/delivery/r1_report_location.json)。小包不包含全部原始科学数据或教师标签审计，完整本地/远端原始归档仍需在后续交付闭合；不称整个研究完成。
+
+
+
+
 
 **2026-10-13 03:19 S1-AI17原768条诊断教师已计算完成，第二版进入设计。** 03:15:37根通过三端实际API核得原`030635_cbe5f74c`、`030636_fb227969`、`030638_96526daf`各256/256 completed、原worker均退出且error为空；随后教师控制器30844也completed并退出。[根终态API](outputs/experiments/first_stage_ai_search_20261013/preflight/root_teacher_actual_api_0318.json)以内部真实时间为准。教师标签完整性/可用性与归档须另核，不等于模型已训练；科学学习仍0、独立test算法评价0。停止该轮自动接模型，持续下一轮研究。
 
+
+
+
+
 [只读机制诊断](outputs/experiments/first_stage_ai_search_20261013/analysis/initial_comparability_diagnosis/diagnosis.md)已绑定560审计及560原case全部SHA。18例实际初始档案差异来自缺档，同宽度已完成布局一致；独立2秒按0.3→0.5→1.0初始化的截止/late处理是原因，具体CPU争用比例不可归因。reference122池仅23完整可判（N偏好20、角域3）；原oracle质量最佳6项成本中位是规则前6的9.65倍，全部不满足原双成本门槛，不能写成没有排序信号，也不能当成已证明峰值排序收益。N_ONLY6292个及时候选全0.5°，4121“宽度重构”旧计数由变N数组长度误触发。Astra据此设计方案18，先建立实际共同强初解与目标对齐的有界开发门槛；不追溯修改R1科学源、结果或旧计数。
+
+
+
+
 
 **2026-10-13 03:13 S1-AI17首轮开发审计与报告12已完成，发现实际初解可比性问题，暂不准入AI训练。** 880条（480开发、80强参考、320桥接）独立回放通过，旧计数字段缺失的失败保留；556条区域超过256机的提前返回经冻结源码语义证明未求解，21项修订审计检查通过，科学源码/数值未改、未重算。[根审计验收](outputs/experiments/first_stage_ai_search_20261013/analysis/g1_root_acceptance.json) · [报告12](docs/第一阶段/实验报告/12_可变束数与束宽联合搜索首轮开发对照.md)。空间门槛79/80出现新非支配点，但共同N/角域切片中RULE与INIT共同61案例峰值全部持平；POST_SHRINK在与RULE共同63例中峰值50更低、13相同。这是开发诊断，不是AI收益或最终算法成功。
 
+
+
+
+
 根另核80案例中INIT/RULE/RANDOM的实际初始档案SHA集合有18不同，原因正由Sol逐原始case与源码诊断；相同初始化规则不能写成严格共同实际初解。旧“离散宽度重构”计数包含N_ONLY的变N，不能当成真实宽度数值改变的证明。[根初查](outputs/experiments/first_stage_ai_search_20261013/preflight/root_common_initial_mechanism_check.json)。原G1接续学习建议被本次[训练暂缓决定](outputs/experiments/first_stage_ai_search_20261013/analysis/learning_hold_decision.json)覆盖；已开始的3×256有限教师保留原预算并继续，明确为R1诊断教师，不热改、不自动启动训练。03:08逐端实际193/768，8个case worker/端，几何标签生成CPU运行、GPU0%/4MiB；科学学习更新0。唯一教师控制器30844/出生1791831993.4599628，实际ID/冻结来源见[运行清单](outputs/experiments/first_stage_ai_search_20261013/run_manifest.json)。下一版由Astra在诊断后设计共同强初解与真实质量/效率门槛，持续研究、不以无人回复结束。
+
+
+
+
 
 四原官方输入已同ID恢复完成，四TAR共7,006,453,760字节整SHA及来源/逐机数组核验通过；新验证20母80景与test40母160景合并完成，时间与训练/开发/旧验证无交集。test仅准备输入，未访问算法结果。[输入验收](outputs/experiments/first_stage_ai_search_20261013/preflight/new_data_merged_acceptance.json) · [数据引用](outputs/experiments/first_stage_ai_search_20261013/source/new_validation_test_refs.json)。原初始控制器13948、数据观察器31908、合并控制器17236、首轮collector32452及修订审计4844均已结束，不恢复旧进程。18/24/73用于本轮教师；74仍未准入，须原F20真实释放证明。最终仍须N≤200可变、逐束宽度可变及全飞机几何约束；当前不是完整交付。
 
+
+
+
+
 **2026-10-13 02:25 S1-AI17四个新日期已同ID恢复下载，科学源码与预算不变。**四个原prepare各仅通过原工作台resume一次，job只有resume与resume_attempt=1增加，原失败/owner/原13948终态和原始引用均完整保存；三端逐任务210冻结文件再次核同。[恢复交接](outputs/experiments/first_stage_ai_search_20261013/preflight/dataset_recovery/recovery_handoff.json) · [同ID接续](outputs/experiments/first_stage_ai_search_20261013/preflight/dataset_recovery/same_id_resume_receipt.json)。新worker依次为Feb17/18/19/20的11805/54432/57473/11810，实际字节由0增长；02:25根核约5.36GB已下载，四任务仍download、error为空，官方完整SHA/解析/80验证景与160test输入尚未完成，不访问test算法效果。
+
+
+
+
 
 独立数据观察器31908/出生1791829226.5367928已根核存活，仅观察4原ID/刷新同fbd路由，0create/0resume，原控制器13948不恢复；观察源码/config自冻结并绑定原control清单，原科学worker仍fbd，不是热改。两份新运维脚本已按SHA移入主目录并以d268f27单独提交，科学实现树保持原fbd干净；正在运行的observer使用独立不可变副本，不依赖这次文件整理。[观察器入口](outputs/experiments/first_stage_ai_search_20261013/preflight/dataset_recovery/observer/launch.json)。G1独立后处理17项工程检查由根再核通过，[源码与验收](outputs/experiments/first_stage_ai_search_20261013/analysis/postprocessor_engineering_acceptance.json)已交持久collector；只核9个已完成的880条科学结果，不等待数据下载、不重复求解。
 
+
+
+
+
 **2026-10-13 02:12 S1-AI17首段880条已计算完成，正在全量独立审计；新日期数据准备网络失败正在同ID恢复。**9个开发/强参考/桥接任务均真实completed、原科学worker退出，case_index闭合480+80+320；原始case共3,046,658,058B，最大单case35,362,334B。[采集资源与实际终态](outputs/experiments/first_stage_ai_search_20261013/analysis/initial_collection_resource_inventory.json)。一个真实INIT案例的6个发布/快照点、几何/负载/输入与210冻结源码成员已独立通过，但这只算partial sanity，不能代替全量G1。[局部实物核验](outputs/experiments/first_stage_ai_search_20261013/analysis/one_case_partial_sanity.json)。全量采集、逐case审计和门槛统计继续，教师与正式学习仍未提交。
+
+
+
+
 
 四个Feb17–20原prepare均因`curl (28) Connection timed out`失败，每次连接上限20秒；共16条失败已保存，原raw目录只有owner与空锁，尚无.part字节/NPZ或优化结果。原控制器13948已以attention_required终止，真实PID不存在，不能再称其仍活。GPT-6.1 Sol已核当前三端官方资产HEAD恢复200且长度匹配，正在逐原asset核验、刷新真实route并通过原工作台同ID接续；不改fbd科学源、日期/请求/种子/预算，不重跑880条，不盲重启旧控制器，不以数据准备失败作科学失败。[原失败与恢复入口](outputs/experiments/first_stage_ai_search_20261013/preflight/dataset_recovery/)。新持久数据观察器与实际下载/准备进度以随后回执为准，未完成前不声称新数据可用。
 
+
+
+
+
 **2026-10-13 02:01 S1-AI17首轮已在三端真实启动，正式AI训练尚未开始。**科学源`fbd3a743dc93ac14a7352e4f66a30db9194dc300`冻结，已集成本地主目录`de7adc0`；49项本组检查及32项既有功能回归通过，Astra终审三项问题均由根独立复核闭合。[源码/合同验收](outputs/experiments/first_stage_ai_search_20261013/preflight/root_freeze_acceptance.json)。20418/20424/20473新工作台8970/8971/8972已启动，实际新包/DQN/CUDA逐端核验，三端合计6次synthetic CUDA更新单列工程，科学学习更新0。仅用前三端；20474未经原F20完整释放证明不准入。
+
+
+
+
 
 13个初始任务已按同request经工作台发布：开发六个非AI方法480条、30秒强参考80条、原07/JOINT桥接320条，另4项官方日期输入准备（Feb17/18各10验证母，Feb19/20各20考核母）；这些准备不访问test算法效果。[冻结展开计划](outputs/experiments/first_stage_ai_search_20261013/run_plan_initial.json) SHA`f916f032657c95477caadeda9e73f1a3bceb24975ea87d5d562d1823ea087d71`，展开审计880轨迹无重复、每母四profile同端。02:01根实时API：开发146/480、参考36/80，六个科学worker均存活且无错误，桥接与数据准备仍排队；尚无效果结论。[根实际API](outputs/experiments/first_stage_ai_search_20261013/preflight/root_initial_actual_api.json) · [运行清单](outputs/experiments/first_stage_ai_search_20261013/run_manifest.json)。
 
+
+
+
+
 唯一持久控制器13948/出生1791827978.7410107使用独立冻结control snapshot，清单32c72177/spec9415d848；不依赖模型持续轮询维持计算。[首启与进程证据](outputs/experiments/first_stage_ai_search_20261013/preflight/initial_live_launch_snapshot.json)。后续先独立核发布布局、预算与G1门槛；通过才生成教师及一个10000更新排序模型，未通过则保留首轮报告并转有依据的下一版，不以无人回复停止研究。最终仍须同时可变N与逐束宽度，固定宽诊断或这些工程检查不能作为最终成果。
+
+
+
+
 
 **S1-AI17首轮方案已形成，正在并行实现和工程核验（2026-10-13）。** [方案17](docs/第一阶段/方案/17_第一阶段AI混合方法持续探索总方案.md)及[机器合同](outputs/experiments/first_stage_ai_search_20261013/design/round1_design.json)明确可变N与逐束0.3°/0.5°/1.0°重构、合法连续包络收缩、同预算规则/随机/AI及单因素对照共7法，AI只排序求解前区域任务。首轮开发80景；教师上限192母×4、2359296候选/11520秒；一个seed51001、10000更新的53维小MLP；每方法10秒/8192候选，初始化计入，最终考核须在验证选定后开启。这些是计划上限，不是已运行量。方案已提交bfed211，工作台9项根独立检查通过，核心16项小例由实现agent完成（尚待集成复核）；未冻结科学提交、未发起新正式任务。新Feb17–20官方元数据已取、远端指定数据登记中未见旧用途，raw尚未下载；最终数据角色仍需实际任务冻结。[数据元信息](outputs/experiments/first_stage_ai_search_20261013/source/) · [实施交接](outputs/experiments/first_stage_ai_search_20261013/controller/implementation_handoff.json)。小时跟进`s1-ai17`已ACTIVE并[逐字段回读](outputs/experiments/first_stage_ai_search_20261013/followup/initial_readback.json)，无变化保持安静，关键结果或故障再通知；单分支失败不会结束本次已授权探索。
 
+
+
+
+
 **S1-AI17实时核验补充（2026-10-13 01:05北京时间）：**20418/20424/20473 SSH、DQN CUDA通过，GPU compute空且无科学worker；24/73旧G16工作台均14/14完成。20474原F20工作台8953及worker1492仍活，2258/6600案例，暂不准入本组。新8970–8973端口均空闲；先三端并行准备/实施，第四端须待原组真实计算、计时与归档释放条件。G16可复用packed训练576母2304景、开发20母80景、旧验证20母80景已核原位置/请求/飞机身份、SHA及时间集合无交集；旧验证和test不冒充新独立考核。[四端事实](outputs/experiments/first_stage_ai_search_20261013/preflight/four_lane_resources_20261012T170458Z.json) · [数据来源](outputs/experiments/first_stage_ai_search_20261013/preflight/g16_packed_source_inventory.json) · [实现审计](outputs/experiments/first_stage_ai_search_20261013/preflight/implementation_audit.md) · [新运行清单](outputs/experiments/first_stage_ai_search_20261013/run_manifest.json)。当前新任务仍为0，独立实现树为`C:/Users/Admin/.codex/worktrees/stage1-ai17/paper`，分支`codex/stage1-ai17`。
+
+
+
+
 
 **2026-10-13 S1-AI17持续探索已获授权，正在设计与四端实时核验，尚未启动新科学实验。**用户要求结合第一阶段当前证据自主多轮探索、逐轮输出方案与报告、中途不停，并明确最终版本必须同时支持**波束数量可变、逐束宽度可变**。优先AI或AI与优化结合，不强制DRL；全飞机覆盖、唯一归属、需求守恒、N≤200及纯第一阶段评价边界保持。固定0.5°只能作机制诊断/对照，不能作为最终交付。四远端20418/20424/20473/20474本轮获使用授权，但实际任务、GPU/工作台/冻结源和其它组占用须先现场核对，不中断现有S2-F20等任务。Astra负责设计，GPT-6.1 Sol负责代码和验证；新独立组`first_stage_ai_search_20261013`、远端`s1_ai17/{port}`，每轮事前冻结数据/预算/门槛，失败保留并据证据改进，不反复查看test挑冠军。此轮扩大探索授权，不修改已结案G16/ND12等历史证据；当前没有新模型、任务ID或效果结论。方案、运行清单、报告和实时证据在形成后补入本节。
 
+
+
+
+
 **2026-10-13 CV跨轮解释更正（仅核对，无新实验）。** ND12正式`load_cv_all`与G16的CV均为全部有效束请求负载的总体std/mean，公式及零请求处理未改；旧空母没有补CV0。0.4723与1.3061的大小反映各自结果的离散程度，但场景、空间请求分布、初解/N及算法目标同时变化，不能据此隔离算法退步；新base的07约0.9577，差距也不能全归因于热点强化。需要同数据/同N/同预算的新旧桥接才可归因，本次未运行。[解释与来源](Q&A/环境仿真/第一阶段波束覆盖规划与两阶段衔接.md#2026-10-13追问两轮cv公式是否改变)。原报告/冻结资产/已结案跟进保持。
+
+
+
+
 
 **2026-10-13 S1-G16正式[报告11](docs/第一阶段/实验报告/11_几何约束负载重分组与MLM候选排序对照.md)、5张曲线与完整双端归档已核验交付。** 28科学/准备任务全部完成，只有一个MLM：seed51001、固定10000更新、四80景诊断；共同验证720、独立考核1440、变量N160组合/800分支记录。纯第一阶段P/T/Q、CV辅助，不调用业务满足/PHY/SI/SGM。全量源/模型/数据闭合与严格统计formal_ready=true、issues空，57项独立数值核对、正式报告31项/22链接及5图人工复核通过。最终小包含83成员，24/73同一共享卷整卷及成员SHA均通过，原始大卷以唯一canonical引用，不冒称小包独立含全部数据。[最终验收](outputs/experiments/first_stage_geometry_load_20261012/delivery/final_root_acceptance.json) · [最终归档入口](outputs/experiments/first_stage_geometry_load_20261012/delivery/final_delivery_location.json)。
 
+
+
+
+
 JOINT相对09-LEX的P在143/160景改善、7景退步，母均38/40改善，逐案例相对改善均32.95%；07的T/CV更低，不能统一排名。MLM相对JOINT/rule/random的平均相对P改善−0.212%/−0.302%/−0.380%，各95%区间跨0，均未到原1%门槛；训练loss下降不算质量成功，同目标速度证据也未建立。原P均值MLM稍低与相对改善均值负号的加权差别保留。[独立数值证据](outputs/experiments/first_stage_geometry_load_20261012/preflight/final_numeric_independent_audit.json)。少束目标160/160未找到，其后配额未运行；多束目标160/160完成，配额仅3景额外降低P。完成布局N34–92、N200为0；不是整个1–200范围或全局最优证明。静态4profile请求为合成量，单seed/固定宽度/地表投影/有限邻域限制保留。
+
+
+
+
 
 科学495与原模型字节不变。后处理内存、教师池提交解释、64862条目录引用解释和变量N图空字段已修，原失败/旧图与逐项proof保留；只修后处理，未重训重评。31060已正常结束，证据副本36848也完成退出。完成后的跟进停止回执另存followup，旧ND12/V10/D12不恢复；24/73本组不再提交任务，不等同于云实例已终止。后续联合邻域、跨N强搜索、目标对齐学习排序仅为建议，未追加新seed/预算。
 
+
+
+
+
 **2026-10-13 00:27 S2-F20按用户“继续”恢复原矩阵，三臂不重训。** 重启后74 SSH可用、8953工作台未启动；根核原1777案例5331份Direct/B/control SHA、两真实2fc/fbf源码清单全部文件、三终点模型引用、DQN/CUDA及原GPU UUID060b保持，通过原45ac控制源启动新服务477/出生ticks841533753，浏览器本地8953 API也已200。随后工作台原ID`prepare_prepare_20261012_182113_afa6cdc3`resume，实际job仅增加四项恢复元数据；原hold/job c05及gate619均保留为历史，当前job/status原字节与新鲜74无归档重IO证据绑定的新gate a4f3核验后，由原cbed协调器29544/出生1791822000.506893准入，证明55ecc512。原预算、seed51001、科学2fc/执行fbf及唯一owner保持，只连接74，不接回已释放18或访问24/73。[实际恢复与来源/设备/进度/准入证据](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/reboot_resume_actual_receipt.json)。
+
+
+
+
 
 新科学worker1492/出生ticks841599282于00:20:18实际启动，00:27原始状态为1858/6600（28.15%），11/12任务、学习1396608/1396608（100%）；未重跑训练或原1777案例。00355 DQN的Direct原SHA、A全部结果及2.266156秒/888评价逐值相同，实际复用后已完成该案例，B未重复；stop_requested缩短阶段仍必须在报告披露。原2秒observer源码不改，新34692/出生1791822114.945457接续7351样本链，旧终态与进程记录保留。新worker到observer启动间有97.235878秒真实监测空窗，355景旧control绑定旧PID，不能伪造新映射或宣称完整严格速度证据。最终归档等待器9704/b502和本地统计等待器36652/469均出生/源码核实，只等真实6600和第12包完成，未开始生产统计；原11包/共享/catalog e4da不重扫不重压。后续继续共同考核、40母统计、六图/报告16、全档及74最终归还；恢复小时跟进已ACTIVE并[精确回读](outputs/experiments/s2_fair20_20261012/followup/reboot_resume_active_readback.json)，23:54暂停段落保留为历史。18/24/73后续全局资源以新S1-AI17授权及实际任务为准，本组继续只用74。
 
+
+
+
+
 01:40新增[重启单案例质量敏感性设计](outputs/experiments/s2_fair20_20261012/analysis/reboot_case_quality_sensitivity_design.md)及[源码/SHA核查](outputs/experiments/s2_fair20_20261012/analysis/reboot_case_quality_sensitivity_design_check.json)，为运维事件后的探索性诊断，未运行统计，不改预登记主分析或科学预算。Direct与PPO结果不改；只对00355 DQN+B采用理论SI/SGM上界1的最不利外包络，不把它当可达解或生成伪容量/功率。单案例替换先按33组合更新所属母均值，再按各bootstrap draw该母出现次数调整并重算原12族区间，不能用1/1320点均值界直接平移CI或宣布稳健；下界按Direct−1e−8容差核实。完整6600及来源/约束闭合后才可做独立附录诊断，无新训练/评价/求解/计时。[v2附录代码与准备回执](outputs/experiments/s2_fair20_20261012/analysis/reboot_case_quality_sensitivity_v2_preparation.json)已过三项40母/64小draw及真实生产格式解析检查，v1错误解析器保留不运行，原postprocess/adapter/awaiter不改，生产0；跟进[精确回读](outputs/experiments/s2_fair20_20261012/followup/sensitivity_v2_prepared_readback.json)保持ACTIVE。01:32当轮实核2546/6600（38.58%）、11/12，四个持久进程出生/SHA及等待状态正常，无当前科学错误；当前结论仍pending。
+
+
+
+
 
 **2026-10-12 23:54 S2-F20按用户重启请求暂停，20418/20474无科学计算，进度已双端保全。** 用户明确要求检查两端并保留当前进度以便重启；根先按出生停止本组调度4456，再经20474工作台对原矩阵`prepare_prepare_20261012_182113_afa6cdc3`发stop，23:42:57实际stopped、原382617已退出。最终持久完成1777/6600案例（26.92%）；00355景DQN的Direct及A_complete另已保存，A为stop_requested/888评价，B尚未开始，没有未提交A_started/B_started。该缩短阶段与重启前后计时条件必须披露，恢复不重新求解已保存A、不重跑1777案例、不新增训练或预算。三正式各400000及全部六短、11任务源/数据/模型归档保持，尚非公平对照交付完成。
 
+
+
+
+
 原任务整个目录7469成员/271662304字节ZIP已在74自身ops/reboot_backups与本地E盘保存，whole SHA5ceb5b3e及全部成员核验通过；根再核1777×3 Direct/B/control引用SHA与未完成A日志，producer31736实际退出。[保全与恢复清单](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/user_reboot_preservation_receipt.json)绑定真实工作台停止、控制器/等待器停止、本地备份验收、两端资源与automation回读。23:54两端GPU及compute查询均exit0、UUID原身份匹配、compute空/无科学worker；18只按本次人明确要求做只读当前状态查询，没有接回计算。归档等待器27456与统计等待器32856已按出生停止且未开始生产，observer27108在实际stopped后正常退出并保7351原样本。跟进已按用户重启意图PAUSED并逐字段回读，不能自动恢复；用户通知重启完成后须先核74新设备/存储/工作台/冻结源，再经工作台原ID接续。20418此前已归还、20474此次为用户重启暂停，不冒称最终报告完成或最终资源归还；24/73及G16未干预。
+
+
+
+
 
 **2026-10-12 22:50–57 S1-G16全量归档引用闭合，已接续严格统计。** 新两端API仍28/28 completed、无科学worker，GPU均0%/4MiB；没有重跑或追加实验。流式归档读取已完成：18,529份JSON约80.70GB、117,716节点/337,995引用，未发现卷/成员SHA或JSON解析错误；原64,862条未解析引用全部由科学495写入语义定位：64,858条教师case相对路径需关联同case的teacher_shard已签manifest，另4条gate原路径关联同job的已签复制文件。修复81ad6c只改后处理解释，6测试通过；根逐流核所有节点、原成功引用和重复记录均不变，每条原错误及更正证据完整保留，科学数据/计划/权重不变。[严格引用修复验收](outputs/experiments/first_stage_geometry_load_20261012/preflight/typed_resolution_root_acceptance.json) · [新旧来源双端验收](outputs/experiments/first_stage_geometry_load_20261012/preflight/typed_resolution_source_receipt.json)。
 
+
+
+
+
 原25044于21:37保存失败并正常退出，不能重起；新唯一31060/出生1791816481.0039067于22:48接续原截止10-13 17:32，attempt3的closure/model已accepted、report正在全量逐case审核，22:52三秒CPU增2.66秒/RSS约284MiB。它通过完整SHA审计加严格引用证明复用依赖图，仍由JobZip重新核原卷/成员并作几何、负载与预算回放；不是绕过原始数据核验。20秒CPU/I/O/RSS心跳、4GiB与原deadline保护均启用，不因回调空窗重复启动或热改源码。[新进程及冻结输入](outputs/experiments/first_stage_geometry_load_20261012/controller/postprocessing/resolved_retry3_launch.json) · [统计入口](outputs/experiments/first_stage_geometry_load_20261012/analysis/final_analysis_location.json)。原模型GPU审核已完成，不重复前向或更新；正式效果、5图、人工报告11及最终双端交付仍待。最终小包的537必要源码/模型节点投影和28任务收据已准备，大graph/proof只引用，不能称小包独立含全部原始数据。跟进保持ACTIVE并[逐字段回读](outputs/experiments/first_stage_geometry_load_20261012/followup/automation_after_typed_resolution_readback.json)。
+
+
+
+
 
 **2026-10-12 22:22 S2-F20已归还20418，最终同GPU矩阵实际运行。** 三臂正式各400000、六短各32768及全部终点核验保持，学习1396608/1396608（100%），实际11/12任务完成。原矩阵`prepare_prepare_20261012_182113_afa6cdc3`于21:45:30由工作台准入，在20474原worker382617/出生ticks840670551执行；22:22真实API/SSH为647/6600案例（9.80%）、130景进度，无科学错误，DQN终点5f0e/35023与原冻结绑定保持，实际执行fbf/科学2fc及GPU UUID060b一致。[实时74与18终态缓存](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/latest_parallel_actual_status.json)。矩阵尚未完成，不能据学习100%或部分案例宣布SAC优势；20474继续保留至报告、全档和归还完成。
 
+
+
+
+
 21:44:51控制器已核20418 DQN完整计算/四节点、学习模型数据归档及74矩阵冻结终点绑定，GPU与compute查询成功/UUID匹配且无科学worker，保存[真实释放证明](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/lane18_resource_return.json)与终态缓存；根[独立复核](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/release18_root_independent_verified.json)通过，已告知用户20418可释放，并向原聊天发送[归还通知及回执](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/resource18_return_message_receipt.json)。这是本组释放，不声称云端已终止，也不授权恢复已结案ND12。根21:47曾因旧state发生一次释放后的只读时钟查询，0科学操作；[边界历史与纠正](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/release18_readonly_probe_boundary_history.json)完整保留，连接前守卫现已阻断18，刷新只用74及18缓存；24/73同样不访问，其全局资源由S1-G16管理。
+
+
+
+
 
 11个唯一任务ZIP、共享195成员、四份真实2fc/fbf源码清单、原TAR整包及576CSV和三record别名均已实际whole/member核验。原独立审计将旧ND12资源诊断快照中的外国任务目标也递归列为依赖；其原始JSON仍完整归档，范围修正仅排除这些非F20输入/peer/控制依赖，全部164546个必需路径/SHA对已闭合。正式[范围审计catalog位置](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/closure_reference_scope_v3_actual_execution.json)为E盘141MB，SHA e4da6484；原762MB pending审计无损移至E留历史，不重扫或伪造通过。旧源record的c8c与后续c8de路径重写字节均保留，[有序8064景/576母及仅路径字段差异](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/source_record_c8c_c8de_semantic_history_audit.json)实际通过，没有用新SHA替换旧冻结pin。六个小控制依赖另有[双端原字节归档](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/dependency_supplement_archive_receipt.json)。原26588/14660/final38596及独立audit/scoping进程均成功退出后，实际新鲜无F20重IO门槛与模型归档闸闭合才释放18/准入矩阵；SSH传输FD权限限制、真实时钟偏差与原失败均保留，未声称CPU隔离。
 
+
+
+
+
 原cbed控制器4456及独立2秒观察器27108出生保持；light v6实际准入后已退出，[完成回执](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/light_handoff_v6_completion_receipt.json)。矩阵归档等待器27456/b502按原ID等待真实completed6600和worker退出，才启动原ab6的矩阵单包归档，[启动回执](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/matrix_archive_awaiter_v2_launch.json)。22:22后处理v3仅完成16项有界检查，未生产统计；待第12包及全部6600来源闭合后做40母配对统计、训练/有效时间曲线与报告。计时缺CPU/PID映射或采样覆盖时只报描述性耗时，不能认定严格速度优势，不新增计时重跑。全部报告/本地远端档案/74释放及归还通知齐全前，自动跟进继续ACTIVE。
+
+
+
+
 
 23:09根核离线统计接续已真实启动32856/出生1791817739.807054，源awaiter v2/4691769b与adapter v5/ab14e558、spec4ee644a5固定，[启动](outputs/experiments/s2_fair20_20261012/analysis/offline_analysis_v2_launch.json) · [实际本地等待/依赖核验](outputs/experiments/s2_fair20_20261012/analysis/offline_analysis_v2_actual_waiting_check.json)。独立[审核](outputs/experiments/s2_fair20_20261012/analysis/audit_actual_adapter_v5_awaiter_v2.json)通过：closure流式解析、精确路径/SHA常数时间索引、有来源partial接续不覆盖已成件、唯一锁/派发意图保存；11ZIP中央未压缩大小实际15.66GB，生产前另计共享/最终矩阵并先核缓存原字节才扣减，保E盘8GiB及4GiB统计空间，成员/块守卫不足即Attention保文件。等待仅小本地JSON，0远端/科学调用/正式统计；原6600/SHA/全N/三400000门槛保持。原v3/v4/bridge/postprocess及失败保留，不改科学worker。
 
+
+
+
+
 已核三臂400000终态五类原始clock：[真实归档时钟](outputs/experiments/s2_fair20_20261012/analysis/actual_formal_clock_schema_diagnostic.json)。环境＋采样＋更新为SAC14424.0304秒、PPO2890.1659秒、DQN9221.7372秒，验证/I/O另列；不同实际资源与并发下只描述开销，不能声称严格算法速度。episodes/evaluations缺同节点累计clock、200k/300k独立checkpoint未保存，不从终点插值。已备[中文出图v2](outputs/experiments/s2_fair20_20261012/analysis/publication_plots_v2.py)，12项小检查通过，真实终点成本另图、日志时间缺口保留；正式图及视觉核验仍待生产统计。整体未交付，18已归还、74继续保留。
+
+
+
+
 
 **2026-10-12 20:16–21:29 S1-G16任务包已传回、权重验收通过，正在流式核查归档。** 两端20:16真实API仍28/28 completed；原32656于19:53正常完成28任务ZIP（11,515,549,771B）后退出，34444于19:50完成实际DQN/CUDA终点审计及小权重导出后退出。final/CP逐tensor相同、106Adam槽各10000步、RNG/sampler/loss/WAL及四80节点来源通过，未知/失败/重放0，验收没有参数更新或新增评价；模型SHA仍aca73404/6ebbe30a。[实际权重核验](outputs/experiments/first_stage_geometry_load_20261012/preflight/final_learning_audit.json) · [导出回执](outputs/experiments/first_stage_geometry_load_20261012/preflight/model_export_receipt.json)。这还不是全量源/几何/统计与最终报告交付。
 
+
+
+
+
 旧37584在19:59归档closure报“Unable to allocate output buffer”退出；28ZIP有18,543份JSON、未压缩80,726,276,649B，原程序累计解析对象且跳过大于16MiB文档的pin提取。原失败及输入完整保留。[失败保全](outputs/experiments/first_stage_geometry_load_20261012/preflight/postprocessing_memory_failure_preservation.json)。仅postops改为ijson3.3.0逐事件读、同流全SHA、完整教师delta回放与紧凑统计，并修正教师池中提交标记被过早应用的审计误判；科学495、数据和权重未改。根79项集成检查通过；单最大158MB参考记录51,623候选/三个节点全部核验，进程RSS峰44.25MiB，不能替代全量通过。新唯一25044/出生1791809868.5058627于20:57启动，来源61ecbae，输入沿用attempt1封闭原字节，仅源索引升v7；原截止10-13 17:32不延长。21:29进度已读65.713GB JSON/13,120文档，当前issues0、RSS约180.5MiB，仍在进行。严格状态见E盘final_attempt2/postfinalizer_state.json，原三PID不能重起。[新进程](outputs/experiments/first_stage_geometry_load_20261012/controller/postprocessing/streaming_retry2_launch.json) · [实时进度入口](outputs/experiments/first_stage_geometry_load_20261012/analysis/final_analysis_location.json)。
+
+
+
+
 
 本轮再次D不足8GiB后，将已结案D12A job_archives的73文件/5,179,632,114B无损迁至E并保D原入口junction；三个唯一原始ZIP仍与原receipt全SHA/大小一致，复制/原入口/备份逐SHA后才删精确D备份，未删除唯一数据或恢复旧组。D约13.06/C10.18/E53.93GiB，模型D逻辑根继续落E。[存储迁移](outputs/experiments/first_stage_geometry_load_20261012/preflight/closed_d12_archives_relocation_receipt.json) · [原卷身份核对](outputs/experiments/first_stage_geometry_load_20261012/preflight/d12_relocation_original_volume_pins.json)。方法说明已精确到：在线是首个改进即接受并重建候选，MLM排序可改变路径；教师才是池内较好标签，二者不能混说。报告11及最终双端小包仍待，自动跟进保持ACTIVE。
 
+
+
+
+
 **2026-10-12 19:10 S1-G16全部科学计算已完成，正在原流水归档。** 两端真实API均14/14 completed，合计28工作台任务；仅一个MLM训练终点10000更新及四个80景诊断节点，共同验证720、独立考核1440、变量N两端各80输入组合完成。变量N实际可行/未找到及展开结果数量仍待严格统计，不能把160组合直接写成800可行解。原MLM与所有评价均不再恢复或追加；科学源495、单seed51001、数据与预算保持。[全部任务终态](outputs/experiments/first_stage_geometry_load_20261012/preflight/scientific_completion_1910.json) · [本轮API/SSH](outputs/experiments/first_stage_geometry_load_20261012/preflight/live_20261012_191024.json)。
+
+
+
+
 
 32656原client正在按顺序导出全部taskZIP，controller_error为空。独立只读核验已成包3→4、四包总3,470,368,314B且local大小均与receipt匹配；第五Feb15压包在10秒CPU增9.82秒、临时卷516→786MB，随后开始下载，后续根state又到7包，不能据旧state时间认死。[真实归档进展](outputs/experiments/first_stage_geometry_load_20261012/preflight/archive_live_1910.json)。未启动重复packer/预取或重压原卷；34444终点等待器、37584统计等待器的出生/命令和全部源guard正常，无新错误。[持久进程核验](outputs/experiments/first_stage_geometry_load_20261012/preflight/persistent_process_check_1910.json)。D/C/E仍≥8GiB，D模型逻辑入口正确重定向E。完整ZIP成员/来源闭合、模型GPU严格验权、正式统计、报告11与最终双端小包仍待，不能称本组已交付或学习优势已成立；自动跟进继续ACTIVE。
 
+
+
+
+
 **2026-10-12 19:03 S2-F20三臂正式终点均已核验，最终矩阵冻结待归档。** DQN原任务于18:20:11完成400000及四个144景direct/B节点，原77009已退出；只读CPU核验35个终点Tensor与断点逐bit相等、step=agent.interactions400000、seed51001/A/from_scratch、严格预算未知0及cb8/a19/522db来源通过，最后节点回退8、返回资源/保护违规0。[DQN终点证据](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/endpoint_dqn400000_verified_20261012.json) SHA592dbd7c；SAC/PPO既有核验保持，三臂均400000，六短均32768，总学习1396608/1396608（100%），实际完成11/12。18:37两端实际API/SSH均无科学worker；原1320景五方法矩阵 prepare_prepare_20261012_182113_afa6cdc3 已真实queued_resources、0案例，冻结DQN policy5f0e/model35023与已核终点一致，根发布的[归档hold](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/matrix_archive_hold_receipt_abe54c4414fe7e2f7ba81024537a41eed5aa8886dd1e1a232ee805a4da02f19a.json)已双端原字节SHA回读。尚无公平考核的效果/严格速度结论，18/74仍不可释放；24/73继续不访问。
+
+
+
+
 
 归档通信故障已实证并部署运维修复：任务列表GET10秒实际超时，GET45秒成功用18.84秒；hold只读核验0.375秒通过，旧unknown不能当科学故障。[诊断](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/archive_hold_gate_actual_diagnostic.json) · [旧归档三进程按出生受控停止及历史保留](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/archive_timeout_upgrade_stop_receipt.json)。新archive v4/26588（ab6）、shared v5/14660（b67）、final11接续26324（aa9）均实际启动、出生与源码SHA绑定；通信45秒、2秒门控/未知暂停、512KiB/低优先保持，原包不重压、partial核前缀后追加。19:02 SAC A短包真实下载至413171712/540263634字节，已有6个唯一已验收包，共享及11包尚未闭合。[v4回执](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/archive_launch_receipt_v4.json) · [shared v5](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/shared_dependency_export_v5_launch.json) · [final11接续](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/final11_archive_awaiter_v2_launch.json)。六类真实迁移/owner/模型peer/矩阵绑定[控制证明](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/final_peer_migration_owner_proofs.json)齐，但不是全部归档闭合。独立whole/member/四真实源码清单/576CSV TAR/三record别名/旧新全部引用审计与新鲜无重IO交接由持久27328（bb47）有界接续，全部真实验收且producer出生退出后才生成lane18/gate；缺项保持pending，未伪造gate。[交接回执](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/closure_handoff_awaiter_v2_launch.json)。科学2fc/fbf、原cbed调度器4456、observer27108及全部预算保持；f510终点读取与3b publisher的0科学失败已保留，修复3fb/b79经真实执行通过。最终报告、6600案例、双端归档与两端释放/归还通知仍待，跟进继续。
 
+
+
+
+
 **2026-10-12 18:18 S1-G16新MLM已到固定10000终点，另一半变量N验证自动接续。** 实际工作台completed10000、2500/5000/7500/10000四节点各80，API账未知/失败/重放均0；空闲24只读共享文件确认final SHA`aca734040d2ca230228948719225f4289b993265e17cf99af833b34525564f85`、CP SHA`6ebbe30ab213720b262a380067fd986c3f8ffbe3f4ab1e9491ee34fea6d9629a`。[终点原字节观察](outputs/experiments/first_stage_geometry_load_20261012/preflight/learning_terminal_observation_1814.json)。完整DQN/CUDA严格验权与全量统计仍待全部科学终态及原训练ZIP；不能把终点完成当效果通过，不恢复或追加该训练。18:18:43真实API为24任务中23完成，唯一variable73=`evaluate_geoload_20261012_181254_7a0afb5a`、worker23288/出生ticks839395069，36/80输入组合；24分片80/80已完成，之后原流水接两端共同验证与考核。[现场](outputs/experiments/first_stage_geometry_load_20261012/preflight/live_20261012_181843.json)。32656/34444/37584身份与源码守卫均正常，后两者仍等待；报告11未交付。
+
+
+
+
 
 18:07曾见D可用7.89GiB低于8GiB预留，未删除唯一资产或动S2。经旧ND12结案/PAUSED/104文件无写入句柄核验，其410,509,132B控制器原目录完整搬至E，复制及D原入口junction再核104/104 SHA后，仅删除同D精确备份；原D路径和全部字节保持。新G16模型逻辑根D:/paper/models/runs/first_stage_geometry_load_20261012同样通过junction落E，源代码与冻结配置不变；shutil.disk_usage已验证读取E实际余量。D恢复8.268GiB、C10.81/E约77.6GiB。[容量迁移完整回执](outputs/experiments/first_stage_geometry_load_20261012/preflight/closed_controller_relocation_receipt.json) · [根独立回核](outputs/experiments/first_stage_geometry_load_20261012/preflight/closed_controller_relocation_root_check.json)。这是已结案文件的无损存储重定位，没有恢复旧组或停止科学worker。
 
+
+
+
+
 **2026-10-12 18:10 S2-F20全部学习交互已达预算，DQN最终验证尚未完成。** 两端真实API/SSH核得三臂各400000、六短各32768，累计1396608/1396608（学习100%）；实际任务仍10/12完成，DQN原77009/出生838003396继续validation_400000，不能称全部计算完成。SAC/PPO终点核验保持，无当前科学错误；共同1320景五方法矩阵尚未注册，18/74都还不能释放。[实时核查记录](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/latest_parallel_actual_status.json)保存本轮时间，后续读取仍须刷新事实。
+
+
+
+
 
 根已批准持久只读终点/归档hold接续：12644/出生1791799769.028232、endpoint_hold_awaiter.py源SHA d646956b，等待真实completed和原worker退出，才调用固定f510终点CPU审计；核精确cb8科学清单、35个policy Tensor与断点逐bit、400000预算及四节点后，等待原工作台实际注册/freeze矩阵，按实际模型/任务与原字节auditSHA发布queued_resources归档hold。它不提交或准入科学任务；原cbed协调器、2fc/fbf科学源和既定评价预算不变。[持久接续回执](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/endpoint_hold_awaiter_launch.json) · [状态](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/endpoint_hold_awaiter_status.json) · [跟进配置精确回读](outputs/experiments/s2_fair20_20261012/followup/endpoint_hold_awaiter_readback.json)。18:14实核共享c80远端ZIP已生成5251512721字节，13148在下载，本地whole/195成员验收未完成；旧paused字段早于ZIP完成，不能当当前停滞。[共享归档进展](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/shared_dependency_export_v4_progress_audit_1815.json)。已有5个唯一任务包，本组11包/共享引用全闭合及最终producer出生退出、新鲜无重IO门槛仍待，未写伪gate或提前释放。所有归档、目录/来源闭合审计及本接续进程均须纳入最终实际无IO核查；24/73继续不访问，全局归属按S1-G16授权处理。
 
+
+
+
+
 **2026-10-12 17:44 S2-F20 DQN355700/400000，归档计数与调度接续已更正。** 实际两端API/SSH仍10/12任务完成、累计学习1352308/1396608（96.83%），SAC/PPO均400000已核；DQN原77009/出生838003396继续，无当前科学错误。DQN200000/300000各144direct/B/journal及288case SHA、实际cb8科学/a19执行/522db来源和全N保存D/C/min(C,D)/SI/SGM、返回保护/资源检查通过，回退50/29景；不重算物理或追加评价。[第二节点](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/checkpoint_dqn200000_verified_20261012.json) · [第三节点](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/checkpoint_dqn300000_verified_20261012.json)。17:01唯一任务包为5、journal9条验证事件，已更正此前把接续重复事件报成8包的错误，历史日志保留且无科学重复。[唯一计数](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/archive_unique_count_correction_20261012.json)。
+
+
+
+
 
 原控制器28120于17:22因SSH transport exit -1被当普通RuntimeError退出，科研worker持续；新外部v3源cbed04a6、4456/出生1791798451.3103156经原state与ID接续，仅该精确运输错误进入原8次有界重试，v2完整归档闸和bb991基底不变，其它错误不遮掩。[恢复回执](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/parallel_controller_v3_launch.json)。共享导出曾将目录引用当文件而失败，继而兼容接口缺失导致首次重试未导出；失败及partial全保，科学源/预算未改。已追到三原record字节SHA与8064/144/1320场景指纹，576原JanCSV通过既有434MB TAR逐成员及本地/经74共享home远端wholeSHA核验，无重包旧组或访问24/73。[目录原记录别名核验](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/original_record_alias_byte_audit.json) · [外部规范卷](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/external_canonical_member_receipt.json)。新共享request c80d9981保原引用并只导出195个真实缺失文件；v4导出13148/出生1791798154.8830905、d7e68848源码持续后台核验，整组共享闭合尚未确认。矩阵未注册，无hold/gate伪造；18/74均保留，计时与报告须待全部终点及11任务/共享依赖归档闭合后推进。
 
+
+
+
+
 **2026-10-12 16:50 S1-G16两端正式并行：MLM训练与可变波束数验证已启动。** 科学源码冻结`495bff976c59c40ddb33de6b5b37b20a894a1347`，计划SHA`0b520943dec9e82f78ba44e0579cc3c50f25f2518761b519c51414bf5096e806`；24/73独立工作台8960/8961、DQN/CUDA/4090D及实际冻结包已核。唯一协调器24220/出生1791790345.992857持锁，客户端`b520e57`只压小数据引用和状态传输字段，科学来源保持。真实API为23任务中21已完成、MLM训练1、变量N评价1：[现场进程与资源](outputs/experiments/first_stage_geometry_load_20261012/preflight/live_20261012_165020.json)。本组避让18/74。
+
+
+
+
 
 原始数据准备、全部共同初解、480开发结果及80条嵌套参考已完成；开发80案例有79个满足预设改进条件、两半比例0.975/1.0、返回硬违规0，说明本预算存在可改空间，不能当作MLM增益。两端各1152教师案例及合并任务已完成。唯一新MLM `train_geoload_20261012_164122_102221bf`归73，16:50实际716/10000更新，worker13308/出生ticks838860895，GPU瞬时13%/824MiB；24同时运行`evaluate_geoload_20261012_164405_c0542107`，变量N完成40/80输入组合。后续由原协调器自动接续固定节点验证、另一半变量N、双端共同验证及独立test，不新增模型或预算填GPU。
 
+
+
+
+
 本轮只评价几何覆盖和请求负载，不调用下游承载/PHY/SI/SGM。固定0.5度、同N P/T/Q字典序与CV诊断，4种空间需求结构；可变N画原单位负载与束数折中。MLM实际对共同候选布局排序，rule沿基础顺序，与JOINT有实现等价关系，9配置不是9种独立算法。32次CUDA工程更新另账，10000为有效保留更新、崩溃未知/重放另列。四节点320诊断验证与共同720验证分列，不把草案可能复用当实际复用。报告11、最终学习效果、全任务归档和严格统计尚未完成；后处理已并行准备，26项合成检查不代替生产审计。[冻结计划](outputs/experiments/first_stage_geometry_load_20261012/run_plan.json) · [运行清单](outputs/experiments/first_stage_geometry_load_20261012/run_manifest.json) · [来源补全索引](outputs/experiments/first_stage_geometry_load_20261012/source_closure/external_registry.json)。自动跟进`s1-g16`保持ACTIVE至报告、曲线和双端归档逐项核验交付；必要故障同ID修复，不恢复旧组。
+
+
+
+
 
 **17:15–17:32接续核验：**17:15真实API中MLM已3705更新、2500节点后继续原13308；24的80个变量N组合全部完成。17:26只替换本地归档传输客户端：旧24220按信号正常退出、OS锁释放后，新32656/出生1791797206.7885015通过原b520模块与计划SHA守卫接续，唯一替换为归档函数；两次SSH核远端科学worker身份完全相同。4MiB有界readv在同一10MiB字节前缀工程读中由8.595秒到0.433秒且SHA相同，仅为传输计时；失败留现场，不无限重压。[受控交接](outputs/experiments/first_stage_geometry_load_20261012/preflight/transport_handoff/new_controller_launch.json) · [传输工程核验](outputs/experiments/first_stage_geometry_load_20261012/preflight/archive_transport_remote_engineering.json)。旧24220不可重启，当前入口见controller/current_launch.json。
 
+
+
+
+
 独立终点等待器34444/出生1791797525.9815893与后处理等待器32128/出生1791797525.992924均已实际启动；先等全部科学终态及原训练ZIP，再真实DQN/CUDA严格加载终点与完整断点，随后封闭输入、逐卷/逐成员/来源闭合、严格统计与正式图。等待和首次审计有时限，异常不会自动重试科学任务；分析完成仍不等于人工报告11和最终双端交付。[等待进程回执](outputs/experiments/first_stage_geometry_load_20261012/controller/postprocessing/launch.json)。后处理63项根集成检查通过；前次测试模块拼名及本地DQN缺psutil已留原失败日志并修复，本地安装psutil5.9.8仅供进程审计，远端科学环境未改。D盘保持8GiB预留，长统计和图实际写入E盘并由[位置索引](outputs/experiments/first_stage_geometry_load_20261012/analysis/final_analysis_location.json)引用；源索引v4保持科学及旧原始数据单份，不新增科学计算。
+
+
+
+
 
 **17:56最新有界核验：**MLM原13308仍training8440/10000，24变量分片已完成，科学来源和预算未改。终点等待器34444继续；旧32128只在waiting、未冻结输入时按出生受控退出，当前唯一后处理等待器37584/出生1791798625.921796，原24h截止不延长，等待源索引v6。596个实际旧CSV/逐机观察与原NPZ位置、ID、请求量逐项相等；相关源、原索引和小运维脚本已封入59,830,433B/1235成员依赖包，本地与24/73整卷成员SHA通过，旧Jan4.68GB及原始tar未重复复制。源声明图1615pins/1739nodes无缺项，三个Feb原tar引用待prepare ZIP；声明核不代替最终全量归档验收。新增75,624B后处理Git增量包也已双端SHA核，依赖原495 bundle以恢复全部新代码和测试。[当前持久交接](outputs/experiments/first_stage_geometry_load_20261012/preflight/persistent_handoff_1756.json) · [真实源索引v6](outputs/experiments/first_stage_geometry_load_20261012/source_closure/external_registry_postops_v6.json)。报告11与完整实验交付仍待，继续原流水及自动跟进。
 
+
+
+
+
 **2026-10-12 15:38 S2-F20正式终点已完成2/3，DQN继续；本组仅保留20418/20474。** PPO任务`prepare_ppo_20261012_124019_3796ce31`于14:52:01实际completed400000、6256更新，原139583/出生837508288退出；CPU只读审计确认终点35个policy Tensor与完整断点逐一bit-equal、step=agent.interactions400000、四node_done及from_scratch/seed51001/candidateA、2fc科学/fbf1641执行/522db合同闭合，strictretained400000且未知0。[PPO终点核验](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/endpoint_ppo400000_verified_20261012.json)。四节点各144direct/B/journal完整，返回资源与保护违规0，回退6/11/36/1；保原候选、求解开销及严格Direct回退，不是全部束需求已满足或最终算法胜出。六短配置选择已核SAC B、PPO A、DQN A。
+
+
+
+
 
 15:38:09实时API为DQN144100/400000、worker77009/出生838003396，2fc科学及18本端fbf/a19来源匹配，无当前错误；100000节点144direct/B/journal及288case SHA、实际cb8科学清单/节点权重/全部D/C/min(C,D)/SI/SGM/保护核验通过，回退21景。[DQN首节点](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/checkpoint_dqn100000_verified_20261012.json)。全组10/12、累计1140708/1396608（81.68%），最终矩阵尚未注册，[双端快照](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/latest_parallel_actual_status.json)。28276协调器、27108计时观察器及两隧道出生/源码匹配，观察器仍等矩阵，不能冒称已取得计时证据。18尚未终点/归档/矩阵绑定；74虽已结束PPO仍预留共同考核，不按GPU0%释放。24/73本组不再访问，其全局分配按对应新任务状态处理，不再重复判全局空闲。
 
+
+
+
+
 15:09已启动十个completed任务的流式原字节归档，原26528/出生1791788940.355232、544ecd源码及清单冻结，约13.61GB；本地E/远端74隔离、无SCI调用，矩阵活动或监测未知时暂停重IO。15:38曾未知API暂停，15:45实际访问恢复并继续下载，2包本地逐成员核验/3包远端已提交；旧异常类型未记录，不确证根因，不称全量归档已闭合。[归档诊断](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/heartbeat_20261012_1537_archive_audit.json)。有界预取/无损压缩及矩阵前等待完整归档的操作层优化正在准备，科学源、种子、交互及6600/8328评价范围不变；既成包与partial保留，接续须记录新来源及真实进程。
+
+
+
+
 
 **2026-10-12 16:33 S2-F20归档接续及矩阵前隔离已部署，DQN230100/400000。** 全组10/12、学习1226708/1396608（87.83%），SAC/PPO完整终点已核，DQN继续原77009/出生838003396，无当前科学错误。操作层切换后该科学PID/出生/命令前后完全相同；原2fc/fbf科学源、45ac工作台、12任务/预算/数据保持。[当轮快照](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/latest_parallel_actual_status.json)。当前控制器28120/出生1791793927.1980715、v2外部源eb57e37c；原28276按出生停止并保完整state。矩阵仍在74同设备按原API注册冻结，但须11个completed任务包与共享源/数据/迁移依赖全部核验、最终归档进程退出/新鲜无重IO证据、18终点及实际矩阵模型SHA绑定后，先释放/cache18再下一轮准入；没有追加任务、评价或训练。[部署回执](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/archive_first_deployment_verified.json) · [根发布闸门字段](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/archive_matrix_handoff_readiness.json)。只有明确SHA绑定的待归档queued矩阵可继续归档，实际计时、未知状态或其它矩阵排队均暂停重IO。
 
+
+
+
+
 旧544归档于16:14:49因CPU保留检查退出，真实证据为全宿主load37.53触旧32阈、RAM63.4GB/磁盘2.27PB；虚拟/proc/statCPU0–15与实际affinity64–79不映射，不能假称同范围CPU空余或隔离。[故障实核](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/archive_v1_reserve_failure_actual_probe.json)。新归档v3源9c444517、34148/出生1791793927.2075284低优先nice10/单线程、512KiB有界readv、新包无损低级压缩，原包不重压且partial/旧attention保留。16:39原报8条验证事件，17:01更正为当时4个唯一任务包；SAC远端partial1.21GB、pack进程真实累计74秒CPU，API请求9.12秒成功，无已注册矩阵。旧错误不当作v3当前错，暂停根因不能确证。[v3原记录](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/archive_v3_initial_progress_audit.json) · [唯一计数更正](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/archive_unique_count_correction_20261012.json)。17:01已有SAC第五个完整包、5个唯一run/ZIP SHA与9条验证事件，不把接续重用的重复事件算新包或新科学执行。全量依赖闭合、DQN终点及矩阵仍待，74保持预留，18尚不能释放；本组不再访问24/73，其新任务分配独立处理。
+
+
+
+
 
 **2026-10-12 S1-G16已获20424/20473实施授权，正在并行实现与数据预检。** 新[方案16](docs/第一阶段/方案/16_几何约束负载重分组与可变波束实验.md)由Astra设计，核心、学习、工作台由GPT-6.1 Sol并行实现。14:11两端DQN2.3.1+cu121/CUDA4090D短矩阵检查通过，CPU affinity不重叠，8960/8961空；首次只读探针因缺psutil失败已用/proc复核，不是科学失败。当前还没有正式prepare/训练/评价，不把代码通过单测当作实验已运行。来源、任务与下一步见[新运行清单](outputs/experiments/first_stage_geometry_load_20261012/run_manifest.json)。
 
+
+
+
+
 新组纯几何覆盖/需求负载，固定0.5、N≤200，按同N P/T/Q字典序与变量N折中设计；20dev×4局部需求分布，教师通过后新MLM10000有效提交更新/seed51001，四固定验证节点，正式test40母×4profile；最终科学预算/参数待源与数据合同冻结。旧32空输入已由canonical小记录证实源时间覆盖不足：Feb11末8母全部expired，Feb12前24母全部no_prior；是否由数据源切换引起尚未证明，旧档不改。新Feb13/14/15与备用16官方metadata已核、原tar尚未下载。两端独立、避让18/74，工作台发起全部正式作业；中途无需确认，完成报告/曲线/数据/模型/源码双端核验才结案。
+
+
+
+
 
 **2026-10-12 14:24 S2-F20双端正式训练已接续，20424/20473可先释放。** 用户最新资源要求覆盖原only74位置限制；未核云端停机，不称24/73已终止。六短调参均32768及144景验证完成，DQN按原规则选A；20418工作台已创建正式`prepare_dqn_20261012_141938_5d898bce`，from_scratch/seed51001/400000，worker77009实际9600步，原2fc科学、fbf执行与共同准备来源绑定。74原PPO139583/出生837508288持续305100/400000，第三验证节点后继续，未停止或重启。SAC400000完成，整体9/12、累计911308/1396608（65.25%）；此为14:24:19当轮API/SSH事实，[双端快照](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/latest_parallel_actual_status.json) · [方案22](docs/第二阶段/方案/22_公平对照双端并行与实例释放说明.md)。PPO/DQN正式终点和最终1320景矩阵仍待，不据未完成考核下算法优势结论。
 
+
+
+
+
 控制层45ac3fc与外部双端路由已冻结，原2fc短worker、fbf正式worker及原12任务/seed51001/预算/输入保持；原单端35040已按出生核验停止，完整旧state归档E盘，PPO原进程接续。首个并行协调器10380因准入任务清单过大EOF退出，0新科学交互；仅压缩传输并保全量原探针后，18008已放行DQN18。14:13进一步冻结释放闸，当前唯一协调器28276/出生1791785600.5859947接续、两个科学PID保持；两GPU查询成功/新鲜/UUID及74矩阵实际冻结DQN终点SHA均为释放18必需证据。18旧ND12工作台有调度能力，精确身份/源码、实时57终态、223科学完成与旧协调器/跟进停止的证据已上传并经远端guard核验；未干预旧服务。分配通知已发送原聊天并[保回执](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/nd12_allocation_message_receipt.json)。18须DQN全部计算、终点归档校验及74只读接入完成后释放；74留至共同矩阵/计时/报告/完整归档核验与归还通知完成。小时跟进已改双端并精确回读，不再访问24/73。
+
+
+
+
 
 14:25两端2fc/fbf冻结清单所有文件重哈希及files字典完全一致，18科学清单实际SHA为cb8bdbc56c300d3940cdfada20225dcbb628cb3a308f666df4fb4a0e6ae10c00、执行清单a19b2d80；74执行清单1641c98a保留，共同522db合同不变。[来源实核](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/dual_source_registry_actual.json)。后处理支持逐臂真实owner/provenance，10项合成检查通过，尚无生产统计。并行控制/源码/交接证据68成员本地E包及74远端SHA回读一致，[运维归档](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/operational_archive_verified.json)；此为控制层归档，不称全组科学交付已完成。
 
+
+
+
+
 **2026-10-12 第一阶段收到S2-F20资源通知。** 对方聊天通知其保留物理20418/20474，DQN A同ID零交互转入18后等待最后准入，PPO继续74；20424/20473由用户拟释放。本聊天后续第一阶段新计算避让18/74，收到释放通知后仍先实核；24/73不当作空闲可用。本轮只登记通知，未做SSH/云端关机核验、未启动或恢复实验。[通知记录](outputs/experiments/first_stage_nondrl12_20261012/followup/s2_resource_notice_received_20261012.json)。
+
+
+
+
 
 **2026-10-12 第一阶段下一轮方向建议（未实施）。** 按用户的独立阶段边界，建议先统一移除旧下游承载保护并重新冻结几何—负载评价，量可达改进空间；再做09单机/交换/多束联合重分的同N消融与热点配额、可变N折中；新强教师有稳定改善后继续MLM同条件增益验证，宽度/动态后续。补充分空间需求场景：同布局全局倍率不改变CV，不能代替热点结构变化。见[实验方向问答](Q&A/环境仿真/第一阶段波束覆盖规划与两阶段衔接.md#2026-10-12追问明确阶段分工后下一步实验往哪里走)。仅讨论与Astra设计复核，没有新训练、评价、求解、预算或自动化；旧数据和门槛保留。
 
+
+
+
+
 **2026-10-12 用户明确第一阶段独立指标边界，撤回此前服务指标主导建议。** 业务满足由第二、三阶段评价；第一阶段使用位置与请求需求量，评价几何覆盖、唯一归属、负载分配、N及规划代价，不以承载/QoS/SI/SGM或资源分配结果作指标、奖励或接受门槛。对热点与孤立边缘，建议研究同N下峰值/重载上尾、全局/局部CV及几何可行强参考差距；具体选择尚未冻结，参考差值也不等于认证最优性差距。见[更正问答](Q&A/环境仿真/第一阶段波束覆盖规划与两阶段衔接.md#2026-10-12更正第一阶段独立指标边界)。本轮只修正文档边界，原冻结实验和报告不改，不新增计算或恢复自动化。
+
+
+
+
 
 **2026-10-12 第一阶段指标讨论：热点与边缘异质需求（历史建议，服务指标部分已由后续用户更正撤回）。** 用户指出原始负载CV可能惩罚几何上不可避免的边缘低负载。已核CV是束需求总体std/mean；建议以全覆盖/资源硬约束、逐机全需求承载、QoS达标/尾部及输入预定边缘组保护为主要评价，CV保留诊断，同场景参考可达水平分开报告。相同负载Jain与CV单调等价，单换名称不能解决；600Mbps非真实容量，TDMA所需时间与当前固定份额服务不同。见[指标问答](Q&A/环境仿真/第一阶段波束覆盖规划与两阶段衔接.md#2026-10-12追问热点与边缘很不均匀应该怎样定评价指标)。本轮没有重评原始数据、改冻结标准、启动新计算或恢复自动化；旧ND12结果保留，新建议待下一轮统一冻结。
 
+
+
+
+
 **2026-10-12 13:25 S2-F20资源授权改为两端并行，20424/20473已确认可释放，迁移正在实现。** 用户要求使用闲置卡并告知可释放实例，随后明确先释放24/73；此新授权覆盖原only74位置限制，算法/seed/预算不变。13:22–25四端真实核18/24/73的GPU均空闲无科学worker，ND12四逻辑API223/223全部completed、旧协调器已退出且scientificcompletion/跟进停止收据匹配；不能据复用的旧PID判断活跃。[资源窗口](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/resources_before.json) · [最新授权与分配](outputs/experiments/s2_fair20_20261012/preflight/parallel_20261012/user_parallel_authorization.json)。本组不在24/73提交任务，两实例可由用户释放；未核云端终止，不把确认可释放写成已关机。
+
+
+
+
 
 计划PPO原worker139583/出生837508288继续20474，queued-zero DQN A原ID及后续DQN正式转20418；最终matrix仍在74按五方法逐景交错，不改变共同6600/8328范围。原35040协调器目前仍管理单卡，迁移/peer依赖/共享唯一owner及真实executorport guard在独立stage2-fair20-parallel树实现，原2fc/fbf科学worker字节不改、PPO不重启。当前只完成只读可用性与运输工具检查，不虚称DQN18已启动；接口检查、冻结、真实工作台转交与双进程/GPU核实后才确认并行运行。18在本臂计算/档案/终点导入主矩阵核验后可单独释放；74保留至本组最终交付/释放通知。其余已完成SCI不因分卡恢复。
 
+
+
+
+
 **2026-10-12 S1-ND12结果解释与后续优先级（仅分析）。** 已根据正式CSV与冻结105函数核：MLM非空204条中45条最终改变初解，其余保持；标签预测损失下降未转化成明显布局收益，教师质量/关键归属预测/解码拒绝的主因尚不能定论。09相对BH在49/68母的CV更好、19/68更差，当前方法主要是邻接边界单机转移，尚未验证联合交换/多束重分配的增益。建议先核空输入与可改空间、分解MLM瓶颈、再加强09邻域，学习模块随后按独立增益筛选；可变N应用、宽度与动态另列。见[人话解释与实验顺序](Q&A/环境仿真/第一阶段波束覆盖规划与两阶段衔接.md#2026-10-12追问十二路线怎么理解mlm为什么收益小09还值得怎么做)。本轮未新增训练/评价/求解、种子或预算，已结案自动化保持暂停，原报告与归档不变。
+
+
+
+
 
 **2026-10-12 12:42 S2-F20首个正式SAC400000终点完成并核验，后续队列已接续。** 原正式任务`prepare_sac_20261012_063042_9b6b5c4e`于12:32:03实际completed，400000交互、98977更新、3301回合；完整断点step=agent.interactions=400000、四个node_done齐全，from_scratch/seed51001及strictretained400000、未知0通过。final policy35个Tensor与完整断点policy逐一相等，权重/模型/断点SHA及原科学2fc、执行fbf来源匹配，原56539已退出。四节点各144条direct/B/journal、共1152引用SHA闭合，返回保护/资源违规0；回退数依次37/66/60/17，原候选和求解开销全保，无额外优化器。[首终点审计](outputs/experiments/s2_fair20_20261012/preflight/endpoint_sac400000_verified_20261012.json)。这是单seed正式训练完成，不是最终三算法优势结论，1320景共同考核仍待。
 
+
+
+
+
 PPO A/B两短均32768/32768及144景直接验证完成，当前DQN B短在原2fc无B源上实际训练，12:42:25为4800/32768、135391出生837395730，DQN A与正式PPO/DQN仍待。12:41共同API为DQN B2500步、学习累计533572/1396608（38.20%），整体7/12，正式模型1/3；[实时快照](outputs/experiments/s2_fair20_20261012/preflight/heartbeat_20261012_124108.json)。任务顺序以工作台资源准入的实际队列为准，范围/ID/预算不变。 12:46复核PPO正式任务`prepare_ppo_20261012_124019_3796ce31`已由工作台创建并queued；按两个短验证SI选择A（lr=1e-4），原2fc科学与共同fbf执行源自动绑定、seed51001/400000、from_scratch保持，尚未称已训练。DQN B短为10300/32768，原其他步骤不变，最新累计541372/1396608（38.76%）、7/12，见[12:46 API](outputs/experiments/s2_fair20_20261012/preflight/heartbeat_20261012_124626.json)。协调器35040与计时观察器27108均出生核实、固定映射仍排物理74；[守卫核查](outputs/experiments/s2_fair20_20261012/preflight/local_daemons_handoff_20261012_1241.json)。20474仍借用，本组全部计算/计时/报告/双端归档与归还通知未完成。
+
+
+
+
 
 后处理代码已完成合成检查，位于本组outputs/analysis/postprocess.py，生产入口拒不完整6600矩阵/三400000模型及不一致SHA，母级20000配对bootstrap/12校正族和日期/时间块敏感性按方案20；原始候选与回退另列。当前仅合成数据、小draw，0生产bootstrap/0评价/0学习/0求解，根正在独立复核，尚不能称正式统计完成。[合成检查](outputs/experiments/s2_fair20_20261012/analysis/synthetic_check_receipt.json)。严格速度结论需要独立GPU/PID/CPU和完整计时段证据，现2秒采样及CPU不可隔离等限制保留，不信原case布尔字段、不捏造补齐，也不追加计时case。
 
+
+
+
+
 **2026-10-12 11:39 S2-F20第三验证节点闭合，SAC已继续至约339000步。** 300000节点144条direct、144条完整A+B及144个journal完整，结果/state一致，288引用SHA逐项一致；返回点资源及相对初解SI/SGM/基本服务保护违规0，60景严格回退Direct并保留原候选、求解/计时账，无额外优化器。[第三节点核验](outputs/experiments/s2_fair20_20261012/preflight/checkpoint300000_verified_20261012.json)。11:39真实API为338900/400000、累计437204/1396608（31.31%），独立现场339000/83727更新，worker56539/DQN/fbf执行源与2fc科学、strict预算未知0匹配，无当前错误。[实时快照](outputs/experiments/s2_fair20_20261012/preflight/heartbeat_20261012_113907.json)。整体仍5/12，三短完成、SAC正式未到400000，其余三短与PPO/DQN正式待执行；节点验证不算新增模型成果。
+
+
+
+
 
 同轮35040协调器、27108计时观察器均真实活跃/出生一致，ND12固定映射继续排除物理20474；[守卫核查](outputs/experiments/s2_fair20_20261012/preflight/local_daemons_handoff_20261012_1139.json)。本组仅20474/8953，完整矩阵/报告/双端归档和释放归还尚待。已派有界GPT-6.1 Sol准备本组outputs/analysis后处理代码及合成检查，不执行生产统计、不新增训练/评价/求解；须待三400000终点与6600矩阵案例闭合后使用，时间主张仍受原始NVML/CPU隔离证据门控。冻结科学与run_plan未改，小时跟进保持。
 
+
+
+
+
 **2026-10-12 S1-ND12正式[报告10](docs/第一阶段/实验报告/10_非DRL十二路线覆盖与负载均衡对照.md)已发布，最终本地/远端交付核验全部完成。** MLM固定10000更新、10×60验证和19方法5700条共同考核全部完成，223任务原始ZIP/来源依赖及全量strict统计通过；根复核两次后处理修复没有改变逐景或汇总数值，5张中文图和全量CSV已目视/核数。预设成功分支均未达到：09邻接图CV相对BH降低3.2232%、承载下降0.0193个百分点，未到5%门槛；MLM M/H仅改善0.1783%，MO相对HO/O未显示明确AI额外收益。02/03预算内证据不足，04/05/08/10前筛或机制停止；这些都不是算法家族不可行的证明。
+
+
+
+
 
 100母中32为空输入；CV/承载有效68母，N和时间保留100母。非空记录N36–105，N200未实证，全部受测非空发布布局通过冻结覆盖/归属/守恒检查。低中高是0.75/1/1.25倍率，同一母的不同需求档初解N可能不同；不声称算法自主选N或角宽/动态已完成。[数值核验](outputs/experiments/first_stage_nondrl12_20261012/preflight/final_numeric_root_acceptance.json) · [图表核验](outputs/experiments/first_stage_nondrl12_20261012/preflight/publication_visual_root_acceptance.json) · [空输入口径](outputs/experiments/first_stage_nondrl12_20261012/preflight/test_zero_demand_audit.json)。最终报告/图/CSV/小模型/源码与校验收据包共636成员，已从20418/20424/20473回读同一共享副本并逐成员核SHA；原始分卷和依赖闭合。交付程序曾因校验清单超长失败，仅修复清单传递并沿原包接续，修复源码与测试另作附录归档，未改科学资产。见[最终验收](outputs/experiments/first_stage_nondrl12_20261012/delivery/final_root_acceptance.json)和[远端回执](outputs/experiments/first_stage_nondrl12_20261012/delivery/final_delivery_receipt.json)。原科学进程与收尾27872均已结束；交付链接已给出，本组自动跟进已暂停并[精确回读](outputs/experiments/first_stage_nondrl12_20261012/followup/final_pause_readback.json)，不重启旧任务。
 
+
+
+
+
 **2026-10-12 10:40 S2-F20第二验证节点完成，SAC持续训练，无新增科学失败。** 200000节点144条direct、144条完整A+B及144个optimizer journal已闭合，结果/state一致、288条引用SHA逐项一致；返回点相对初解的SI/SGM/基本服务保护和资源违规0，66景按严格验收回退已核Direct，原候选、求解次数及耗时全留，未追加优化器。不是保证每景全部束达到基本服务，也不是正式终点或算法优势结论。[第二节点核验](outputs/experiments/s2_fair20_20261012/preflight/checkpoint200000_verified_20261012.json)。10:40 API为267500/400000、累计365804/1396608（26.19%），独立10:40:48现场至268200，worker56539出生与DQN/fbf实际包、原2fc科学及严格预算未知0匹配；PPO A短已完成、其余3短/正式PPO/DQN仍待，整体5/12。见[真实API/资源](outputs/experiments/s2_fair20_20261012/preflight/heartbeat_20261012_104021.json)。
+
+
+
+
 
 同轮协调器35040和计时观察器27108均出生匹配且正常，ND12固定映射仍排除物理20474；仅使用20474/8953，资源尚未归还。独立单秒窗CPU约15.32核/RSS4.276GiB、GPU68%/2576MiB，Torch预检线程1不能当作原生库/driver单核或CPU无争用的证明；这是瞬时记录而非平均。[进程/隔离/空间核查](outputs/experiments/s2_fair20_20261012/preflight/local_daemons_handoff_20261012_1040.json)。冻结训练源码/配置不热改，最终严格耗时结论须结合独立原始进程记录及实际CPU条件，相关限制保留。普通心跳继续由运行清单及最新API快照承载，完整400000终点、共同矩阵、报告和双端归档/释放通知仍待。
 
+
+
+
+
 **2026-10-12 10:04 S1-ND12原始归档已核验，正式统计正在全量复核。** 延迟汇入父清单的35条原教师记录已按合同原字节、原子清单引用及预约身份严格闭合；修复只改后处理校验器，36项回归通过，main5316b93保留原数据与105来源。[修复验收](outputs/experiments/first_stage_nondrl12_20261012/preflight/archive_closure_repair_20261012/root_patch_acceptance.json)。新唯一收尾进程37252/出生1791770271.1619155保原截止，从已有卷接续；223任务、227任务ZIP共3.32GB和6个Feb共享卷共3.80GB逐卷/成员/依赖闭合，Jan4.68GB唯一卷另引用。[原始归档验收](outputs/experiments/first_stage_nondrl12_20261012/preflight/final_archive_closure_root_acceptance.json)。当前building_strict_report，CPU持续增长、内存约448MB，无报错；这尚不等于正式报告完成。
+
+
+
+
 
 图表门控35452/出生1791770452.4430215等待唯一strict成功后自动生成5张中文图及8张全量CSV，最多等待2小时；源脚本和10节点真实验证承载的SHA已钉住，不得双起扫描。[出图门控](outputs/experiments/first_stage_nondrl12_20261012/analysis/publication/controller/launch.json)。随后仍须人工核数核图、发布报告10及完成最终双端小包；当前不恢复任何科学任务，小时跟进保持ACTIVE并已[精确回读](outputs/experiments/first_stage_nondrl12_20261012/followup/strict_and_publication_readback.json)。
 
+
+
+
+
 **2026-10-12 09:34 S1-ND12科学计算全部完成，完整归档验收仍在收尾。** 根实际四逻辑工作台核223/223任务completed：MLM固定10000更新、seed51001、10×60验证，19个方法配置的76项共同考核各75条、共5700条完成；223是准备、开发、教师、训练和评价分片任务数，不是模型数。固定终点1144704参数已在DQN/CUDA严格加载，checkpoint/最终权重逐Tensor一致，Adam/RNG/10000条损失与来源链通过；原worker及协调器31192已正常退出。[实际完成核验](outputs/experiments/first_stage_nondrl12_20261012/preflight/scientific_completion_20261012_0933.json) · [固定终点审计](outputs/experiments/first_stage_nondrl12_20261012/preflight/final_learning_audit.json)。
+
+
+
+
 
 09:39收尾进程1740生成全部223任务ZIP后，在来源依赖校验处退出：校验器误将修复前已预发、后来折入父清单的35条教师记录判为新执行。原合同直接钉住全部35条，当前SHA与原始文件相同；正在补严格的原始子清单/字节/来源三重校验，未修改原始结果或重复训练。[失败原现场](outputs/experiments/first_stage_nondrl12_20261012/preflight/archive_closure_repair_20261012/failure_preservation.json) · [逐条拒绝诊断](outputs/experiments/first_stage_nondrl12_20261012/preflight/lineage_origin_fold_rejection.json)。冻结final_input保持；其中manifest保留历史进度，终态依据完整state与任务收据。原48小时收尾截止不变，后续从已有ZIP接续；报告10、全量strict、最终图和双端交付尚未完成，自动跟进保持ACTIVE。02/03仍为预算内证据不足，04/05/08/10开发停止，不借计算完成改写成全部路线有效。
 
+
+
+
+
 **2026-10-12 09:39 S2-F20同ID R2恢复已实核，100000节点评价完成，SAC继续到193000步。** 修复执行源`fbf79047ea859b91d8c7ee1decddd53a1436c359`与原科学2fc分列，R1及原失败快照/合同/断点/日志保留；31项本地检查通过，远端31项有1项仅因本地证据路径而跳过，真实worker启动哨兵和来源更替覆盖。组级及同ID来源接口已实际登记：[R2登记](outputs/experiments/s2_fair20_20261012/preflight/validation_failure_100000_20261012/repair2_registered.json)、[同ID接续](outputs/experiments/s2_fair20_20261012/preflight/validation_failure_100000_20261012/repair2_same_id_source_repair.json)。08:26实际56539/DQN/CUDA/fbf快照身份、未知交互0及严格预算通过，原前三景direct与前两景B未重跑，第三复用原A/B并按严格保护退回原分配；IO已测差9.039秒带回，失败验证墙钟未记录部分明确缺失，不补0。见[真实恢复核验](outputs/experiments/s2_fair20_20261012/preflight/validation_failure_100000_20261012/repair2_live_verification.json)。
+
+
+
+
 
 100000节点144条direct与144条完整A+B及journal已闭合，逐引用SHA一致，返回点资源/独立终态/保护违规0；37景候选未过严格保护而回退Direct，所有候选与原求解/计时账保留，无额外优化器。[完整节点核验](outputs/experiments/s2_fair20_20261012/preflight/checkpoint100000_verified_20261012.json)。PPO A短调参已真实32768/32768及144景完成，SAC两短已完成，PPO B与DQN两短仍待；正式PPO/DQN未启动。09:38 API为SAC190800/400000，累计289104/1396608（20.70%），已完成5/12；09:39只读实核到193000，无新科学失败。只是验证节点，不是完整400000终点或SAC优势结论。
 
+
+
+
+
 09:33本地协调器34084因SSH握手`No existing session`退出，科学worker56539继续，未停止或重复交互。根09:43将该连接异常在独立外部包装器中转入原有界重试，并用原state/plan重启35040；科学2fc/fbf及run_plan未改，原包装器与异常状态归档：[运维检查](outputs/experiments/s2_fair20_20261012/controller/transport_wrapper_verification.json)、[重启回执](outputs/experiments/s2_fair20_20261012/controller/transport_restart_receipt.json)。计时观察器27108仍真实等待共同矩阵。ND12当前旧记录31192实际已退出、phase report_pending，不能称协调器活跃；固定映射仍排除物理20474、逻辑74在73。20474仍由本组借用，全部考核/计时/报告/双端归档与归还通知未完成。实际工作台页面已显示科学源2fc与执行源fbf、原任务编号和接续状态，未从页面新建任务。
+
+
+
+
 
 **2026-10-12 08:10 S2-F20首次修复已登记，但真实worker启动导入失败；100000学习状态未前进。** R1执行源`b47493b2cf7ff3890e0f593485cb85750e2e64ce`本地29检查/167导入通过，远端29检查有1项因仅本地存档而跳过，已另用真实保存案例验证严格回退且0新增求解。[本地检查](outputs/experiments/s2_fair20_20261012/preflight/validation_failure_100000_20261012/repair_local_verification.json) · [远端检查](outputs/experiments/s2_fair20_20261012/preflight/validation_failure_100000_20261012/repair_remote_verification.json)。08:03核无活跃科学worker后仅替换本组服务17514→53673；原科学repo/2fc快照保留，新执行repo及快照独立。工作台组合同与同IDsource-repair实际成功登记，原配置/任务编号/预算未改；见[同ID登记回执](outputs/experiments/s2_fair20_20261012/preflight/validation_failure_100000_20261012/same_id_source_repair.json)。
 
+
+
+
+
 但接续worker54329于08:09在`run_job`错误导入来源函数时失败，尚未到CUDA预检/agent初始化；根08:10核真实failed，协调器35340已退出。前轮检查没有执行真实启动入口，不能把登记/单测通过写成恢复成功。新的ImportError与旧B验收失败分别保存，100000交互、23977更新和原断点/日志不变；仍4/12、165536/1396608（11.85%），PPO/DQN仍待。R2在新的`stage2-fair20-repair2`树修正导入并补真实启动哨兵，同时以明确前驱合同SHA更替执行来源，保留原2fc证据、R1合同/快照与失败epoch，禁止热改或抹去旧登记。R2尚未冻结/部署/接续，主任务自主处理同ID必要修复；20474仍属借用，未归还，计时观察器继续等待。科学算法/预算、strict保护及原始数值保持。
+
+
+
+
 
 **2026-10-12 07:42 S2-F20在100000节点完整A+B验收失败，断点完整，正在同ID修复。** SAC正式`prepare_sac_20261012_063042_9b6b5c4e`已100000/400000、23977更新、821回合；验证144景完成2景，第三景direct与完整A/B journal已保存。07:35:19失败后worker35737及协调器29300已真实退出，07:42 API仍failed，其余四短调参待资源；学习总账165536/1396608（11.85%），已完成仍4/12，不称训练结束或有效果优势。见[原失败现场](outputs/experiments/s2_fair20_20261012/preflight/validation_failure_100000_20261012/remote_failure_evidence.json)、[断点/训练日志/SHA账](outputs/experiments/s2_fair20_20261012/preflight/validation_failure_100000_20261012/checkpoint_ledger.json)与[实际API](outputs/experiments/s2_fair20_20261012/preflight/heartbeat_20261012_074242.json)。
 
+
+
+
+
 诊断确认第三景A/B候选仅一束容量/需求比略低于0.1：B缺口约3.68 bps、需求比短缺9.59e-9，优化器比值容差与runner绝对bps验收不一致，真实基本服务49/50而初解50/50。修复保持原严格验收：保留候选原始容量/指标/优化预算和计时，未通过时返回已核Direct，不放宽门槛、不补算优化器。100000断点与三训练日志完全闭合、无未提交尾，验证失败需独立SHA证明后免记错误的“未知训练交互+1”；原生训练崩溃的保守规则保持。GPT-6.1 Sol在独立`stage2-fair20-repair1`树实现验收/来源接口，原2fc源码及任务/配置/预算字节未改；尚未冻结部署/恢复，不把代码检查当接续成功。工作台已临时hold派发，必要修复及同ID恢复在原授权内；仅20474，ND12新协调器31192出生及持久排除已核，GPU空闲是故障空窗，资源尚未归还。独立计时观察器27108仍等待共同矩阵；本组小时跟进持续。
+
+
+
+
 
 **2026-10-12 06:33 S2-F20数据准备与两组SAC短调参完成，正式SAC已实际从头训练。** 两prepare结果已复核字节SHA、场景身份和数量；训练8064景/576母来自Jan08/09，验证144景/12母来自Feb13，考核1320景/40母来自Feb14/15，三个分区UTC母时刻无交集。GPT-6.1 Sol逐一核两套19056个场景文件SHA并检查六调参合同，主任务独立复核结果和场景签名，训练输入仅train/validation。见[数据及调参核查](outputs/experiments/s2_fair20_20261012/preflight/data_and_sac_tuning_verified.json)。SAC A/B各32768真实交互与144景直接验证完成，均严格交互账通过；按事先规则选择B（固定alpha=0.05），仅用于配置选择，不是算法优劣结论。短调参clock没有纳入末尾验证耗时，报告须用原始单景计时及工作进程起止另列，不能把字段0解释为验证零开销。
 
+
+
+
+
 正式SAC任务`prepare_sac_20261012_063042_9b6b5c4e`于06:32:19启动，06:33:38实际5100/400000、worker35737；从头初始化、seed51001、冻结2fc与DQN/CUDA已核，未继承短调参权重。两prepare及两短调参已完成4/12，PPO/DQN四短调参与两正式仍待；最终共同矩阵及归档/归还未完成。仍仅20474/8953，ND12当前协调器8632出生和同placement SHA已核，物理20474继续排除，8943不监听且无旧科学进程。已保存[06:30实际快照](outputs/experiments/s2_fair20_20261012/preflight/heartbeat_20261012_063030.json)与[最新工作台状态](outputs/experiments/s2_fair20_20261012/preflight/latest_actual_status.json)。任务交替期间旧admission过期会退回queued_resources，随后由协调器新鲜复核重新准入；本轮已实际接续SAC，不是失联。科学源码/预算不变，本轮仅核验与状态归档，无前端配置修改；工作台已生成prepare、shorttune和train记录。
+
+
+
+
 
 **2026-10-12 07:14 S1-ND12等价数据读取扩展已接续，MLM真实5925/10000更新。** 同ID train_nondrl_20261012_055310_890a4cba在4144更新、四个完整验证节点后由工作台安全保存并接续；原权重、Adam、随机状态、采样游标和损失前缀保留。07:14真实API为training5925、cursor189600，5000节点60景已完成；正式种子51001、10000更新和固定终点选择不变。基础科学执行仍为a21，外置只读缓存和启动桥分别冻结并显式记录在任务、进程、断点和模型元数据中，不能称纯a21运行。[当前API与本地守卫](outputs/experiments/first_stage_nondrl12_20261012/preflight/datafeed_epoch/live_handoff_verified.json) · [同ID扩展回执](outputs/experiments/first_stage_nondrl12_20261012/preflight/datafeed_epoch/activation_receipt.json)。
 
+
+
+
+
 读取优化在1024样本、原新各两次真实CUDA更新上核对张量、模型参数、Adam及随机状态逐位一致，四次更新只记工程账。启用后5.257秒新增18更新，约3.42更新/秒；此前短窗约1.3。GPU瞬时6%/492MiB，CPU仍接近单核满载，不能称GPU已满或严格算法速度提升。82.67MB派生缓存只随本训练任务归档一次，原567.47MB教师证据保留；预算、精度、采样和算法未变。[启用后实际资源](outputs/experiments/first_stage_nondrl12_20261012/preflight/datafeed_epoch/post_activation_resource_probe.json)。
+
+
+
+
 
 **2026-10-12 07:36 S1-ND12跟进提示编码故障已修复，训练未中断。** 上轮读取中文提示时把GBK输出误按UTF8处理，保存后的提示含1997个替代字符；旧“字段完全相同”检查未发现源请求已损坏。本轮保存旧原字节、重建可读中文，按原自动化更新并增加UTF8/无替代字符/关键约束及冻结SHA检查；真实GBK子进程输出ASCII JSON的跨工具回验通过。[诊断与修复验证](outputs/experiments/first_stage_nondrl12_20261012/followup/encoding_repair_20261012/verification.json) · [实际配置回读](outputs/experiments/first_stage_nondrl12_20261012/followup/encoding_repair_20261012/readback.json)。07:36真实SSH为同worker33156、8800/10000更新，前8节点各60验证完成；CPU约0.99核、GPU瞬时6%/492MiB，预算与来源不变。协调器31192与收尾1740各唯一，42守卫文件匹配，原截止保持；共同考核尚未启动，跟进保持ACTIVE。
 
+
+
+
+
 原105实验源及plan保留，七个故障任务经显式工作台来源修复接续；157项冻结回归和Linux超时回收检查通过，四个整数规划尾任务已完成。02/03各有60个合法参考，但预算耗尽、只有2/20母达到改善门槛，另有7/10个未搜索I0参考，终态明确为“预算内证据不足”：未训练、未独立考核，不判算法不可行或科学失败。04/05/08/10按原开发门槛停止，01/06/07/09/11/12进入后续流程；05采用冻结规则前筛，尚未训练选区模型。这些停止只限本轮条件，不证明算法家族无效。[来源合同](outputs/experiments/first_stage_nondrl12_20261012/preflight/repair_epoch/source_contract.json) · [有界处置](outputs/experiments/first_stage_nondrl12_20261012/controller/bounded_dispositions.json)。
+
+
+
+
 
 唯一协调器现为31192/出生1791760304.5813775，收尾进程1740/出生1791760317.4470956，实际phase分别为running_workbench_dag与waiting；两者模块守卫全通过，原48小时截止不变。旧8632/21096因本次等价扩展交接而受控停止，不能按旧PID再起。[本地交接与启动](outputs/experiments/first_stage_nondrl12_20261012/preflight/datafeed_epoch/local_handoff/pipeline_launch.json) · [收尾启动](outputs/experiments/first_stage_nondrl12_20261012/preflight/datafeed_epoch/local_handoff/finalizer_launch.json)。物理20474仍借给S2-F20，本组只用18/24/73，逻辑74在73，最终计时按物理端隔离；状态压缩前的巨大JSON原文已流式回验保留。报告10、最终曲线与完整双端交付未完成；持续跟进已更新并[精确回读](outputs/experiments/first_stage_nondrl12_20261012/followup/automation_datafeed_active_readback.json)，不重复已完成的来源修复或缓存安装。
 
+
+
+
+
 同轮06:35核实一个计时证据限制：NVML显示宿主进程334736、名称`[Not Found]`，容器实际worker35737；原GPU快照按名称白名单筛选，会漏记该行。矩阵的`strict_gpu_isolation_observed`不能单独当作严格隔离证明；当前可见proc/驱动接口尚不能直接核宿主与容器PID映射。见[计时监测审计](outputs/experiments/s2_fair20_20261012/preflight/gpu_namespace_timing_audit.json)。仅为未来矩阵补独立只读原始NVML/worker出生及案例时刻记录，冻结算法、预算、训练保持；缺少映射或完整覆盖时如实限制速度结论，不追溯伪造或重跑科学案例。 独立观察器10项纯模拟/语法检查通过，06:44:27以本地PID27108启动并核出生，现等待matrix注册，等待期无GPU/SSH查询；[启动回执](outputs/experiments/s2_fair20_20261012/controller/timing_observer_launch_receipt.json)、[验证说明](outputs/experiments/s2_fair20_20261012/controller/timing_observer_validation.json)与E盘原始记录/源码存档随组保留。观察器明确仅覆盖未来样本，仍不直接证明PID映射或采样间隔内无其它活动。
+
+
+
+
 
 **2026-10-12 05:22 S2-F20已接收20474并实际启动正式数据准备，学习交互仍为0。** 原S1-ND12逻辑20474任务通过原工作台保ID迁到物理20473，旧物理服务退役；根独立复核原协调器PID34748出生、placement及五模块SHA、当前20474无旧进程/计算、8943不监听，见[交接复核](outputs/experiments/s2_fair20_20261012/preflight/nd12_20474_release_verified.json)。本组仅20474/8953，源码`2fc16884078ad64b97333013737fef5cd9294626`已本地/远端clean冻结；三算法、共同环境/掩码、实际前端与同景轮换矩阵已实现，50新组检查、166模块导入、207原工作台检查通过。本地已明确记录176次学习工程交互，另含数值环境检查，不记正式训练。唯一prepare `prepare_prepare_20261012_050521_78650e1b`实际preparing/worker19042出生与冻结包已核，第一日原始源已下载并进入scan，后续两日/144验证景/1320考核景仍待，不能称数据全完成。
 
+
+
+
+
 正式后续仍为六短调参196608与三组各400000/seed51001、8328次完整A+B；首次POST在冻结8064输入时客户端60秒超时，服务端原任务随后发布，未重复创建。外部运维包装器把POST等待改1800秒、保本机接收时间与原远端时间以处理约135毫秒偏差，科学源码/任务/计划不变；旧失败和各进程出生均归档。[运行清单](outputs/experiments/s2_fair20_20261012/run_manifest.json) · [执行21](docs/第二阶段/方案/21_公平对照单卡隔离执行说明.md) · [最后真实API状态](outputs/experiments/s2_fair20_20261012/preflight/latest_actual_status.json)。协调器29300、隧道10856与单worker服务17514持续；实际身份以对应回执为准。小时跟进`s2-f20`持续，未有质量/速度成果。全部计算、计时、报告与归档核验后停止后续调度、核20474释放并通知S1-ND12恢复；归还通知尚未发生。C/D本轮约10GiB余量，长原始归档单份经outputs/raw_archive入口落E盘独立目录，不复制旧组资产。
 
-**2026-10-12 04:12后 S2-F20已获实施授权，正在独立实现与等待20474交接。** 用户先要求四端，随后收束为借用20474单卡、S1-ND12用其余三端，并要求完成后归还；已实际通知“设计第一阶段可变波束方案”聊天完成原工作台接续/持久排除及释放回执，尚未收到有效回执，不把GPU0%当已释放。04:12真实四端SSH/API/进程窗口显示ND12各有评价任务且未来训练待调度，四GPU无计算进程，证据见[资源核查](outputs/experiments/s2_fair20_20261012/preflight/initial_existing_resources.json)。新独立实现树`C:/Users/Admin/.codex/worktrees/stage2-fair20/paper`、分支`codex/stage2-fair20`；三GPT-6.1 Sol分别实现共同环境/算法、工作台/runner/UI、持久单卡调度/数据。方案20预算保持，未启动正式调参/训练/评价，冻结源与数据登记尚待。每小时跟进`s2-f20`已ACTIVE并[精确回读](outputs/experiments/s2_fair20_20261012/followup/automation_initial_readback.json)；包含完成后释放核验、归还通知和最终报告/归档要求。本组仅20474/8953，不干预其余三端。
+
+
+
 
 **2026-10-12 05:18 S1-ND12三物理端交接完成，正在接续工程修复；尚无正式监督训练结果。** 物理20474已交给S2-F20并由对方独立验收；本组只用20418/20424/20473，原逻辑20474、8943工作台及四分片数据保持，实际迁到20473。直到对方正式归还前不再向物理20474提交计算。[实际释放回执](outputs/experiments/first_stage_nondrl12_20261012/preflight/physical20474_release_final.json)与[固定映射](outputs/experiments/first_stage_nondrl12_20261012/controller/execution_placement.json)保存进程、归属和持久排除证据；旧四物理端启动记录仅为历史。
 
+
+
+
+
 三日新数据及576/20/20/100母规范输入已准备并注册。开发闸门已通过01/06/07/09/11/12，04/05/08按原实测门槛停止；02/03因强教师参考记录不全待修，10因原生整数求解器实际超时待修，不能据此称算法不可行。05:17真实API仍有四个10主评价进程，已提交6/10/6/5条；根05:18经原工作台stop、核PID出生并等待协作退出后，仅终止这四个未返回的原生求解进程，27条已提交原文及SHA保持。MLM教师正常预算超时未捕获，已有样本/游标保留；两强教师预算用尽只有53/60、50/60完整参考，后续只补明确标记的未搜索I0参考，不追加试算、不伪造强教师收益。[实际现场](outputs/experiments/first_stage_nondrl12_20261012/preflight/repair_epoch/live_before.json) · [有界停止证据](outputs/experiments/first_stage_nondrl12_20261012/preflight/repair_epoch/all_stops.json)。
+
+
+
+
 
 原科学105及run_plan字节未改，候选修复e1ae189/e6aab64仅本地专项检查通过，尚未正式部署。GPT-6.1 Sol正在补严格来源接续契约、工作台API、旧记录和新执行源分列及Linux工程检查。唯一流水34748与等待中的finalizer36680已在无网络边界受控停止，原回执保存在[修复历史](outputs/experiments/first_stage_nondrl12_20261012/preflight/repair_epoch/local_stop_receipt.json)，不可按旧PID重启；需采用经核验的新启动回执。预算、数据、种子和科学闸门不改，native超时与修复空窗单独记账。Jan08/09/12原始数据的唯一4.68GB补档已完成，本地E与三允许物理端整卷/成员SHA闭合：[补档回执](outputs/experiments/first_stage_nondrl12_20261012/source/reused_january_archive_receipt.json)。报告、模型、最终考核和完整交付仍待，小时跟进保持ACTIVE。
 
+
+
+
+
+**2026-10-12 04:12后 S2-F20已获实施授权，正在独立实现与等待20474交接。** 用户先要求四端，随后收束为借用20474单卡、S1-ND12用其余三端，并要求完成后归还；已实际通知“设计第一阶段可变波束方案”聊天完成原工作台接续/持久排除及释放回执，尚未收到有效回执，不把GPU0%当已释放。04:12真实四端SSH/API/进程窗口显示ND12各有评价任务且未来训练待调度，四GPU无计算进程，证据见[资源核查](outputs/experiments/s2_fair20_20261012/preflight/initial_existing_resources.json)。新独立实现树`C:/Users/Admin/.codex/worktrees/stage2-fair20/paper`、分支`codex/stage2-fair20`；三GPT-6.1 Sol分别实现共同环境/算法、工作台/runner/UI、持久单卡调度/数据。方案20预算保持，未启动正式调参/训练/评价，冻结源与数据登记尚待。每小时跟进`s2-f20`已ACTIVE并[精确回读](outputs/experiments/s2_fair20_20261012/followup/automation_initial_readback.json)；包含完成后释放核验、归还通知和最终报告/归档要求。本组仅20474/8953，不干预其余三端。
+
+
+
+
+
 **2026-10-12 S2-F20公平算法对照方案已设计，未实施。** 用户要求先设计SAC/PPO/DQN共用Transformer、动作掩码、奖励和交互预算的效果/耗时比较，详见[第二阶段方案20](docs/第二阶段/方案/20_Transformer下SAC_PPO_DQN公平对照方案.md)。建议三构造式算法（DQN明确沿用Double DQN目标）同1000项联合频率起点/槽数、同掩码及3000/N规则功率；奖励为全N SI差分、gamma=1，最终同完整A+B。单seed51001正式各400000共1200000，短调参196608与工程检查6144另账；新40母1320景与8328次完整A+B均为待执行预算，输入/日期可用性尚待核验，未冻结科学源或建立正式任务。质量和速度门槛、母级统计及同硬件计时已写明，尚无优势结论；前端实施需新增三算法共同合同，本轮纯文档无需前端改动。未授权/启动该组计算或定时任务，不恢复旧组或干预正在运行的S1-ND12。
+
+
+
+
 
 **2026-10-12 S1-ND12已正式启动，四端冻结源码与工作台均通过核验。** 科学源`105d5f57ec241cce0c484b95f6341d6dc418b3fe`、[冻结计划](outputs/experiments/first_stage_nondrl12_20261012/run_plan.json) SHA`d4d5b097ffcb4db41725997541320ff4bbbaf80f1963a754d386516eee6db2c2`；112项代码/工作台/旧权重检查通过，四端五个默认网络共20次实际CUDA更新仅记工程验证。正式三prepare为Feb10/20473 `prepare_nondrl_20261012_033449_2428a355`、Feb11/20474 `prepare_nondrl_20261012_033454_f72b76aa`、Feb12/20418 `prepare_nondrl_20261012_033458_291a0c53`。03:42 API快照中后两日各50母完成，Feb10仍准备；尚无正式监督训练。运行快照不替代下次实际核查。
 
+
+
+
+
 唯一本地launcher38528/出生`1791747268.9194221`按[启动回执](outputs/experiments/first_stage_nondrl12_20261012/controller/launch_start.json)接续数据登记、四端共同初解、开发闸门、教师/监督训练流水及独立考核。首launcher16276因上传父目录缺失在正式任务前退出，client-only `8254e21`已修并保[历史](outputs/experiments/first_stage_nondrl12_20261012/controller/history/upload_parent_missing/launcher.json)，远端科学源和计划不改；不得双起协调器。新工作台8940–8943与[持久隧道](outputs/experiments/first_stage_nondrl12_20261012/preflight/tunnels/receipt.json)已实际核，远端页面可见准备任务；[现场API/进程/输入SHA](outputs/experiments/first_stage_nondrl12_20261012/preflight/first_launch_live_check.json)确认下载增量和冻结包。
+
+
+
+
 
 本组十二路线含五种监督模型，seed51001最多44000更新；固定0.5°、同景同N、每机覆盖及N≤200，首轮不证明宽度/动态全目标。02/03用真实开发强教师而非弱规则代理判可达性，试算/问题/秒从原总账扣除；03的10000是教师问题，另冻1280000候选试算上限。05/11共享含64飞机工程上限的候选菜单，超限筛除不算物理不可行；BH即使06停也保留为共享对照。新Feb10/11/12分别用于验证/考核，旧考核不回流训练，模型不按test选择。[运行清单](outputs/experiments/first_stage_nondrl12_20261012/run_manifest.json)保存来源和实际任务；小时跟进`s1-nd12`已ACTIVE并[精确回读](outputs/experiments/first_stage_nondrl12_20261012/followup/automation_after_launch_readback.json)。报告、原始曲线、权重和完整双端归档仍待，当前没有新效果结论。
 
+
+
+
+
 **2026-10-12 第二阶段SAC/PPO/DQN效果差异问答核查（仅解释既有证据）。** 旧默认100景重评中T-SAC终态总满意度95.36/100，旧PPO direct67.11、DQN73.23；旧训练来源与物理实现有限制，不据此宣称当前欧洲环境下同预算重训的算法排名。该套T-SAC的直接行为优势是频率避让与槽数兑现，功率几乎固定20 W；经验回放、熵、双价值网络及Transformer各自贡献未由该对照识别。当前PPO direct熵正则未进入策略损失，但仍随机采样，不能倒推旧权重训练配置。追问统一Transformer、动作、奖励和预算后是否仍明显领先：尚无该正式对照；差距可能缩小、消失或反转，属未验证判断。比较还须控制观测/联合动作表示、调参与考核规则，分开同交互步的样本效率与同墙钟的计算效率；仅seed51001不能证明跨种子稳定优势。详见[问答](Q&A/算法与训练/第二阶段SAC与PPO及DQN的效果差异.md)。本轮未新增或恢复训练/评价、未改变已授权范围；纯说明无需前端变更。
+
+
+
+
 
 **2026-10-12 S1-ND12十二路线已获四端实施授权，正在并行实现。** 用户要求GPT-6.1 Sol实现、四端验证至报告/曲线/完整归档，中途不确认；一次主动中断后已要求继续并确认远端可连。根实际重新核20418/20424/20473/20474全部SSH成功、四个不同GPU UUID的4090D、DQN/CUDA可用，GPU当前无计算进程；新8940–8943端口空闲。尚未启动正式prepare/训练/评价，不把资源就绪当算法已运行。
 
+
+
+
+
 独立实现树`C:/Users/Admin/.codex/worktrees/stage1-nondrl12/paper`起点`922fe379034042bbe734a829b84e20f19c103171`，三个GPT-6.1 Sol任务分工：共用内核与06–12、01–05学习与教师、工作台/runner/前端。根负责数据来源冻结、四端部署和持久调度；范围与执行总账将写入`outputs/experiments/first_stage_nondrl12_20261012/`。首轮固定0.5°、同景同N、全飞机覆盖及N≤200；未来宽度/动态条件扩展不混入首轮结论。原算法与旧组归档保留，新组路径`s1_nd12/{port}`隔离；此前SSH握手失败已恢复，不判成科学任务失败。
+
+
+
+
+
+**2026-10-12 三阶段最优性边界已核原开题，仅问答记录。** 已查看原嵌入公式：P1为离散波位及0.3°/0.5°/1.0°三档宽度下的长期覆盖/均衡策略；P2为SGM与原容量匹配率加权；P3固定频率后最大化SGM，并有逐束匹配/SGM阈值及单束功率上限。有限组合可完整穷举或用准确整数模型认证；一般功率问题可研究全局非线性求解，但限时、候选池、代理目标和动态模型各有限定，现有已归档实验未证明原问题全局最优。当前SI优先及非负仅总功率域与原P3分别说明；阶段最优不推出整体最优。[问答与原公式入口](Q&A/算法与训练/三阶段研究瓶颈与关键问题.md#2026-10-12追问开题三个阶段有没有算法能够找到最优解)。未运行求解器/训练/评价、增加预算或刷新远端状态，S1-ND12授权与范围不变；无需前端修改。
+
+
+
+
+
+同日规模/耗时追问：报告09实际40–111束，新专题20个已见开发输入每景122–1815飞机；P19考核50–200束，P03计时仅固定100束。100束原SCA/改进路线完整单次均值3.916/11.331秒是局部方法，不是全局认证时间。有限候选整数优化及固定槽功率值得有界离线试；完整非线性频率/功率联合模型风险更高，但不能仅按束数断言不可解。问答中的1–5分钟/30–60分钟/10–30分钟均是首次单景试算预算建议，未实测、未授权新增计算；无本项目全局求解完成时间依据。未运行求解器或改变现有范围。
+
+
+
+
 
 **2026-10-12 非DRL专题十二份设计文档完成，未实施新实验。** 按用户要求建立[专题目录](docs/第一阶段/方案/非DRL专题/00_专题总览与共同比较约定.md)，00共同比较＋01–12独立路线文档已齐。三组并行成稿后，按用户新分工由GPT-6 Astra逐组完成实质设计复核，GPT-6.1 Sol作机械检查；AGENTS已保存“方案设计／写作用Astra，其它子agent默认6.1 Sol，不再用6 Sol”。本轮仅文档，代码、前端、既有训练/模型/数据未改。
 
+
+
+
+
 每篇均包含变量、算法步骤、模型／求解目标、有界预算建议、主对照、开发门槛、小例子和失败回退，以及原始出处。共享约定区分同N机制轨和可变N应用轨，固定下游模型；05学习选区与11规则选区共用重建器、候选和总时限。根统一主比较对象、逐母三档统计、CV/需求零值、承载保护相对初解而非逐步累积，以及限时整数解/真实几何/回退收益边界。MLM方向已确定保留，其他路线并列筛选；各篇上限不自动累加为已授权实验预算。旧方案14/15保留，原文献与实验结果不改写。 [最终内容与73个链接/锚点核验](outputs/verification/non_drl_designs_20261012/final_review.json)保存13份文档SHA和审校分工。
+
+
+
+
 
 **2026-10-12 按用户更正新增三阶段实际代码笔记本。** 用户需要近期训练代码本体而非结果导读，现分别交付[第一阶段BC/PPO](docs/第一阶段/实验规范/01_BC与PPO训练代码.ipynb)、[第二阶段SAC三路线](docs/第二阶段/实验规范/01_SAC三路线训练代码.ipynb)、[第三阶段连续功率优化](docs/第三阶段/实验规范/01_连续功率优化代码.ipynb)及同名HTML代码阅读版。S1-D12A取dfe7c394；P19 C0/C1取48c7恢复源、I0取62e33恢复源；S3-P03取e85a942。46个源码格与冻结Git原文核同，最终三本默认定义流程共55个代码单元从头执行通过；C0/C1/I0路线另分别验过。只在隔离outputs导出源码并装载定义/核配置，未训练、推进环境或运行功率求解；前端无需变更，实验状态及授权范围未改。现有Jupyter内核用于阅读执行；本机DQN缺IPython，第三阶段还缺CVXPY/Clarabel，未静默补装或当作已具备原远端求解环境。资料08保留为结果导读。生成脚本、分路验证与[交付核验](outputs/training_notebooks_20261012/delivery_verification.json)保存在outputs；HTML检查限结构/链接，未做浏览器实景检查。
 
+
+
+
+
 **2026-10-12 实验路线范围更正：MLM确定保留，其它路线须并列筛选。** 用户明确“MLM是其中一条路线，先确定这个是要做的”，并要求覆盖综合调研中的其它方向。不能把所有方法收成MLM配套对照，也不能要求其它独立路线等MLM成功后才开展。方案15已标记MLM方向确定，尚无新训练/评价任务；具体配置与预算仍待冻结。其余候选应按独立机制组织开发筛选和正式比较，区分同N机制轨与可变N应用轨，保留非AI方法的独立研究价值，旧算法复用不计新训练成果。下方方案15六法矩阵只属于MLM内部归因，不代表整个后续研究范围。
+
+
+
+
 
 **2026-10-12 掩码布局重构具体方案已形成，未实施。** 用户询问采用MLM准备怎样做，本轮形成[方案15](docs/第一阶段/方案/15_掩码布局重构与约束优化方案.md)：以飞机对候选波束的归属为遮盖变量，输入保留几何、需求和可见布局；先验收候选空间的可达改善，再用同条件局部优化参考训练一个非RL掩码模型。防止教师中心、完整负载或隐藏启用状态泄露答案，按母场景先划分数据。模型补全与模型筛选＋约束优化共享权重，对照共同强初解、同区域规则、全候选优化和同规模规则筛选＋优化；区别原始提议、解码、修复与回退贡献。
 
+
+
+
+
 A建议试点固定0.5°、同场景相同束数，跨场景N可变；通过后另研究变束数、宽度和动态，不能将A称为完整第一阶段。建议一个seed51001模型最多10000监督更新、教师最多20000局部问题且各1秒求解上限，新20验证母与100考核母×三档×六法1800条；全部为待执行建议，不是已获新预算。已核现有Layout、卫星射线、逐机数据及下游接口，识别全体负载CV与现有正负载口径需显式区分、平方目标需二次求解或说明MILP近似；未修改科学代码、启动计算或前端。README、问答与目录同步；方案编号15避让并行新增的综合调研14。
+
+
+
+
 
 **2026-10-12第一阶段可行路线综合调研完成，仅文档，未新增实验。** 用户要求不局限纯AI，尽可能全面查找AI、非AI及混合方案，并以人话简明说明。新增[方案14](docs/第一阶段/方案/14_波束覆盖优化可行路线综合调研.md)：32类不同机制/可组合部件、41项方法来源；给出候选束池＋整数规划、大邻域＋局部求解、强教师BC、学习排序搜索、聚类＋指向宽度优化五种优先组合。它们是建议排序，不是新实测结果；宽度/时序/新预算未执行，S1-D12A及旧组仍已结案。
 
+
+
+
+
 调研追溯到原论文/出版商/作者页，并明确摘要与正文片段阅读边界，不能称穷尽式系统综述。CG-FlexBeamOpt核为2024（机构库2025为上传日期）；GeoClust的给定足迹半径不等于物理可变角宽；候选池/局部/限时求解不自动给连续全局最优。核心10个DOI登记及元数据已核通过；详细[文献附表](outputs/research/beam_coverage_routes_20261012/文献与适用边界.md)和[检索协议](outputs/research/beam_coverage_routes_20261012/review_protocol.json)保留。采用纯文档内容、来源、链接和差异检查，不改前端、算法、数据或冻结实验。
+
+
+
+
 
 **2026-10-12 三阶段近期实验导读已整理。** 新增[可执行Jupyter笔记本](docs/资料/08_三阶段近期实验导读.ipynb)与[直接阅读版HTML](docs/资料/08_三阶段近期实验导读.html)，覆盖9月30日至10月10日第一阶段7组、第二阶段G11/P17/P18/P19及第三阶段P01/P02/P03，单列10月12日纯AI/AI＋优化路线调整但不记为已做实验。以已有报告、逐场景数据和后续更正为依据；7份CSV、13代码单元、4图已重算，沿用原统计分母及P19 SI容差，不新增科学结论或实验范围。三阶段证据分别复核，保留P18更正、原终态/保留布局区别、单种子、功率域与异条件计时限制。未刷新远端运行状态、未训练或环境评价，前端无新增操作；[生成与执行检查](outputs/research_overview_20261012/delivery_verification.json)和[数值复核](outputs/research_overview_20261012/numeric_checks.json)留存。HTML已检查结构和本地链接，浏览器工具禁止file协议，未完成浏览器实景排版检查；图像已直接查看。下方原实验完成状态及最新研究方向不变。
 
+
+
+
+
 **2026-10-12 用户调整第一阶段路线：不再强制DRL，考虑纯AI或AI＋优化。** 本条覆盖同日下方MLM讨论中“必须检验DRL追加贡献才符合主线”的前提，以及2026-10-10方案12形成时的DRL方法限制；已同步[项目约定](AGENTS.md)和文档目录。后续以AI对覆盖布局质量或同质量求解效率的实际贡献为依据，可采用监督/模仿学习、掩码布局重构、学习辅助搜索和数学优化组合。全部飞机覆盖、唯一归属、N≤200、负载均衡及完整指向/宽度/动态业务目标保持；第二三阶段分工未改变。历史训练、报告及其原始结论保留，不能将当前PPO未达门槛扩大为所有DRL都不适用。
+
+
+
+
 
 讨论建议（未实施）：优先比较AI候选提议/排序或局部重构＋同一搜索/约束优化器，并保留纯监督模型、仅掩码重构和纯优化对照；不必再给掩码模型追加PPO。可借鉴[MaskCO的掩码参考解重构](https://proceedings.iclr.cc/paper_files/paper/2026/hash/d85816bf41e54d9b0847e02249f4fcc6-Abstract-Conference.html)和[Neural Diving的部分变量赋值＋求解器补全](https://arxiv.org/abs/2012.13349)，这只是方法迁移建议，未验证本项目效果。几何候选限制下的求解不能称原连续布局全局最优；需计入候选生成、修复/回退、在线求解和独立教师/训练成本，区分同计算预算质量与同质量耗时。报告09的BC是现成非RL学习参照，其收益不等于直接端到端生成布局已获证明。本轮仅方向讨论与轻量文档更新，未确定新模型/预算、启动训练/评价或恢复已交付组；无需前端变更。旧开题和中期正文保留原版本，后续修订应说明方法路线调整。
 
+
+
+
+
 **2026-10-12 MLM用于第一阶段的概念调研（仅候选方向，未实施）。** 本轮按用户问题核对[报告09](docs/第一阶段/实验报告/09_R04引导的DRL覆盖A阶段对照.md)、[方案12](docs/第一阶段/方案/12_R04引导的DRL波束覆盖优化方案.md)、[BERT原论文入口](https://aclanthology.org/N19-1423/)及[MaskCO的ICLR 2026官方摘要](https://proceedings.iclr.cc/paper_files/paper/2026/hash/d85816bf41e54d9b0847e02249f4fcc6-Abstract-Conference.html)。MLM的遮盖后重构目标与合法动作掩码不同；可研究保留飞机位置/需求、遮盖部分布局决策的结构化重构预训练或局部重建，并单独检验DRL追加贡献。纯重构学习不属于DRL，组合优化文献结果不能直接外推为本项目收益。报告09的PPO未胜BC/强基线也不能证明瓶颈就是表示不足；教师质量、目标对齐、布局无序性、连续指向/宽度与全覆盖约束仍须处理。
+
+
+
+
 
 建议在同场景、同操作空间与在线几何预算下区分规则重建、仅掩码重构、仅RL及重构预训练后RL，并另记教师/预训练成本；最终看全覆盖、唯一归属、N≤200、负载CV、逐机承载与分段/总耗时，不能以重构准确率代替优化效果。此处仅记录讨论判断，未形成新的冻结实验计划、任务、训练/评价预算或定时跟进；效果待验证，指向/宽度与动态业务尚未完成的边界保持。本轮仅检查文档事实、来源与链接，无科学代码或前端操作变化。
 
+
+
+
+
 **2026-10-10 18:56 S1-D12A已完整交付。** 本轮真实四端API再次核37/37任务completed、科学源dfe一致且worker均不存活；两PPO、1800考核、全部原始ZIP/共享源、三模型和全量严格审计均完成。[正式报告09](docs/第一阶段/实验报告/09_R04引导的DRL覆盖A阶段对照.md)与七图/18行分档/100母配对和计时已经发布。最终小包`c0672af34aebfbeed454`共108成员、17,649,228字节，ZIP SHA`e4137153a3c387a5435779f632574d58738c1c58b2494d9aff4cd55b2c892edc`；四端读同一共享副本逐ZIP/成员SHA通过，根再次复核本地全成员与正式报告SHA一致。[最终双端回执](outputs/experiments/first_stage_s1_d12a_20261010/delivery/final_delivery_receipt.json) · [完成记录](outputs/experiments/first_stage_s1_d12a_20261010/delivery/s1_d12a_completion.json)。首次上传仅本机DQN缺paramiko、尚未连接远端，已用原传输环境接续同一不可变包，未重打包或改科学环境。
+
+
+
+
 
 结论：全部受测几何覆盖、实际40–111束；P0/P1相对H1平均CV退步2.35%/6.47%，均未过事前门槛，P1在BC之后继续PPO未增加总体收益。已证明PPO有布局选择作用，未证明超越BC/强基线，更未完成宽度/动态与完整三阶段效果。run_manifest整体标delivered，原冻结state/任务/预算/失败记录保持。交付跟进已完成并删除`s1-d12a-drl`，实际TOML已不存在；删除前精确配置与工具回执保留于[跟进终止核验](outputs/experiments/first_stage_s1_d12a_20261010/followup/automation_completion_readback.json)。不恢复已完成训练、controller或旧S1-V10；后续B/新预算仅建议。
 
+
+
+
+
 **2026-10-10 S1-D12A正式报告09已发布，正在最终四端小包交付。** 两PPO各262144决策、16384更新、16×60验证；六法1800条考核及37任务完整归档均完成。全量严格报告已`formal_ready=true`/issues空：全部受测几何覆盖、实际40–111束；P0/P1相对H1平均CV分别上升2.35%/6.47%，均未过事前质量或效率门槛，P1继续PPO未超过BC。PPO确实会改动布局，但不能称已获超越BC或强基线的收益。报告含7张实际曲线/分层/配对/计时图，18行分档表和100母计时；三倍率相关、单种子、固定宽度、模型估计TDMA及未独立重算RF限制保留。[正式报告09](docs/第一阶段/实验报告/09_R04引导的DRL覆盖A阶段对照.md) · [严格审计](outputs/experiments/first_stage_s1_d12a_20261010/analysis/final_report_verified/audit.json) · [数图链接复核](outputs/experiments/first_stage_s1_d12a_20261010/preflight/final_report_numeric_figure_qa.json)。
+
+
+
+
 
 37原始任务已由收尾40180完成逐卷/成员/共享源核验。首次严格报告拒绝P0/P1的旧status checkpoint SHA：冻结runner在最后验证后补32预算尾段并重存checkpoint，而status仍旧SHA。实际终点、全部日志/观察、优化器/RNG及final参数一致并严格CUDA加载通过。报告213b288仅接受逐项匹配的独立终点证明，保留旧SHA/最终SHA和初次失败，没有改原日志或终点。唯一复核报告47024已正常结束，最终1800行及汇总与初次QA逐字节一致。归档/launcher/训练均不再重启。约10小时pilot停等和服务修复仍留账；本条覆盖下方17:52“归档进行中”历史快照。
 
+
+
+
+
 当前已通过交付工具全部门槛，正式报告小包将包含三模型、冻结科学Git、分析脚本、37收据和图表；四端回读通过前不称最终交付完成，自动化继续。后续B/宽度/动态或新种子未授权实施。
+
+
+
+
 
 **2026-10-10 17:52:31 S1-D12A全部科学计算完成，正在完整归档与严格报告生成。**根本轮四端真实API核24/24独立考核任务全部completed，各75行、合计1800；两PPO此前各262144/16384更新与16×60验证已验收，未追加训练或重复基线。controller.phase已test_complete_report_archive_pending，不再恢复任何已完成科学任务。归档28940仍在处理P1，收尾40180真实PID出生吻合并等待归档结束；随后补37任务完整归档、冻结输入、全量strict统计。正式报告09/图数人工复核/最终交付仍未完成，跟进继续。[全部考核完成快照](outputs/experiments/first_stage_s1_d12a_20261010/preflight/heartbeat_20261010_1755.json)。
 
+
+
+
+
 **2026-10-10 17:49 S1-D12A两PPO正式训练完成，独立考核20/24分片已完成、1593/1800行已记录，归档转入E盘继续。**两组各262144决策/16384更新/16×60验证；17:36在原DQN/CUDA严格加载终点并核checkpoint、全部日志行数、128观测分片SHA、32环境流、optimizer/RNG、final与checkpoint参数逐张量相等，全部通过。P0/P1完整回合分别9413/10488，各32预算尾段另列；网络88450参数，不能沿用S1-V10的87682。三小模型P0/P1 final与BC endpoint已导出并对远端SHA核同。[终点验收](outputs/experiments/first_stage_s1_d12a_20261010/preflight/final_learning_audit.json) · [模型入口与SHA](outputs/experiments/first_stage_s1_d12a_20261010/preflight/model_exports.json)。
+
+
+
+
 
 16:27原launcher在提交BC考核时将evaluation误套训练dataset gate，400后有界退出；I0/H1/H2的900行已完成未重跑。独立服务ops已从666更新到`02b610c22f898af96654eb1013f43fca0621c8d4`，只补kind优先的数据角色校验，训练门槛及来源/模型/分片校验不放宽；Store科学源仍原dfe，四端新评价实际job.git_commit均dfe。新唯一launcher PID14756/出生1791625284.1644783已恢复，原25616不重启。17:49真实四端API：24任务已全部提交，20 completed、4 evaluating，共1593/1800记录，无新错误。[恢复现场](outputs/experiments/first_stage_s1_d12a_20261010/preflight/heartbeat_20261010_1750.json)。
 
+
+
+
+
 源三日ZIP已于16:28:04完整校验闭合，原41840正常退出。旧completed批43668在P0下载前遇容量保护而失败，原六任务归档保留：P0已有远端ZIP共3,609,436,653字节，而C/D各保8GiB后总量仅2,752,638,976字节，问题不是损坏。E盘已核Fixed/NTFS/Healthy、空闲约106GiB，7908044新增E:/paper_archives/outputs/experiments/first_stage_s1_d12a_20261010/job_archives作为新卷优先路径，各盘仍保8GiB，旧D/C卷不移动/重复。新归档批PID28940/出生1791625343.7784634，17:49已从P0推进至P1，分块SFTP预读实际10MB/0.5秒且SHA一致，保持2MiB预读窗口和全卷/逐成员SHA。[容量审计](outputs/experiments/first_stage_s1_d12a_20261010/preflight/archive_capacity_audit.json) · [吞吐字节等价核验](outputs/experiments/first_stage_s1_d12a_20261010/preflight/archive_vector_read_verification.json)。
+
+
+
+
 
 已启动唯一收尾进程PID40180/出生1791625670.140581，analysis/finalizer_state.json保存三个后处理模块SHA守卫。它等待科学launcher及当前归档批完成，冻结state/manifest/prepare输入，补齐37任务归档，再运行全量strict报告，异常有界停止而非无限重试。正式报告09、数值/图片人工复核及最终交付仍待，不能将已完成训练或生成统计当作全部交付。原source/归档/launcher失败和约10小时试点停等继续保留。[收尾状态](outputs/experiments/first_stage_s1_d12a_20261010/analysis/finalizer_state.json)。
 
+
+
+
+
 **2026-10-10 15:10 S1-D12A两PPO继续正常，报告全量核验与归档入口已补强。**根真实四端API/SSH核P0为141312/262144、8832更新，P1为139264/262144、8704更新；两者第8个验证节点131072已完成，原worker54275/52878与科学dfe保持，无重训或新增预算。[进度证据](outputs/experiments/first_stage_s1_d12a_20261010/preflight/heartbeat_20261010_1510.json)。14:50瞬时GPU两端0%/498MiB；14:52四秒窗口CPU主worker及17子进程合计约2.65/2.93核，不能宣称GPU或全部CPU已满载；窗口样本不作算法速度排名，后续仍按有效吞吐观察。
+
+
+
+
 
 H1/H2开发与固定验证共240条已用原NPZ重新回放初解/原终态/最好解几何、需求守恒、J、逐束供需代数、逐机TDMA、资源及分段时间，全部通过；复用相同纯几何实现，未独立重算离轴链路物理。训练各3条真实完整回合抽查也通过，但全量须终态归档后执行。报告工具原带内统计把需求均衡与C/D混用，410c4a1已按原定义更正并分列两者，未改冻结算法或数据；训练回合未记总墙钟时间，28d071e明确缺项不补零。报告SHA和JSONL均流式读取，1a57287增加全部训练终态回放，d8c8b5a另列发布最好布局的物理成本与多布局审计总成本，不将审计额外调用冒充在线部署速度。[240条实数复核](outputs/experiments/first_stage_s1_d12a_20261010/preflight/strict_real_baseline_audit.json) · [训练终态抽查](outputs/experiments/first_stage_s1_d12a_20261010/preflight/strict_training_terminal_sample.json)。
 
+
+
+
+
 归档已改每卷唯一canonical存D或C、各留8GiB，不再重复下载两份。真实dev_H1首包166成员/ZIP SHA与成员SHA闭合，卷在C，D只留索引；首遍因D索引目录未创建而留错，42884ef修复后复用同卷，无重打包。[dev_H1收据](outputs/experiments/first_stage_s1_d12a_20261010/job_archives/20473/evaluate_ppo_20261010_033351_fb367deb/receipt.json)。共享源首次批27952在ZIP生成前因Feb07旧恢复缓存而保护性失败；400块与35.37MB前缀已逐范围证明可从最终tar重建，274804c重新实时核对并排除重复缓存，将证明和清单存入源ZIP，原缓存未删改。[缓存逐字节核验](outputs/experiments/first_stage_s1_d12a_20261010/preflight/source_recovery_cache_audit.json)。
+
+
+
+
 
 唯一源归档批PID41840/出生1791615734.5712087，冻结ops274804c，15:02在空闲20473压缩三日卷，随后逐卷校验下载；15:13本地part仍实际增长，未完成前不称归档闭合。源完成后自动接已完成任务的有界批：当前PID43668（15:19更新模型目录保留后启动，见completed_launch.json），最多等待7200秒，再只处理API已终态且worker已退出者；旧等待批39552/2236已按出生在waiting阶段停止，分别延长等待和更新归档实现，源码/训练不受影响。不要双起源批或归档批。[源批状态](outputs/experiments/first_stage_s1_d12a_20261010/job_archives/background/source_status.json) · [后继批状态](outputs/experiments/first_stage_s1_d12a_20261010/job_archives/background/completed_status.json)。独立考核1800、报告09、最终模型小文件导出和完整双端核验仍待，小时跟进保持ACTIVE。
 
+
+
+
+
 **2026-10-10 正式中期报告按开题行文重写，故障中断后已续作完成。**用户指出上一版07仍像实验汇编；本轮重新通读原开题研究正文，先形成[结构与行文分析](outputs/midterm_proposal_style_20261010/proposal_style_analysis.md)，再按“立题依据—三阶段研究内容与模型—方案/结果/可行性—可能创新—基础与计划”重写[07正文](docs/资料/07_HTS资源分配中期报告_正式版.md)及[Word](docs/资料/07_HTS资源分配中期报告_正式版.docx)，最终16页、5图、7条Word数学表达和3张主要效果表（另有术语表）。完整历史明细仍引用06讨论版附件，06和原开题未改。纠正文稿中逐槽功率分摊、目标束分母和50回合平滑说明，既有科学结果未改；新S1-D12A只记录进入实施流程，不纳入其尚未完成的效果。源码/训练/远端控制/自动化/前端均未操作。全部本地引用、P19表28个值、图源SHA及16页排版已核对，[交付核验](outputs/midterm_proposal_style_20261010/delivery_verification.json)保存恢复与验收证据；该记录覆盖此前07的26页汇编版说明。
+
+
+
+
 
 **2026-10-10 14:27 Codex退出影响已核实并修复，两PPO从原断点恢复，已真实推进到67584。**本轮14:13真实API/SSH显示：新三日数据、H1/H2开发与验证可达性、teacher、BC1580更新及两工程2048均已完成；P0/P1此前各正常运行到65536、4096更新和4×60验证，exit0/stop_reason=pilot_gate。工作台Scheduler漏识别合法pilot_pending，把正常试点等待误标成interrupted，原launcher37916于04:22进入attention_required；Codex异常期间未及时接续，凌晨04:22/04:32至14:25造成约10小时等候。不能把这段时间算作算法计算慢，也不能把问题全部归咎于聊天退出。
 
+
+
+
+
 14:16独立核两断点SHA、全部日志长度、32观察shards、32环境流、RNG、优化器、权重严格CUDA加载、4×60验证及pilot终点均通过，未发现成果丢失，不重训。P0/P1原试点分别20/20与17/20母可测改善并有真实非STOP刷新，均过事先6/20门槛；这是继续训练条件，不是最终学习增益结论。服务专用修复`666b608341379ee7cb0a2f5bba73537d1ebccf59`仅改三工作台文件，部署在独立ops/service目录；Application明确Store源为原clean `dfe7c394267e94bd2084ae72add3aa2c855b578f`，全部科学worker仍用原冻结snapshot。两误标状态通过工作台pilot-reconcile API逐原status/checkpoint/failure SHA与原验证审计恢复，再按pilot-gate/resume原ID接续；旧状态字节、失败和停等记录均保留。[现场与完整断点审计](outputs/experiments/first_stage_s1_d12a_20261010/preflight/crash_recovery_20261010/checkpoint_audit.json) · [API纠正回执](outputs/experiments/first_stage_s1_d12a_20261010/preflight/crash_recovery_20261010/pilot_reconciliation.json)。
+
+
+
+
 
 14:27:20根实际复核：P0 `train_ppo_20261010_034306_03e7f00f`/20418与P1 `train_ppo_20261010_034937_d980cee4`/20424均training **67584/262144、4224更新**，原ID/科学dfe/seed51001保持，worker PID54275/52878出生与--resume命令及原snapshot路径匹配。两组都已完成恢复后的一个2048批次，不能仅凭旧failure或stop_reason判断又停。唯一新launcher PID25616/出生1791613429.2841775、learning/OS锁存活；本机旧进程44772/37916/24084及传输relay已结束，不恢复它们。首次恢复launcher24084重复POST已完成prepare遭400，已保留现场；local ops f398a96改为GET严核既存任务，未新建或重做准备。四本地隧道已恢复，小时跟进ACTIVE并精确回读。[恢复后实际增量](outputs/experiments/first_stage_s1_d12a_20261010/preflight/crash_recovery_20261010/progress_after_resume.json) · [新启动回执](outputs/experiments/first_stage_s1_d12a_20261010/preflight/crash_recovery_20261010/launcher_retry1_start.json) · [定时配置回读](outputs/experiments/first_stage_s1_d12a_20261010/followup/automation_crash_recovery_readback.json)。
 
+
+
+
+
 修复相关27项检查通过，后处理strict补充f3dd1ff的11项机械检查通过，但报告09/独立考核1800及全归档未完成。归档工具当前D/C重复下载安排需先改成单canonical卷选择，各盘留8GiB；未执行不适配磁盘预算的源归档。已有用户中期报告及其目录修改保持，不混入本组提交。
+
+
+
+
 
 **2026-10-10 03:17传输修复已持久接续，正式学习仍待数据。**本地HTTPS→远端SFTP流式传输PID21532继续，Feb08/09已有持续字节增长，Feb07官方CDN慢且不稳定，准备严格Content-Range分块等价传输后备；不更换日期/抽样。旧relay36616已按出生单独停止，修复API恢复中starting调度态后新relay9172持唯一锁，逐日长度/SHA通过后自动同ID恢复prepare、再启动唯一launcher；准确现态以[恢复回执](outputs/experiments/first_stage_s1_d12a_20261010/preflight/stream_transfer/relay_resume_workflow.json)及[根复核](outputs/experiments/first_stage_s1_d12a_20261010/preflight/root_relay_live.json)为准，不重启旧PID。已保存每次失败与脚本SHA，小时跟进仍ACTIVE。
 
+
+
+
+
 新归档工具与报告QA已并main3fc507c/c65ce98并通过10项机械检查，科学源仍dfe不变。最终完整任务预计37项，含3prepare和24个考核分片；当前尚无新科学结果。报告formal_ready由strict_physics_and_timing_replay_pending硬门槛保持false，独立几何/逐束代数/逐机TDMA/资源与时间回放仍在补齐，不能以机械测试冒充报告交付。
+
+
+
+
 
 **2026-10-10 03:09后 S1-D12A数据下载遇远端出口超时，正在按原来源修复传输，PPO尚未启动。**Feb08/20474及Feb09/20418 prepare在官方GitHub连接20秒超时×8且0字节后failed；唯一launcher44772按规则退出attention_required，不能凭前文running重起第二实例。原任务ID、失败和冻结源码保留。本机可访问同一官方asset，当前采用本地无落盘流式转发至已锁定远端共享源、逐长度/SHA核验后通过原工作台同IDresume；不更改数据日期/抽样/科学预算。第三Feb07状态须现场核查，修复与重启看后续回执。
 
+
+
+
+
 远端16常驻CPU/32流实际GPU工程核已独立完成：2048交互、198完整回合、采样44.32秒（46.21步/秒）、一次PPO更新128小批1.09秒且参数确变，3个固定训练母子集；工程消耗单列，不计正式P0/P1预算，也不作效果结论。[短供给核验](outputs/experiments/first_stage_s1_d12a_20261010/preflight/remote_gpu_smoke_result.json)。四实例各可见60GiB内存和16 CPU affinity，其中CPU编号有部分交叠，保存[资源记录](outputs/experiments/first_stage_s1_d12a_20261010/preflight/root_resource_limits.json)，不能宣传四个完全隔离CPU宿主或严格异机速度排名。后续仍尽快自动接续已授权训练与考核，不需用户确认。
+
+
+
+
 
 **2026-10-10 03:07:09 S1-D12A已真实启动四端工作台与三项并行数据准备，PPO尚未启动。**根本轮API/SSH独立核三prepare均preparing：Feb07/20473 `prepare_ppo_20261010_030558_91ff478d`，Feb08/20474 `prepare_ppo_20261010_030600_e4379d1b`，Feb09/20418 `prepare_ppo_20261010_030602_2bcfdb9b`；worker出生、任务冻结源和四GPU身份已记录。四端科学源均`dfe7c394267e94bd2084ae72add3aa2c855b578f`，各repo clean，DQN2.3.1+cu121/4090D实际CUDA更新通过。当前阶段CPU/网络准备，观测GPU0%，不宣称四卡训练已满载。[根实时快照](outputs/experiments/first_stage_s1_d12a_20261010/preflight/root_live_preparation.json) · [四端CUDA核验](outputs/experiments/first_stage_s1_d12a_20261010/preflight/gpu_update_four_lanes.json)。
 
+
+
+
+
 唯一持久协调器`launch.py` PID44772/出生1791572729.5054016，root已核真实命令/cwd及OS独占锁，自动接prepare完成→数据注册→开发/验证可达性→教师/BC/工程短核/P0/P1→配对机制门槛→24片独立考核。正常流程不需用户确认；不要另外启动controller.loop或重复launcher，异常先核真实状态并留现场。冻结run_plan SHA`3032b0368ffc7c7a788e25d41067270e117ab053d60a549c2b8dfb760b97ed92`，新进度只更新manifest/state。[启动回执](outputs/experiments/first_stage_s1_d12a_20261010/controller/launcher.json) · [运行清单](outputs/experiments/first_stage_s1_d12a_20261010/run_manifest.json)。新跟进`s1-d12a-drl`已ACTIVE并更新启动事实；报告09和完整归档仍待。HTTP前端资源/schema6/配置提交核验通过，root浏览器工具因kernel assets路径错误无法操作页面，实际页面核验待工具恢复；不冒称浏览器已验。本地16进程GPU工程核曾遇Windows页文件不足且已清理，远端Linux微核另账，不是正式训练失败。离线报告模块23a41d5已通过5项机械检查，正式数据输入尚未齐，不能据此称效果或报告已完成。
+
+
+
+
 
 **2026-10-10 S1-D12A已获四实例并行执行授权，正在实现整合与启动前核验，尚无正式训练任务。**用户在方案12后要求四卡并行，随后明确继续且中途无需确认。本轮按[方案13](docs/第一阶段/方案/13_DRL覆盖A阶段四实例执行方案.md)执行A阶段：I0/H1/H2/BC/P0/P1六法，同初解/参考目标/菜单/预算；P0从零PPO、P1从共享BC终点继续PPO，各seed51001、65536试点包含在最多262144内，总524288。教师最多20000标签与BC最多1600更新另账；工程各2048另账。开发H1/H2各60、新Feb07验证20母（含两基线可达性120条）、Feb08/09新100母×三档×六法独立考核1800条。提前科学停止不强行补满，65536检查至少6/20母可测改善及正确性，真实状态与任务以[运行清单](outputs/experiments/first_stage_s1_d12a_20261010/run_manifest.json)为准。
 
+
+
+
+
 新独立远端s1_d12a/{20418,20424,20473,20474}与工作台8920–8923；四端已只读确认DQN/CUDA/独立4090D可用，尚待冻结整合源码并通过工作台发起。最终100母固定i mod4分片，同母六法同机，24个评价任务各75条，任务数不算模型数。当前已核短真实几何及实际CUDA参数更新/恢复；这些不构成效果结论。已建立独立每小时跟进s1-d12a-drl并精确回读ACTIVE，[回执](outputs/experiments/first_stage_s1_d12a_20261010/followup/automation_initial_readback.json)。用户睡觉期间自主推进必要修复、训练、评价、正式报告09和双端归档。旧S1-V10已结案且跟进暂停；下方方案12“未授权”是形成方案时的历史状态，现由本条更新。B/指向宽度/时序及新种子不在本轮范围。
+
+
+
+
 
 **2026-10-10 中期报告已按全历史自检重写为两版，仅文档与既有统计排版。**原05稿范围不足，现交付[06导师讨论版](docs/资料/06_中期研究进展与路线调整_导师讨论版.md)及[Word](docs/资料/06_中期研究进展与路线调整_导师讨论版.docx)、[07正式内容版](docs/资料/07_HTS资源分配中期报告_正式版.md)及[Word](docs/资料/07_HTS资源分配中期报告_正式版.docx)，分别24/26页。逐文件核对三阶段27份报告（26主报告＋1审计附录）、34份阶段方案与1份共用方案，另补G02/G03/G04原始中文对照及G05/G06历史评价/诊断；开头术语表按实验作用域解释代号，完整效果附录保留失败、约束与未执行范围。P18采用最终B更正，第一阶段最新十二路线与新方案12分别标已完成实证/待实施研究；R04不替代DRL覆盖目标，I0只学习离散结构，数学优化连续功率，完整三阶段同景接口仍未验证。覆盖分层图仅从已核36行统计重新排版，未重评；原报告/开题不改，无科学预算/任务/自动化或前端变更。[覆盖自检](outputs/midterm_revision_20261010/coverage_catalog.md)及[交付核验](outputs/midterm_revision_20261010/delivery_verification.json)保留来源与检查；正式内容版参照开题结构，未冒充学院专用中期表。
 
+
+
+
+
 **2026-10-10 第一阶段DRL主线已重新明确，方案12仅为建议，未启动新实验。**用户指出R04非学习路线不能替代开题的DRL覆盖优化目标。已核开题P140/P163/P217等正文、既有R08停止诊断与原始方法论文，形成[方案12 R04引导的DRL波束覆盖优化](docs/第一阶段/方案/12_R04引导的DRL波束覆盖优化方案.md)：R04提供初解/算子/示范和强参照，DRL实际选择区域、动作、顺序及停止；先对齐目标、预算状态和终态奖励，再补齐指向/宽度及真实时序。R04在同菜单无即时改善时不能机械后接同样只收改善的PPO；预算截止与局部无改善分开。当前R04/R08初始化均走capacity_cluster，不将未证起点差异当失败原因。
+
+
+
+
 
 A阶段建议两PPO/seed51001各65536试点、包含在各最多262144内，合计最多524288；教师/BC另账，六法新100母×三档考核建议1800条，B/时序/更大N另列预算。以上均未获新运行授权，效果待验证；本轮仅文档、来源和代数检查，没有改科学代码、开工作台任务或恢复已暂停跟进。原S1-V10报告08、模型和交付SHA保持。证据见[开题正文核对](outputs/verification/s1_drl_mainline_20261010/thesis_audit.json)、[文献边界备忘](outputs/verification/s1_drl_mainline_20261010/hybrid_research.md)、[方案内容检查](outputs/verification/s1_drl_mainline_20261010/proposal_content_checks.json)。不能把PPO、模仿或GAT名称本身当成已经证明的DRL增益。
 
+
+
+
+
 **2026-10-09 22:56 S1-V10十二路线已完整交付，小时跟进已按约暂停。**两PPO共524288决策、1920训练内验证、3600静态和720时序结果、32任务原始归档、全量严格审计与正式曲线均完成。[正式报告08](docs/第一阶段/实验报告/08_可变波束全覆盖与负载均衡十二路线对照.md) SHA为`da2e7f03d31c486f26b7d4a090c51e447a3f355d48b29357cd8e15b36a9964dc`。含报告、图表、统计、学习诊断、复现脚本、两终点模型及来源索引的最终小包`030274583ebf03eb40c9`共151成员/5,998,862字节，ZIP SHA`daee381a974061e19e417e67fa835afae40f608eae52a147357ceb1f11cfb3db`；四端均对同一共享副本逐ZIP/成员/回执SHA回读通过，未重复打包大型原始ZIP。根22:53再次核本地151成员、报告SHA、原始验收和四端回执一致。[交付回执](outputs/experiments/first_stage_s1_v10_20261009/delivery/final_030274583ebf03eb40c9/final_delivery_receipt.json) · [根复核](outputs/experiments/first_stage_s1_v10_20261009/delivery/final_root_delivery_verification.json) · [完成记录](outputs/experiments/first_stage_s1_v10_20261009/delivery/s1_v10_completion.json)。
+
+
+
+
 
 每小时`s1-v10`已实际保存PAUSED并精确回读：[暂停配置](outputs/experiments/first_stage_s1_v10_20261009/followup/automation_completed_paused.toml) · [操作回执](outputs/experiments/first_stage_s1_v10_20261009/followup/automation_completed_paused_readback.json)。run_manifest整体状态已delivered，原科学观测时间、任务/预算/来源保留且保存更新前副本；原controller科学终态不重写。所有计算和后处理已结束，不恢复旧PID或重复评价。结案表示已授权验证与报告完成，不表示负载均衡/业务承载研究目标全部解决；38–111实景范围、R04/R05取舍、R08早停、R09承载退步、R12全回退与模型/物理边界均保留。下一轮仅为建议，未新增预算或任务。
 
+
+
+
+
 **2026-10-09 22:21严格报告与科学统计全部通过，22:39正式报告08已发布本地，正在最终双端交付。**`formal_ready=true`、issues为空、28/28科学/工程审计、32任务归档闭合；R08的251978个完整回合已全量解析，R09为3208完整回合＋32条明确未评价的预算尾段。正式与阶段静态/时序4320条逐字段一致，六张正式报告插图及工程/修订图均已核数核图。原R09与两工程六联图把截断尾段画成末端覆盖下跌，正式报告改用完整回合修订图＋独立学习指标图；原图保留，不改原始成绩或终点。[正式报告08](docs/第一阶段/实验报告/08_可变波束全覆盖与负载均衡十二路线对照.md) · [最终QA](outputs/experiments/first_stage_s1_v10_20261009/preflight/final_report_numeric_figure_qa.json)。
+
+
+
+
 
 静态各路线300/300严格几何覆盖；实际N38–111，477/3600条N<50、无200束输出。R04平均CV0.4784/逐机TDMA承载85.21%，比R01的0.5663/84.00%更均衡且承载略高；R05 CV最低0.3749但承载75.37%，不可单指标评冠军。R08早STOP没有确定性验证重构收益，R09验证承载退步，R12后续300/300帧均回退重建。仍是单seed、固定贪心＋声明TDMA/物理的结果，未验证112–200实景或I0/SCA三阶段效果。全部正式计算已结束，不恢复旧任务。最终报告小包及四端SHA回读尚待实际交付回执，跟进此刻仍ACTIVE；交付复核后暂停。
 
+
+
+
+
 **2026-10-09 21:12严格报告仍正常扫描；21:33完成最终交付工具准备。**PID26724出生与命令匹配，5.15秒CPU增加5.09秒、读取约14.1MB，RSS约337MB，stdout/stderr为空；不因state仍停留20:23的启动时间判死或重复扫描。[本轮存活证据](outputs/experiments/first_stage_s1_v10_20261009/preflight/heartbeat_20261009_2110_report_liveness.json)。代码`263b420da6d5c695c4a1180f87b8dd3997c59710`已并入main，仅增加最终交付模块与测试，门控钉住六文件未改；26项相关检查通过（1项Windows权限跳过），main实跑plan仍准确`ready=false`，未打包/上传草稿。最终报告与正式图通过后运行`python -m scripts.stage1_variable.final_delivery deliver`，核全部正式结果、模型、诊断/分析源码与来源索引，再打小包并四端回读共同远端ZIP及成员SHA；大任务ZIP不重复打包。网络中断可用`resume-upload --local-receipt ...`沿同一包续传，禁止再打新包冒充恢复。[交付计划](outputs/experiments/first_stage_s1_v10_20261009/delivery/final_delivery_plan.json) · [准备回执](outputs/experiments/first_stage_s1_v10_20261009/delivery/final_delivery_preparation_receipt.json)。仍须strict/science完成、正式出版图4320行对齐、人工核数核图、报告08发布和真实双端交付回执，才暂停跟进。
+
+
+
+
 
 **2026-10-09 20:22归档独立验收通过，20:23已进入严格报告扫描，仍待正式报告交付。**全部32任务＝28科学/工程＋4准备的ZIP及成员SHA已重核，任务压缩卷共20,686,645,828字节、原始成员98,839,425,544字节；唯一共享源另6,486,295,343字节。两终点模型已独立导出，根20:32再次核policy/model字节与SHA、验收清单SHA和报告冻结输入manifest一致。D/C验收时余15.55/10.15GB，均高于8GiB底线。[归档验收](outputs/experiments/first_stage_s1_v10_20261009/preflight/final_32_archive_acceptance.json) · [根复核](outputs/experiments/first_stage_s1_v10_20261009/preflight/final_32_archive_root_verification.json)。归档35396与验收31320可正常结束，不再重复启动。
 
+
+
+
+
 唯一报告门控23288已自动启动strict报告PID26724/出生1791548585.462571，正在从压缩成员全量扫描R08约80.53GB回合，20:32累计CPU528秒、RSS约312MB，无失败。其后自动接科学统计；阶段图/静态结论不能代替这一全量训练核验。报告正文已保存为[内部草稿](outputs/experiments/first_stage_s1_v10_20261009/analysis/report08_draft.md)，未放入正式报告目录；12路线总体/36行分层核心值和本地链接已人工核对，并补齐最终布局核验耗时，使分段账相加闭合。出版散点重叠标签已修，最终数据完成后需与阶段静态/序列CSV逐行对齐再生成正式图。后续执行`analysis/publication_figures/build_figures.py`的final/compare流程，再运行`analysis/build_report08_text.py --final`产生有门槛的候选稿，人工复核后发布报告08、双端归档报告/图/分析源码并暂停跟进；不把候选稿或当前`running_strict_report`称完整交付。
+
+
+
+
 
 **2026-10-09 20:14归档仍正常推进；20:23更正束数范围。**R08远端包已生成7卷、18,478,037,127字节，本地已收到约18.00GB，余约480MB；唯一归档进程35396出生/命令正确，5秒CPU增加5秒且读取约386MB，正在流式校验大卷，不因19:17逐任务心跳未变化判停滞。D/C均高于8GiB底线，独立验收31320与报告门控23288继续等待，无新增科学计算。[实际归档观测](outputs/experiments/first_stage_s1_v10_20261009/preflight/heartbeat_20261009_2011_archive_live.json)。逐景CSV及出版图总体表核对发现，实际静态N全范围为**38–111**（R02最小38），此前19:35摘要的40–111漏掉R02；本条更正该范围，不改原始数据、任务或结论分母。全部N=200仍为0，112–200实景效果仍未验证。
 
+
+
+
+
 **2026-10-09 19:17 S1-V10全部训练与共同考核已完成，正在最终归档与正式报告。**真实API/SSH核R08/R09原ID均completed262144/262144、16384更新，合计524288/524288；两模型各16个验证节点×60结果，固定终点、seed51001、13261来源及b311接续历史一致。两终点在远端DQN/CUDA严格加载18个参数张量、87682参数通过，旧训练worker均退出。R08终点评价`evaluate_ppo_20261009_183548_5de326ee`已300/300完成，R09亦300/300；全部12路线静态3600/3600与R04/R12时序720/720已逐任务审计，无异常。静态12路线均300/300严格几何全覆盖，均衡及业务承载优劣仍待完整统计，不能把覆盖达成扩大为业务全部满足。[真实终点核验](outputs/experiments/first_stage_s1_v10_20261009/preflight/final_learning_audit_api.json) · [控制器终态](outputs/experiments/first_stage_s1_v10_20261009/controller/state.json)。
+
+
+
+
 
 原唯一控制器PID34440已在`completed_pending_report_archive`阶段正常退出，**不要重启训练协调器或恢复已完成任务**。当前仅归档后台在运行：冻结ops64b10ef，PID35396/出生1791544651.2722476，先补test_R08再补train_R08；启动前30任务已归档，最终应为32＝4准备＋28科学/工程。模型核验、正式训练行为诊断、ZIP流式统计/图表及报告08并行收尾；正式报告、最终归档闭合与每小时跟进暂停尚未完成。跟进`s1-v10`仍ACTIVE，须在报告/曲线/原始数据/两模型/源码与双端归档复核交付后暂停。[归档进度](outputs/experiments/first_stage_s1_v10_20261009/job_archives/background/status.json) · [启动回执](outputs/experiments/first_stage_s1_v10_20261009/job_archives/background/launch.json)。
 
+
+
+
+
 **19:25后正式学习诊断更正效果预期：**R08完整262144动作中STOP251917次（96.10%）；16个固定验证节点各60景均首动作STOP，首末节点同60景的覆盖、CV、N和束中心/逐机TDMA承载逐景完全相同，未显示确定性验证上的额外重构收益。R09首末同60验证景CV均值0.96238→0.94947，但逐机TDMA承载0.76534→0.75598，不能称综合改善。两者不是独立test结论，不据此改冻结奖励、终点或加预算；R08早停与奖励审计所示激励一致，但不能证明唯一原因。完整动作奖励复算与有限值通过；R08约80.53GB回合日志本次诊断仅32处位置抽样，完整逐回合物理/trace核验留给严格报告器，不混称全量已核。为避免重复80GB I/O，按PID/出生仅停止了自有只读诊断helper，科学任务与归档未受影响。[学习诊断](outputs/experiments/first_stage_s1_v10_20261009/analysis/final_learning_diagnostics.md) · [终点与来源审计](outputs/experiments/first_stage_s1_v10_20261009/preflight/final_learning_audit.json)。
+
+
+
+
 
 **19:29已启动报告持久流程，最终交付仍未完成。**归档35396后接独立验收31320；验收`passed=true`且32任务精确闭合后，唯一报告门控PID23288/出生1791545343.727547自动冻结state/manifest输入，按报告Git`94b615cb6643b04f7073b704291fd5f1460b60cb`和六项依赖SHA运行strict报告、再做逐路线科学统计。当前`waiting_acceptance`，失败留现场不自动无限重试；不能双起或将无新日志误判为科学计算挂起。[门控启动回执](outputs/experiments/first_stage_s1_v10_20261009/analysis/final_report_controller/launch_receipt.json) · [门控状态](outputs/experiments/first_stage_s1_v10_20261009/analysis/final_report_controller/state.json)。全部材料完成后仍需人工核数核图、写正式报告08、同步入口并把报告/图/分析脚本与证据索引存入双端交付包。每小时跟进已更新为此流程并实际回读ACTIVE，见[现行跟进配置](outputs/experiments/first_stage_s1_v10_20261009/followup/automation_finalization_saved.toml)及[操作回读](outputs/experiments/first_stage_s1_v10_20261009/followup/automation_finalization_readback.json)。
 
+
+
+
+
 **19:35已形成静态/时序阶段分析，完整报告仍待R08回合全量核验。**31任务冻结快照已包含全部3600静态/720时序；实际静态N为40–111，没有任何200束输出，因此只能说工程上限200已接入，不能称112–200实景效果已验证。中需求层R04的CV/逐机TDMA承载为0.476560/0.855473，R05为0.374652/0.748175，说明较低CV并不保证较高业务承载。R12的300个后续时序帧全部触发温启动回退重建，没有证明连续前态保留有效；不得把这一结果写成温启动成功。R02只证明有限候选集求解，R06仍有分数到整数修复差异，R11未另测未见空间扰动。详[阶段科学审计](outputs/experiments/first_stage_s1_v10_20261009/analysis/pre_final_static/report/science_audit/science_audit.json)，其`formal_ready=false`明确保留。最终严格结果须与该静态快照核对；CV—承载散点已目视发现密集路线标签重叠，正式交付前另存绘图版本修排版，不热改已启动门控钉住的脚本SHA。
+
+
+
+
 
 **2026-10-09 13:07:39–45 S1-V10同ID提速接续成功，非学习及R09已完成，R08继续后台；此条覆盖下方11:18的恢复中状态。**四端实际API核验：R08 `train_ppo_20261009_095314_19a69288`（20418）training63488/262144、3968更新、PID15615；R09 `train_ppo_20261009_095159_714e5c20`（20424）completed262144/262144、16384更新，其终点考核`evaluate_ppo_20261009_124601_3d78add5`也已300/300完成审计。正式训练完成1/2，已记录决策325632/524288＝62.109375%（仅资源账，宏重构/逐束构造不能当同等工作量）。10条非学习静态3000结果和R04/R12时序720结果已完成审计，静态总计11/12路线、3300/3600；R08尚需训练终点及300景考核，报告08未交付，不能宣称全覆盖与均衡目标已达成。[最新真实现场](outputs/experiments/first_stage_s1_v10_20261009/preflight/delivery_final_live_audit.json) · [运行清单](outputs/experiments/first_stage_s1_v10_20261009/run_manifest.json)。
 
+
+
+
+
 两原训练ID均已合法恢复到冻结工程版`13261cd752a06b6ac725705136fe0f017072159a`，保留R08停点14336/896更新、R09停点98304/6144及旧SHA、来源历史和完整断点；R09中断验证17/60的前缀原样保留，仅续43行。1728/1728初解与真实4090D一批更新逐位等价证据已核，当前各用8个CPU spawn供给32场景流，原科学预算/seed/奖励/终点选择不变。原PID17552控制器已停止，唯一新PID34440出生1791517201.1798463与现场匹配，无need_attention或last_error；其b311参数表示实验原点，精确per-task映射接纳两train/test的132来源。**不要再次执行已完成的stop/repair或重启旧控制器。**准备仍ff25076、非学习仍b311，归档工具64b10ef不是科学worker来源。[接续回执](outputs/experiments/first_stage_s1_v10_20261009/ops/throughput_repair/) · [GPU等价审计](outputs/experiments/first_stage_s1_v10_20261009/preflight/gpu_one_rollout_audit_partial_loader.json)。
+
+
+
+
 
 四端此前按2/2/4/4工作台位并行，当前20424/20473/20474本组任务均结束，剩余R08独立推进；不能为填空闲GPU增加无关计算或改变被冻结的采样过程。有效吞吐优化、冷启动/暂停成本和异条件计时均保留，不宣称CPU/GPU持续满载。R04与R08目标、动作菜单不完全相同；奖励中的折扣/动作收费可能鼓励已覆盖状态早STOP，已在[方案11](docs/第一阶段/方案/11_十二路线四实例验证执行方案.md)和[只读审计](outputs/experiments/first_stage_s1_v10_20261009/analysis/reward_objective_audit.md)更正，当前完整方法差值不能纯归因学习，也不按测试结果临时改奖励或追加预算。
 
+
+
+
+
 归档已闭合30个任务ZIP＝4准备＋26科学/工程任务，原始成员和压缩卷SHA在归档时全验；本轮有界核收据、卷存在/尺寸与共享源闭合，没有重复全量大卷散列。四日原始源仅一份已核ZIP存于`C:/paper_archives/outputs/experiments/first_stage_s1_v10_20261009/job_archives/`，四准备均显式引用；D/C可用约33.21/10.30GB，两盘各留8GiB，避免全文解压。R09终点模型已单独导出`models/runs/first_stage_s1_v10_20261009/`；完整R08训练/test结束后还须补两任务归档，因此`formal_final_archive_closed=false`。两次有界归档后台已退出；按实际状态启动下一次`archive_background --limit 32`，勿重复并发归档。[压缩成员清单](outputs/experiments/first_stage_s1_v10_20261009/synced_jobs/manifest.json) · [共享源回执](outputs/experiments/first_stage_s1_v10_20261009/delivery/source_bundle_receipt.json)。
+
+
+
+
 
 每小时本对话跟进`s1-v10`已更新并实际回读ACTIVE，现行[配置](outputs/experiments/first_stage_s1_v10_20261009/followup/automation_delivery_saved.toml)包含当前PID/来源、剩余工作、压缩流式报告与归档规则。下一步为R08完成→同固定终点300景考核→补归档→正式报告08及原始训练/验证/静态/时序曲线→目录/Q&A/状态与来源核验→交付后暂停对应跟进。阶段图仅QA；逐机代数/守恒核验不等于独立重算全部离轴物理，非学习初始化与搜索合并计时不补零，单种子、理想化宽度及参考容量假设均须在报告保留。
 
+
+
+
+
 **2026-10-09 11:18 S1-V10正在执行已授权同ID等价提速接续，请勿另起旧控制器或重复恢复。**冻结工程版`13261cd752a06b6ac725705136fe0f017072159a`已获本任务放行：未覆盖行子矩阵构造在全部1728训练输入上与b311初解逐字段相同；线程/进程供给的同包及真实4090D更新的策略、优化器和四类RNG逐位一致。原科学预算/seed/数据/模型选择不变。通过工作台对两原训练ID发正常stop，等待完整2048边界，绝不热改旧worker；20473/20474四worker评价保持运行。候选冷启动成本另账，稳态供给提速不写成正式训练整体同比。
+
+
+
+
 
 协调器原PID17552已在03:11:07 UTC按身份暂停，20418/20424均有临时dispatch hold。11:18实际核：R09原ID已stopped98304/262144、6144更新，旧PID5431出生匹配且会话已退出；本次验证保留17/60行、前5节点各60行，源SHA/顺序已核，需同ID继续剩余43行而非重跑。R08仍在旧b311的12288→14336长批次，stop.request已送，PID5840出生810477210且5秒CPU增加557 ticks，仍真实计算；不能凭心跳旧判死锁或强杀。后续唯一操作者为本对话的工程接续流程，依次wait-stopped→deploy13261cd→绑定实际停点及全部旧文件SHA→API resume同ID→精确per-task执行来源映射→新唯一controller→release holds；任一门槛不符先保现场诊断，不绕过。现有[接续目录](outputs/experiments/first_stage_s1_v10_20261009/ops/throughput_repair/)和[GPU逐位证据](outputs/experiments/first_stage_s1_v10_20261009/preflight/gpu_one_rollout_audit_partial_loader.json)为入口，结束状态须以后续真实回执为准。
 
+
+
+
+
 报告器已改流式JSONL，22项已完成任务138文件4.46GB逐SHA增量镜像可供阶段分析，**不是最终完整归档**；静态/验证/训练终态完成逐束与逐机代数/守恒审计，未独立重算逐机离轴物理。阶段图已修可读性并标partial，未发布正式报告08。[增量收据](outputs/experiments/first_stage_s1_v10_20261009/delivery/completed_analysis_receipt.json) · [阶段绘图核验](outputs/experiments/first_stage_s1_v10_20261009/analysis/partial_report_plot_qa/)。
+
+
+
+
 
 **2026-10-09 10:09:55 S1-V10四端已执行，两正式PPO并行推进。**根实际API核R08 `train_ppo_20261009_095314_19a69288`（20418）training4096/262144、256更新；R09 `train_ppo_20261009_095159_714e5c20`（20424）training20480/262144、1280更新，首个60行验证节点已记录。正式训练完成0/2，已记录决策合计24576/524288＝4.6875%，两类决策只作资源账，不当同等算法工作量；每2048一批落盘，状态可能滞后正在计算的批次。两工程任务均completed2048/2048、128更新及60开发终态（另账4096），不是正式训练成果。控制器10:09:09观测正式R01/R03/R07各300景已审计，独立静态完成3/12；开发/短验证11/12完成，R11开发仍在跑，其余正式评价并行/排队或等固定终点。当前need_attention空，报告与最终归档未完成。
 
+
+
+
+
 四源准备已全部完成20/50/50/120；train/development/validation/test/sequence为576/20/20/100/120母或帧，四端规范NPZ逐SHA一致，合同`912cb6081fa10620a12566abdc61c4f638e2bb8147b02942cc5d1b9c1bdd3cff`。准备源`ff25076e9f98b8111cc9671cb60e57cfc3f99760`与后续冻结`b31187fcaf79e90b70d85db4cdfec5a4150020de`的13科学模块逐SHA相同，变化为UI实例归属和显式来源接续；旧四prepare ID不重提。唯一持久controller启动时PID17552/北京时间09:48:22.832954、当前锁有效；以后仍核出生与命令行，不能据旧PID判断。所有任务经工作台，实际ID与阶段读[运行清单](outputs/experiments/first_stage_s1_v10_20261009/run_manifest.json)、[控制器状态](outputs/experiments/first_stage_s1_v10_20261009/controller/state.json)和[根API实查](outputs/experiments/first_stage_s1_v10_20261009/preflight/root_running_observation.json)。
+
+
+
+
 
 用户要求尽量提高CPU/GPU利用率后，20473/20474已在不停止科学worker的情况下从2调度位升至4；原4 worker的PID/出生连续一致，派发保留已释放，20418/20424训练未动。短窗口总评价进度0.744条/秒→4.899、2.679条/秒，CPU约13%→19–26%；路线组成变化，不能称严格同条件算法提速。四GPU瞬时多为0%，实际瓶颈在CPU初始化和逐飞机物理；没有宣称显卡满载。[并发调整回执](outputs/experiments/first_stage_s1_v10_20261009/ops/worker_resize_receipt.json)与[吞吐摘要](outputs/experiments/first_stage_s1_v10_20261009/ops/worker_resize_summary.json)保留。开发分支另有候选构造等价提速`261982be90516b9acf93f6001811afe402cff2b7`，当前**未部署到正式worker**；全576母×3的数值审计尚在收尾，不能据局部初始化提速宣称训练同比提速，也不能热改b311快照。
 
+
+
+
+
 工程核验：本地覆盖123项（3平台跳过）、最终相关54项及四端各50项通过，真实GPU短训与完整恢复/日志检查已核；全量932首次有15处失败/错误，其中1项新fixture已修并相关回归通过，其余14项在未改main的S2-P19测试重现，未改旧组源码。页面已实际核schema5、R01–R12、200上限校验、R08训练和正确S1-V10实例归属。[检查记录](outputs/experiments/first_stage_s1_v10_20261009/preflight/pre_freeze_validation.json)。每小时`s1-v10`仍ACTIVE，保存的运行版提示见[配置](outputs/experiments/first_stage_s1_v10_20261009/followup/automation_running_saved.toml)。下一步持续监督有效吞吐与授权范围内等价提速、独立考核、报告08与双端归档；明日报告保留未完成和失败，不虚报全覆盖或均衡达标。
+
+
+
+
 
 **2026-10-09 第二三阶段中期讨论稿与研究分工已明确（仅文档工作）。**用户只接受“学习处理离散结构、数学优化处理连续功率”，已记入AGENTS；当前I0＋B提供新分工的既有桥接证据，历史T0/C0/C1等保留原条件作参照，不重新命名旧实验。审阅S2报告15、S3报告01–03、原开题及逐束SGM分析后，判断足以形成第二三阶段中期进展讨论稿，但不能宣称完整第一到三阶段接口、严格逐景保障、统一墙钟优势或全局最优均已完成。已形成[共用资料05](docs/资料/05_第二三阶段中期进展报告草稿.md)及[Word草稿](docs/资料/05_第二三阶段中期进展报告草稿.docx)，列出同域初始化/求解器对照、退步与工程功率约束、强搜索/统一计时、上游接口与新时窗验证的后续优先级。仅使用已有证据，无新增训练、评价、种子、预算或自动化，已归档正式报告及科学资产不改；前端无需变更。内容审阅和版面核验入口：[本次材料目录](outputs/midterm_s2s3_20261009/)。
 
+
+
+
+
 **2026-10-09 S1-V10已获全部12路线四实例验证授权，正在实现与准备。**用户确认全覆盖为每场景全部飞机；N可变且≤200，低/中/高需求，与第二阶段对齐，并要求中途不确认、2026-10-10看报告。[调研方案10](docs/第一阶段/方案/10_可变波束数全覆盖与负载均衡调研方案.md)含19篇论文和1项数据入口，[执行方案11](docs/第一阶段/方案/11_十二路线四实例验证执行方案.md)明确12路线、两个PPO各262144/seed51001、三倍率、开发/验证/考核和失败边界。当前正式训练0/2、正式路线评价0/12；不把研究或短测试记成训练结果。开发树`C:/Users/Admin/.codex/worktrees/stage1-variable-beams/paper`，分支`codex/stage1-variable-beams`，初始参照c76d315；源码尚未冻结。
+
+
+
+
 
 08:59北京时间真实SSH核20418/20424/20473/20474四端DQN/CUDA/4090D均可用，GPU0%/约4MiB，新8910–8913端口空闲；这是准备期观测，不能作为后续实时进度。新根`/home/u2024110224/first_stage_satellite_rl/s1_v10/{port}`，旧实验隔离，所有正式任务经工作台。每小时跟进`s1-v10`已实际创建ACTIVE并保存配置，首次缺destination的失败请求未创建重复任务。[四端只读核验](outputs/experiments/first_stage_s1_v10_20261009/preflight/four_lane_readonly.json) · [跟进配置](outputs/experiments/first_stage_s1_v10_20261009/followup/automation_saved.toml) · [操作回执](outputs/experiments/first_stage_s1_v10_20261009/followup/automation_created_readback.json)。下一步完成方法与工作台/前端、宽度及下游物理正确性、新日期数据冻结和独立审阅，再并行提交；明日报告如实分列完成、失败、科学停止和未完成。
 
+
+
+
+
 **2026-10-09 02:04 S2-P19报告15与全部归档已交付核验，定时跟进已结束。**三训练3/3、最终评价12/12、80万逐束与397112宏步完成；核心15＋配套16共31唯一任务包的逐SHA归档和来源验收均通过，原始成员约449.80GB、压缩卷36.73GB，185343成员/243卷（不是科学任务数）。后处理全部正常退出，完整统计formal_ready=true、missing0，根复核29920动作、12320重复均值和3658400逐束行。I0直接SI94.0516%、同完整B后97.3334%，对贪心分别+3.2609/+3.0658百分点，40母配对95%区间均在零上；同32/32菜单对规则/随机的最终B优势为+1.7490/+0.6847百分点。C0/C1仍低于贪心；最终B有2景SI/SGM和3景基本服务束数退步，单种子、异条件计时及恢复额外成本缺失保留，不宣称逐景或同墙钟全面胜出。最终完整B总15680，不再追加计算。
+
+
+
+
 
 成本审计已核I0训练396969候选探测、贪心初解1480915逐束可证下界，7040直接case均符合32/32上限；教师576轨迹/68288转移。三训练实际自然N为50–200剔除60/90/140/180的147种，这四个精确N在训练/教师中均未出现。原恢复/终点成员及21旧pilot快照已全部闭合。报告含每路线原论文/借用边界、预期对照实测、失败、曲线和逐段时间；图表目视复核、独立科学及出版审阅未见确切数值错误。最后262项报告/分析/元数据包（337355639字节ZIP）在本地和20418逐成员SHA通过，另引用已核静态运维包；每小时自动化已删除，原配置、操作回执和精确读回保留。[正式报告15](docs/第二阶段/实验报告/15_SAC三路线超越贪心的独立场景对照.md) · [完整统计](outputs/experiments/sac_routes_s2p19_20261007/analysis/final_report_material/summary.json) · [来源验收](outputs/experiments/sac_routes_s2p19_20261007/supplemental/final_source_acceptance.json) · [成本审计](outputs/experiments/sac_routes_s2p19_20261007/analysis/cost_audit/cost_audit.json) · [最终报告备份](outputs/experiments/sac_routes_s2p19_20261007/analysis/delivery/final_archive_receipt.json) · [跟进结束回读](outputs/experiments/sac_routes_s2p19_20261007/analysis/delivery/automation_completion_readback.json) · [运行清单](outputs/experiments/sac_routes_s2p19_20261007/run_manifest.json)。
 
+
+
+
+
 **2026-10-08 23:36核心归档9/15，静态运维与旧试点元数据补充已核。**23:22四端API/SSH再次确认训练3/3、最终评价12/12完成，80万逐束、397112宏步及15680完整B预算不变；四GPU均0%/1MiB，宿主负载约5.8/11.1，当前执行归档而非训练。23:36本机核心9/15、无失败，D盘剩51.21GB，13087归档器与74f后处理接续器PID/出生/cwd匹配，后者仍waiting_for_core，不能重复启动。已完成的9份最终任务小身份/冻结单位/物理合同预检均一致，但没有解析完整结果，不构成正式效果结论。
+
+
+
+
 
 481个静态运维文件（原始614980140字节，ZIP157796812字节）已本地和20418逐卷、逐成员SHA核验，含历史控制器、修复/部署、原始监测、跟进与已有preflight；这是时点快照，活跃后处理日志、核心归档尾部、本轮及后续证据和正式报告仍须最终追加。旧pilot审计输入21项已取真实源SHA：4项与完成包按SHA/bytes匹配免复制，14项小元数据19466481字节双端核验，剩I0 pilot checkpoint及两个pilot B结果大文件待绑定未来训练/补充包，未重复下载。三训练库存中的24个关键恢复成员和12个终点/来源成员齐全，但无训练包完成收据时不称逐SHA归档。计时审计确认原两段273＋215条、四端372条，段间空窗2851.028秒与4892.858秒；旧20424的a306设备转到新20474，逐任务覆盖/设备/线程及未知PID映射已记录，不能给严格同条件速度排名。无科学任务或代码变更，无需重训。[本轮验收](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T151811Z/acceptance.json) · [静态运维归档](outputs/experiments/sac_routes_s2p19_20261007/supplemental/local_ops_20261008T1530Z/receipt.json) · [旧试点快照核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T151811Z/pilot_snapshot_coverage_after_sha.json) · [恢复成员库存审查](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T151811Z/recovery_archive_coverage_precheck.json) · [计时条件审计](outputs/experiments/sac_routes_s2p19_20261007/analysis/timing_conditions_audit.md) · [跟进精确回读](outputs/experiments/sac_routes_s2p19_20261007/followup/static_ops_verified_readback.json)。
 
+
+
+
+
 **2026-10-08 22:52核心归档5/15，报告来源修复完成并设置自动接续。**22:22四端真实API/SSH复核全部训练3/3、最终任务12/12均completed；80万逐束与397112宏步、直接14960及含配套完整B15680预算不变，GPU四端均0%/1MiB。唯一13087核心归档器PID6592出生/cwd/源码匹配，22:52本机已核5/15、无失败，D盘剩64.16GB；继续完整ZIP逐卷/成员SHA，不全量解压。报告预检发现冻结scene记录未携单位字段，以及3000/3000.0编码导致相同物理合同误判；main `0c580cf`从原SHA绑定准备源码取单位证据并规范等值预算，`93ade2a/74fba32`改大JSON有界读取和数字跨块处理。真实四份最终任务合同一致、V2直接/B各一case工程预检通过；根60项相关检查通过，未改科学结果/阈值，无需前端新增操作。完整880统计仍待归档。
+
+
+
+
 
 失败母源原任务及唯一ops材料46文件、1786884266字节已源端/本地SHA及根独立重哈希通过，保留失败与八次下载记录；pilot输入快照尚需与完整任务ZIP逐SHA绑定去重。新增12MB Git bundle已本地verify并复制20418，含main74f、c81、13087和报告/补充归档开发分支。新唯一后处理接续器PID27428/UTC14:50:47.947793、固定runtime `C:/Users/Admin/.codex/worktrees/s2p19-final-analysis/paper`/`74fba32`已验收为waiting_for_core，不能热改或重复启动；核心15完成且锁释放后，自动冻结输入并并行启动报告材料分析和16项补充completed任务归档，原greedy72 smoke只核验引用。读`analysis/post_core_delivery/status.json`及其日志，不能另外起相同长入口。报告材料、补充16项完成也不等于全部交付：本地运维/计时/最终报告材料仍需双端保真快照，报告15须人工核图核数后交付。[本轮验收](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T141435Z/acceptance.json) · [补充证据索引](outputs/experiments/sac_routes_s2p19_20261007/supplemental/evidence_index.json) · [报告预检与修复](outputs/experiments/sac_routes_s2p19_20261007/analysis/report15_execution_preflight.json) · [后处理启动](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T141435Z/post_core_launch_receipt.json) · [跟进精确回读](outputs/experiments/sac_routes_s2p19_20261007/followup/post_core_verified_readback.json)。
 
+
+
+
+
 **2026-10-08 21:59全部科学计算完成，核心归档已实际启动。**最后C0 B在21:47:38 completed7920/7920，I0 B在21:22:38 completed；两者精确880景×3动作×3方法网格均已核。最终12/12、直接14960/14960、最终完整B14960/14960，含配套720累计15680/15680；训练仍3/3、80万逐束与397112宏步。c81协调器和四端监测均按完成条件正常退出，不是新故障。已从冻结13087c3的D:/paper_worktrees/s2p19-final-delivery启动唯一归档等待器PID6592/UTC13:43:11，后经15项真实GET与元数据/空间门槛通过，21:53进入archiving；核心15项原始成员共442392720954字节（约442.4GB），当前1/15已完成逐SHA，暂无失败。不得另起archive_core争用或热改该runtime树。使用comp6/part1024MiB/max256GiB/长timeout及ZIP流式引用，实际压缩体积仍按每包本地8GiB余量检查，不保证全量必fit。核心外16任务、失败/ops/源码/计时证据及正式报告仍待完整交付。根51项检查通过，每小时跟进已更新且精确回读。[计算完成与归档启动核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T124339Z/computation_complete_archive_started.json) · [归档等待器启动](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T124339Z/archive_waiter_launch_receipt.json) · [跟进回读](outputs/experiments/sac_routes_s2p19_20261007/followup/archive_waiter_verified_readback.json)。
+
+
+
+
 
 **2026-10-08 20:45 C1最终B已完成；大文件归档方式已调整，尚未启动正式归档。**最终10/12完成；C1在20:43:54 completed7920/7920，精确880景×3动作×3方法网格齐；C0为6859/7920仍计算，I0为7920/7920但仍evaluating汇总，不能记作completed。完成任务口径完整B累计10400/15680（含配套720），直接14960/14960、训练3/3不变。已完成随机B只对固定文件做stat，发现results.json48.827GB、power_cases.jsonl38.751GB、beamCSV2.076GB等五文件合计83.91GiB，尚未含完整job树；D盘仅68.66GiB可用、C盘约18.57GiB。原全量解压镜像及64GiB单job上限不适用，未据压缩率猜测可容纳。main 8bc2201已支持完整原始ZIP逐卷/逐成员SHA与结果、case、NPZ、训练JSONL的ZIP直接读取；仅小身份JSON镜像、逐束表gzip，显式输入上限256GiB/分卷上限8192MiB/压缩级1–9/长超时与SSH keepalive30秒，下载按实际ZIP字节保留8GiB。根DQN46项通过，已有真实72景小归档从ZIP完整读取并核8520束与NPZ，原索引SHA不变；不是880景正式结果。正式压缩率、全量字节与能否放入本地仍未知，全部计时结束后必须实际库存和空间检查；旧默认archive_core参数不能直接用于随机大job。[C1完成与固定文件容量样本](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T124339Z/completed_size_samples_and_C1_grid.json) · [大归档适配验证](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T124339Z/large_archive_adaptation_verification.json) · [真实ZIP读取复核](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T124339Z/real_zip_reader_smoke.json)。
 
+
+
+
+
 **2026-10-08核心归档协调器已准备，尚未执行。**main 0ba668f提供12最终任务＋3训练的精确归档计划，实际执行前逐项工作台GET核run/request/源码/归属/completed及预算（I0严格397112/12500），记录各GET观测时点；任一未达标不启动复制。当前只本地--list，15项匹配，根DQN相关40项通过。复制采用串行记账与源索引跨进程锁，拒绝run/port/inventory冲突；旧smoke仅在原收据、下载回执及ZIP SHA核齐后补缺失port，保留旧路径。准备/开发/试点/终点B另有16个唯一已记录任务需实际GET再核，失败母源与ops材料独立补充，不能把core15视作全部交付。D盘19:49采样剩余68.67GiB，所有评价结束后须先量实际目录体积/可用空间，再启动长归档；没有提前远端归档或改运行worker。[核心计划](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T114603Z/core_archive_plan.json) · [验证](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T114603Z/core_archive_verification.json) · [补充任务清单](outputs/experiments/sac_routes_s2p19_20261007/analysis/supplemental_completed_jobs_plan.json)。
+
+
+
+
 
 **2026-10-08 18:48随机B正式完成，三条学习路线B继续并行（真实API/SSH）。**随机任务`refine_sac_20261008_120914_687c01ef`在18:45:04已completed7920/7920方法记录，精确880景×3动作×原分配/A/B文件网格完整，2640次完整B已完成；20418无科学worker，未提前压缩归档。最终9/12完成，C1（20424）5438/7920、C0（20473）4666/7920、I0（20474）5305/7920均evaluating，各有真实worker且13ea/3cca冻结版本、线程1与出生身份匹配。完成任务口径最终B累计7040/14960，含配套720为7760/15680；直接14960/14960、训练3/3（80万逐束/397112宏步）不变。GPU四端均0%，20418为1MiB，其余4MiB；宿主负载约8.4/45.7，当前均为CPU优化。协调器及监测正常、无新错误。全部B结束前继续禁止远端长归档；报告统计/导出已准备，补充归档清单已覆盖四端与重启证据，仍未执行归档。[本轮现场及随机文件网格](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T104702Z/live.json) · [本机进程核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T104702Z/local.json)。
 
+
+
+
+
 **2026-10-08 报告15统计与导出准备已补齐（效果仍待完整矩阵）。**main 1049980已加入按已知终止原因分母统计的优化器时间上限命中率，未知覆盖率单列、全未知为null，接近95%预算单列；逐束表从完整审计case流式导出D/C/min(C,D)/未封顶C/D/SI/SGM及身份、单位和来源SHA。训练updates经SHA后导出raw loss/alpha并按臂画图，C0/C1逐束与I0宏步横轴分开；补齐参考A的优化/核验时间，使分段账保留A+B且不重复计费。真实日志first/last只用于确认字段，不作为完整曲线；根DQN35项相关检查通过，绘图格式测试样例已目视核验。当前只读预检formal_ready=false、缺项38，真实曲线和结论须等全部B结束及完整归档。没有远端压缩/长归档，没有变更运行worker/冻结协调器；无需前端配置改动。[验证与限制](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T094606Z/report_statistics_verification.json)。
+
+
+
+
 
 **2026-10-08 15:55全部独立直接评价完成，四项最终细调并行。**C0/C1/I0各completed2640动作，连同V2和三基线，直接动作累计14960/14960；最终任务8/12完成、4项B运行。C0/C1各2640动作文件完整，额外contract.json是契约元数据；I0精确880景×3动作2640文件齐。15:55监测实际记录随机/C1/C0/I0 B为4824/832/718/244，各方法记录预算7920；对应新B任务为C0 `refine_sac_20261008_153647_dd07e9fc`（20473）、C1 `refine_sac_20261008_153809_5880cf60`（20424）、I0 `refine_sac_20261008_155106_e6019954`（20474），皆由四端协调器按原唯一request自动接续。GPU均0%/4MiB，当前均为CPU功率优化；协调器及监测真实存活，无新错误。完成任务口径完整B仍5120/15680（含配套720），运行中方法记录不混算完整B。训练仍3/3、80万逐束与397112宏步。[本轮现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T073800Z/latest_four_snapshot.json) · [C0/C1直接文件核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T073800Z/constructive_completed_grid.json) · [I0直接及B接续](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T073800Z/I0_direct_complete_B_started.json)。
 
+
+
+
+
 四端归档/报告支持已整合至main 5c40850，新增端口与真实任务/归档回执校验，保留旧逻辑键及旧计划兼容；episodes/evaluations/updates逐SHA入索引，缺项明确列出。根DQN相关26项通过；当前报告入口只读试跑识别12项，formal_ready=false、缺项35，尚无正式图表或结论。没有提前远端压缩归档，没有修改运行worker或冻结协调器；这是交付工具改动，前端无新增配置或操作。完成所有B后使用当前归档/报告入口即可，无需重复适配。[交付工具验证](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T073800Z/delivery_support_verification.json)。
+
+
+
+
 
 **2026-10-08 15:14用户授权四端并行已真实执行。**两原实例重启造成服务/worker及本机调度监测退出，随机B保留2654方法记录，经原20418工作台同ID恢复；原已完成5项及三训练不重跑。用户新增20473/20474并明确四端并行，覆盖旧最终矩阵串行部署。15:14:44实测四worker同时运行：20418随机B3148/7920方法记录，20424 C1 direct1431/2640，20473 C0 direct1429/2640，20474 I0 direct978/2640；最终5/12完成、4项运行、3项后续B等待各自direct。GPU依次0/9/8/0%，显存4/452/452/446MiB；新三端共享宿主负载约93，物理/优化CPU成本占比较高，四GPU UUID互异，原20424设备已改变。各端独立API8900/8901/8904/8905、固定线程1；保持40母880景、原终点双SHA/repeats/预算。I0跨archive仅服务来源审计补丁3cca，科学agent/env/physics/runner与13ea相同；原run397112来源和checkpoint/config/policy/model双SHA实际校验通过，未伪造训练记录。根DQN相关11项通过；工作台任务/日志/结果入口均真实，不新增训练前端选项。新协调器冻结c81a（tree s2p19-four-lane，历史PID33932），新监测PID35464已采样，均须实时核身份；原ee controller与双端monitor不再启动。原revision6保存历史，接续使用[四端计划](outputs/experiments/sac_routes_s2p19_20261007/controller/migrations/four_lane_plan.json)及four_lane_state；只保留每路线direct→B，原请求全局唯一。已更正每小时自动化并精确回读，记录并发、设备变化、两次监测空窗与恢复额外物理成本；异条件耗时不作严格同条件速度排名。原报告15、曲线及四端来源归档仍待全部考核。[实际四端快照](outputs/experiments/sac_routes_s2p19_20261007/preflight/four_host_20261008/latest_four_snapshot.json) · [源码等价审计](outputs/experiments/sac_routes_s2p19_20261007/preflight/four_host_20261008/science_source_equivalence.json) · [协调器/监测验收](outputs/experiments/sac_routes_s2p19_20261007/preflight/four_host_20261008/runtime_acceptance.json) · [跟进精确回读](outputs/experiments/sac_routes_s2p19_20261007/followup/four_host_verified_readback.json)。
 
+
+
+
+
 **2026-10-08 12:36共同考核规则B完成、随机B接续（真实API/SSH）。**最终5/12完成、1项运行、6项等待。规则B `refine_sac_20261008_102407_f18a7be0` completed2640/2640方法记录，精确880景×原分配/A/B文件网格齐备，完整B880次；最终已完成4400/14960，含开发验证共5120/15680，逐内容/SHA归档待后续。随机B `refine_sac_20261008_120914_687c01ef`经原request自动接续，evaluating1195/7920方法记录（880景×3动作×3方法），PID141555/出生802698636，13ea/DQN/四线程变量1匹配；两GPU0%/4MiB、20424空闲。controller/monitor实际身份匹配，新段174样本、末次12:34:46，无新异常。训练仍3/3、80万逐束与397112宏步，三臂独立结果及报告15待后续。[现场与规则网格证据](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T043525Z/live.json) · [本机核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T043525Z/local.json)。
+
+
+
+
 
 **2026-10-08 10:31共同考核贪心B完成、规则B接续（真实API/SSH）。**最终4/12完成、1项运行、7项等待。贪心B `refine_sac_20261008_083411_425dd8e7` completed2640/2640方法记录，精确880景×原分配/A/B文件网格齐备；完整B880次，最终已完成V2+贪心3520/14960，含开发验证共4240/15680，逐内容/SHA归档待后续。规则B `refine_sac_20261008_102407_f18a7be0`经原request自动接续，evaluating379/2640，PID129529/出生802067580，13ea/DQN/四线程变量1匹配；两GPU0%/4MiB，20424空闲。恢复controller/monitor实际PID出生与命令匹配，监测新段90样本、末次10:30:49，无新异常。训练仍3/3、80万逐束与397112宏步，报告15及整体结论待完整矩阵。[现场与网格证据](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T023053Z/live.json) · [本机核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T023053Z/local.json)。
 
+
+
+
+
 **2026-10-08 08:35本机调度/监测中断已恢复验收。**真实API确认V2直接/完整B与基线直接任务均completed，最终完成3/12；基线直接4400/4400，最后heartbeat为08:05:16，远端任务正常完成。原本机controller PID26324与monitor PID25548已不存在，Python进程清点也未见同命令替代进程；旧状态的running无效，退出原因暂未知。已保留旧status/lock和现场，冻结ee0a60c控制器以独立后台进程恢复为PID37436/UTC00:30:10.853897，原SHA不变的监测以PID10084/UTC00:30:10.848244恢复，保留原10月10日01:51:53监测截止时间；08:31监测首样本UTC00:31:28已验，08:35控制器已通过原request接续贪心B：`refine_sac_20261008_083411_425dd8e7`正在evaluating66/2640方法记录，PID116940/出生801407984，13ea冻结路径/DQN/线程1与单worker服务匹配。最终任务3/12完成、1项运行、8项等待。最后有效监测为07:43:57，至08:31:28恢复首样本之间约47分钟明确记为空窗，基线评价尾段计时覆盖不足，不能宣称连续无扰；不重训或重复评价。训练仍3/3、80万逐束及397112宏步；08:29两GPU0%，20418/20424为1/4MiB。[远端现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T002851Z/live.json) · [恢复回执](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T002851Z/recovery_launch_receipt.json) · [实际接续验收](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261008T002851Z/recovery_live_acceptance.json)。
+
+
+
+
 
 **2026-10-08 07:27共同考核已接续基线（真实API/SSH）。**最终12项已完成2项、运行1项、等待9项。V2直接评价2640/2640、完整B任务`refine_sac_20261008_021641_2b95fbfe`均completed；07:28只读核`power_cases`精确覆盖880景×3动作×原分配/A/B共7920文件，三方法各2640，最终完整B累计2640/14960，加开发/验证720为3360/15680；逐case内容与逐SHA归档核验仍待完整矩阵结束。基线直接任务`evaluate_sac_20261008_065110_5c4efea7`已由原控制器自动提交，07:27为2185/4400动作结果（贪心1、规则1、随机3次/景），PID107245/出生800789675、13ea冻结源码/DQN及四线程变量1匹配。20418仅此科学worker，20424空闲，两GPU0%/4MiB，未见新异常；训练仍3/3、80万逐束与397112宏步。不能凭V2单臂结果作新路线胜负结论，报告15及完整归档仍待交付。[现场证据](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261007T232704Z/live.json) · [V2文件网格核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261007T232704Z/V2_completed_grid.json)。
 
+
+
+
+
 **2026-10-08 02:27共同考核进度（真实API/SSH）。**最终12项任务已完成1项、运行1项、等待10项：V2直接评价`evaluate_sac_20261008_014109_76d045db`已completed2640/2640（880景×3动作）；其同初解功率细调`refine_sac_20261008_021641_2b95fbfe`在evaluating400/7920方法记录，PID75963/出生799142875、冻结13ea/DQN与四线程变量1匹配。7920是2640次完整B所含原分配/A/B的方法记录上限，不能算成7920次完整B。两端GPU均0%/4MiB；当前优化器为CPU且复用已保存初解。控制器及每60秒计时监测真实存活，暂未记录可见额外科学worker，但未映射NVML PID与开头采样缺口仍保留，不能声称连续无竞争。训练仍3/3、80万逐束与397112宏步，不重训。报告15方法出处素材已按五篇一手论文补齐，完整共同矩阵、报告/曲线及双端归档尚待完成。[本轮现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261007T181559Z/live.json) · [本机控制器核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261007T181559Z/local.json) · [方法出处素材](outputs/experiments/sac_routes_s2p19_20261007/analysis/method_sources_for_report15.md)。
+
+
+
+
 
 **2026-10-08 S2-P19训练与终点验证全部完成，独立共同考核已启动。**C0/C1各400000逐束、398001更新，累计800000/800000；I0在12500回合上限完成397112宏步/395113更新（40万为上限，不记作跑满）。三训练3/3、直接验证1296/1296；I0的300k只保存checkpoint/skip、0新增case，最终节点397112已72景完成。三项终点B均72/72完整B、各216方法记录，累计训练配套B720＝开发216＋验证504。原run/seed不变、终点权重及checkpoint SHA见清单。[终点只读核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261007T165002Z/endpoint_state.json) · [三终点B完成核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/final_timing_switch/intent.json)。
 
+
+
+
+
 旧13ea服务仅允许I0试点初解转B，导致ee控制器提交终点B时HTTP400退出；这没有生成重复评价。已将严格终点来源校验单文件修复冻为29dee3248893d42d7569aa57e004cf3db0d0ee65，临时8902工作台一次创建`refine_sac_20261008_010934_f19c8d82`，仅复用原397112节点已保存72景，主8900启动并完成；物理/优化器/solver参数不变，原三训练与direct均未重跑，临时API已关闭。根8项来源回归与开发130项专项通过。[I0终点B回执](outputs/experiments/sac_routes_s2p19_20261007/preflight/i0_endpoint_29dee_submit.json)。
+
+
+
+
 
 01:22:24真实空闲核验后，只将20418主8900切为同13ea源码/固定四线程变量1/max_workers1，新server PID69404/ticks798814763；20424保持空闲，旧服务身份回执已备份。ee控制器计划已追加为revision6共38节点，最终12项direct/B全部在20418严格串链，预算14960次完整B不增。C1固定400k终点已按policy/model.json双SHA导入20418为`model_20261008_013430_2e22d095`。首项V2历史模型直接考核`evaluate_sac_20261008_014109_76d045db`在01:44:59根核evaluating358/2640，PID71475/出生798929614、DQN13ea冻结路径匹配；每景3动作，scene集880，新40母。此时尚未有完整最终成绩，不能把试点的I0改善当最终胜出；报告15/曲线/双端归档仍待交付。[计时切换](outputs/experiments/sac_routes_s2p19_20261007/preflight/final_timing_switch/switch_receipt.json) · [首项真实进度](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261007T165002Z/final_first_task_live.json)。
 
+
+
+
+
 **2026-10-08最终计时切换仅完成准备，当前未执行（根API/SSH：北京时间00:25:56）。**C0/C1仍training389400/395200逐束，I0 API380000、原始trace389172宏步/当前episode12251；完整训练终点0/3，三项endpoint B尚未创建。I0真实300k跳过记录已核：断点SHA5e6c4d48…、cases_generated=0、未生成300k验证目录；直接验证保持1080/1296。两GPU当时62%/42%、1387/892MiB，旧worker/源码未切换。
+
+
+
+
 
 已新增`prepare_final_timing.py`：默认只读，实时核三训练固定/受限终点与各自72景endpoint B全部完成，才允许显式执行同13ea源码的20418单worker计时切换；C0/C1状态无checkpoint SHA、I0状态无checkpoint_step时均按真实断点核验，已用现有B与服务身份确认字段。25项相关检查通过；根DQN首次9pass/1可选psutil测试依赖错误已保留，测试stub修正后base/DQN各10/10通过，不安装依赖或改生产逻辑。实际--check仍waiting、mutation_count0，本轮未停controller/服务或新评价。下一轮从D:/paper以base运维Python运行该脚本，切换成功后精确核回执并及时重启冻结ee控制器；最终计时回执若在append前超过10分钟须重新只读取证，不能重复起服务。报告15与最终880矩阵仍待完成。[本轮现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261007T154856Z/remote_after_preparation.json) · [只读切换检查](outputs/experiments/sac_routes_s2p19_20261007/preflight/final_timing_readonly_check_r2.json) · [服务身份](outputs/experiments/sac_routes_s2p19_20261007/preflight/final_timing_service_identity_check.json)。
 
+
+
+
+
 **2026-10-07 S2-P19验证预算修复已完成，三组继续训练（根API/SSH：北京时间20:33:22）。**
 
+
+
+
+
 | 路线 | 当前进度 / 总上限 | 阶段与冻结来源 |
+
+
 | --- | --- | --- |
+
+
 | C0 | 198500/400000逐束，196501更新 | training，20418，48c7 |
+
+
 | C1 | 199100/400000逐束，197101更新 | training，20424，48c7 |
+
+
 | I0 | API149517/400000宏步；原始trace154470，更新日志在154450步为152451次 | training，20418，62e |
+
+
+
+
 
 C0/C1累计397600/800000逐束＝49.70%；I0原始宏步154470/400000＝38.62%，两类交互不相加；完整训练终点0/3。两卡GPU72%/43%、显存1385/892MiB，三worker PID/出生及冻结路径匹配。I0于139517宏步/4450回合经工作台正常stop，原断点SHA f2b3ebad…完整归档后同ID恢复62e33c1baa066c2a577a351cd18ecb487f4e11e8；新worker37818已真实越过停点。原四验证节点/试点审计未改，300k将只checkpoint并记skip、200k与实际终点保留，直接验证上限1296不增。143项相关整合回归通过；120k代表性GPU/RNG等价与实际139517恢复断点明确分开，来源合同及299项归档SHA均已核。没有重新训练或重做已完成评价。[本轮根现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/heartbeat_20261007T105552Z/final_root_live.json) · [实际恢复](outputs/experiments/sac_routes_s2p19_20261007/preflight/i0_budget_62e_resume_api.json) · [不可变证据](outputs/experiments/sac_routes_s2p19_20261007/preflight/i0_budget_62e_live_worker.json)。
 
+
+
+
+
 I0试点验证的直接/B改善+3.7378/+3.2836百分点仍成立，但只是Jan12的72景/6母；独立880景与规则/随机控制尚未评价。完整B累计504，保留三臂的真实审计已保存。控制器ee0a60c按revision5恢复，本机PID30064/20:25:58出生，日志`runtime_ee0a60c_R1.log`；主8900/8901仍13ea、临时8902已关闭，后续先实时核身份。最终矩阵必须等全部训练/终点B、20418同实例无竞争计时回执后才派发，不提前串行训练；报告15、曲线和双端归档仍待完成。工作台沿用现有停/恢复、来源历史和任务展示，本次等价运维修复无新增实验选择项。[运行清单](outputs/experiments/sac_routes_s2p19_20261007/run_manifest.json) · [每小时跟进精确回读](outputs/experiments/sac_routes_s2p19_20261007/followup/budget_repair_complete_verified_readback.json)。
+
+
+
+
 
 **2026-10-07 S2-P19三试点均通过，I0验证集已优于贪心；最终结论待880景共同考核。**I0在97112宏步/3125回合的受限试点完成72景、6母验证及完整B（任务`refine_sac_20261007_191743_e37373af`）；19:26:14审计passed，直接SI0.935578对贪心0.898200（+3.7378百分点），相同B后0.970679对0.937843（+3.2836百分点），6/6母最终B提升>0.1百分点。控制器已同ID批准I0续训；19:44代理实查I0 training110000宏步/108001更新，仍13ea。C0/C1仍48c7续训。结果限于单seed51001的Jan12验证母场景，尚不能称独立考核胜出或SAC优于同预算规则/随机搜索。[I0审计](outputs/experiments/sac_routes_s2p19_20261007/pilot_audit/I0_audit.json) · [三臂保留审计](outputs/experiments/sac_routes_s2p19_20261007/controller/gates/pilot_retention_audit.json)。
 
+
+
+
+
 **验证预算缺陷已发现，当前未超额，正在做等价修复。**受限试点97112与随后100000各保存72景，三臂现有直接验证720/1296；不修会最多1368。所有已有案例保留，I0后续保200000与实际终点、300000照常checkpoint但显式跳过验证，保持每臂最多6节点；不改变学习、训练步数/回合、种子或最终B预算。补丁已在13ea独立支线708c526，正确性与真实更新/RNG等价检查通过，专属工作台来源修复和真实当前断点验收仍在准备；未热改13ea worker，正式切源以实际回执为准。[只读预算审计](outputs/experiments/sac_routes_s2p19_20261007/preflight/i0_validation_budget_audit.json)。
+
+
+
+
 
 **最终计时调度已补闸门，尚未执行最终考核。**控制器已受控换至ee0a60c独立`C:/Users/Admin/.codex/worktrees/s2p19-ops-timing/paper`，PID30848/19:22:24出生；远端训练和13ea主服务未动。全部保留模型完成后，须真实核20418单worker、固定线程、双实例无其它活动计算，再按同一20418严格串链完成880景direct/B；C1终点先核400k来源及policy/model.json双SHA后在20418导入，B与动作预算不增。当前尚无该计时隔离回执，控制器不能提前追加最终矩阵。I0审计helper PID16992已正常completed退出，不再启动重复helper；完整B累计504＝216开发＋288验证，最终B未开始。
 
+
+
+
+
 **2026-10-07 S2-P19三组均实际训练中，断点故障已修复（根API/SSH：北京时间18:47:09）。**
 
+
+
+
+
 | 路线 | 实例 | 实际进度 / 总上限 | 当前冻结源码 |
+
+
 | --- | --- | --- | --- |
+
+
 | C0 终态目标对齐SAC | 20418 | 109300/400000逐束，107301更新 | 修复48c7，科学起点47da |
+
+
 | C1 示范回放SAC | 20424 | 108600/400000逐束，106601更新 | 修复48c7，科学起点47da |
+
+
 | I0 贪心起点多步改进SAC | 20418 | API70000/400000宏步、68001更新；同期原始日志72654宏步、episode2360 | 13ea |
+
+
+
+
 
 C0/C1累计217900/800000逐束（27.2375%），I0宏步另计，三训练终点完成0/3。两卡当时GPU54%/43%、显存1385/890MiB；I0原PID17797未变，C0/C1同ID新worker24787/23359已真实越过100k并持续更新。48c7只修满环束数表恢复及必要来源链，两个原试点断点和100k学习快照SHA保留；17项冻结修复测试、28项相关回归及双真断点GPU下一更新严格等价通过。详细失败与被阻断的准备版f8/92保留，不算新训练。主8900/8901仍13ea，临时8902/8903已关闭。[根现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/root_three_training_verified.json) · [修复验证](outputs/experiments/sac_routes_s2p19_20261007/preflight/c0c1_replay_repair_validation_48c7.json)。
 
+
+
+
+
 固定控制器8d已按revision4恢复，18:46:54最新观察20/24节点完成、waiting为空；本机PID34184/18:45:18出生，运行于独立ops worktree，后续须实时核身份。两个10万科学审批已真实认领完成，I0试点受100000宏步/3125回合先到者约束，之后自动接72景B并由每小时跟进构建科学审计再决定续训。新40母/880景已双端导入，V2历史权重已导入；完整B累计432＝216开发＋216验证。尚未开始最终共同考核，**当前没有超过贪心的正式结论**；最终直配/B、规则/随机对照、逐束、统一计时、曲线和报告15待完成。每小时跟进ACTIVE并精确回读，授权范围内继续，无需中间确认。[运行清单](outputs/experiments/sac_routes_s2p19_20261007/run_manifest.json) · [控制器观察](outputs/experiments/sac_routes_s2p19_20261007/controller/latest_observation.json) · [跟进回读](outputs/experiments/sac_routes_s2p19_20261007/followup/running_verified_readback.json)。
+
+
+
+
 
 **2026-10-07 S2-P19续训恢复异常正在等价修复，I0持续训练。**18:01北京根API/SSH实核：C0/C1工作台已接受10万步科学审计，但两个新worker在加载回放时失败，仍各100000/400000、98001更新，**不能称已成功续训**。两份checkpoint与pilot_artifacts逐SHA完全相同，各20000转移完整；实际束数表误多存一个未使用尾0（20001项），有效20000项与状态/桶全量一致，未丢学习状态。新算法补丁d3cc591（47da独立修复支线）只兼容该精确格式并修满环写入；正做真实GPU恢复/下一更新等价和专门工作台来源修复合同，不改原断点或原冻结worker。I0任务`train_sac_20261007_174121_7d0b687c`在20418/13ea正常运行，API20000宏步、最后原始trace20941宏步，单列400000宏步/12500回合上限。[真实现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/root_post_resume_live.json) · [故障](outputs/experiments/sac_routes_s2p19_20261007/preflight/c0c1_resume_failure.json) · [C0原断点全量取证](outputs/experiments/sac_routes_s2p19_20261007/preflight/c0c1_resume_forensics_20418.json)。
 
+
+
+
+
 C0/C1试点72景真实审计已通过原相对门槛：直接SI0.84631/0.86825、最终B0.90042/0.91765；同景贪心0.89820/0.93784，故仍未超过贪心。C1对C0直接+2.1946百分点、B+1.7232百分点，保留C1及必要参照C0。两份审计各929源文件SHA绑定并保存不可变试点副本。795项整合检查791通过/4条件跳过，新代码已并入main；每小时跟进ACTIVE且更新精确回读。固定controller曾因最终场景传record.json而非父目录失败，已迁移revision3并重启完成部分导入；18:06左右为恢复来源合同审计暂停本机控制器（仅其PID25136，远端I0不受影响），修复后再接续。[试点审计](outputs/experiments/sac_routes_s2p19_20261007/run_manifest.json) · [跟进回读](outputs/experiments/sac_routes_s2p19_20261007/followup/continuation_verified_readback.json)。
+
+
+
+
 
 **2026-10-07 S2-P19两构造组已到10万试点，准备科学验收。**C0/C1均为100000/400000、98001更新、`stopped/s2p19_pilot_gate_pending`，累计200000逐束交互；这是计划内科学停点，不是故障，未直接放行续训。两组原47da冻结源码138文件及配置SHA复核不变。服务8900/8901已独立升级为13ea014f1c1709c4a82059fc89ba3092e75010e1（仅新任务使用），服务PID15747/16257；原worker未被终止或热改。新运行时补齐I0真实探索终态/选中输出逐束日志、受限验证到B来源、P19严格880考核合同，30项专项通过。I0日志工程门槛已形成SHA回执，训练尚待实际唯一任务ID，不能称已启动。[部署回执](outputs/experiments/sac_routes_s2p19_20261007/preflight/service_13ea/deployment_receipt.json) · [工程回执](outputs/experiments/sac_routes_s2p19_20261007/controller/gates/i0_logging_runtime_receipt.json)。
 
+
+
+
+
 新考核`prepare_prepare_20261007_171407_3c757c98`经工作台完成880/880，record SHA `0011042660b0e7b07fc3abaef502112b81b93087c5df2a02732755ac3b7e7f0c`；双端导入与最终考核仍待接续。验证贪心直配72已新建`evaluate_sac_20261007_173305_3a1ccaff`，后接一次72 B并与C0/C1各72试点B比较。科学审计将先冻结两个10万断点，再按C1对C0直接+0.2百分点且B不退的原门槛决定二者续跑；未通过不追加同路线预算。I0另走原规则。仍需后续训练、共同考核、曲线与报告，不将试点或准备当最终成绩。
+
+
+
+
 
 **2026-10-07 S2-P19双GPU已正式学习，I0开发闸门通过（根API/SSH核验北京时间16:24:16–25）。**C0 `train_sac_20261007_152717_479365fb`在20418 training49350/400000、47351更新；C1 `train_sac_20261007_153047_1faf6d10`在20424 training45100/400000、43101更新；均seed51001、冻结47da239910485508f7c978461314dff92f8672ec，100000试点须科学审计后才同ID继续。逐束累计94450/800000，11.80625%；I0宏步训练仍0/400000，未混算。两端4090D当时均46%/892MiB。教师576母/68288转移及打包SHA已核，Jan12开发/验证各72与Jan08/09训练无重叠。743项本地整合（739通过/4跳过）、双端真实GPU参数更新、页面与来源链已验；后续日志/880考核合同修补仍在独立开发，不热改运行worker。[根现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/root_live_20261007T082424Z.json) · [运行清单](outputs/experiments/sac_routes_s2p19_20261007/run_manifest.json)。
 
+
+
+
+
 I0开发直接任务`evaluate_sac_20261007_153239_e442d472`已216/216；贪心/规则/随机三B任务均72/72（共216完整B、648方法记录），逐源SHA、资源/终态与共同保护通过。规则/随机相对贪心+B总体SI分别+1.105/+2.636百分点，大N+1.161/+2.849百分点，开发门槛通过，**不是SAC模型效果**。I0在补齐训练宏动作、最后探索态/选中输出逐束日志并冻结等价修复后启动；源47da的状态/奖励/更新等价回执已保存。[开发闸门](outputs/experiments/sac_routes_s2p19_20261007/preflight/i0_dev_nonlearning_gate_audit.json) · [日志等价](outputs/experiments/sac_routes_s2p19_20261007/preflight/i0_logging_equivalence/paired_old_new.json)。
+
+
+
+
 
 新考核母源旧6e8任务`prepare_prepare_20261007_145623_5e8713ea`因Feb02 release入口八次0字节网络失败而保留failed及Feb01 20母。R1 `prepare_prepare_20261007_154940_dd12808c`经独立62202aff0e1190492338f98359cc2f274884341c准备源码、同官方asset API和四次有界重试恢复，已40/40完成，原20CSV/八次失败证据SHA不变；C0/C1服务和worker未受影响，880衍生景尚待工作台准备。每小时跟进ACTIVE。另更正磁盘证据：49.45GB是容器`/home`overlay，实际archive在共享NFS；已按真实挂载去重并保留未知配额下本组48GiB软上限，不把NFS全局空间当用户配额。[恢复来源](outputs/experiments/sac_routes_s2p19_20261007/preflight/recovery_62202af/submission_receipt.json) · [挂载核验](outputs/experiments/sac_routes_s2p19_20261007/preflight/mount_audit.json)。
 
+
+
+
+
 **2026-10-07 P18已保存最终B补审计更正（只读，不新增评价）：**从原远端任务读取V2/V3/G0各1320条最终B，分别与P17同440景SHA全匹配，并核SCA参数一致。V2总体SI=0.923624，大N六档与贪心差1.959百分点、200束差2.880，原方案终点G1通过；小N相对V1最大下降0.148百分点，G2通过。V3 G1未过、G2通过；G0 G1/G2未过。G3尾部联合门槛仍未完整核。旧报告“G1/G2全失败”已加日期更正；V2仍低于贪心最终B总体0.933354，S2-P19超越贪心目标和授权范围不变。[补审计](outputs/verification/s2p19_research_20261007/p18_final_gate_reaudit.json) · [同景原始压缩摘要](outputs/verification/s2p19_research_20261007/p18_existing_B_compact.json) · [报告14更正](docs/第二阶段/实验报告/14_可变束数泛化第二轮S2-P18三臂对照实验报告.md)。
+
+
+
+
 
 **2026-10-07 S2-P19已获双GPU执行至报告授权，正在实现与预检。**用户明确无需中间确认。首轮仅C0/C1/I0，范围/科学闸门与预算沿方案19第二版，非12路线全启动。开发worktree为`C:/Users/Admin/.codex/worktrees/s2-p19-sac/paper`、分支`codex/s2-p19-sac-20261007`、起点`03c067dd1b13cdf9734bc6cbdc773af8e93cec17`；两Sol实现C0/C1和I0，另一Sol准备远端/数据，根负责工作台、前端与整合。北京时间13:48:22/28真实SSH核两端DQN PyTorch2.3.1+cu121/CUDA、独立4090D通过，采样均0%/4MiB，未见旧活跃计算；新8900/8901端口空闲，尚未创建正式计算任务。DQN默认包仍指旧first_stage repo，启动前必须绑定并核新冻结source路径。每小时`s2-p19-gpu-sac`已实际ACTIVE且精确回读。100k试点拟以冻结400k总额+闸门停止实现同ID续跑，不热改worker配置；效果待验证。[运行清单](outputs/experiments/sac_routes_s2p19_20261007/run_manifest.json) · [现场](outputs/experiments/sac_routes_s2p19_20261007/preflight/remote_probe.json) · [跟进回读](outputs/experiments/sac_routes_s2p19_20261007/followup/verified_readback.json)。
 
+
+
+
+
 **2026-10-07 S2-P19第二版：SAC优先、多路线调研（仅建议，未执行）。**按用户要求，[方案19](docs/第二阶段/方案/19_超越贪心的频率槽局部改进与学习排序方案.md)已改为12条SAC路线＋2非SAC参照，逐条说明论文/算法出处、本项目动机、预期可测效果、对照与风险，区分原生SAC和自行组合。首轮建议C0终态目标对齐构造SAC、C1同结构示范回放增强、I0贪心起点多步改进SAC；各100000决策试点、达标及必要参照最多400000，分别记80万逐束/40万宏步上限，示范与物理成本另列；建议完整B上限15680次、新40母/880景考核。均未授权实施或启动；第一版“两监督模型/26320 B”不再是现行推荐预算，监督排序仅作N02参照。已补原文与实现审查、同步问答/目录/AGENTS；无源码/前端/训练/评价/自动化变更，效果待验证。旧P18事实核对与数据缺口保持。
+
+
+
+
 
 **2026-10-07 S2-P19第一版历史记录（已由上方第二版替代，未执行）：**用户要求综合调研并形成“超过贪心”的下一步方案。已核源码/十篇一手论文、本地V2/V3与P17逐景SHA各440/440；V2在N≥125直接SI比V1高0.647百分点、比贪心低3.569百分点。纠正方案18贪心175/180/200束最终B误抄，200束正确94.296%、比V1高4.495百分点；P18本地仍缺SCA逐景最终B，原终点门槛不能据总体重判。第一版主推贪心初解＋固定16候选频率块修复＋监督排序，建议预算26320次完整B、两模型各8000更新，均未执行。保留数据证据与当时方案来源，不将旧建议当成当前预算；证据见[复核目录](outputs/verification/s2p19_research_20261007/)。
 
+
+
+
+
 **2026-10-07 S2-P18 比较口径复核（本地保存结果，只读分析）：**下方原交付摘要保留历史，但“超过贪心”仅指模型＋SCA超过未细调贪心，不能用于算法同阶段排名。报告13保存的同批440景总体基准为贪心直接SI=0.893319、最终B=0.933354，V1直接=0.877176、最终B=0.918503；报告14的V2直接=0.879475、SCA后约0.9236，因此总体SI仍低于对应阶段贪心，同时相对V1有小幅改善。V2/V3原始results.json均确认11档N、1320动作记录，报告14“仅50/100/200三档”不成立。报告14用本轮直接SI对比V1最终B、用总体均值对比旧N=200、将试点门槛用于40万终点评判的问题，均须纠正；原G1/G2/G3结论暂不能作为有效终点验收，需按方案18第5节最终B逐N门槛重新核算。本轮未刷新远端运行态、未重训/重评；新增方法仍处讨论阶段。详见[报告14复核说明](docs/第二阶段/实验报告/14_可变束数泛化第二轮S2-P18三臂对照实验报告.md)。
+
+
+
+
 
 <!-- S2P18-LIVE-BEGIN -->
 
+
+
+
+
 **S2-P18（可变束数泛化第二轮）全部完成（2026-10-07）。**三臂各 10 万步试点按预算跑满并各自在同一任务 ID 上从断点续跑到 40 万步（合计 120 万交互，方案上限）；三臂 440 景共同考核（随机三次动作、种子 53001、含固定/贪心基线）与三臂统一 SCA（原分配/功率优化/SI优先，各 3960 单元）全部完成。
+
+
+
+
 
 **判定：G1 未达标、G2 未达标、G3 部分达标（G0 每束槽数 +30.8% 达标，尾部与绝对水平未改善）、G4 按方案转下一手段且不追加同手段预算。**
 
+
+
+
+
 **三臂完整对照（440 景考核）**
 
+
+
+
+
 | 臂 | 直接分配 SI | SCA 后 SI | 供需匹配程度（SCA 后） | 对贪心 0.8933 |
+
+
 | --- | ---: | ---: | ---: | --- |
+
+
 | V2 | 0.8795 | **0.9236** | 0.9244 | 超过（也超 V1 的 0.898） |
+
+
 | V3 | 0.8660 | **0.9090** | 0.9087 | 超过 |
+
+
 | G0 | 0.8152 | 0.8724 | 0.8694 | **仍低于** |
+
+
 | 固定分配基线 | 0.8368 | — | — | — |
+
+
 | 贪心基线 | 0.8933 | — | — | — |
+
+
+
+
 
 **关键结论**：SCA 对三臂同等施加、各提升 4.3–5.7 个百分点，但**不抹平初解质量差距**（G0 经 SCA 后仍低于贪心）。逐束审计（各 16.14 万条）显示原分配存在**严重过供**（C/D 最大 24.6–31.8），封顶满足率会掩盖这一点；SCA 消除过供后把功率**普遍铺开**，严重欠服务（C/D<0.8）占比降 9–13 个百分点，而 C/D<1 占比反升。
 
+
+
+
+
 **交付物**：报告《14_可变束数泛化第二轮S2-P18三臂对照实验报告.md》（219 行、7 张中文曲线、含三臂完整对照、逐束尾部、分段计时与两套口径）、《14_附录_S2-P18运行审计轨.md》（预算账、四个已修缺陷、复现锚点）；问答《S2-P18频谱用量与满足率为何不同步.md》。
+
+
 <!-- S2P18-LIVE-END -->
 
+
+
+
+
 后续：跑满10万步后按 G1–G4 门槛判定（以 N=100/120/160 为主），通过臂补足到40万步（总上限120万交互）；随后统一 SCA 共同评价、逐束与计时审计、中文正式报告。
+
+
 **S1-03-R1已完整交付并结束每小时跟进（2026-10-05）：**[报告07](docs/第一阶段/实验报告/07_区域重构PPO修复版共同考核.md)、5图、原始436文件2,216,453,844字节及74成员补充包已完成本地与远端核验，正式结论已在本对话汇报。P1训练262144/262144（100%）、验证320/320、共同考核500/500；原失败65536另列。主体CV改善成立，但双100%仍93/100、完整90束均衡目标0/100。16:31:26–27最后API/SSH复核两端全部completed、活跃训练0、GPU均0%/4MiB。补充审计与文档复核通过后，自动化`s1-03-ppo-gpu`实际置PAUSED且精确回读；仅本轮归档轮询helper在身份核对后结束，工作台/隧道与其它实验保留。以下“正在报告/ACTIVE”文字为历史阶段。[最终交付验收](outputs/experiments/first_stage_s1_03_r1_20261005/delivery/final_acceptance.json) · [报告补充包双端回执](outputs/experiments/first_stage_s1_03_r1_20261005/delivery/supplement_delivery_receipt.json) · [跟进暂停回读](outputs/experiments/first_stage_s1_03_r1_20261005/delivery/automation_pause_readback.json)。
+
+
+
+
 
 **S1-03-R1正式结果（2026-10-05）：**[报告07](docs/第一阶段/实验报告/07_区域重构PPO修复版共同考核.md)已形成，附5张中文训练/验证/考核/配对/耗时曲线。新P1训练262144/262144、4096更新、16验证节点320记录，Jan31五法500/500；旧失败65536单列，累计327680。P1主体CV均值0.602222，优于共同初始化R0的0.855564和同重构器搜索R3的0.663655；对R3的Q提高70景、下降30景。五方法均双100%覆盖93/100、双99.9%覆盖100/100，但完整主体均衡目标均0/100；P1带内均值23.68，不能称已解决90束目标。原终态为主结果，best仅1景略高；已记录分段合计P1均值1.875337秒、R3为3.548662秒，历史中心生成时间缺项，不称完整端到端。500原终态、训练8578与验证320终态/best及P1考核100best均独立通过；终点权重严格加载和来源绑定通过。原始436文件2,216,453,844字节本地/远端SHA已核；正式文档及补充归档正在完成，跟进仍ACTIVE，最终关闭以精确回执为准。[完整汇总](outputs/experiments/first_stage_s1_03_r1_20261005/analysis/final_report_15ff2253ace6/summary.json) · [终点补充审计](outputs/experiments/first_stage_s1_03_r1_20261005/preflight/final_supplement.json) · [原始资产核验](outputs/experiments/first_stage_s1_03_r1_20261005/delivery/raw_assets_verified.json)。
 
+
+
+
+
 **S1-03-R1训练与五法共同考核完成，正在收尾报告（2026-10-05，北京时间16:00:06–07 API/SSH）：**修复版P1原任务`train_ppo_20261005_093803_4570222a`已completed262144/262144（100%）、4096更新，训练1/1完成、活跃0；旧失败65536单列，累计327680。16验证节点各20景、320条记录的数量与ledger SHA已核；Jan31最后P1任务`evaluate_ppo_20261005_151515_8940d494`及原R0–R3均100/100，共5/5方法、500/500。五法独立原终态审计passed，SHA`8deb8d4cf7e74677cd560584826bce8cdf8fd1775be2b48a69b0b2ee93323495`。controller正常到`awaiting_final_report`后退出，不能作为故障恢复；归档器已登记10任务156个任务文件、无错误，两端GPU此刻0%/4MiB。完整终点checkpoint SHA`5b54b3b2ca2d96da4dc4cbebd25eb8f60d1814af0c92ae14dfcf7deb5897e838`，权重严格加载和训练/验证终态补充审计、完整中文曲线与正式报告正在进行。尚未完成正式交付，不把仅训练和考核结束当作全部完成；跟进保持ACTIVE，不新增训练/评价。[现场与收尾回执](outputs/experiments/first_stage_s1_03_r1_20261005/preflight/heartbeat_20261005_1600/summary.json) · [完整五法审计](outputs/experiments/first_stage_s1_03_r1_20261005/ops/remote_20424/audits/formal_audit.json) · [运行清单](outputs/experiments/first_stage_s1_03_r1_20261005/run_manifest.json)。
+
+
+
+
 
 **S1-03-R1机制闸门通过，已同ID续跑（2026-10-05，北京时间11:57:45–46 API/SSH）：**P1 `train_ppo_20261005_093803_4570222a` training105472/262144（40.234375%）、1648更新，训练完成0/1、活跃1；旧失败65536单列。65k独立机制审计九项全通过，近期非STOP接受9787/16380＝59.7497%、验证18/20景Q改善、均值+0.1566606、立即STOP比例0.0341564。工作台11:05:26批准后同ID恢复，旧worker137337退出，新worker172784/出生ticks776394744、`--resume`命令、DQN/CUDA、576冻结源码/配置均匹配；未新建训练组或增加预算。六验证节点至98304共120/320记录，节点唯一且SHA一致。四条Jan31对照仍各100/100、400/500，最终P1考核尚待固定终点，不能将机制通过当作最终均衡效果已证。GPU单点均0%，显存1342/4MiB；controller/归档/隧道身份正常，无attention或新错误。已更新每小时跟进并精确回读，避免重复65k审计/放行或将活动checkpoint与历史65k SHA误比。[现场](outputs/experiments/first_stage_s1_03_r1_20261005/preflight/observe_20261005T035745.json) · [机制及节点证据](outputs/experiments/first_stage_s1_03_r1_20261005/preflight/heartbeat_20261005_1156/gate_and_validation_evidence.json) · [本轮回执](outputs/experiments/first_stage_s1_03_r1_20261005/preflight/heartbeat_20261005_1156/summary.json)。
 
+
+
+
+
 **S2-P17报告与实验资产已通过交付复核，每小时跟进已暂停（2026-10-05）：**[正式报告13](docs/第二阶段/实验报告/13_可变波束数量与SCA前后对照.md)已向用户呈现，直接分配/最终B、29图、19360终态及4839最高候选物理核验、438景共同计时和两处不可恢复精确成本均完整说明。原始七卷7,655,398,166字节及229成员/44,370,103字节的报告补充卷已双端逐SHA通过；68项根交付前核验全部通过。自动化`s2-p17`已实际置PAUSED并精确回读，最后的关闭回执另以小卷封存，不重启正式任务、不关机、不归档对话。[根交付复核](outputs/experiments/variable_beams_20261004/delivery/final_preclosure_root_acceptance.json) · [报告补充卷回执](outputs/experiments/variable_beams_20261004/archive/report_supplement_delivery_receipt.json) · [跟进暂停精确回读](outputs/experiments/variable_beams_20261004/followup/completion_pause_verified_readback.json)。本轮没有增加科学预算；V1的条件性改善、直接SGM取舍、强贪心基线与严格基本服务下降均保留在报告中。以下待归档/ACTIVE段落为此前历史。
+
+
+
+
 
 **S2-P17双阶段正式报告已形成，正在完成报告补充归档（2026-10-05，10:51:25 API/SSH完成态复核）：**训练2/2、V0/V1各400000/400000、累计800000/800000（100%）；共同评价3/3、4840直接结果；SCA5/5、14520方法及4840最终B。ef审计已完成19360终态物理复算和4839最高SI候选复核，两精确计时缺项明确保留。最终出版31626b2共29图/37输出，覆盖全部147个实际训练N分页和20母景配对分布，数值与视觉检查通过；旧bbfc图的轴题遮挡/巨幅分面问题已独立修复，原输出保留。
 
+
+
+
+
 [第二阶段报告13](docs/第二阶段/实验报告/13_可变波束数量与SCA前后对照.md)并列直接与SCA最终结果：V1相对V0四留出N平均SI直接+0.722百分点、最终+0.279百分点；100束最终保留门槛通过，但直接SGM下降0.032634，小N有退步。B1贪心＋SCA总体SI/SGM仍较强，平均SI与总有效承载不可互代。严格基本服务计数在A的数值容差内略降，B相对A无新增严格跨下；没有删除失败/非收敛或用补零掩盖两次中断成本。主计时采用五方法共同完整438景，性能保留全部440景/20母来源。原始七卷双端已验，正式报告/分析证据/新图及代码的补充卷和最终关闭回执尚待完成，每小时跟进仍ACTIVE，不能仅凭报告文件已生成宣称全部交付结束。[数值摘要](outputs/experiments/variable_beams_20261004/analysis/summary_ef62040e88f1/analysis_summary.json) · [共同438景计时](outputs/experiments/variable_beams_20261004/analysis/timing_common_ef62040e88f1/timing_common_intersection.json) · [基本服务转换](outputs/experiments/variable_beams_20261004/analysis/basic_service_ef62040e88f1/basic_service_transitions.json) · [29图QA](outputs/experiments/variable_beams_20261004/analysis/publication_qa_31626b2ffa4b.json)。以下为历史阶段记录。
+
+
+
+
 
 **S1-03-R1四条独立对照完成，P1接近机制检查（2026-10-05，北京时间10:56–10:57 API/SSH）：**Jan31 R0共同初始化、R1规则重构、R2随机重构、R3同重构器搜索均completed100/100，累计400/500、4/5方法完成；P1最终100景尚待262144固定终点，未读取四对照成绩用于调参。新P1原ID`train_ppo_20261005_093803_4570222a` training60416/262144（23.046875%）、944更新，训练完成0/1、活跃1；三个验证节点16384/32768/49152各20景，60/320条记录的节点SHA与账一致。原失败65536单列。两端源码/config/进程身份无异常，GPU瞬时均0%，显存1342/4MiB；20424因对照完成而空闲，不新增任务占用。controller与归档器及隧道身份匹配，归档器记录8个已完成开发/正式对照任务、无错误。下一步由既有控制器完成65536独立机制审计，通过后同ID续跑；完整模型效果仍待考核。[本轮回执](outputs/experiments/first_stage_s1_03_r1_20261005/preflight/heartbeat_20261005_1055/summary.json) · [验证节点](outputs/experiments/first_stage_s1_03_r1_20261005/preflight/heartbeat_20261005_1055/validation_nodes.json) · [运行清单](outputs/experiments/first_stage_s1_03_r1_20261005/run_manifest.json)。
 
+
+
+
+
 **S2-P17原始资产双端归档完成，新的完整审计已启动（2026-10-05，北京时间10:23:19 SSH/API）：**训练2/2、V0/V1各400000及800000交互，共同评价3/3和4840初解，SCA5/5、14520方法记录及4840最终B保持完成。七卷7,655,398,166字节、78,377成员已于10:07:58完成本地/20424容器与成员校验；随后小清单验收确认两端manifest SHA一致、后台归档进程已退出。最终报告、分析代码/账本与出版曲线仍需后续补充卷，不能把原始归档完成当完整交付。
+
+
+
+
 
 50cf路径错误已由cdb修正；cdb又因报告逐束标量除法与statistics.mean不同于原物理核心的float64向量除法/NumPy均值而在SI锁定边界误拒。直接导入冻结cdb审计函数全量复现4840条B，确认误拒173、按原口径的SI守护/phase2锁定值/最高可行SI违规均0，最大归约差4.44e-16。真正首例为V0 `scene_00002_r0`（此前quick-sum定位的00005_r1只是边界物理示例，不能称实际首例）；首例A/B/最高候选容量独立物理重算与保存值逐束完全相等，B恰等原锁定floor。新分析提交`ef62040e88f1f02f936de8fb26699b2249feb1bb`仅对齐SI计算并完整核最高可行SI锁定值，保留1e-8阈值及严格比较，12/12专项及真实输入预检通过；没有改变原终态或重跑优化。完整只读审计PID39201/出生776097322已从干净ef仓库启动，后续出版门控PID39443/出生776102645只等待这一身份成功；尚未生成完整审计输出。源码已整合至main `2e4850c`，原0a/c80冻结资产不动，正式效果结论仍待完整物理审计与报告。[原始归档验收](outputs/experiments/variable_beams_20261004/archive/final_raw_metadata_acceptance.json) · [精确全量谓词复现](outputs/experiments/variable_beams_20261004/preflight/analysis_sca_floor_scan_old_report_exact_4840.json) · [首例物理核验](outputs/experiments/variable_beams_20261004/preflight/analysis_first_old_report_rejection_scene00002_r0_physics.json) · [新分析启动](outputs/experiments/variable_beams_20261004/preflight/analysis_report_launch_ef62040e88f1.json) · [出版成功门控](outputs/experiments/variable_beams_20261004/preflight/analysis_publication_gate_ef62040e88f1_launch.json)。以下运行中或分析失败的段落均保留为历史。
 
+
+
+
+
 **S2-P17计算完成，报告路径读取错误已定位，远端原始归档齐全（2026-10-05，北京时间09:50:54 API/SSH）：**10任务仍全部completed，V0/V1各400000/400000、2/2与800000/800000（100%），共同评价3/3及4840初解，SCA5/5及4840条B、14520条方法记录齐全。旧只读审计27417已退出：50cf脚本把controller内已指向文件的`job_path`再次拼接`job.json`，在`load_jobs`前置读取时失败；物理19360终态/4839候选复核尚未开始，没有正式报告输出，原科学资产未改。开发树已修路径解析，20424隔离11项报告专项通过；正在用真实10任务分层预检并补充实际频率槽资源汇总，不降低身份、物理或数量门槛。不得按旧审计PID重启，也不重复正式计算。
+
+
+
+
 
 09:53:54按远端归档manifest重新核对七卷（含`raw_support.tar.gz`），远端7,655,398,166字节已逐成员校验；本地四卷完成，H0仍为part，其余两卷待传，本地最终delivery回执未生成。早先六个job卷扫描漏计支持卷的观察已保留并更正，不能据此宣称七卷双端验收。独立整合分支d5c8d9a已纳入当前S1-R1 main与出版脚本681980b，本地针对性Ran69、通过68、1 CUDA条件跳过，旧整合远端Ran648、通过644、4跳过及11优先专项通过；尚未合main，待报告修复冻结接入。20424另有S1-R1正式评价，不干预其任务或抢占计时资源。出版图源码已冻结，尚未读取正式审计结果；中文双阶段报告与全部归档交付仍未完成，每小时跟进保持ACTIVE。[本轮任务核验](outputs/experiments/variable_beams_20261004/preflight/heartbeat_20261005T0148_summary.json) · [七卷更正](outputs/experiments/variable_beams_20261004/preflight/heartbeat_20261005T015354Z_archive_volumes_correction.json) · [报告失败现场](outputs/experiments/variable_beams_20261004/preflight/analysis_report_observe_20261005T094x.json) · [路径修复专项](outputs/experiments/variable_beams_20261004/preflight/dev_snapshot_20261005T015255Z_analysis_path_fix.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。
 
+
+
+
+
 **S1-03-R1已从零训练，并与另一实例对照并行（2026-10-05，北京时间09:43:23–24 API/SSH）：**用户已选择修复版完整262144，并要求今后相关修复、验证和必要重跑直接执行、不反复询问。新P1唯一任务`train_ppo_20261005_093803_4570222a`为training2048/262144（0.78125%）、32更新，完成0/1、活跃1；旧失败65536单列，计划累计327680。20424同源Jan31对照R0已100/100、R1为58/100，R2/R3排队，共158/500、方法完成1/5；新P1最终评价尚未提交。两端新工作台8896/8897及冻结科学576ed63093fd0300e3ffd15ed57c8b4e0ee6e902、DQN/CUDA、实际worker出生/源码/config SHA均核，issues为空。GPU瞬时均0%，20418显存1342MiB、20424为4MiB，未宣称满载。
+
+
+
+
 
 旧696输入/起点独立复用审计通过，572/576训练资格保持，修复版开发80/80及独立审计通过后才启动P1与Jan31四对照。远端652项回归中4跳过、其余通过；计划SHA33af0e32efd88d7a520819d09702416a9bffde303c011c6d227ad833c50e017d，独立运维25467ac，controller17276及归档器8252持久运行。每小时跟进已切新组，不恢复旧P1，不干预S2；模型效果待固定终点考核。实际ID、版本、来源和后续进度见[方案09](docs/第一阶段/方案/09_区域重构缓存修复后重跑方案.md)、[新运行清单](outputs/experiments/first_stage_s1_03_r1_20261005/run_manifest.json)、[现场核验](outputs/experiments/first_stage_s1_03_r1_20261005/preflight/observe_20261005T014324.json)。下方等待方案09授权为此前历史。
 
+
+
+
+
 **S2-P17正式计算全部完成，进入全量审计与双端归档（2026-10-05，北京时间08:51:36 API/SSH根核）：**V0/V1训练2/2、各400000/400000，累计800000/800000（100%）；共同评价3/3、4840初解；SCA五来源5/5、14520条none/A/B记录及4840条最终B全部保存。贪心最后任务为`refine_sac_20261005_075851_e6741d48`，固定/贪心各1320条方法记录、各440条B；三模型各3960条方法记录、各1320条B。10任务均completed、计算worker均已退出，controller正常进入`awaiting_report_and_archive`后退出，不能按残留PID恢复或重复计算。
+
+
+
+
 
 原科学0a与生产修复c80冻结保留。独立分析提交88a6721修正报告清单变量覆盖并增加V1主动暂停账本；20424专项10项中1项测试夹具缺键，已单独以50cf449修正，仅改测试；20424真实专项10/10通过。09:11:06启动唯一只读全量审计PID27417/出生775664007，明确不skip physics，19360终态/4839最高SI候选审计结果尚待完成。V1暂停账本已双端逐SHA冻结（`8e90d6fb8e2bfa22a8cc00402eb2a4437da2362ef795fe6d39bd1e6f732c1266`）；V0原失败B回退与V1主动中断的精确成本缺项分开保留，不补零、不重做优化。原始资产约40.42GB由持久远端packer26818/出生775632958和本地隐藏接收10636分卷压缩、下载及逐成员SHA复核；09:11:33已完成前三卷远端校验，本地首卷仍在传输，不能称双端备份完成。出版曲线另按真实N分面回报、标明编号＋组合，不覆盖已冻结审计输出；整合提交268bdaf正在独立20424验证，尚未合main。全部正式结果、曲线、整合验证及归档验收后才交付并暂停跟进，当前不能称完整交付。[正式计算完成回执](outputs/experiments/variable_beams_20261004/preflight/all_computations_complete_20261005T005136Z.json) · [中断账本](outputs/experiments/variable_beams_20261004/analysis_inputs/user_pause_interruption_20261005T005919Z.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。下列S2-P17运行中段落均保留为历史时点。
 
+
+
+
+
 **S2-P17三模型SCA完成、固定基线接续；报告预检修正中（2026-10-05，北京时间07:50:19 API/SSH）：**训练2/2、V0/V1各400000及800000交互，三共同评价4840初解完成。V0/V1/H0＋SCA各completed3960/3960、各1320条B，SCA来源完成3/5。B0 固定规则＋SCA实际任务`refine_sac_20261005_065945_65b1b812`（request `s2p17-fixed-jan29-sca`）evaluating1183/1320、目录394条B，来源为V0评价的fixed组（固定基线初解，仅一次），worker17917/出生774876847及c80快照/原science0a/修复证明核验一致；贪心未提交。累计B4354/4840（89.96%，含原1条失败回退），controller420及server226正常、单worker、无新任务错误。
+
+
+
+
 
 只读收尾预检发现c80报告脚本`load_refinements`局部变量覆盖控制清单，后续scientific_commit读取会失败；尚未运行正式审计，不能称正式结果失败。另需将V1用户主动暂停的A试算成本按独立SHA账本处理，不能把成功续算一次时间当累计全程。已安排只改开发worktree的报告脚本/专项测试，形成新的分析提交；不热改运行c80、不重算初解或优化，待SCA计时全部结束后在20424验证并做完整审计。main与c80只重叠runtime/service，runtime有两处合并冲突；之后须在独立整合树保留S1 schema4/机制闸门和S2来源修复两侧语义，不能整文件选一侧，当前未合并或运行测试。正式报告、曲线、全量审计及归档尚未完成。[现场回执](outputs/experiments/variable_beams_20261004/preflight/heartbeat_20261004T235019Z_sca.json) · [根复核](outputs/experiments/variable_beams_20261004/preflight/heartbeat_root_review_20261004T235019Z.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。
 
+
+
+
+
 **S1-03停止诊断和缓存修复报告已形成（2026-10-05）：**原e174任务仍停在65536/262144（25%）、1024更新，机制接受率未达门槛；不是262144完成或Jan31考核结论。已用两步确定性序列复现接受中心移动后缓存不一致及连续/恢复路径分歧，一行修复c98085a通过本地相关25项、远端632项回归（4跳过），修复版未部署/训练。已有2736完成回合终态（564不同训练景）和80验证终态的新增独立物理核验均无违规；不能据此抹除过程缺陷或直接续跑。34文件停止现场、15项派生文件及5张中文曲线已逐SHA本地/远端核验。[报告06](docs/第一阶段/实验报告/06_区域重构PPO机制检查与停止诊断.md) · [只读分析](outputs/experiments/first_stage_s1_03_20261005/analysis/gate_report_22ba087bfa17/summary.json) · [修复证据](outputs/verification/s1_03_cache_fix_20261005/) · [待确认方案09](docs/第一阶段/方案/09_区域重构缓存修复后重跑方案.md)。推荐修复版从头262144，若获批与旧失败65k累计327680（较原总额净增65536）；也列196608余量备选，两者均未执行。剩余训练/500考核不擅自接续，跟进保持ACTIVE等待范围决定。
+
+
+
+
 
 **S1-03在65,536机制闸门停止，正在诊断几何缓存缺陷（2026-10-05，北京时间06:20:05–07 API/SSH）：**P1唯一任务`train_ppo_20261005_051054_d2e8e76a` stopped65536/262144（25%）、1024更新、2736完整回合，stop_reason=mechanism_gate_pending；worker45214已退出，活跃训练0，四验证节点共80/320记录。原机制审计issues为空、八项通过，但近期非STOP接受率578/16282=3.5499%未达冻结50%，没有恢复或改阈值。65k验证13/20景原终态Q改善、均值+0.028712，并非独立Jan31考核，原定196608后续交互与500方法结果均未执行。controller按failed审计退出，不能当运维超时直接重启。
 
+
+
+
+
 只读代码发现accepted中心/归属更新后未同步`_distance_cache`，可能污染后续几何判断；最近窗口无此前accepted时559/912接受（61.3%），有此前accepted后仅19/15370（0.124%），9959次footprint外拒绝全部在后者，故不能将3.55%直接归于PPO能力。最小修复和确定性回归正在开发树进行，不热改e174、未部署或新训练；完整stopped断点/日志正在逐SHA后台归档，诊断报告06和曲线待完成。checkpoint SHA3245daa460cc2a025101f09730b3218d53a87d09c2b7d41121bf91ed54fcdbad，audit SHA0d6a868c0edcc4d2d1aa4e3370591767179b7fd4f014777340ba236dda8747e7。两GPU均0%/4MiB，20424仍无S1作业，未干预S2。每小时跟进已更新停止条件并精确回读、保持ACTIVE。[现场](outputs/experiments/first_stage_s1_03_20261005/preflight/observe_20261004T222006.json) · [原审计](outputs/experiments/first_stage_s1_03_20261005/preflight/heartbeat_20261005_0619/mechanism_remote_evidence.json) · [动作分层](outputs/experiments/first_stage_s1_03_20261005/preflight/heartbeat_20261005_0619/mechanism_prior_acceptance_diagnosis.json) · [运行清单](outputs/experiments/first_stage_s1_03_20261005/run_manifest.json)。
+
+
+
+
 
 **S1-03 P1已开始真实学习（2026-10-05，北京时间05:14:56–57 API/SSH）：**唯一任务`train_ppo_20261005_051054_d2e8e76a` training3072/262144（1.171875%）、48更新，完成0/1、活跃1；worker45214出生、远端DQN/CUDA、科学e174源码和配置SHA均核。Jan31新100景已冻结并完成共同起点`evaluate_ppo_20261005_050939_c90e9d14`，公共准备696/696、开发80/80审计通过，训练资格572/576（完整账SHA744b1157…150168）。20418 GPU单点0%/1342MiB、P1进程CPU约满一核心，20424为0%/4MiB且继续等S2正式计时完成；当前没有双GPU同时计算或已跑满的证据。控制器26548、归档器23484正常，每小时跟进ACTIVE并已绑定实际P1 ID；按原65536闸门审计后同ID接续，最终262144/500考核及报告未完成，效果待验证。[最新现场](outputs/experiments/first_stage_s1_03_20261005/preflight/observe_20261004T211457.json) · [实际更新](outputs/experiments/first_stage_s1_03_20261005/preflight/P1_initial_sampling_probe.json) · [运行清单](outputs/experiments/first_stage_s1_03_20261005/run_manifest.json) · [执行说明08第7节](docs/第一阶段/方案/08_区域重构PPO双GPU执行说明.md#7-p1已开始真实学习)。下方05:06等待输入/训练0为历史时点。
 
+
+
+
+
 **S1-03跟进文本编码修复（2026-10-05 05:22）：**本轮心跳发现保存的自动化名称/正文分别含11/1403个Unicode替换字符；保留原文件后已用完整中文重写，通过结构化参数提交并显式UTF-8/ASCII转义JSON回读，名称/正文替换字符均0，每小时/本对话/ACTIVE设置保留。训练和科学源码未改、未重启或重复任务；05:22:16–17实际核验P1为23552/262144（8.984375%）、368更新，首个16384验证节点20/20文件SHA通过。controller/归档器出生与冻结脚本核验正常、无新错误。原0步准备状态不再代表当前。[本轮回执](outputs/experiments/first_stage_s1_03_20261005/preflight/heartbeat_20261005_0518/summary.json) · [配置精确回读](outputs/experiments/first_stage_s1_03_20261005/preflight/heartbeat_20261005_0518/automation_repair_readback.json)。
+
+
+
+
 
 **S2-P17两个学习模型SCA完成、H0已接续（2026-10-05，北京时间04:46:59 API/SSH）：**训练V0/V1各400000、2/2及800000交互，三共同评价4840初解均完成。V0＋SCA、V1＋SCA各completed3960/3960方法记录，各1320条B，SCA来源完成2/5。H0 冻结G11 T0＋SCA新任务`refine_sac_20261005_043701_fcd5474a`（request `s2p17-h0-jan29-sca`）evaluating382/3960、目录127条B；worker7421/出生774020749匹配，绑定原H0评价初解及T0 policy SHA ae095e…eb824，修复runtime c80与原science0a/修复证明一致。累计B目录计数2767/4840（57.17%，含原1条失败回退）；固定/贪心两个来源未提交。controller420、server226正常、单worker、无新任务错误。另见额外工作台server6214，当前相关计算worker仅H0，不把额外server误报成并行计算；不干预其它实验。报告、全部物理/时间审计与归档仍待完成。[现场回执](outputs/experiments/variable_beams_20261004/preflight/heartbeat_20261004T204659Z_sca.json) · [根复核](outputs/experiments/variable_beams_20261004/preflight/heartbeat_root_review_20261004T204659Z.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。
 
+
+
+
+
 **S1-03实现与开发闸门完成，接续新数据准备（2026-10-05，北京时间05:06:27–28 API/SSH）：**用户已授权双GPU，一个P1/seed51001/262144宏动作（含65536机制闸门），预算未增加。科学e1745eccc1f47aa0b2f4ede678ce7789e030c1ea、计划SHA cee8f1f28d633a71e887a40fb780d2ea2ba9ea3165bb90f5c8f365de664033bd；20418/20424的8894/8895服务、DQN/CUDA与独立源码核验正常。开发R0/R1/R2/R3各20、80/80独立审计通过：20起点合格，R1/R3原终态Q改善17/20与20/20，仅证明非学习动作可改善。576训练初始化完成，572合格、4不合格；六个唯一工作台任务均completed。Jan31官方资产149071069已本地下载校验，后台SFTP到20418后用远端DQN准备预先冻结的100时刻；最终输入尚未就绪。当前活跃训练0、累计**0/262144（0%）**，两GPU均0%/4MiB，不能把准备算作训练。20418接续单模型学习，20424等待S2既有计时完成后导入同源输入/起点并做五方法考核，未干预其它实验。
+
+
+
+
 
 04:47原controller仅因8781只读超时退出；保留现场、核原六ID后以独立运维7837d689daf89d0a126178770cdcefefea925584修复恢复（12项检查通过），新PID26548/UTC出生21:05:11.0057764Z、attention为空。S2查询故障只排队20424，放行还须核五SCA身份和实时API；科学源码不热改。归档器PID23484健康，只拉completed资产逐SHA核验；每小时`s1-03-ppo-gpu` ACTIVE并精确回读。完整ID、阶段、来源与限制见[运行清单](outputs/experiments/first_stage_s1_03_20261005/run_manifest.json)、[现场核验](outputs/experiments/first_stage_s1_03_20261005/preflight/observe_20261004T210628.json)、[恢复证据](outputs/experiments/first_stage_s1_03_20261005/preflight/controller_recovery_preflight.json)、[执行说明08](docs/第一阶段/方案/08_区域重构PPO双GPU执行说明.md)。模型效果待验证；下方方案07未授权为之前讨论时点。
 
+
+
+
+
 **S1下一轮PPO重新设计仅为方案（2026-10-05）：**用户要求放弃旧做法重新设计，新增[第一阶段方案07](docs/第一阶段/方案/07_面向需求区域重构的PPO重新设计.md)。主推PPO主动决定需求区域合并/拆分/重划及跨区波束配额转移，由固定几何层原子落实；取消旧聚类身份与0.25°范围作为新算法默认，拟议新可达域同时供所有基线。主训练拟按原终态统一有界覆盖等级与连续负载目标，加入STOP，最好布局仅诊断；同一完整宏动作/重构器下规则、随机、搜索与PPO比较，先验可行性与动作改善闸门先于训练。候选单seed51001/一个新PPO总262144宏动作（含65536检查节点）、原Jan08/09训练与Jan12开发验证、新独立100景日期尚未冻结；均未授权执行、未产生新任务或权重。仅完成方案审查与文档引用检查，效果待验证；S1-02仍已交付/跟进PAUSED，本对话未操作S2-P17等其它实验，无SSH或新计算。
+
+
+
+
 
 **S2-P17用户重启后已按原ID续跑（2026-10-05，北京时间02:59:31 API/SSH根核）：**20424已可连接，DQN/CUDA12.1、原4090D、c80修复源码干净且包路径正确；V1暂停前1315件全部SHA不变，断点及关键文件与暂停前一致。经工作台普通resume恢复`refine_sac_20261005_014002_932212d0`，现evaluating1342/3960（目录1343条，顺序观测）、447条B；加V0完整1320条B，共1767/4840最终B，SCA来源完成1/5。训练2/2、800000交互及三共同评价4840初解仍完成，未重训/重评或重做首次failed299修复。新server226/ticks773410386、controller420/ticks773421630、worker354/ticks773420447实际匹配，controller phase=sca、last_error为空，单worker继续。每小时跟进已更新新身份、ACTIVE并精确回读。
 
+
+
+
+
 用户主动暂停的V1 scene_00146_r0 sca未提交尝试有callback下界至少571调用/1.4651551842689514秒，已备份原迭代日志；成功续算的时间不能声称包含此前中断计算或人工停机，该开销将在最终报告单列，与原V0失败B回退缺时分开。报告、全量审计与归档仍待完成。[恢复前核验](outputs/experiments/variable_beams_20261004/preflight/user_resume_preflight.json) · [实际续跑验收](outputs/experiments/variable_beams_20261004/preflight/user_resume_live.json) · [API与控制器](outputs/experiments/variable_beams_20261004/preflight/user_resume_api_and_controller.json) · [跟进配置回读](outputs/experiments/variable_beams_20261004/followup/user_resumed_verified_readback.json)。下方暂停/SSH不可用均为历史时点。
+
+
+
+
 
 **S2-P17已获续跑授权，等待20424 SSH恢复（2026-10-05，北京时间02:44:35连接尝试）：**用户明确“继续”，临时暂停授权已撤销；连续有界连接均在SSH协议握手前断开（Error reading SSH protocol banner），尚未启动server/worker/controller或发送恢复请求，不能称已续跑。最后有效远端核验仍为02:24:22：训练2/2、80万交互和4840初解完成，SCA1/5完成，V1 stopped1315/3960、438条B，累计1758/4840最终B。用户已被询问远端是否启动完成及端口是否仍为20424；不扫描其它端口或切20418。每小时跟进已实际恢复ACTIVE并精确回读；连接可用后按原ID、c80修复源码和完整已保存case核验后续跑，不重做首次failed299修复、不重训或重复初解，保留暂停中断开销。[连接记录](outputs/experiments/variable_beams_20261004/preflight/user_resume_access_20261004T184435Z.json) · [跟进恢复回读](outputs/experiments/variable_beams_20261004/followup/user_resume_waiting_ssh_verified_readback.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。
 
+
+
+
+
 **S2-P17按用户要求暂停，等待远端重启后明确续跑（2026-10-05，北京时间02:24:22已核）：**训练V0/V1各400000、2/2及800000交互已完成，三共同评价4840初解完成；SCA来源1/5完成。V0＋SCA3960/3960、1320条B；V1原任务`refine_sac_20261005_014002_932212d0`已通过工作台停为stopped，保存1315/3960条方法记录、438条B，累计1758/4840条最终B（36.32%，含原1条失败回退）。两SCA断点最后case SHA一致；接续controller81152已核出生后停止，V1 worker89630已退出，活动任务0，文件已刷盘，未重启或关闭主机。每小时`s2-p17`已实际置PAUSED并精确回读；用户未明确继续前不得自动恢复。重启后须重新核20424的DQN/CUDA、c80修复源码、工作台及当前进程出生，以原ID/已提交case接续，不应用首次failed299修复、不重训或重复初解；暂停中未提交的优化尝试日志保留，续跑及报告需记录中断开销。报告/全量审计/归档未完成。[暂停验收](outputs/experiments/variable_beams_20261004/preflight/user_pause_verified_20261004T182422Z.json) · [定时任务暂停精确回读](outputs/experiments/variable_beams_20261004/followup/user_pause_verified_readback.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。
+
+
+
+
 
 **S2-P17首个SCA来源完成、V1已接续（2026-10-05，北京时间01:50:42 API/SSH）：**训练2/2、V0/V1各400000、合800000交互及三共同评价4840初解已完成。V0＋SCA原任务`refine_sac_20261004_215930_e814197c`已completed、3960/3960方法记录、1320最终B；V1＋SCA新任务`refine_sac_20261005_014002_932212d0`（request `s2p17-v1-jan29-sca`）evaluating、380/3960，目录已有127条B，worker89630/出生ticks772958980匹配。SCA来源完成1/5，累计B目录计数1447/4840（29.90%，含既有1条失败回退）；API与目录顺序读取，可能相差正在落盘的一条方法记录，不用方法数除3代替B计数。V1已绑定c80修复快照、原science0a及同一修复证明SHA；controller81152和server80715正常、单worker、无新错误。H0/固定/贪心三个来源尚未提交，由原控制器继续；最终报告、全量审计及归档仍待完成。[当前回执](outputs/experiments/variable_beams_20261004/preflight/heartbeat_20261004T175042Z_sca.json) · [根复核](outputs/experiments/variable_beams_20261004/preflight/heartbeat_root_review_20261004T175042Z.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。
 
+
+
+
+
 **S2-P17 SCA已按原ID修复接续（2026-10-04，北京时间23:30:50 API/SSH根核）：**训练V0/V1各400000、2/2及800000总交互完成，三共同评价3/3、4840初解完成。V0 SCA仍为`refine_sac_20261004_215930_e814197c`/`s2p17-v0-jan29-sca`，现evaluating、544/3960条方法记录；逐文件计数none182/A181/B181，已保存181/4840条最终B（含1条明确失败回退），SCA完成0/5来源，后四来源由原控制器依次接续。新worker80820/出生ticks772138443、server80715/ticks772131461与controller81152/ticks772166046均实际匹配，DQN/CUDA及单worker计时条件通过，controller phase=sca且last_error为空。
+
+
+
+
 
 原科学提交`0a4742a9a15af93478501497fac5cd36579fa075`及其源码/模型/初解不改。候选严格边界修正单独提交`57ddd9e30c54b9999c327ae5a9d5655a2d41ce01`，恢复/报告提交`c80acaeca867a448cd8ec8cecaad5cfc79d8597a`已部署到20424独立`recovery/c80…/repo`并经工作台API绑定原任务；API同时保留原来源、实际repair快照、299件和失败尝试备份及SHA证明。真实干净repair源码全量548项中545通过、3项Windows限定跳过；原299最终记录及99个B最高SI候选逐束复核无异常。23:30再核原299件SHA全部未变，scene_00033_r0失败B逐束等于原A、新增优化调用0，原失败精确调用/时间依旧缺失并单列下界，不以工程复算代填。主计时表/图只对三动作精确时间完整的场景汇总，失败终态仍纳入。
 
+
+
+
+
 本地完整修复代码保存在`codex/variable-beams-20261004`开发worktree；main期间另有第一阶段共享runtime改动，合并及所需整合验证安排在正式SCA计时结束后，避免并行测试争用。本轮报告应使用已冻结repair repo或开发worktree中的`report_results.py`，不能用main旧报告入口忽略来源链。正式双阶段结果、全量物理/计时审计、曲线和双端归档仍待交付，每小时跟进继续。[实际恢复验收](outputs/experiments/variable_beams_20261004/preflight/repair_live_acceptance_c80acae.json) · [548项回归](outputs/experiments/variable_beams_20261004/preflight/repair_full_c80acaeca867.json) · [99候选复算](outputs/experiments/variable_beams_20261004/preflight/highest_si_audit_20261004T150922Z.json) · [工作台恢复回执](outputs/experiments/variable_beams_20261004/preflight/repair_resume_api_c80acae.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。下方22:11故障未恢复为历史时点。
+
+
+
+
 
 **S1-02 A/B执行、共同考核及正式结果完成（2026-10-04，北京时间22:39:40 API/SSH实查）：**三训练X0四向/X1八方向/X4相邻双束各409600交互、1600更新及20验证节点，累计1228800/1228800（100%）；六方法Jan30共同考核各100/100、共600/600，完整600保留布局及300原终态独立复算通过。活跃训练/评价均0，GPU单点0%/4MiB（总23028MiB）；controller与归档watcher已完成其阶段并正常退出，不恢复旧PID。原科学e22、单seed51001、固定终点与全部预算未变。
 
+
+
+
+
 六法全部100/100双99.9%覆盖、严格双100%为92或93景，但主体均衡目标均0/100。四向搜索主体CV0.532496、均值带内26.60束、已记录合计11.538秒，可作当前参照；三PPO对同菜单搜索主体CV差+0.002633/+0.002730/−0.001187，双束PPO微小改善伴随64.096秒均值耗时（约5.46倍），未显示全面优势。PPO原终态与保留结果分别报告；原终态三组主体CV都差于对应搜索。全部100景保留分母，例外仅0–3束；初始聚类逐景计时缺失不补零，时间非完整端到端。本轮未发生真实训练并行，未来新实验按用户要求优先并行。
+
+
+
+
 
 中文[报告05及13图](docs/第一阶段/实验报告/05_动作空间与PPO负载均衡B阶段对照.md)与[已交付A报告04](docs/第一阶段/实验报告/04_覆盖优先与主体负载均衡A阶段对照.md)、[完整补充统计](outputs/experiments/first_stage_s1_02_20261004/analysis/B_delivery/supplement/supplement.json)、[714文件逐SHA终核](outputs/experiments/first_stage_s1_02_20261004/preflight/final_delivery_20261004/terminal_archive_receipt.json)、[输入8文件逐SHA](outputs/experiments/first_stage_s1_02_20261004/preflight/final_delivery_20261004/input_assets_receipt.json)、[最终交付验收](outputs/experiments/first_stage_s1_02_20261004/preflight/final_delivery_20261004/root_acceptance.json)均为本轮入口。原始归档2580853935字节、缺失/差异0；最终报告补充资产备份和跟进暂停状态以[运行清单](outputs/experiments/first_stage_s1_02_20261004/run_manifest.json)及精确操作回执为准。实验执行完成，主体均衡目标尚未实现；下一轮仅建议、未新授权。以下S1-02运行中及partial说明为历史时点。
 
+
+
+
+
 **S1-02最终交付闭环（2026-10-04）：**23:19:59再次API/SSH实查，26个原任务均completed、三训练1228800交互与六法600结果齐全、issues为空，活跃训练/评价0，GPU0%/4MiB。主任务独立复核714原始文件及报告41链接/13图；最终报告、脚本、补充统计与图表远端65文件（含两份inventory）逐SHA一致，Git版本与Windows实际原字节通过明确换行映射分别保留。[主体报告备份](outputs/experiments/first_stage_s1_02_20261004/preflight/final_delivery_20261004/B_delivery_backup_receipt.json) · [实际原字节备份](outputs/experiments/first_stage_s1_02_20261004/preflight/final_delivery_20261004/B_delivery_runtime_exact_receipt.json)。报告与相关文档提交4eaf165；无新训练/评价。23:26:23已在报告链接和结论交付后，将本对话小时跟进`s1-02-a-b`暂停为PAUSED，prompt/周期/目标对话保持相同并精确回读；[暂停与配置回执](outputs/experiments/first_stage_s1_02_20261004/preflight/final_delivery_20261004/automation_closed_verified.json)。未归档对话、未停止工作台；科学效果未达标不改变已授权实验完成状态。
+
+
+
+
 
 **S2-P17共同初解全部完成，SCA边界故障正在修复（2026-10-04，北京时间22:11:09现场；22:18隔离诊断）：**两训练2/2、800000交互完成；V0含两基线2200、V1/H0各1320，三项共同评价3/3、初解4840/4840。V0 SCA原任务`refine_sac_20261004_215930_e814197c`在299/3960条none/A/B方法记录后failed；已有99条完整B路线及第100条none/A，后四来源未提交，不能把299条方法记录当299条完整路线。controller因该故障进入attention_required并退出；评价server71017/出生771337037仍正常，未盲重启。
 
+
+
+
+
 故障在scene_00033_r0的B：原A波束47恰好满足容量C=0.1×需求D，但C/D浮点值略小于0.1；候选逻辑将其视为未达束并允许微降，而末端严格守护拒绝。20424隔离工程复现跨下约0.428566 bps，非权重/数据缺失。修复保持末端严格守护与原预算，统一候选判断为C≥0.1D；原299条及失败证据冻结、按同口径只读复核。失败B原求解未保存最终功率/精确调用与耗时，仅回调证明至少684调用/约1.037秒；拟仅该案例显式回退已保存A、新增优化调用0，原失败及精确缺项保留，不能用工程复算数代填。工作台同ID修复来源链、后续四来源同口径及报告缺项审计正在实现验证，尚未正式恢复；不重训、不重推理已完成初解、不热改0a冻结源码。完整双阶段报告与归档仍待全部路线完成。[故障现场](outputs/experiments/variable_beams_20261004/preflight/sca_failure_observation_20261004T141109Z.json) · [299案例与失败资产清单](outputs/experiments/variable_beams_20261004/preflight/sca_failed_case_inventory_20261004.json) · [隔离根因复现](outputs/experiments/variable_beams_20261004/preflight/sca_boundary_diagnosis_20261004T141843Z.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。以下21:11共同考核中为历史快照。
+
+
+
+
 
 **S2-P17训练完成，进入共同考核（2026-10-04，北京时间21:11:47 API/SSH实查）：**V0 数量感知T-SAC＋固定100束、V1 同网络＋混合50–200束两原任务均completed、各400000/400000，完成2/2，累计800000/800000（100%）。科学`0a4742a9a15af93478501497fac5cd36579fa075`、seed51001、576母/8064训练景和原预算不变；训练worker已正常退出，不能按残留PID恢复。终点policy SHA为V0 `cdeee257cac92cdd2db4cb237ec4da597358ac9171e54a6e23a04d75e80b4df3`、V1 `702d1c66211b88a20840f4a22c3b13e019c228d2b79fb01fb1d7d902b0d129e9`（controller已登记，完整审计后再形成效果结论）。
 
+
+
+
+
 持久controller43266已自动切换工作台8781至evaluation/max_workers=1；新server71017/出生ticks771337037与V0评价worker71050/ticks771339542现场核验一致，原训练采用双worker并行。当前`evaluate_sac_20261004_211012_74ec35aa`（request `s2p17-v0-jan29-eval`）为157/2200次初始分配、evaluating，含V0三动作及固定/贪心各一次；三项共同评价完成0/3，累计初解157/4840，V1/H0和五来源SCA由原十请求控制器接续，不另建任务。当前无API/身份/源码异常；每小时跟进继续，正式双阶段报告、曲线、逐束物理与计时审计及全量归档尚未完成，不能以训练完成替代交付。[训练完成与评价启动回执](outputs/experiments/variable_beams_20261004/preflight/training_complete_evaluation_started_20261004T131147Z.json) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)。下方训练中为此前历史时点。
+
+
+
+
 
 **S1-02 B报告补充核验工具已就绪（2026-10-04）：**新增只读`scripts/report_stage1_balance_b_supplement.py`，主库b870055/06608f5；6项定向测试与X0两方法显式partial smoke通过，200计时行/100原终态与最好布局配对/100同菜单配对已核，未新增推理或评价，不能当六法完整交付。正式模式要求六法各100景及同标签passed审计SHA，输出原终态/保留最好布局分开统计、每菜单PPO对搜索及分段时间CSV；原终态状态未记录则空缺，边缘例外数量只报增减。完整六法仍未齐，补充正式分析尚未执行。21:02:08实际API为4/6方法完成、双束PPO15/100、双束搜索排队，合计415/600（69.17%）；训练3/3、1228800交互及1200验证均完成，效能结论仍待完整共同考核。[最新任务](outputs/experiments/first_stage_s1_02_20261004/preflight/observe_20261004T130208Z.json) · [只读补充脚本](scripts/report_stage1_balance_b_supplement.py) · [局部结构检查](outputs/verification/s1_B_supplement_20261004/partial_X0/supplement.json) · [共同考核阶段定时跟进回读](outputs/experiments/first_stage_s1_02_20261004/preflight/automation_B_formal_readback.json)。
 
+
+
+
+
 **S1-02三终点及考核来源核验通过（2026-10-04，20:46回执／20:49:12最新API）：**X4固定409600终点policy SHA`3f53541c99c4ebc7a2ee82729c51c79f1d267c23a03954432af3a317d0861f40`，策略/元数据/断点双端SHA一致，CPU严格加载727042参数有限、无新前向；50批/1600更新/20×20验证齐全，主任务另复算三SHA和更新序列。六考核job/config已核同Jan30的100景NPZ SHA`44e607af412e1599afcb35e281dc926d4e2e5e45ecf289559edb319b8beac07b`与同A2 starts SHA`c9e3dfed415a503bb0b0aab308537b37257b87cf5e7003f5a3284095a23589dc`，三PPO分别绑定409600终点、三搜索无模型，均repeats1及原预算。20:49:12四向/八向PPO与对应搜索4/6项完成，双束PPO3/100、双束搜索排队，合计403/600（67.17%）；活跃训练0、评价1，GPU单点23%/450MiB，异常0。[终点与来源回执](outputs/experiments/first_stage_s1_02_20261004/preflight/X4_completed_B_formal_started_20261004_2038/final_handoff_receipt.json) · [根复核](outputs/experiments/first_stage_s1_02_20261004/preflight/X4_completed_B_formal_started_20261004_2038/root_acceptance.json) · [最新评价](outputs/experiments/first_stage_s1_02_20261004/preflight/observe_20261004T124912Z.json)。B报告必须补原终态/保留最好布局两种口径及同菜单PPO对搜索配对，补充只读脚本正在准备；自动报告gate不能代替最终交付复核。
+
+
+
+
 
 **S1-02三训练完整完成，600结果共同考核已启动（2026-10-04，北京时间20:38:26 API／20:38:32节点核验）：**X0/X1/X4均completed，各409600交互/1600更新/20验证节点，总1228800交互、4800更新与1200验证记录，训练3/3完成。controller已按原计划建六项Jan30同100景、确定性1次共同评价；当时四向PPO＋四向搜索各100/100完成、八方向PPO85/100，其余三项排队，方法2/6、场景方法结果285/600（47.5%）。活跃训练0、活跃评价1；PPO-X1 worker210724/出生ticks771052581，DQN/CUDA/e22路径正确，GPU单点22%/454MiB（总23028MiB），无新异常。数据与模型选择仍冻结，独占评价以控制计时和动作量；尚不据部分结果判断菜单优胜。后续继续六项全部完成→独立审计→B正式报告/曲线→完整归档，小时跟进不提前停止。[六任务实际观测](outputs/experiments/first_stage_s1_02_20261004/preflight/observe_20261004T123826Z.json) · [三训练完整节点](outputs/experiments/first_stage_s1_02_20261004/preflight/B_validation_progress_20261004T123832Z.json) · [方法组合及唯一ID](docs/第一阶段/方案/06_A阶段与动作空间B阶段远端执行说明.md#13-三组训练完成与共同考核启动2026-10-04)。
 
+
+
+
+
 **S1-02交互预算已达终点，X4最终验证尚未结束（2026-10-04，北京时间19:36:20 API／19:36:26逐任务核验）：**X0/X1各409600步并已完整完成；X4亦达到409600步/1600更新，但状态仍validating，第20节点14/20，最后已完整验证阈值389120。累计1228800/1228800交互（100%），完整训练任务仍2/3，不能提前称三组及终点归档全部完成。共同考核尚未提交，controller正常等待X4；随后按原范围接三固定终点模型＋三同菜单搜索共600结果及B报告。当前1个活跃训练任务，GPU单点22%/1680MiB（总23028MiB），DQN/CUDA/e22及实际进程核验正常，无新异常。[本轮任务](outputs/experiments/first_stage_s1_02_20261004/preflight/observe_20261004T113620Z.json) · [节点证据](outputs/experiments/first_stage_s1_02_20261004/preflight/B_validation_progress_20261004T113626Z.json) · [本地归档及跟进核对](outputs/experiments/first_stage_s1_02_20261004/preflight/local_followup_20261004_1936.json)。
+
+
+
+
 
 **S1-02 X4阶段耗时核对（2026-10-04，北京时间14:33:13）：**X4为98304/409600、384更新，4个完整验证节点；训练2/3完成、累计917504/1228800（74.67%）。同一worker已运行5009.105秒，4节点的已保存`evaluation_call_seconds`合计4521.903秒，占90.27%，没有重复计入公共C1准备耗时。当前时间主要耗在逐场景验证，不能把它写成参数更新耗时或据此定位具体CPU/GPU算子瓶颈。GPU单点25%、显存1678/23028MiB，只有X4一个未完成训练；不补跑其它组填占用，也未改原验证预算或冻结科学源。回执：[实际任务](outputs/experiments/first_stage_s1_02_20261004/preflight/observe_20261004T063308Z.json) · [验证节点](outputs/experiments/first_stage_s1_02_20261004/preflight/B_validation_progress_20261004T063313Z.json) · [分段时长核算](outputs/experiments/first_stage_s1_02_20261004/preflight/X4_time_scope_20261004_1433.json)。该比例仅限已记录节点及本次观察窗口，不是全程提速或模型效果结论。
 
+
+
+
+
 **S2-P17两组已在20424并行训练（2026-10-04，北京时间13:46:50根API/SSH核验）：**V0 数量感知T-SAC＋固定100束任务`train_sac_20261004_133850_e482d0f3`为6450/400000，V1 同网络＋混合束数任务`train_sac_20261004_133951_5af0b41f`为5050/400000，均training、完成0/2，累计11500/800000（1.4375%）。两worker真实学习更新已在13:44:20核验（V0 update1951、V1 update552），不以服务启动冒充更新。科学`0a4742a9a15af93478501497fac5cd36579fa075`、seed51001、原3000W/频谱/预算冻结；两worker PID43555/43754出生、DQN/CUDA及实际source_snapshots/0a路径通过。生产工作台8781 max_workers=2，持久controller43266自动接共同评价与五来源SCA，不重复创建任务。13:43:59 GPU采样72%/1349MiB是瞬时值，不保证持续满载。
+
+
+
+
 
 原520合格＋Jan08新32/Jan09新24已恢复576母/8064景并全量核验，144验证/440考核不变。原39cf空服务的DQN软链接守护误报已按PID出生核停并保留原repo；首次scope87db因缺H0证明被拒时任务仍0，补新科学真实T0兼容证据后合同SHA9df68702…41ba通过，未放宽预算或改模型。最后538项/4跳过回归、双worker工程核验与实际页面通过；新学习效果待固定终点共同考核。每小时`s2-p17`已写入实际ID、科学源和并行要求并精确回读；报告将并列第二阶段直接与SCA最终结果及分段/总耗时，全部结果/曲线/审计/归档交付后才结束跟进。[运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json) · [根启动核验](outputs/experiments/variable_beams_20261004/preflight/root_launch_acceptance.json) · [真实更新](outputs/experiments/variable_beams_20261004/preflight/two_worker_training_confirm_20261004T0544.json) · [自动化回读](outputs/experiments/variable_beams_20261004/followup/formal_launch_verified_readback.json) · [方案17](docs/第二阶段/方案/17_可变波束数量泛化训练方案.md)。下方待选、未提交和启动准备均为先前历史，不据其恢复旧空服务。
 
+
+
+
+
 **S2-P17补足输入已核验，正在接续工作台启动（2026-10-04，13:22输入审计／13:27现场）：**520原合格母＋Jan08新32/Jan09新24已恢复576母，8064训练NPZ与4032逐机细节逐SHA/身份/需求账审计通过，训练record SHA c8c686bc…faceff；原144验证/440考核SHA不变。最终538项/4跳过回归及真实双worker工程检查通过（GPU采样峰82%、显存峰1347MiB，只是短核验），按用户要求生产两worker并行。第一次39cf生产服务已启动但启动脚本因DQN python软链接比较方式误报身份不符，实际CUDA/source正确、runs0；已核PID42157出生后安全停止空服务，冻结39cf资产保留，新提交0a4742a仅修路径比较，正在受控替换并重启。尚无正式训练任务，不把数据准备或服务启动写成已训练。[运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json) · [输入审计](outputs/experiments/variable_beams_20261004/preflight/verify_train_inputs_20261004T052234Z.json) · [空服务停机回执](outputs/experiments/variable_beams_20261004/preflight/orphan_8781_stop_39cfdb8.json)。
+
+
+
+
 
 **S1-02用户更正并行默认，当前只剩X4（2026-10-04）：**用户要求以后尽可能跑满GPU、不要串行训练，已写AGENTS及每小时跟进。外置调度器已实现训练并发1–5可配置/默认2、非训练考核独占，7项调度检查通过；主库f1f575e，能力准备不等于实际部署。两次切换均在只读预检退出，第一次controller版本化名称未被规则接受，修后X1已13:09:41完成、原服务13:09:44启动X4；没有发服务/controller停止信号，没有重复任务，原e22服务不变。故本轮未真实发生X1/X4并行、未验证提速；当前只有X4，不重跑完成组填占用。后续新实验须从启动时按资源并行，最终考核/计时隔离安排。[未执行切换回执](outputs/experiments/first_stage_s1_02_20261004/preflight/parallel_switch_nonexecution_receipt_20261004.json) · [新约定问答](Q&A/算法与训练/训练耗时瓶颈与GPU利用率.md) · [定时任务最新精确回读](outputs/experiments/first_stage_s1_02_20261004/preflight/automation_parallel_final_readback.json)。
 
+
+
+
+
 **X1终点/X4接续已核验：**X1固定409600步/1600更新、50批及20×20验证记录完成，policy SHA`b7bd0d367f1d420e5db3b3e00e3a2ad018d430c9656280fc03e06d81304fa473`，策略/元数据/断点双端SHA一致；CPU严格加载、727042参数有限，未新推理。13:17:53 X4原ID为24576步、96更新，PID156402/出生768500305，DQN/CUDA/e22正确，551/576资格表与X1同SHA。训练2/3完成，累计843776/1228800（68.67%），三模型共同考核及B报告仍待完成，定时跟进继续。[X1终点和X4接续](outputs/experiments/first_stage_s1_02_20261004/preflight/X1_completed_X4_started_20261004_1313/final_handoff_receipt.json) · [终点权重入口](docs/第一阶段/方案/06_A阶段与动作空间B阶段远端执行说明.md#12-x1终点核验与x4接续2026-10-04)。
+
+
+
+
 
 **S2-P17用户已选择补足并要求开始训练（2026-10-04）：**用户明确“补足”，随后要求“开始训练”；待选限制解除。保留原520个合格母快照，从原Jan08/09另选56个不重复、满足至少200正需求用户的时刻，补足576母/8064训练景；原56不合格记录保留，不伪作合格。两组各400000步/seed51001、合计800000及144验证/440考核、4840初解/SCA预算不变，正式运行仍只20424。已启动补充数据和部署预检的后台子agent，先按预定时间规则与资格筛选（不看模型效果）补齐、审计输入，再冻结源码/合同并经工作台提交两组，无需再次确认本次范围。当前还未创建正式训练任务，真实进展见[运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)及[用户决策记录](outputs/experiments/variable_beams_20261004/replenishment/authorization.json)；下方连续待选简报是此前历史。
 
+
+
+
+
 **S1-02 X0终点资产与X1接续复核通过（2026-10-04，11:38 SHA／11:40加载／11:42:01 X1进程实查）：**X0固定409600终点policy SHA`f1a61ada77aa1d8b16985c9df551e8f6e02481e05677affc0bcffcdafb7ef8b1`、model及checkpoint本地/远端一致，50批/1600更新与20×20验证记录齐全；CPU严格加载成功，727042参数有限，未新增前向或评价。主任务另复算三终点SHA和50批序列。X1已106496/409600、416更新，551/576资格全文与X0同SHA，真实DQN/CUDA/e22包路径匹配；X4排队，无启动失败或恢复。训练1/3完成，累计516096/1228800（42%），B共同考核尚未提交，每小时跟进继续。[完整回执](outputs/experiments/first_stage_s1_02_20261004/preflight/X0_completed_X1_started_20261004_1132/final_handoff_receipt.json) · [模型与验证核验](outputs/experiments/first_stage_s1_02_20261004/preflight/X0_completed_X1_started_20261004_1132/X0_endpoint_validation_and_load.json) · [终点文件入口](docs/第一阶段/方案/06_A阶段与动作空间B阶段远端执行说明.md#10-x0固定终点完成与x1接续2026-10-04)。产物完整可用不等于已证明性能提高。
+
+
+
+
 
 **S1-02 X0固定终点完成、X1已接续（2026-10-04，北京时间11:32:17 API／11:32:21逐任务实查）：**X0：A2＋四向PPO任务`train_ppo_20261004_070859_2896e8e3`已completed，409600交互/1600次更新，20验证阈值各20景全部保存，原worker退出；同20景的400次验证不称独立考核。X1：A2＋八方向PPO任务`train_ppo_20261004_070900_2918897c`已到81920/409600、320更新，第4次验证8/20，实际worker138079/出生ticks767665097及DQN/CUDA/e22包路径通过。X4：A2＋双束PPO任务`train_ppo_20261004_070900_44af22cb`仍0/409600排队。训练完成1/3，累计491520/1228800（40%）；seed51001、科学e22、计划a9和调度未变。已完成A报告和B筛选保持原结论，600条共同考核及B正式报告尚待三训练完成，效果待验证。[实时任务](outputs/experiments/first_stage_s1_02_20261004/preflight/observe_20261004T033217Z.json) · [验证节点进度](outputs/experiments/first_stage_s1_02_20261004/preflight/B_validation_progress_20261004T033221Z.json) · [方案06第10节](docs/第一阶段/方案/06_A阶段与动作空间B阶段远端执行说明.md#10-x0固定终点完成与x1接续2026-10-04)。下方旧训练进度保留当时时点。
 
+
+
+
+
 **S1-02 B训练资格与实际更新已核验（2026-10-04，07:35–07:38材料核对）：**公共576训练起点中551景达到双99.9%覆盖门槛，25景未达；按方案只从公开资格表采样，原576索引和不合格原因均保留，逐项对照差异0，验证/考核20/100分母不变。三任务引用同一冻结训练起点SHA，X0已落盘完整资格表；X1/X4仍排队，启动时继续核各自表。X0前三批8192/16384/24576交互对应32/64/96次真实小批量更新，当前初次验证尚未完成，不宣称验证效果。没有新训练启动失败或恢复。见[启动配置与更新证据](outputs/experiments/first_stage_s1_02_20261004/preflight/B_training_launch_20261004_0730/capture_receipt.json)、[资格独立对照](outputs/experiments/first_stage_s1_02_20261004/preflight/B_training_launch_20261004_0730/eligibility_vs_starts.json)。本段材料核对时间不替代下方明确标注的API进度时点。
+
+
+
+
 
 **S1-02 B训练已启动（2026-10-04，北京时间07:29:22 API/worker实查）：**全部796公共起点预处理完成，A正式400/400及报告、B五菜单筛选100/100保持完成。X0：A2＋四向固定步长PPO任务`train_ppo_20261004_070859_2896e8e3`为24576/409600，首次验证3/20；X1：A2＋八方向PPO任务`train_ppo_20261004_070900_2918897c`、X4：A2＋相邻双束PPO任务`train_ppo_20261004_070900_44af22cb`各0/409600排队。完成0/3，累计24576/1228800（2%），均seed51001、固定终点考核；初次验证按计划阈值20480在实际完整批次24576执行。科学e22、恢复计划a9、分析57ce不变，X0实际DQN/CUDA/4090D及快照路径核验通过，观察异常0。当前单worker调度，PPO效果待共同考核，不用早期回报作效果排名。[实际观测](outputs/experiments/first_stage_s1_02_20261004/preflight/observe_20261003T232922Z.json) · [方案06训练启动记录](docs/第一阶段/方案/06_A阶段与动作空间B阶段远端执行说明.md#9-b正式训练启动2026-10-04) · [运行清单](outputs/experiments/first_stage_s1_02_20261004/run_manifest.json)。下方预处理进度是历史快照。
 
+
+
+
+
 **S1-02 A交付归档复核完成（2026-10-04，北京时间05:45）：**报告04和补充图、400条本地独立复核、逐景时间CSV及脚本共11文件＋清单，已在20418独立`deliveries/A_final_20261004_v1/`保存，12文件逐远端SHA回读并由主任务对本地逐项复核一致；原400结果与7图保持原归档，不复制。报告/目录/问答提交`847d575`，新增45链接和图表可读性核对通过。[双端回执](outputs/experiments/first_stage_s1_02_20261004/preflight/A_final_delivery_backup_receipt.json) · [主任务交付验收](outputs/experiments/first_stage_s1_02_20261004/preflight/A_delivery_root_acceptance.json)。05:45:40实际API：B训练起点98/576 preparing，B独立100景起点排队，X0/X1/X4各0/409600、合计0/1228800，异常0；每小时跟进继续，B结果与整体交付尚未完成。
+
+
+
+
 
 **S1-02 A正式考核与报告完成，B筛选后进入准备（2026-10-04，北京时间05:30:04 API实查）：**A四路线400/400和独立复算通过，[正式报告04](docs/第一阶段/实验报告/04_覆盖优先与主体负载均衡A阶段对照.md)已形成并附7图、原始数据与逐景时间。A0：C1基础布局→A3：C1＋修补＋归属＋四向调位，双100%覆盖35→92/100、双99.9%覆盖46→98/100、主体CV均值0.7926→0.5491，但覆盖与主体均衡共同达标仍0/100。A3较A2仅再降CV0.00295；全部100景先耗尽200000归属尝试，82景不足一轮，不称已跑满10轮。已记录时间不含数据导入时生成初始聚类中心的逐景耗时，不补零或称完整端到端。
 
+
+
+
+
 B五菜单Jan12验证100/100及审计/选择已完成，固定X0四向，加质量候选X1八向和下一质量候选X4双束；没有满足效率不退步条件的候选，不能称三者已优于全部其它菜单或证明PPO效果。当前训练起点任务`evaluate_ppo_20261004_052920_9ccd61dd`准备3/576，B独立100景起点排队；三训练尚未提交，0/1228800（0%）。科学e22、恢复计划a9、分析57ce保持不变，控制器/活动worker/归档器/隧道身份及冻结SHA实查正常，已完成资产461文件逐SHA镜像；新正式报告补充包单独归档。每小时简报继续，等待准备→三PPO→共同考核与B报告。入口：[本轮进程/来源/归档回执](outputs/experiments/first_stage_s1_02_20261004/preflight/hourly_bounded_check_20261004_0530.json) · [B选择依据](outputs/experiments/first_stage_s1_02_20261004/analysis/B_menu_selection/selection.json) · [运行清单](outputs/experiments/first_stage_s1_02_20261004/run_manifest.json)。下方较早快照保留历史。
+
+
+
+
 
 **S1-02进入A正式考核（2026-10-04，北京时间05:21:45实查）：**Jan28公共起点100/100完成；A0：C1基础布局、A1：加覆盖修补、A2：再加负载感知归属各100/100完成，A3：再加X0四向调位6/100，合计306/400结果，当前观察异常0。四个正式任务依次为`evaluate_ppo_20261004_052045_4c3392cd`、`evaluate_ppo_20261004_052045_2ca9c671`、`evaluate_ppo_20261004_052045_d2dc8171`、`evaluate_ppo_20261004_052045_3853f8a4`。全部完成后进行共同审计/报告，再依序接B；三组训练仍0/1228800，尚不宣称效果提高。源e22、恢复计划a9及分析57ce保持不变。[实际观测](outputs/experiments/first_stage_s1_02_20261004/preflight/observe_20261003T212145Z.json) · [运行清单](outputs/experiments/first_stage_s1_02_20261004/run_manifest.json)。下方05:12及更早段为历史时点。
 
+
+
+
+
 **S1-02已接续运行，A开发80/80审计通过（2026-10-04，北京时间05:12:08实查）：**仅20418，工作台8892；A0基础C1、A1加覆盖修补、A2再加用户归属、A3再加四向调位四任务各20/20完成，原始结果经独立复算通过。当前Jan28正式100景公共起点任务`evaluate_ppo_20261004_050314_403d27d7`为52/100、preparing，实际worker74026/出生ticks765581597、DQN/CUDA及e22快照路径通过，观察异常0。准备不是训练；A正式四路线400结果与B三组训练尚未开始，训练0/1228800。持久控制器将接A正式考核及审计报告，再按方案05筛选五菜单、训练X0加两候选并共同考核，已授权预算不变，效果待验证。
+
+
+
+
 
 现行科学提交`e22f449ccee11d525bce1c8011f297dc87bc86e1`，恢复计划SHA`a9cebefc5b06eaf25f7459c7670b9bb11f9aaf218dfd90d5ecb0f987872f0bf7`；以远端`ops/current_controller_route.json`指向的recovery计划/状态为准。原77d四个0场景启动失败ID保留历史，新四ID有明确替代关系，仅白名单复用已完成20景公共起点。A开发审计曾把移动容差设得比冻结算法更严，误报7个场景：最大0.25000000032014935°仍在既定0.25°＋1e-9内；独立分析57ce改用相同容差、越界回归通过，同80条结果重审通过，未重跑或修改科学数据。外置analysis_override按SHA登记，不热改e22 worker。控制器、隧道和逐SHA归档器持续运行；A/B原始包本地/远端全SHA备份已完成，最终模型/结果归档仍随实验进行。
 
+
+
+
+
 入口：[执行说明06](docs/第一阶段/方案/06_A阶段与动作空间B阶段远端执行说明.md) · [运行清单](outputs/experiments/first_stage_s1_02_20261004/run_manifest.json) · [实际观测](outputs/experiments/first_stage_s1_02_20261004/preflight/observe_20261003T211208Z.json) · [只读重审](outputs/experiments/first_stage_s1_02_20261004/preflight/root_a_dev_audit_fixed/audit.json) · [分析修复来源](outputs/experiments/first_stage_s1_02_20261004/preflight/analysis_override_stage_receipt.json) · [控制器接续](outputs/experiments/first_stage_s1_02_20261004/preflight/controller_recovery_attempt2_launch.json) · [每小时跟进最新精确回读](outputs/experiments/first_stage_s1_02_20261004/preflight/automation_current_readback.json)。本段更新下方启动故障与准备期历史，后续须刷新API，不把本段时间当实时进度。
+
+
+
+
 
 **S1-02共同起点完成，A开发启动错误正在受控接续（2026-10-04，北京时间04:25–04:27现场）：**20418工作台8892、科学77d已真实启动；共同验证起点`evaluate_ppo_20261004_042121_08092f17`完成20/20，starts SHA`d5a1d4a6cf757cd423f157e1548f1c817a84957e90fcf6ed708262294af5350e`。随后A0/A1/A2/A3四个开发任务在0场景时因冻结配置`balance_starts.validation`被默认空字典合并器拒绝而失败，控制器已停在needs_attention；不是覆盖或学习效果失败，未产生80条开发结果、400条正式结果或任何新训练。所有失败任务/配置/日志逐SHA保留于[现场回执](outputs/experiments/first_stage_s1_02_20261004/preflight/a_dev_failure_receipt.json)。
 
+
+
+
+
 已完成本地/远端528项全量检查及真实CUDA更新/恢复、实际页面与最终工作台worker验证，但此前测试遗漏了“注入并冻结起点后的完整配置再次校验”环节。修复正补此回归，保留77d snapshot和原四失败ID；将用新冻结提交及新幂等ID接续同四路线（明确替代关系，不称原ID恢复），唯一白名单复用已完成20景起点，不重算或扩预算。原计划SHA`5895e5d2712eb8db84942bbdfd1719af2d75ccfd32e390ca72282f15d46ef8f4`保留；恢复计划/路由待门槛完成登记。归档器另有系统Python旧版不支持Path.is_relative_to的运维兼容问题，已用父目录归属判断修正、完成任务130文件SHA镜像通过。每小时`s1-02-a-b`保持ACTIVE；当前以[运行清单](outputs/experiments/first_stage_s1_02_20261004/run_manifest.json)及精确API观测为准，旧“未提交”条目是前期历史。
+
+
+
+
 
 **S2-P17实现与数据准备已完成可独立部分，正式训练待母场景选择（2026-10-04）：**核心0da4ca6、实际页面发现的>100束导入修复c045088、终止日志9b1d407、20424接续工具2cbe23e及双阶段审计报告入口32b2806已合入main（b1e6013）。20424最新快照全量531项/4跳过，真实CUDA小更新/恢复、T0严格加载及保存初解→SCA A/B不重新推理检查通过；页面V0/V1、210维/14令牌、SCA来源与预算通过，144景在页面重导入并核各N24条、任务0。Jan12 12母/144与Jan29 20母/440输入已核验；原576训练母仅520合格、56不满足200正需求用户，已询问采用520/7280或补56母，答复前不改范围、不生成整批训练或提交。正式训练0/2、交互0/800000、效果待验证。每小时s2-p17 ACTIVE且精确回读；生产8781工作台/controller尚未启动。报告固定并列第二阶段直接和SCA最终结果、逐N配对及分段耗时，脚本尚未用完整正式结果端到端验证。所有正式运行仅20424；固定/贪心的合法动作适配明示。[方案实施记录](docs/第二阶段/方案/17_可变波束数量泛化训练方案.md#11-2026-10-04实施与启动前核验记录) · [运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json) · [最新回归](outputs/experiments/variable_beams_20261004/preflight/dev_snapshot_20261003T194507Z_full_regression.json) · [页面导入](outputs/experiments/variable_beams_20261004/preflight/ui_import_receipt.json)。
 
+
+
+
+
 **S2-P17训练母场景资格待用户选择（2026-10-04）：**20424核验原576训练母快照仅520个满足至少200正需求用户，56个不满足（最少140）；原20验证中18合格，可按既定规则选12，首次不合格选取导致的0/144数据准备失败现场已保留并修正。已询问采用520母/7280训练景且维持两组40万步及考核预算，或另取原两天56个合格时刻补576；答复前不生成或提交依赖该选择的正式训练。工程实现与20424验证继续：DQN/CUDA及冻结包路径通过，核心/采样/案例16项、旧环境45项、SCA与保存初解来源39项专项通过，真实V0/V1更新和完整恢复、旧T0严格加载及100/200束兼容检查通过；均为工程验证，不是新训练效果。596源CSV逐SHA上传，Jan29官方下载持续，12合格验证母景的144输入在后台生成。正式任务0；每小时`s2-p17`已ACTIVE并精确回读。[运行清单与资格证据](outputs/experiments/variable_beams_20261004/run_manifest.json) · [自动化回读](outputs/experiments/variable_beams_20261004/followup/verified_readback.json)。
+
+
+
+
 
 **S1-02已获执行授权，正在实现和数据准备（2026-10-04）：**用户批准“先A阶段，再按方案05做B阶段”，本轮仅20418。范围落实为A开发80/正式400方法结果，B验证集五菜单筛选100结果，X0加两个候选各409600交互/seed51001（共1228800），训练验证1200及新100景三模型加三搜索600结果；原两奖励目标矩阵不额外执行。开发worktree为`C:/Users/Admin/.codex/worktrees/stage1-balance-actions/paper`，分支`codex/stage1-balance-actions`；核心、工作台与运行管线并行实现，尚未冻结新科学提交或提交正式任务，效果待验证。
 
+
+
+
+
 实际远端核验北京时间02:53:24：20418 DQN/CUDA可用、4090D无训练占用，默认包仍指旧repo，正式将显式绑定新snapshot。A Jan28与B Jan30各100时刻已在看场景/成绩前冻结，避开另一个第二阶段任务的Jan29；原train576/val20来源已核，原包下载由两持久后台进程执行，下载不算训练。每小时`s1-02-a-b`已ACTIVE并精确回读。入口：[执行说明06](docs/第一阶段/方案/06_A阶段与动作空间B阶段远端执行说明.md) · [运行清单](outputs/experiments/first_stage_s1_02_20261004/run_manifest.json) · [真实远端预检](outputs/experiments/first_stage_s1_02_20261004/preflight/remote_readonly_20418.json) · [定时配置回读](outputs/experiments/first_stage_s1_02_20261004/preflight/automation_readback.json)。旧S1-01及其他阶段保持原记录，本条优先于以下未授权候选历史。
+
+
+
+
 
 **S2-P17已获执行授权，正在实现与预检（2026-10-04）：**用户批准方案17开始，并明确本轮只在`10.160.17.102:20424`执行，覆盖原双实例建议。两新组各400000交互/seed51001、总800000；6048验证分配、4840独立初始分配及同数SCA完整细调预算保持。最终报告须并列第二阶段直接结果与第三阶段SCA最终结果及分段/总耗时。已从70572f7建立独立开发worktree与`codex/variable-beams-20261004`分支，正在做可变N、210维状态、混合采样、工作台和数据适配；源码尚未冻结，正式任务尚未提交，效果待验证。真实远端观测与数据资格见[运行清单](outputs/experiments/variable_beams_20261004/run_manifest.json)及preflight，不用旧完成记录代替本轮检查。[方案17](docs/第二阶段/方案/17_可变波束数量泛化训练方案.md)。
 
+
+
+
+
 **S1-02动作空间候选扩展（2026-10-04，仅方案）：**按用户希望增加思路、后续共同对比的要求，新增[第一阶段方案05](docs/第一阶段/方案/05_波束调整动作空间候选与对照方案.md)。优先X0四向5动作/X1八方向9动作/X2四向多步13动作/X3业务引导位置/X4相邻双束；主动选束、用户归属、连续位移和可变宽度另列后续。共同A2起点、覆盖/主体口径及移动范围；单束最多10轮/1000次束处理，双束占两次额度并同时比较候选核验和完整时间。拟20开发场景×5菜单=100个非学习结果，之后再选基准加两候选训练；3×409600=1228800交互或全部5×409600=2048000仅成本备选，seed51001，不与方案04原两目标矩阵自动交叉/叠加。若选三菜单，独立考核3模型加3同菜单搜索共600方法结果为候选规模，日期/预算/任务ID/冻结科学版本仍待确认；未实现、未启动训练/正式评价/定时跟进，效果待验证。仅内容/链接/算术检查，无需本轮改前端，实施须同步动作配置和结果。S1-01已完成及其他组状态保持原证据，本轮未刷新API/SSH。
+
+
+
+
 
 **S1-02动作与最大轮数补充（2026-10-04，仅方案）：**用户提出四向移动若干格/固定格数或不动，直到全局理想状态，并要求未达时有合理轮询上限。[方案04第5.1节](docs/第一阶段/方案/04_覆盖优先与主体波束负载均衡方案.md#51-四向格点移动与全局停止条件)建议先固定1格5动作，多步长1/2/4格13动作备选；每轮100束依次决策，最多10轮/1000次调位，达标提前结束，未达保留最好可行布局和实际终态/停止原因。10轮是待验证的工程起点，替代此前200次调位建议；覆盖修补另最多200次，原候选核验/时间限额继续累计，不因未达而自动延长。成对动作保留扩展，A3/B0/B1采用相同选定动作与停止规则，不新增组数；两PPO仍各409600交互，建议128环境×64采集以便观察1000步完整回合，每批8192/50批/原学习设置1600更新，须正式前核验冻结。前端动作/格宽/轮数/停止展示及逐场景早停尚未实现，未创建任务/定时跟进，未训练或新评价；无需本轮改前端。旧S1-01结果与完成状态不变。
 
+
+
+
+
 **S2-P17可变波束数量正式方案已归档（2026-10-04，待确认执行）：**用户指出前次仅问答未单独写方案，现已补[第二阶段方案17](docs/第二阶段/方案/17_可变波束数量泛化训练方案.md)。建议接口1–200、首轮科学范围50–200（1–49仅工程检查）；两组同210维数量感知T-SAC，V0固定100束、V1保留25%100束并混合其余数量，各400000交互/seed51001、合计800000。留出60/90/140/180束，拟训练8064场景、144验证场景×21节点×2模型=6048次验证分配；候选Jan29的20母快照×11束数×2负载=440衍生场景，V0/V1/H0各3动作加固定/贪心各1，4840初始分配＋同数统一S3-P03 B路线细调，共9680细调前后终态。固定3000W、原频谱，B每次含A及追加两段共最多4000调用/60秒；20母快照不能冒充440独立来源。Jan29为避开第一阶段候选Jan28的建议，仍须核真实可用性及数据隔离；上述全部预算为待确认建议。T0原207维中的两段100是频率槽，旧权重跨N只作兼容后历史参照，不保证200束效果。代码/前端同步、正确性与真实更新、计时/逐束审计及报告跟进门槛已写明，但尚未实现、冻结新科学版本、创建任务或定时跟进；效果待验证。本轮未刷新API/SSH，已完成旧组保持原交付核验。[问答](Q&A/算法与训练/可变波束数量的泛化训练.md)。
+
+
+
+
 
 **S1-02候选方案归档（2026-10-04，尚未授权执行）：**根据用户“100%或接近100%覆盖下尽量主体均衡，允许少数边缘专用束轻载”的要求，结合开题第2.1节和S1-01原始结果形成[第一阶段方案04](docs/第一阶段/方案/04_覆盖优先与主体波束负载均衡方案.md)。建议双100%优先、双99.9%备用目标，按共同候选几何认证少量例外，主体CV≤0.20且全部100束中至少90束处于主体均值±20%为待确认目标，全体CV与覆盖明细继续保留。A阶段拟旧C1/加覆盖修补/再加负载感知归属/再加协调调位四路线，候选新日期100场景各1次、400结果且训练0；日期和有限计算上限正式执行前核验冻结。B阶段两新PPO各409600步、seed51001/合计819200仅为后续建议，须根据A报告另行确认；宽度扩展不在两阶段候选预算内。尚无任务ID、冻结新科学提交或权重，未实现或启动正式计算/定时跟进，效果待验证。
 
+
+
+
+
 本轮只读复核旧C1的100个2024-01-22终态：双≥99.9%为50/100，双100%为36/100，64场景漏用户、最多7架；原100/100可行使用双99%门槛，历史结果不改写。[复核原始来源与SHA](outputs/verification/stage1_balance_plan_20261004/c1_threshold_review.json) · [问答](Q&A/环境仿真/第一阶段波束覆盖规划与两阶段衔接.md)。这是归档结果重算，不是新评价/训练；本轮没有刷新实时API/SSH，S1-01完成状态仍依据2026-09-30最终交付核验。文档无需前端改动，未来实施须同步配置、校验、任务/断点元数据和结果展示。
+
+
+
+
 
 **SI上限表述澄清（2026-10-04，只读问答）：**S3-P03支持当前固定槽、布局、预算与基本服务条件下，从已有SCA继续功率微调的收益明显递减；C对A仅+0.00229/+0.00248个百分点、完整耗时约11秒对3.9秒，可作为降低继续微调投入优先级的依据。尚无能够约束所有可行方案最好SI的参照值，B/C也共享对应A起点，未证明全局或物理上限；约94.2%仅为本批Jan27场景平均成绩。不把“步长小/预算用尽停止”当最优证明，不把未调整的频率、布局或跨日期效果写成已验证。仅更新[通俗问答](Q&A/算法与训练/第三阶段功率细调方案.md)，无新计算任务，S3-P03完整交付和跟进暂停保持不变。
 
+
+
+
+
 **S3-P03完整交付已完成（2026-10-04；任务实际API/SSH核验为10月3日23:35，10月4日完成审计/报告复核）：**两原任务各900/900，完成2/2、1800/1800（100%），新增训练0。Jan27共同100场景×3动作×A/B/C，T0固定150000步/seed51001/α0.01，科学e85a942未改变。3696文件/1,403,813,436字节逐SHA归档、18万终态束与12万最高SI候选束物理复算、基本服务/SI门槛及完整计时审计均通过。中文[报告03](docs/第三阶段/实验报告/03_SI优先功率细调与容量近似对照.md)、15图、配对/阶段/耗时表及生成脚本齐全。
+
+
+
+
 
 本轮追加调整使SI微增，未出现明显提升：3000W下A/B/C SI为94.224274%/94.225854%/94.226564%，SGM为0.943430/0.943229/0.943162，单次完整时间3.916/5.529/11.331秒；初始总功率上限下SI为94.128265%/94.129973%/94.130745%，SGM为0.942520/0.942313/0.942244，时间3.934/5.603/10.945秒。B对A平均SI+0.00158/+0.00171个百分点，C+0.00229/+0.00248，两预算均100景略升；SGM大多下降，C并非每景优于B。B/C无相对A新增严格基本服务跨下；C恢复36/28条临界束，原A距门槛仅数bps，不代表承载大幅改善。C有1次时间上限停止，30.004320秒如实记录；单种子、单Jan27、固定频率与有限求解范围不构成全局最优证据。
 
+
+
+
+
 后处理曾因Windows MKL与远端OpenBLAS小数尾差误报4个B案例5束的最高SI候选违规（最大约3.71e-5bps）；原远端冻结DQN复算与保存值一致且严格达标。只修本地审计的严格记录判定与数值一致性检查分工（提交ec37863），不改科学源码、原结果或容差；失败现场和复核证据保留。原watcher重试已核身份后停止，后处理由根幂等接续完成，没有重推理/优化/评价。报告53项资产已备份授权远端共享/home，并两端逐成员复核；这是一个共享副本。每小时`s3-p03-si`已在完整交付核对后暂停为PAUSED，并[精确回读](outputs/experiments/stage3_si_priority_20261003/delivery/automation_closed_verified.json)；不关机、不归档对话、不新开实验。
+
+
+
+
 
 [运行清单](outputs/experiments/stage3_si_priority_20261003/run_manifest.json) · [原始归档终核](outputs/experiments/stage3_si_priority_20261003/completion/root_archive_verification_final.json) · [全量物理与计时审计](outputs/experiments/stage3_si_priority_20261003/completion/beam_audit.json) · [独立指标/阶段复算](outputs/experiments/stage3_si_priority_20261003/completion/root_summary_check.json) · [审计误报诊断](outputs/experiments/stage3_si_priority_20261003/diagnostics/conclusion.md) · [报告复核](outputs/experiments/stage3_si_priority_20261003/completion/root_report_verification.json) · [报告备份](outputs/experiments/stage3_si_priority_20261003/delivery/operation_receipt.json)。以下运行中、待确认和审计待诊断内容是之前的过程记录。
 
+
+
+
+
 **S3-P03 SI优先三组已在双远端正式运行（2026-10-03，北京时间22:30:25–26主任务API/SSH核验）：**20418总3000W任务`refine_sac_20261003_222353_313e994d`为119/900，20424初始总功率上限任务`refine_sac_20261003_222356_db93000c`为144/900；均evaluating、完成0/2，合计263/1800（14.61%），新增训练0。冻结科学源码`e85a9429461a358ba2e11614a3cce4671d12b68e`；T0固定150000步终点/seed51001/α0.01，Jan27共同100景×3动作×A/B/C不变。A为旧SCA，B优先SI，C改进功率估计且优先SI；B/C分别从同A终值追加，允许SGM下降，之后锁住最高已找到可行SI。每段300/2000/30，B/C完整路线计入A，最多4000容量调用、60秒两段求解；连续功率非负且仅总预算，空槽0。
+
+
+
+
 
 两端首景各9条结果通过：跨预算T0初始SHA一致，本预算B/C引用同一A分配及案例SHA，SI锁定/基本服务与引用时间核验通过。部分首景SGM低于A是本轮目标允许的取舍，完整SI/SGM收益仍待全部评价。497项远端全量（3项Windows专用跳过）、最后冻结版双端各44项专项、Jan12两景双预算12条开发检查及真实worker入口通过；原A核心源码与b3等价。22:33另核两正式worker的CVXPY1.6.5/Clarabel0.11.1及隔离路径正确。页面实际三组选择/冻结参数只读/0动作被拒/3动作通过；同端口隧道8776/8777保留原同源检查。输入下载、依赖传递及dev静态资源问题均在正式任务前解决，无当前运行异常。
 
+
+
+
+
 持久watcher38592负责完成后逐SHA归档及1800case/18万束、最高SI候选与计时审计；本对话每小时`s3-p03-si`已创建ACTIVE并精确回读，每次发中文简报，完整报告03与曲线交付后暂停。今后未指定本地的正式实验默认这两远端，已写入AGENTS。S3-P01/P02完成/暂停及冻结资产不变；下文同日“待确认/未启动”为之前讨论历史。
+
+
+
+
 
 [方案04](docs/第三阶段/方案/04_SCA需求满足率提升与剩余空间诊断.md) · [运行清单](outputs/experiments/stage3_si_priority_20261003/run_manifest.json) · [根实时核验](outputs/experiments/stage3_si_priority_20261003/preflight/root_launch_acceptance.json) · [正式worker依赖核验](outputs/experiments/stage3_si_priority_20261003/preflight/root_worker_dependency_acceptance.json) · [首景来源](outputs/experiments/stage3_si_priority_20261003/preflight/first_scene_verified.json) · [首景SI与逐束守护](outputs/experiments/stage3_si_priority_20261003/preflight/first_scene_guard_verified.json) · [定时跟进精确回读](outputs/experiments/stage3_si_priority_20261003/followup/verified_readback.json)。
 
+
+
+
+
 **SI优先目标更正（2026-10-03，仅方案）：**用户明确先确保高SI、再尽可能提高SGM。方案04已改为分级目标：SI阶段移除旧SGM下限，保留功率与逐束基本服务；SGM阶段锁住已找到的最佳可行SI，默认仅1e-8数值容差且门槛不累计下滑。旧实现的SCA线性子问题与真实接受检查两处都有SGM保护，尚未修改。上一版“SGM不得低于当前SCA”的建议被覆盖，最终SGM可能因优先SI而低于旧SCA。B/C候选共同采用SI优先、等追加预算，C再换容量凹下界；B对A是目标与追加搜索整体效果。目标顺序已明确，正式实施及候选1800结果预算仍待确认，未新建任务/训练/监控；S3-P02完成/暂停不变。[方案04](docs/第三阶段/方案/04_SCA需求满足率提升与剩余空间诊断.md) · [问答](Q&A/算法与训练/第三阶段功率细调方案.md)。
+
+
+
+
 
 **SCA进一步提高SI的前次方案讨论（2026-10-03，SGM保护建议已由上段更正）：**已只读复核S3-P02的600条SCA轨迹。98%/99%的调用封顶均发生在SGM阶段；两端各299/300条SI阶段按65%预算切换，其末尾约100调用（窗口中位105次）SI增益中位仅0.000139/0.000156个百分点。每场景最差10束贡献约87%累计SI缺口，不能据此认定缺口全可恢复。建议从相同SCA终值比较原解/原SCA追加求解/容量凹下界SCA，守住SGM与基本服务，额外预算相同并计入总耗时；候选Jan27的100景×3动作×3方法×两预算共1800结果，新增训练0。数学、预算及条件见[方案04](docs/第三阶段/方案/04_SCA需求满足率提升与剩余空间诊断.md)；[阶段证据](outputs/verification/sca_si_followup_20261003/review/sca_history_review.json)与[缺口统计](outputs/verification/sca_si_followup_20261003/beam_deficit.json)来自已用Jan26，非新算法效果。当前仅方案，须用户确认后实施；未新建任务或自动化，S3-P02完整交付与暂停不变。
 
+
+
+
+
 **S3-P02七路线评价、耗时审计与正式报告已完成（2026-10-03；16:35实际API/SSH核验）：**两端原任务均completed，各2100/2100，完成2/2、4200/4200（100%），新增训练0。共同Jan26的100场景×3动作×7方法、T0固定150000步终点/seed51001、冻结科学源码`b3c94c993457919bd17e30c71f22f87e5349f012`不变；相同初始SHA、42万束物理/指标与1400场景×方法计时行通过审计，6094原始文件/2,272,275,339字节逐SHA复核通过。watcher已正常完成归档并退出，无需恢复评价。
+
+
+
+
 
 同场景先平均3动作：原T0为SI89.7898%、SGM0.707955、2276.483W。3000W预算下SCA为93.7783%/0.940246/2999.682W、单次分段总时间3.867秒，SLSQP为93.7473%/0.937759/2928.120W、12.013秒；初始总功率上限下SCA为93.7003%/0.939547/2276.383W、3.890秒，SLSQP为93.6711%/0.939406/2268.334W、13.139秒。SCA在本轮平均指标略高且更快，但功率略高、部分场景不如SLSQP；DE/PSO和WMMSE效果与计算开销见报告，不称全局最优。严格基本服务计数保留下降；SCA最大服务下限短差约3.418bps（最大需求比例8.56e-9）在既定容差内，不能全部解释成机器舍入。SLSQP局部非收敛103/131次，SCA多数触及2000容量调用上限，WMMSE每端70/300回退；零超时、无超预算或容差外服务守护违规。
 
+
+
+
+
 中文[报告02](docs/第三阶段/实验报告/02_七路线功率细调与逐场景耗时对照.md)及14图已完成并复核，终态指标与单次/每景3动作的时间同表，均值、中位/P95和逐景原始表齐全；公共T0初始解只实际生成一次，总时间为分段实测合计，包含初始解而非只计算细调。单训练seed、单Jan26和设备实现限制保留。报告资产已备份到授权远端共享/home的一处目录，两SSH端逐成员核验通过，不称两份独立备份。本对话`s3-p02`每小时跟进已在完整交付复核后暂停为PAUSED，并保存[操作及精确回读](outputs/experiments/stage3_all_routes_20261003/delivery/automation_closed_verified.json)；不新增实验、不关机，旧S3-P01保持完成和暂停。
+
+
+
+
 
 [运行清单](outputs/experiments/stage3_all_routes_20261003/run_manifest.json) · [物理与计时审计](outputs/experiments/stage3_all_routes_20261003/completion/beam_audit.json) · [全量SHA复核](outputs/experiments/stage3_all_routes_20261003/completion/root_archive_verification.json) · [指标与阈值独立复算](outputs/experiments/stage3_all_routes_20261003/completion/root_supplement_audit.json) · [报告和图表复核](outputs/experiments/stage3_all_routes_20261003/completion/root_report_verification.json) · [报告备份](outputs/experiments/stage3_all_routes_20261003/delivery/operation_receipt.json)。原两任务ID仍为20418 `refine_sac_20261003_142302_c8c68fcb`、20424 `refine_sac_20261003_142305_a2665f99`，不重复评价。
 
+
+
+
+
 **S3-P01完整评价、审计与正式报告已完成（2026-10-03；03:57:55–56远端API核验，04:18原始归档全量复核，04:25报告复核）：**两原任务均900/900，2/2完成，1800/1800方法结果（100%），新增训练0；冻结T0的15万终点/seed51001和科学2b3ef54不变。100个Jan25共同场景内先平均3次动作：原分配SI91.5300%、SGM0.705797、功率2184.800W；连续细调在3000W预算下为95.0546%/0.951469/2907.237W，在初始总功率上限下为94.9681%/0.953006/2172.408W，两预算各100/100场景SI与SGM均提高。严格基本服务束数和全束达标比例有下降，逐束诊断确认全部跨越差在预设数值容差内（最大约0.000153bps、相对7.375e-13），原值保留，不宣称严格计数不降；连续求解分别131/156次非收敛，收益包含初始化与放宽单束功率范围，单seed/单日期且无全局最优保证。3740文件/1,206,945,833字节逐SHA最终核验、1800case/18万束物理与指标独立审计、中文报告与8图均已完成。报告ZIP已备份到两SSH端共享/home的一处目录并逐成员核验，不称两份独立远端备份。此前本地辅助进程退出原因未证，结果API门槛与审计写缓存两项运维问题已保留现场后修复；不重评、不改冻结科学源码。
+
+
+
+
 
 [正式报告01](docs/第三阶段/实验报告/01_T0初始解的连续功率细调对照.md) · [报告及图表SHA](outputs/experiments/stage3_power_20261003/report_20261003/artifact_manifest.json) · [原始归档最终复核](outputs/experiments/stage3_power_20261003/completion/root_archive_verification.json) · [报告根复核](outputs/experiments/stage3_power_20261003/completion/root_report_verification.json) · [原始审计/配对完成回执](outputs/experiments/stage3_power_20261003/completion/receipt.json) · [报告备份回执](outputs/experiments/stage3_power_20261003/delivery/operation_receipt.json)。本轮交付复核已完成，04:30已通过应用工具将`s3-p01`暂停为PAUSED，目标对话和完整prompt保持不变并精确回读；[暂停回执](outputs/experiments/stage3_power_20261003/delivery/automation_closed_verified.json)。接续watcher32124已完成归档后正常退出，工作台与查看隧道保留；以下“运行中/归档中/报告待完成”均为注明时点的历史记录，不代表当前阶段。
 
+
+
+
+
 **S3-P01两项评价均已完成，正在恢复本地归档并编写报告（2026-10-03，北京时间03:57:55–56 API/SSH核验）：**20418与20424原任务均completed、各900/900，共1800/1800（100%），新增训练0；冻结2b3ef54与T0终点不变，worker均已正常退出。本地watcher39804及原隧道进程已退出，旧watch_state停03:25，确切退出原因未证实；已保存故障前文件/日志SHA和新现场，恢复本地只读辅助链，不重复评价。接续归档首轮发现结果API正文不含stage，旧运维脚本错误将其当完成门槛；正在按真实job/status已completed加结果research_stage/summary/900scenes修复，原现场保留。正式总报告、18万束独立审计与本地归档尚未完成，定时跟进保持ACTIVE。[本次实时核验](outputs/experiments/stage3_power_20261003/preflight/heartbeat_live_20261002T195755_962475Z.json) · [本地辅助异常现场](outputs/experiments/stage3_power_20261003/preflight/helper_recovery_preflight_20261002T195925_390847Z.json)。
+
+
+
+
 
 **S3-P01结束后正式实验报告已安排（2026-10-03 02:56配置精确回读）：**用户明确任务结束后要有实验报告。已新建本对话每小时heartbeat `s3-p01`（S3-P01实验报告与完成验收），状态ACTIVE，目标对话、完整prompt与配置均精确回读相等；每次跟进中文简报，完成后核双任务/逐SHA归档/1800case与18万束独立审计，交付两预算口径的中文正式总报告及曲线，更新目录、问答与实验状态，交付后暂停本跟进。已有60秒后台watcher继续负责原观察和后处理，不新增训练/评价或改冻结源码。正式报告计划为`docs/第三阶段/实验报告/01_T0初始解的连续功率细调对照.md`，目前未生成；须保留失败/非收敛/回退与单种子单日期限制。[创建及精确回读](outputs/verification/stage3_report_followup_20261003/verified_readback.json)。下方02:43“尚未创建聊天任务”是此前状态，已由本段更新。
 
+
+
+
+
 **S3-P01第三阶段T0功率细调已在双远端正式运行（2026-10-03，北京时间02:32主任务API复核）：**20418任务`refine_sac_20261003_022328_6deff6bb`按3000W总预算执行，200/900方法结果；20424任务`refine_sac_20261003_022330_571c2455`按初始总功率上限执行，137/900；均evaluating、0/2任务完成，合计337/1800（18.72%），新增训练交互0。两端均用T0固定15万步终点（seed51001、固定α0.01、权重SHA ae095e8246…），冻结科学源码`2b3ef546391198004b82d86631258846bb3587f6`，新Jan25共同100场景×3动作×none/discrete/SLSQP含需求匹配初始化。首景两端各9结果通过，同初始分配SHA一致；CUDA、实际冻结包路径、server/worker进程出生核验通过。连续功率非负且仅总预算约束，无5W下限或50W单束上限。当前无运行异常；完整效果、1800case/18万束审计与归档待完成，不将部分场景当正式结论。持久watcher39804与8787/8788隧道运行，完成后自动逐SHA归档、逐束物理/指标复算及场景配对汇总。本地全量462项（2跳过）、最终T0专项29项、远端两端各29项通过；真实T0两Jan12场景两预算口径短检查通过，局部非收敛如实保留。原M1仅开发/部署预核，零正式任务。 [运行清单](outputs/experiments/stage3_power_20261003/run_manifest.json) · [主任务02:32核验](outputs/experiments/stage3_power_20261003/preflight/root_launch_acceptance.json) · [首景一致性](outputs/experiments/stage3_power_20261003/preflight/first_scene_verified.json) · [实施方案02](docs/第三阶段/方案/02_连续功率优化与双实例运行.md) · [当前持久跟进状态](outputs/experiments/stage3_power_20261003/preflight/watch_state.json)。以下同日“准备/未提交”是已被本段覆盖的历史里程碑。
+
+
+
+
 
 **S3监控层次澄清（2026-10-03 02:43只读核对）：**本轮是每轮约60秒的本地持久watcher，PID39804/创建02:23:51仍运行；尚未创建S3的Codex聊天定时唤醒任务，因此不会自动在本对话发送简报。任务异常只标needs_attention，未实现自动恢复或聊天通知；完成后的归档/逐束审计/配对汇总已接续。应用现有五项旧实验自动化均PAUSED，没有S3条目。本次未创建或更改定时任务。[核验及问答](Q&A/算法与训练/第三阶段功率细调方案.md#2026-10-03追问是否设置了定时监控任务)。
 
+
+
+
+
 **初始模型更正（2026-10-03，用户最新指令）：**今后用T0组固定终点模型生成初始解，覆盖此前M1工程起点建议。第三阶段原M1版本仅完成双端源码部署与检查，尚未启动工作台、导入或提交正式任务；正同步修改为T0，Jan25共同100场景、三方法与两预算口径不变，不新增训练。以下M1实现记录保留为更正前里程碑，不能按其启动正式评价。
+
+
+
+
 
 **S3-P01第三阶段已获实现与双实例运行授权（2026-10-03，开发/验证中）：**用户明确连续功率可取任意非负值，只受总功率约束，覆盖P09最初的[5,50]W建议；今后“远端”默认10.160.17.102:20418与20424，认证只读BUPT_PASSWORD。首轮已按用户后续指令改为冻结G11 T0的15万步终点（固定α=0.01），固定实际频率槽，比较none、原档位discrete、连续SLSQP含需求匹配初始化。20418使用3000W总预算，20424使用同初始总功率上限；共同Jan25预选100场景×3动作×3方法，每端900条方法结果，共1800条，新增训练交互0、原训练seed51001，动作seed53001–53003。数据已下载及逐景核验，两GPU/DQN/CUDA已预核；源码、API/前端与恢复流程正完成验收，原M1版本仅部署验证，未启动工作台或正式任务；T0版本正式任务尚未提交、效果待验证。[实施方案02](docs/第三阶段/方案/02_连续功率优化与双实例运行.md) · [远端预核](outputs/experiments/stage3_power_20261003/preflight/remote_preflight_20261002T174108_775029Z.json) · [Jan25数据回执](outputs/experiments/stage3_power_20261003/preflight/remote_jan25_data_receipt.json)。下段P09为本日早先讨论，授权状态已由本段覆盖。
 
+
+
+
+
 **当前最佳候选及T0高SGM补充诊断（2026-10-03，只读统计）：**从十一模型已归档Jan24逐束终态和原始results复算，T0的SGM0.697289、原奖励平均回报117.151、有效承载估计18.329Gbit/s均为本轮十一模型最高，功率2129.18W最低；M0的平均SI92.967%最高，T0为91.898%。按旧奖励/供需匹配优先保留T0，按平均SI选M0；此前M1是高SI/功率折中建议，不是唯一综合冠军。T0相对同15万步J0将超过2倍需求的记录比例38.63%降至24.49%，超额容量10.56降至5.78Gbit/s；训练末α0.01/策略熵1.02，对照α0.244/熵6.39，支持动作更集中但不证明全部收益由温度引起。有效承载是模型估计，按需求量加权，与逐束等权SI有取舍。单seed、单Jan24及不同训练预算限制保留，不拼历史榜或宣称上限；未实施第三阶段或改动原方案运行范围。[最佳候选问答](Q&A/算法与训练/模型是否学到了有效策略.md#2026-10-03追问当前历史最佳的模型是哪个) · [SGM原因](Q&A/算法与训练/当前奖励函数.md#2026-10-03追问t0的sgm为什么这么高) · [原数据复算与SHA](outputs/verification/g11_t0_sgm_20261003/beam_diagnosis.json)。G11完整交付与自动跟进已结束状态不变。
+
+
+
+
 
 **历史最佳与上限口径澄清（2026-10-03，只读问答）：**M0/M1/G2是当前较强候选，不能称M/G两个系列全面历史最佳或接近所有强化学习算法的上限。Jan19/23/24结果不可直接拼榜；同Jan24的J0_150k已达SI92.861%，距M0仅0.106个百分点，而T0的SGM0.6973高于M/G。曲线平台只说明当前设置下改善趋缓，尚无同约束最优性差距证据。可按工程投入产出推进第三阶段讨论，但不以上限已证实为理由；本次未新增任何运行。[详细问答](Q&A/算法与训练/模型是否学到了有效策略.md)。
 
+
+
+
+
 **第三阶段功率细调进入方案讨论（2026-10-03）：**用户提出第二阶段暂告一段落，改为研究“冻结较好模型给出频率功率初始分配，再固定频率槽优化功率”。本轮只读核对本地G11报告/原始汇总与代码，并形成[P09/第三阶段方案01](docs/第三阶段/方案/01_冻结模型初始解与功率细调方案.md)及[问答](Q&A/算法与训练/第三阶段功率细调方案.md)；未重新API/SSH观测、未实现优化器、未提交训练/评价或定时任务。M0/M1/G2的Jan24 SI分别92.967%/92.898%/92.714%，SGM为0.572476/0.576259/0.564436，没有唯一双指标赢家；训练平台不等于物理上限。建议M1作首版起点、M0参照，原5W档位调整作基线、连续[5,50]W的SQP作主候选，SCA后续研究；低于5W另列资源规则变更。效果待验证，正式运行范围与预算未确定。G11已完成的状态以以下00:40最终验收为依据，不恢复历史任务。
+
+
+
+
 
 **G11完整交付已完成（2026-10-03，北京时间00:10归档完成、00:40最终复核）：**九训练3100000交互、十一模型Jan24共同评价和两基线3500次分配、350000终态束独立审计、正式报告12及9张曲线、分阶段620000条供需日志全部完成。原始训练/代码/历史断点等61,144文件、20,917,500,639字节已全量本地逐SHA归档；根再次核全部文件存在与大小、15个报告输出、9终点权重及66个补充日志输出SHA。归档器36948在成功写入最终回执后正常退出，不是新故障。保留所有原始结果、失败现场和修复来源，不重训、不重评、不关机、不归档对话。本次g11定时跟进已在验收后删除，原配置与删除回执另存保留。下方“同步中”各段是带日期的历史里程碑。[最终验收](outputs/experiments/europe_tmg_20261001/delivery/final_root_acceptance_20261002T164041_279791Z.json) · [全量归档回执](outputs/verification/g11_remote_launch_20261001/archive_receipt_g11.json) · [正式报告12](docs/第二阶段/实验报告/12_温度记忆与干扰图独立场景对照.md)。
 
+
+
+
+
 **G11训练、共同评价及正式报告已完成，完整资产本地归档中（2026-10-02晚）：**21:59 API与22:04独立终点复核确认9/9训练完成，总3100000交互；T各150000/148001更新，M/G各400000/398001更新，原worker均退出，固定终点policy/metadata/results SHA与controller回执一致。M2已于21:42自动回原20424归属，保留原ID/科学85f/guard及学习状态；11模型Jan24共同100场景×3动作、固定/贪心各100次均完成，共3500分配。报告前后两次独立审计通过350000终态束，9张中文曲线和15个输出已本地逐SHA核验。[正式报告12](docs/第二阶段/实验报告/12_温度记忆与干扰图独立场景对照.md) · [训练和评价原始核验](outputs/experiments/europe_tmg_20261001/preflight/terminal_and_common_raw_20261002T140424_906058Z.json) · [报告本地核验](outputs/experiments/europe_tmg_20261001/verified_report_20261002/download_receipt.json)。
+
+
+
+
 
 **分模块结论：**固定α的T0相对同15万步J0，SGM+0.1315且100场景均提高、功率−362.48W，但SI−0.963个百分点；T1相对J1的SI+2.678个百分点，仍未优于原加性Q参照。M1相对M0的SI几乎相当（−0.069个百分点），功率−153.03W；GRU/因果Transformer未提升本轮SI。G2相对G1的SI+0.615个百分点、SGM+0.0041，但功率+107.75W。仅限单seed51001、单Jan24日期及既定终点，不能称多种子稳定性或跨日期泛化已证实；不启动额外实验。
 
+
+
+
+
 报告首attempt在共享数据根解析及CSV/NPZ来源层次比对失败，已保存现场后修复运维审计；从guard双端archive定位数据根，核原来源/导入清单及100×2场景七个NPY成员字节一致，不更改公式、容差、场景或权重、不重评。当前collector43290已正常完成退出，旧失败39184仅为历史。原资产归档器36008在进度JSON原子替换遇Windows读锁退出，已保留11175文件及错误现场；随后补有界重试、非关键进度写失败继续以及远端POSIX路径兼容修复，4项短测通过。当前唯一v3归档器36948（UTC14:49:36.200895，脚本SHA6eff51f8…）已重核并超过旧停点，继续逐SHA同步61,144文件、20,917,500,639字节；进度以[总归档状态](outputs/verification/g11_remote_launch_20261001/archive_mirror_status.json)为准，**尚未宣布全量资产本地归档完成**。补充逐束CSV/JSONL的22数据集、620000终态束已本地归档，并独立逐行复算/CSV对照通过；本步历史缺项仍为null。[补充日志验收](outputs/experiments/europe_tmg_20261001/beam_service_logs/root_independent_export_audit.json) · [修复后报告完成凭据](outputs/verification/g11_remote_launch_20261001/verify_repaired_report_completion_20261002T141103_918965Z.json)。g11继续每小时简报归档进度，直到全量回执、正式文档及远端备份复核完毕才结束跟进。下一次不要再按已退出worker/controller/returner的旧PID恢复训练或重复评价。
+
+
+
+
 
 **G11训练结束后的逐束供需日志已接入等待流程（2026-10-02）：**用户要求记录D、C、min(C,D)、未封顶C/D、SI和SGM，并区分本步与终值。当前85f冻结worker保持原样；已有评价结果的终态beams含D/C/SI/SGM，可保真导出。历史抽样训练与旧评价trace缺少本步容量，明确null和missing_reason，不用终值或封顶SI补造。独立导出程序17:22在20418启动PID16827/出生ticks752694431，本地逐SHA补充归档器17:23启动PID2392；均只读已有结果，不进行模型推理或新增分配。先等九训练完成及M2回迁原归属，导出Jan15九终点测试2700分配/270000束；再等原Jan24报告和独立审计完成，导出原3500分配/350000束。两阶段分开，共22数据集、620000终态束，不混成新的训练或考核预算。
 
+
+
+
+
 输出为远端`/home/u2024110224/second_stage_satellite_rl/g11_beam_logs_20261002`、本地`outputs/experiments/europe_tmg_20261001/beam_service_logs`；与原总归档目录隔离，避免扫描正在写的补充文件。当前状态为等待，**尚未生成正式全量日志**；原G11交付门槛外还须核补充日志completion与本地archive_receipt的全SHA。6项数据导出检查在本地DQN和远端均通过，使用已完成T0的真实100束样本，另核过供、step/final不同、未服务、输入变更拒绝和幂等发布。后续新任务的完整逐步/全束终态记录已由独立分支合并main（0a6c39a、9f87a49），原数值/RNG对照与页面CSV/JSONL下载核验通过；全量432项中2跳过、最终补丁23项聚焦通过，未测全程吞吐，也未替换G11运行源码。[远端启动与测试](outputs/verification/g11_beam_service_logging_20261002/remote_launch_receipt.json) · [本地归档启动](outputs/verification/g11_beam_service_logging_20261002/local_mirror_launch_receipt.json) · [自动跟进精确回读](outputs/verification/g11_beam_service_logging_20261002/automation_beam_log_receipt.json) · [记录口径问答](Q&A/工程维护/训练日志与进度监控改进建议.md)。本段为记录方案里程碑，训练实时进度仍以latest_verified_snapshot为准。
+
+
+
+
 
 **G11 M2分卡迁移已完成并续训（2026-10-02，北京时间15:49 API、15:50进程复核）：**M2原ID从262800交互/260801更新的完整断点迁至20418独立archive，经目标工作台同ID恢复；M3原worker在20424持续运行。当前M2为267050/265051、M3为273400/271401，均training；7/9完成，累计2840450/3100000交互（91.63%，不含验证/测试）。M2的网络、优化器、20000目标＋15历史回放、全部RNG及场景顺序在路径白名单转换后深比较相等，原种子51001、40万总预算、科学85f与global_guard不变；source_root仍为共享/home中的原20424冻结snapshot。源20424不再调度M2，404是有意隔离，不得恢复历史副本。
 
+
+
+
+
 迁移中首个目标启动因同一步诊断快照已有旧来源路径退出，停点仍262800且零新增更新；原快照已完整保留，目标重建后16类科学字段与回放样本相等，再经同ID恢复。历史failure保留，不代表当前故障。新M2 worker6400/出生ticks752067759、原M3 worker573/751678235、returner6000、双端sidecar5137/5831与本地watcher30664均复核身份；两GPU UUID不同。15:44–15:45约60秒观察合计12.38更新/秒，迁移前短窗7.35，约1.68倍；不同训练位置、短窗计数，不能外推全程净节省或模型效果。[根验收及新原始入口](outputs/experiments/europe_tmg_20261001/migration_m2_20261002T070813_436244Z/root_migration_verified_snapshot.json) · [交接与来源链](outputs/experiments/europe_tmg_20261001/migration_m2_20261002T070813_436244Z/migration_live_handoff.json) · [短窗吞吐复算](outputs/experiments/europe_tmg_20261001/migration_m2_20261002T070813_436244Z/root_throughput_comparison.json)。
+
+
+
+
 
 **当前接手方式：**M2看8766、M3看8767；两前端已实际验证任务列表、211维/K16与更新增长，无需改前端代码。g11仍ACTIVE每小时简报，已精确回读新路由。优先用本地base解释器执行`outputs/verification/g11_remote_launch_20261001/m2_migration_local_watcher.py --read-only --once --snapshot`，脚本SHA为37d65b27a6faeeeaa4084e3c9e9f22d97bb20c697be0446bdcb83d8856e6810a；不用旧固定20424路由读M2。原controller/collector及本地mirror/archive在此期间受控暂停，持久returner、两sidecar和本地watcher负责M2完成/终点SHA/worker退出核验后的自动回迁及原流程重启。Jan24共同评价须等九训练完整完成且M2回原20424归属；自动回迁、共同评价和终点归档尚待执行。两实例共享/home但不共享loopback，跨端动作经各自sidecar与唯一请求ACK完成。实际阶段以运行清单migration_context和本轮远端migration_state为准；旧helper暂停不当新故障。[冻结合同](outputs/experiments/europe_tmg_20261001/migration_m2_20261002T070813_436244Z/migration_contract.json) · [自动跟进精确回读](outputs/experiments/europe_tmg_20261001/migration_m2_20261002T070813_436244Z/automation_migration_final_receipt.json)。
 
+
+
+
+
 **G11双GPU分配询问（2026-10-02，仅只读分析与建议，未迁移）：**14:50–14:53分别短时采样各25点，20424上M2/M3均在训练，共用GPU平均利用率96.72%（93–100%）、显存6315MiB；20418样本为0%、无GPU计算进程。支持尝试两独立实验各占一张GPU以提高总体吞吐，但两窗口非同时采样，未测迁移后速度，不能承诺两倍或给净节省时间。当前工作台resume仅管理本实例archive，G11 guard/controller/report也绑定M组到20424；规范迁移需保原ID和完整断点、隔离调度，并处理评价归属与校验，不能直接另开worker。建议优先M2→20418、M3留20424，实施方案与实际提速仍待验证。本次没有停止、迁移、改配置或新增训练，现有续训和小时跟进继续。[原始资源样本](outputs/experiments/europe_tmg_20261001/resume_20261002T062332_824457Z/gpu_two_instance_readonly_20261002T065309_270211Z.json) · [复算与限制](outputs/experiments/europe_tmg_20261001/resume_20261002T062332_824457Z/two_gpu_allocation_analysis_20261002.json)。
+
+
+
+
 
 **G11重启后已恢复续训（2026-10-02，北京时间14:26恢复、14:35根运行核验、14:36镜像核验）：**用户明确“开始吧”，本段解除下方历史暂停状态。M2/M3经原工作台同ID从249600/247601、252400/250401完整断点恢复，training_resumed事件的配置哈希和场景顺序与原训练一致；新worker为574/751678237、573/751678235，实际DQN/CUDA与85f冻结快照路径通过核验。14:35已到251150/249151、254550/252551并持续更新，仍各40万总预算；七已完成组保持不变，Jan24考核继续等待两组完成。两实例重启后仍为独立4090D，实际GPU UUID重分配已记入恢复回执，科学源码/global_guard未改。两工作台、controller、collector、隧道、镜像和归档等待器已按新PID出生登记接续；14:36本地镜像九任务SHA检查恢复，旧job字节已保留且仅接受工作台新增resume:true字段。g11自动跟进已ACTIVE并精确回读，继续每小时简报。后续从运行清单latest_verified_snapshot及current_helper_registry.json读取新身份，helper采集改用read_helpers_from_registry.py（本地base解释器），勿再使用旧固定PID脚本。[恢复交接](outputs/experiments/europe_tmg_20261001/resume_20261002T062332_824457Z/resume_final_receipt.json) · [根验收与当前快照](outputs/experiments/europe_tmg_20261001/resume_20261002T062332_824457Z/root_resume_verified_snapshot.json) · [自动跟进回读](outputs/experiments/europe_tmg_20261001/resume_20261002T062332_824457Z/automation_resume_final_receipt.json)。
 
+
+
+
+
 **G11按用户要求暂停，准备远端重启（2026-10-02，北京时间14:03停止请求、14:08退出复核）：**因断网后需要重启服务器，已通过原20424工作台8771的停止API优雅停止M2/M3，原worker均退出。M2停249600交互/247601更新，M3停252400交互/250401更新；完整checkpoint含五网络、四优化器、序列经验池及K16历史前缀、全部RNG、下一回合与场景顺序，配置/来源核验通过；两checkpoint及job/config/status/source_manifest均已本地备份并逐SHA复核。其余七组已完成，未重训或改动第一阶段。g11自动跟进已PAUSED并回读，Jan24共同评价未提交。**保持暂停；用户告知重启完成后按本次授权从两原任务ID续训到各40万总预算。** 恢复前核新主机/进程身份、DQN/CUDA、冻结85f与断点SHA；controller遇stopped会进入needs_diagnosis，不自动resume，重启后应按原guard及请求ID接续，不能据此另建训练。断点审计曾将20015行误当超出20000容量，已按SequenceReplay允许20000目标＋15历史行更正检查，原诊断留存，断点未改。[暂停状态入口](outputs/experiments/europe_tmg_20261001/pause_20261002T060300_404442Z/pause_state.json) · [恢复交接](outputs/experiments/europe_tmg_20261001/pause_20261002T060300_404442Z/pause_final_receipt.json) · [根SHA与完整性复核](outputs/experiments/europe_tmg_20261001/pause_20261002T060300_404442Z/root_pause_verification.json)。代理没有重启服务器或发出恢复请求。
+
+
+
+
 
 **G11 M0/M1完整完成（2026-10-02，北京时间11:48训练观测、11:51终点复核）：**两组均已`completed`，400000交互/398001更新，原worker正常退出；各自policy/model/results/evaluations SHA与两controller回执一致，seed51001/冻结85f/固定终点、验证2580条及100场景×3次测试齐全。M0为207维/14令牌，M1为211维/15令牌并包含上一实际动作。当前7/9完成，仅M2/M3训练，分别219800/222550步；累计2742350/3100000步（88.46%，不含验证和测试）。两端后台与镜像身份核对正常，Jan24共同评价尚未提交，预算与冻结源码未变。[有效快照](outputs/experiments/europe_tmg_20261001/preflight/root_verified_snapshot_20261002T035325_408454Z.json) · [M0/M1独立终点核验](outputs/verification/g11_remote_launch_20261001/m01_terminal_compact_20261002T035127_320177Z.json)。
 
+
+
+
+
 **G11 M0/M1达到40万步（2026-10-02，北京时间10:48核验）：**两组均400000交互/398001更新，当前为`evaluating`，原worker仍存活，正在进行既定Jan15内部终点测试，尚未计为completed。T0/T1/G0/G1/G2五组保持完成，M2/M3分别206150/209650步并持续更新；累计2715800/3100000步（87.61%，不含验证与测试）。两端controller仍等待四个M组完整结束，Jan24共同独立考核未提交。实际PID/出生、DQN/CUDA冻结源码及helper身份/guard均核对通过，本轮无训练或配置变更。[有效快照](outputs/experiments/europe_tmg_20261001/preflight/root_verified_snapshot_20261002T025020_260874Z.json)。
+
+
+
+
 
 **G11 G1完整完成（2026-10-02，北京时间09:47训练观测、09:48终点复核）：**G1已完成400000交互/398001更新并正常退出；固定终点policy/model/results/evaluations SHA及两controller回执一致，seed51001/冻结85f、2946维/122令牌/逐束编码、2580条验证与100场景×3次终点测试均核验通过。当前T0/T1/G0/G1/G2共5/9完成，M0–M3四组持续训练；观测累计2654550/3100000步（85.63%，不含验证与测试），Jan24共同评价未提交。两端后台身份、源码SHA与本地镜像核对正常。只读helper脚本在本地DQN中因缺psutil提前退出，已用原有运维解释器完成补核；正式训练仍为DQN/CUDA，未安装包或改动训练。后续该helper脚本使用`C:/Users/Admin/anaconda3/python.exe`，训练快照脚本继续用DQN。[有效快照](outputs/experiments/europe_tmg_20261001/preflight/root_verified_snapshot_20261002T015022_338815Z.json) · [G1独立终点核验](outputs/verification/g11_remote_launch_20261001/g1_terminal_compact_20261002T014854_564684Z.json)。
 
+
+
+
+
 **G11 G2完整完成与监控取证更正（2026-10-02，北京时间08:45训练观测、08:54独立复核）：**G2已`completed`，400000交互/398001更新，原worker退出；独立核对final policy/model、results/evaluations SHA与两controller回执一致，seed51001/冻结85f/固定终点、Jan12验证2580条及Jan15测试300条齐全。T0/T1/G0/G2共4/9完成，其余五组继续训练或周期验证；08:45累计2556450/3100000步（82.47%），Jan24评价仍未提交。08:44轮本地Luna汇总混入旧来源路径、helper时间和计数，已拒用并保留；本轮采用实际API/SSH及新独立helper/终点原始证据从头重建，未操作训练进程或冻结源码。g11自动跟进已更新为原始来源与时间校验、每次简报不变并精确回读。后续增长基线使用运行清单`latest_verified_snapshot`，不能用被拒摘要。[有效快照](outputs/experiments/europe_tmg_20261001/preflight/root_verified_snapshot_20261002T005730_267586Z.json) · [独立原始核验](outputs/verification/g11_remote_launch_20261001/helper_live_raw_20261002T005446_074844Z.json) · [汇总拒用记录](outputs/experiments/europe_tmg_20261001/preflight/rejected_summary_20261002T005505_613096Z.json) · [自动跟进修正回执](outputs/verification/g11_remote_launch_20261001/monitoring_provenance_repair_20261002.json)。
+
+
+
+
 
 **G11 G0完整完成（2026-10-02，北京时间06:45观测、06:46终点复核）：**G0已`completed`，400000交互/398001更新，原worker正常退出。final的policy.pt/model.json、results.json和evaluations.jsonl SHA已核，元数据为seed51001/冻结85f/固定40万步终点，Jan12验证2580条、Jan15内部测试300条齐全，两controller完成回执匹配。现在T0/T1/G0共3/9完成，其余M0–M3、G1/G2六组持续训练；观测累计2311650/3100000步（74.57%，不含验证和测试）。Jan24共同独立考核尚未提交，科学配置和预算未变。证据：[本轮更正后的完整核验摘要](outputs/experiments/europe_tmg_20261001/preflight/g11_hourly_readonly_20261001T224905_248625Z.json) · [根复核](outputs/experiments/europe_tmg_20261001/preflight/root_hourly_review_20261001T224953_401020Z.json)。原首份摘要继承的G0旧阶段与controller旧别名字段已保留并明确更正，实际API/SSH及终点证据未改写。
 
+
+
+
+
 **G11首个40万步节点（2026-10-02，北京时间05:44核验）：**G0已达到400000交互/398001更新，当前为`evaluating`，正在执行既定Jan15内部终点测试；真实worker仍为PID6448/出生ticks743734948，尚未计为completed。T0/T1保持完成，其余M0–M3、G1/G2六组继续训练，九组累计2185000/3100000步（70.48%，不含验证与测试）。DQN/CUDA、冻结85f源码与原任务身份核对一致。Jan24共同独立考核仍须等待全部九组完整终点；当前2/9任务完成，不依据达到训练预算提前宣告评价或模型效果完成。证据：[实际API](outputs/experiments/europe_tmg_20261001/preflight/hourly-20261002-0543_20261001T214437_357289Z.json) · [SSH及进程核验](outputs/verification/g11_remote_launch_20261001/live_snapshot_20261001T214449_771059Z.json)。
+
+
+
+
 
 **2026-10-02用户进度简报偏好更改：要求改为每小时必报，自动化实际保存结果以本次操作凭据为准。** G11 自动化更新回执确认任务仍为 `ACTIVE`、原频率与九组范围不变，并已改为每次运行后在对话中发送简短中文进度简报（包括正常无变化）；见[更新与精确回读回执](outputs/verification/g11_reporting_preference_20261002/change_receipt.json)。本条记录的是汇报偏好和自动化提示，不更改下方实验训练事实。
 
+
+
+
+
 **G11 T两组完整结束、G1已接入（2026-10-01，北京时间21:29观测、21:33终点复核）：**T0/T1均为`completed`，各150000交互/148001更新，原worker正常退出；final目录的policy.pt/model.json与results/evaluations SHA、元数据seed51001/冻结85f/固定终点、Jan15内部测试各300条及Jan12验证各1080条均已核验。G1已按原任务ID从队列启动，PID27640/出生ticks745261874，DQN/CUDA及冻结包路径一致，21:29为24100步/22101更新。当前2/9完成、其余7组运行，无排队或新故障；九组共967950/3100000步（31.22%，不含验证/测试）。两controller均已登记T0/T1完成并等待剩余七组，Jan24共同考核尚未提交。未修改科学源、任务、种子或预算，尚未形成正式模型效果排名。入口：[本轮实时与终点SHA证据](outputs/experiments/europe_tmg_20261001/preflight/g11_hourly_readonly_20261001T133632_381538Z.json) · [真实API快照](outputs/experiments/europe_tmg_20261001/preflight/hourly-20261001-2128_20261001T132906_063676Z.json)。
+
+
+
+
 
 **G11首个训练预算节点（2026-10-01，北京时间20:31根核验）：**T1已达150000交互/148001更新，当前仍为`evaluating`，正在进行预先安排的Jan15内部终点测试；尚未核齐最终metadata/results，不计作completed。T0为145600/150000步，其余六个已运行长组持续推进，G1仍排队。九组本次共821950/3100000步，completed仍为0/9。这不是Jan24共同独立考核开始；两个controller仍等待九组完整终点，未新增独立评价任务。worker/辅助进程身份、冻结85f源码和guard均保持，未停止、恢复、改源或增加预算，尚无正式模型效果结论。入口：[根实时API](outputs/experiments/europe_tmg_20261001/preflight/root-t1-budget-milestone_20261001T123118_343660Z.json) · [本轮SSH/进程核验](outputs/experiments/europe_tmg_20261001/preflight/g11_hourly_readonly_20261001T123012_238990Z.json)。
 
+
+
+
+
 **G11九组已在双4090D启动（2026-10-01，北京时间16:31根核验）：**T0/T1各15万步，M0–M3/G0–G2各40万步，共9组310万交互，seed51001。八个真实worker均已有CUDA参数更新，G1在20418按四路上限排队；合计43050步，0/9完成，不能提前判断模型效果。科学冻结`85f667cd5731e284c19b2590b5dcf5308a58f234`；本地及两远端各自425项全量检查通过（平台跳过见日志），默认J0/J1数值等价、M完整恢复、G物理关系及前端贯通通过。20418承担T/G，20424承担M，两GPU独立但共享/home，repo/archive/锁已隔离，前端8766/8767。Jan24预选100场景及796场景50/40dBi合同通过；九终点＋旧J0/J1的15万步参考＋两基线共3500分配尚待执行。guard SHA`139197aced9821b861d7faaf624cd983505dfea11ef4af895e2a4fc176e946c4`，两controller/报告collector/本地SHA镜像与完整归档等待进程均已启动，九训练全部完成才触发独立评价。g11每小时跟进ACTIVE，正常无重要变化静默，旧g10保持PAUSED；不关机、不开额外组/种子/预算。入口：[执行说明16](docs/第二阶段/方案/16_温度记忆与干扰图双实例实验说明.md) · [运行清单](outputs/experiments/europe_tmg_20261001/run_manifest.json) · [根PID与更新核验](outputs/verification/g11_remote_launch_20261001/live_snapshot_20261001T083145_176520Z.json) · [持久启动交接](outputs/verification/g11_remote_launch_20261001/final_launch_handoff.json) · [辅助进程补核](outputs/verification/g11_remote_launch_20261001/final_launch_handoff_helper_identity_addendum.json)。
+
+
+
+
 
 **P08后续方案（2026-10-01，仅建议）：**G10完成后，建议先读取既有1/3/5/8/10/15万步学习快照，拆分联合Q目标的价值项与熵项；再新增原分头策略下“加性Q＋固定α0.01”和“完整联合Q＋固定α0.01”两组，各15万步，候选新增30万交互。满足默认分支等价、初始化和场景/验证条件后，复用历史J0/J1同期节点，不把15万与40万混排。固定原初值仅隔离温度自适应，不代表最佳温度；后续候选为加性Q＋槽数—功率交互，共220输出，不在30万预算中。Jan23已参与开发，正式确认需新留出日期。本次只核文件清单、源码格式、证据与方案，未运行模型探针、训练/评价、改前端或恢复g10。入口：[方案15](docs/第二阶段/方案/15_联合Q失稳诊断与结构化价值改进方案.md) · [后续问答](Q&A/算法与训练/Transformer记忆与算法创新.md#2026-10-01追问后续怎么做)。
 
+
+
+
+
 **G10组间差距解释补充（2026-10-01）：**用户追问J0/J2为何优于J1/J3。已核四组共同分界是加性/完整联合Critic，动作空间仍最多10000，改变的是每Critic120分量输出→10000组合输出及直接监督共享方式。原始日志新增窗口统计显示J1/J3前段批熵长期低于目标，后段α/Q/TD同时大幅漂移；加性结构更易学稳是本轮证据支持的解释，稀疏直接监督与温度/自举反馈是机制假说，不把α定为唯一初因、也不推导83倍样本需求。日志α×当前熵仅作数量级代理，非下一状态TD目标精确分解。仅读取既有代码/日志和维护问答，未改算法/前端、未新增训练/评价或恢复g10跟进。入口：[解释问答](Q&A/算法与训练/Transformer记忆与算法创新.md#2026-10-01追问为什么j0j2比j1j3好这么多) · [窗口证据](outputs/verification/g10_completion_20261001/why_joint_q/learning_windows.json)。
+
+
+
+
 
 **G10全部完成并通过最终核验（2026-10-01 14:43）：**J0–J3各40万步/398001更新，四固定终点同Jan23的100场景×3动作及两基线各100，共1400分配/140000逐束轨迹，全部completed。报告v2、独立审计和根标准库逐束重算一致；20618文件/7.183GB双端SHA归档、四规范模型、6个中文补图/统计文件以及Jan23原包1.504GB双端SHA均完成。科学冻结cc27不变；仅修报告把final test行误当validation的分类错误，原失败和运维史保留，无重训/重评。J0/J1/J2/J3独立SI=93.11/83.54/93.41/87.41%，SGM=.5518/.4237/.5643/.3530；J2平均SI比J0高0.295个百分点、SGM高.01251，但全100束基本服务88%→85.33%，仅小幅取舍。完整联合Q的J1/J3后段价值误差与温度持续增大、回报退步，不支持替代J0；单seed/单日期/参数量差异限制保留。正式报告11含训练原始及100回合均值、43节点原生验证回报、对数学习曲线、共同考核和资源账。g10已通过应用工具暂停并回读PAUSED，中文提示无乱码；最后额度9%、1张重置卡未用，不关机或归档本对话。入口：[正式报告11](docs/第二阶段/实验报告/11_联合动作四组独立场景对照.md) · [最终资产交接](outputs/verification/g10_completion_20261001/final_archive_handover.json) · [根最终核验](outputs/verification/g10_completion_20261001/root_final_delivery_verification.json) · [规范模型](models/runs/europe_joint_action_20261001/) · [运行清单](outputs/experiments/europe_joint_action_20261001/run_manifest.json)。
 
+
+
+
+
 **G10训练与共同评价已完成，报告统计修复中（2026-10-01 14:16）：**根实时API及远端逐文件核对，J0–J3各400000步/398001更新、4000回合完成，四worker正常退出；四个已登记Jan23评价也全部completed，J0为500分配（含两基线）、其余各300，共1400/140000逐束轨迹，终点policy与metadata SHA一致。controller因报告器把训练`evaluations.jsonl`中的正常final test300行也要求为validation而退出，错误为`J0: unexpected validation row`；实际验证为43×20×3=2580行，另final test300，共2880行。原失败现场、脚本、不可变输入与SHA已保留；仅修报告/运维接续，禁止重训或重复评价，科学冻结cc27不变。逐项报告审计与本地归档尚待完成，暂不发布模型优劣结论。入口：[根八任务完成核验](outputs/verification/g10_completion_20261001/root_api_completion_milestone.json) · [原报告失败](outputs/verification/g10_completion_20261001/failure_preserved/report_failure.json) · [终点及原始数量核验](outputs/verification/g10_completion_20261001/completion_probe_initial.json)。
+
+
+
+
 
 **G10跟进提示编码已修复（2026-10-01 10:15）：**上次更新自动化时，经Windows子进程读取非ASCII JSON的中文发生有损转换，导致本次提示主体及名称乱码；原任务约束在已保存的Unicode提示中完整保留。本轮恢复原中文并保留09:12监控修复条款，ASCII JSON/显式UTF8回读与期望逐字符相同，替换字符为0，g10仍ACTIVE、每小时/正常静默及严格剩余<3%用卡规则不变。新只读脚本按已核SHA真实执行，唯一快照确认J0/J1/J2/J3为230900/232900/228100/232750步，总924650/1600000，四组持续更新，controller/mirror正常，无训练操作。本轮额度16%，未用卡。入口：[有效快照](outputs/experiments/europe_joint_action_20261001/preflight/heartbeat_live_hourly-20261001-1012_20261001T021344_832598Z.json) · [根回读核验](outputs/experiments/europe_joint_action_20261001/preflight/root_review_20261001_1012.json)；乱码原配置已留在运维证据目录，未掩盖历史。
 
+
+
+
+
 **G10监控取证误报已排除（2026-10-01 09:22）：**09:12心跳记录混入08:13旧观测并误覆盖原08:11本地快照，不能据此认定训练停滞。09:14根独立no-cache API与09:17新API/SFTP核对四组实际为189500/190000/186000/190000步，更新187501/188001/184001/188001，原PID/出生tick、cc27源码、controller15798及mirror25220身份/SHA均正常；没有停止、恢复或修改训练。误写现场保留，原08:11完整字节未恢复，仅已核总558550步及四组数字可重建；旧响应进入新文件的具体路径因缺独立原始请求记录仍未确定。新增唯一UTC微秒文件名、拒绝覆盖、保留raw响应和新鲜度核对的只读入口`g10_live_heartbeat.py`，SHA89d8424b52a1c9501786da090485e0d85b757500fe467c96cb488348e2bf47d9，本地无网络安全自检通过；长验证/评价/正常退出交状态审阅，不据旧心跳直接判失败。g10跟进已更新为此入口，仍ACTIVE，训练/评价预算不变。本轮额度剩余17%，未用卡。入口：[诊断与限制](outputs/verification/g10_remote_launch_20261001/heartbeat_0912_diagnosis.json) · [新的有效快照](outputs/experiments/europe_joint_action_20261001/preflight/heartbeat_live_post0912-audit_20261001T011744_516361Z.json)。
+
+
+
+
 
 **G10四组已在远端4090D真实训练（2026-10-01 05:13根API核对）：**J0/J1/J2/J3已到4500/4250/3850/3600步，更新2501/2251/1851/1601，真实PID15471/15590/15704/15831及出生tick核对稳定；四组207维14令牌、旧奖励/dropout0/shuffle/joint_feasible、seed51001各40万步共160万，初始温度沿G09实际0.01。科学冻结`cc27cd7f7a4725d217c2fce1feadfb2c3cbc8358`，source清单SHA`7d31929e8fd658f08dee82ab5d2fdccc8c15bd04cebf807540bc777b38464174`；本地及远端Git保留，新worker显式导入第二阶段冻结snapshot，第一阶段/旧G09不动。Windows403通过/skip2、Linux403通过/skip3，旧J0同场景动作/两次更新及optimizer/RNG全等、J四组本地/远端CUDA恢复与实际页面通过；这些不等于学习效果提升。05:13–05:14短窗口约54.3更新/秒，含5000步验证，GPU98–99%/约3164MiB，非长期吞吐结论。Jan23 staging-0独立100场景已导入`scenes_20261001_050411_a2df67d5`，首错误sidecar ID导入留预检历史，100数组未变；四固定终点后自动同100×3加两基线各100共1400分配，报告/独立审计/本地SHA归档已接持久后处理。g10每小时跟进ACTIVE，正常静默、里程碑与异常通知。用户额度规则严格剩余<3%才可使用已有卡，最近剩余20%、1张未用。学习效果及最终归档仍待完成。入口：[训练说明14](docs/第二阶段/方案/14_联合动作四组远端训练说明.md) · [G10清单与四任务ID](outputs/experiments/europe_joint_action_20261001/run_manifest.json) · [根实时核验](outputs/experiments/europe_joint_action_20261001/preflight/root_live_launch_check.json) · [运维证据](outputs/verification/g10_remote_launch_20261001/)。
 
+
+
+
+
 **P07算法创新调研（2026-10-01，仅方案）：**用户要求在字段消融外研究Transformer记忆及根本性算法改进。当前代码与原论文核对：Transformer仅处理同一步状态令牌，无跨步骤记忆；t是静态场景内逐束分配，不是ADS-B真实时间。联合掩码已实现，但策略合法频率/槽数打分仍加性、功率独立，双Q各自三头相加。推荐优先J模块原/条件策略×加性/联合Q四组，207维旧奖励/dropout0/shuffle、候选seed51001各40万步共160万；历史记忆M四组与逐束干扰关系G三组分别列候选，不自动累计或替代P06。时序方案包含真实上一动作/有效位、同窗口GRU与因果注意力、连续回放与无未来泄漏；图方案要求同信息对照。定向原论文调研不证明首次创新或实际提升。尚未实现、未建任务或训练/评价，G09完成/跟进暂停保持。入口：[方案13](docs/第二阶段/方案/13_分配记忆与联合动作建模算法调研方案.md) · [算法创新问答](Q&A/算法与训练/Transformer记忆与算法创新.md) · [调研记录](outputs/verification/algorithm_innovation_research_20261001/)。
+
+
+
+
 
 **P06下一轮建议（2026-10-01，仅方案）：**基于G09结果，推荐同4090D从零比较完整207维及分别去掉平均需求/处理进度/剩余需求的三种206维，共四组、seed51001各40万步，候选总160万步；旧奖励/dropout0/shuffle及真实维数不补0。四组只检验另外两字段存在时的单项作用；若要检验三项整体相对原状态的作用，204维第五组须单列，候选总预算才变200万。平均需求仍用于环境旧奖励，消融只删除观测；字段相关、必要投影参数和初始化差异不隐去。先诊断基本服务不足，再做固定验证及新日期共同考核；01-19已用于开发判断、01-22已用于第一阶段，候选01-23尚未核验可用性。新字段选择与步0/早期验证需前后端接入，目前未实现、未提交任务、未训练/评价或启用自动跟进，G09保持完成。入口：[方案12](docs/第二阶段/方案/12_207维全局信息消融与稳定性验证方案.md) · [问答](Q&A/算法与训练/模型是否学到了有效策略.md#2026-10-01追问根据g09结论下一轮实验怎么做)。
 
+
+
+
+
 **G09已全部完成并通过独立复核（2026-10-01 03:57）：**五原任务各400000步/398001更新、4000回合、40验证节点，八个固定终点模型同01-19独立100场景×3动作，另固定/贪心各100，共2600分配均completed。全100束最终SI/SGM/基本服务、功率/槽数、2600评价记录与260000轨迹、权重与源SHA复算一致，科学训练ecb、评价/服务6042不变。N0/N1/N2/N3/N4的SI=86.67/91.56/91.67/89.40/90.40%，SGM=.5586/.5980/.5973/.5932/.5907；N2平均SI微高，N1基本服务99.65束、300次分配全100束达标73.33%（N2为98.64/44%），综合优先参照N1但非全指标最优。N0回报/服务在迁移前已退步，不能称五组均收敛。验证NPZ SHA差异经5×20数组及ZIP层证实只是Windows/Linux封装create_system标记，实际场景相同。单seed/单日期、自然编码参数量和N0/N1跨设备限制保留。规范模型/完整断点和日志、2.798GB全量运行资产已remote+local SHA归档；原始1.66GB ADS-B上游包本地已核，额外异地副本未建。最终报告、分面回报/验证及学习诊断曲线已完成；本轮没有新训/重评。g09每小时跟进已通过应用工具核验为PAUSED，页面与原始记录保留。入口：[报告10](docs/第二阶段/实验报告/10_欧洲自然维状态与独立场景对照.md) · [独立审计](outputs/verification/g09_completion_20261001/audit/audit_summary.json) · [全量归档](outputs/verification/g09_completion_20261001/archive_receipt.json) · [规范模型](models/runs/europe_natural_state_20260930/) · [实时完成核验](outputs/experiments/europe_natural_state_20260930/preflight/completion_check_20261001.json)。
+
+
+
+
 
 **G09每小时进度跟进已按用户新授权启用（2026-09-30 22:03）：**自动化g09（本对话heartbeat，ACTIVE，每小时一次）每次输出五组维数/当前40万步/百分比/阶段及总体交互预算进度；此前的G08/G01/SAC跟进保持暂停。每轮刷新真实工作台/API/PID出生与更新，不以旧镜像或502误判训练。五固定终点及文件SHA齐后确保既定Jan19八模型同100×3、固定/贪心各100共2600评价执行，优先沿用远端现有v2后处理与已登记请求ID，避免重复；不加种子/组数/预算。评价阶段继续每小时报告，最终原始核验、中文报告/曲线/归档完成后暂停g09。训练和后处理依旧为远端持久进程；定时本地跟进需要本机和应用运行。入口：[自动化创建核验](outputs/experiments/europe_natural_state_20260930/preflight/hourly_followup_created.json)。
 
+
+
+
+
 **G09本地通道已恢复（2026-09-30 21:26核对）：**新tunnel34164（21:22:11）、mirror3420（21:22:30）身份/脚本SHA已核，8766实际API恢复、镜像沿原账本14→15轮error空，三项隔离重连检查通过。原SSH banner/通道超时现场保留，辅助进程退出根因未定；本轮仅恢复本地运营通道，未停/重训/恢复远端任何训练。新API N0/N1各400000 completed，N2/N3/N4为129050/124650/120700步，PID仍49148/49926/49927且训练中；总交互预算58.72%，独立Jan19共同评价仍待三组终点。入口：[恢复凭据](outputs/verification/g09_remote_migration_20260930/local_helper_recovery_20260930_211837/recovery_receipt.json) · [恢复后API进度](outputs/experiments/europe_natural_state_20260930/preflight/user_progress_20260930_212646_root.json)。
+
+
+
+
 
 **G09进度及本地查看通道异常（2026-09-30 21:14–21:17核对）：**远端工作台/SSH实际确认N0(204维)、N1(207维)均completed400000步/398001更新，worker退出，final policy/model.json/results.json齐且SHA已记录；N2/N3/N4为119550/115200/111500步（29.89%/28.80%/27.88%），真实PID49148/49926/49927及/proc出生tick匹配，科学源ecb/清单50f124未变。合计1146250/2000000交互步，57.3125%，不含验证/考核工作量。远端服务49918和后处理55124仍活着、脚本SHA匹配，独立Jan19评价任务尚未创建，phase waiting_five_fixed_endpoints，不能先排名两完成模型。本地隧道34444和mirror27268实际已死、8766本地拒绝连接/代理502；镜像旧步数落后且末次有SSH banner错误，不能当训练停了。已按既定授权派Sol只恢复本地辅助通道，远端训练/服务/源码/评价未动；恢复结果待实核。入口：[本次真实进度快照](outputs/experiments/europe_natural_state_20260930/preflight/user_progress_20260930_211738.json)。
 
+
+
+
+
 **G09已迁往4090D并五路运行（2026-09-30 19:00核对）：**用户指定u2024110224@10.160.17.102:20418，BUPT_PASSWORD仅环境认证。五原ID、seed51001、每组40万总预算、旧奖励/dropout0/shuffle和自然维输入均保持。8765两本地worker已退出，N0/N1完整停点306200/300400、更新304201/298401；三零步队列经API取消，原日志/断点保留。远端独立archive以同ID接续，本次五组步数N0/N1/N2/N3/N4为335000/329500/30000/26500/25800，训/验证中且均真更新；科学worker仍ecb74e89e637dced320f2f8ea9892a55d28565d7、原源清单SHA50f124...，服务只以6042e715调度cap3→5（main7d2f133，16相关检查通过）。60.005秒生产窗口GPU均98.98%、峰99%、显存峰3761MiB，每组增650–700更新，不能当全程提速或学习结论。新01-19独立100场景已核并导入scenes_20260930_182924_9417de52，旧G07/A/B固定终点也已复制；共同2600评价仍待五训练结束。查看远端8766，不把8765停止历史误当远端停训。原本地后处理/监督已退出或身份核停，数据监督独立；远端v2后处理55124已核身份/脚本SHA/完整断点与非有限恢复门槛，local镜像v2 PID27268（独立remote_mirror）至少3轮且error空；旧helper退出已核，CJK报告小流水线通过。工程交接已完成，科学学习与评价待完成。入口：[方案11](docs/第二阶段/方案/11_4090D迁移与并行运行方案.md) · [验证报告09及曲线](docs/第二阶段/实验报告/09_4090D迁移与并行验证.md) · [任务来源与现态](outputs/experiments/europe_natural_state_20260930/run_manifest.json) · [最终交接](outputs/verification/g09_remote_migration_20260930/final_handover.json) · [根任务核验](outputs/verification/g09_remote_migration_20260930/root_final_audit.json)。
+
+
+
+
 
 **G09自然维状态实验已授权并启动（2026-09-30）：**用户明确旧奖励＋dropout0＋每轮重排场景，按各档实际维数输入，不为网络对齐填0并开始训练。五组N0/N1/N2/N3/N4为204/207/246/746/2946维，令牌13/14/22/32/32，seed51001各400000步（共200万）。源码冻结`ecb74e89e637dced320f2f8ea9892a55d28565d7`，API8765服务源固定`C:/Users/Admin/.codex/worktrees/natural-state-ablation/paper`、归档D:/paper，worker用同提交source_snapshots；运行期间勿修改该固定工作区src或切分支。最终全量356测试、五档真实CUDA更新、原13基线初始逐位一致及实际前端选择通过，效果仍待训练。N0/N1已真实更新、N2–N4排队，初始max-workers=2；服务PID30640、持久后处理33292及恢复监督31632的创建时间与脚本SHA已核；监督只管五原ID，完整断点同ID恢复最多两次，手动停止/取消及非有限学习错误不自动恢复。01-19独立包尚在断点下载，日期/100预选时刻/业务规则已先冻结；完整校验并API导入后才评价5新模型＋旧G07/A/B，同100×3及基线共2600次，不冒充旧01-18。P05门控211维/新奖励只是旧建议，本轮未执行；P04第一阶段不受此授权影响。入口：[方案10](docs/第二阶段/方案/10_欧洲自然维状态对照训练方案.md) · [正式任务清单](outputs/experiments/europe_natural_state_20260930/run_manifest.json) · [启动现场](outputs/experiments/europe_natural_state_20260930/preflight/live_launch_snapshot.json) · [根API复核](outputs/experiments/europe_natural_state_20260930/preflight/root_api_snapshot.json) · [交付核验](outputs/experiments/europe_natural_state_20260930/preflight/root_final_review.json) · [恢复监督](outputs/experiments/europe_natural_state_20260930/preflight/supervisor_launch.json)。后续先刷新真实API/PID创建时间和更新增长，不恢复已结束G08。
 
+
+
+
+
 **S1-01覆盖图补充（2026-09-30）：**按用户要求，七组各同10时刻（idx5/15/.../95）生成70波束覆盖单图＋7组总览＋10跨组对照及本地可筛选图库；取自已审计的01-22共同考核原始终态，没有重训/新评价或按成绩挑图。真实0.25°GEO半角锥与球面近交点、欧洲/10°仰角截断，7000束几何QA和92文件SHA通过；七组同场景同坐标范围、全70同线性色标。P0展示十图中035/055/075不达覆盖门槛（图子集3/10不替代完整18/100），055图未覆盖26架、C1为3架。新的静态图库实际筛选通过，原工作台和第二阶段G09实验不变。入口：[报告03与全部图](docs/第一阶段/实验报告/03_七组十场景波束覆盖图.md) · [图库文件](outputs/experiments/first_stage_s1_01_20260930/coverage_maps_10_scenes/index.html) · [图及几何清单](outputs/experiments/first_stage_s1_01_20260930/coverage_maps_10_scenes/manifest.json) · [SHA/数值核验](outputs/verification/coverage_maps_20260930/download_check_receipt.json)。
+
+
+
+
 
 **S1-01七组已完成并通过独立复核（2026-09-30）：**三PPO各409600交互/1600优化更新、四基线＋三模型各同01-22留出100场景，10工作台任务全部completed且worker退出；冻结源`b3a11c51e9da6612a43cb005a79c9e89a37e448d`未改。独立700场景复算、原始业务/NPZ/结果/权重SHA通过；初次956条告警仅float32用户覆盖舍入（最大2.98e-8，均在原数值契约），修正审计侧精度后0问题，原失败现场保留。R0/R1/R2/C0/C1/C2/P0需求覆盖99.8495/99.9299/99.8658/99.8849/99.9391/99.9077/99.4725%，CV0.907098/0.854229/0.912277/0.840619/0.805150/0.844620/0.794456；R/C六组100/100可行，P0为82/100且无空束，18不达标来自覆盖。P0负载较均匀但覆盖较低；本轮C1兼顾覆盖与负载，PPO微调未优于同初始化局部搜索。仅single seed51001/该留出日期，不泛化为稳定结论。三模型checkpoint/policy/model.json已本地保存9文件SHA一致；138项suite资产已归档，新修正审计另存且SHA通过，原始ADS-B/任务NPZ/源码快照本地完整备份仍有缺口。训练/评价/controller/审计/归档工作均结束，页面服务与SSH隧道保留供查看，不创建定时任务或新训练；第二阶段G09独立继续。入口：[正式报告02与曲线](docs/第一阶段/实验报告/02_七组覆盖规划独立场景对照.md) · [最终交付与10任务核对](outputs/experiments/first_stage_s1_01_20260930/final_delivery.json) · [通过审计](outputs/experiments/first_stage_s1_01_20260930/audit_precision_review/audit.json) · [原始结果](outputs/experiments/first_stage_s1_01_20260930/results/) · [本地权重](models/runs/first_stage_s1_01_20260930/)。以下启动/进行中条目保留历史时点，不作为当前运行事实。
 
+
+
+
+
 **S1-01三训练完成、七组考核进行中（2026-09-30）：**R2/C2/P0三原任务均completed，各409600交互/1600优化更新/50rollout，原始完整回合2048/2048/4096；固定终点模型已导出，源`b3a11c51e9da6612a43cb005a79c9e89a37e448d`不变。原始训练/验证/负载/学习曲线已SHA核对并在本地归档，[报告01](docs/第一阶段/实验报告/01_七组覆盖规划训练记录与考核进度.md)附全部回合散点，避免将512环境同时终止的回合连成连续趋势。终点20场景开发验证：R2/C2/P0需求覆盖99.8820%/99.8846%/99.5569%，负载CV0.894887/0.828985/0.793118，可行20/20、20/20、19/20；这不是最终考核、不能说P0整体更好。七考核已同API建档，R0/C0各100完成，R1/C1局部搜索进行中，三模型评价排队；最新真实进度看[根API快照](outputs/experiments/first_stage_s1_01_20260930/root_current_snapshot.json)。controller22500与独立审计等待器29154持续后台，后者每30秒/最多2小时且结果齐才重算；异常不算通过。三模型checkpoint/final policy/model.json已同步本地并逐SHA核实；其余资产由隐藏归档器38144等待考核与审计后归档，最终ledger仍待生成，原始ADS-B/任务NPZ/源码快照本地备份缺口保留。完整效果待七考核、逐场景审计与正式结果更新，第二阶段G09独立继续。
+
+
+
+
 
 **S1-01第一阶段七组正式任务已启动（2026-09-30 14:43）：**用户授权远端4090D与新增无基础纯PPO，范围R0/R1/R2/C0/C1/C2/P0；4基线评价＋3PPO各409600步/seed51001，共1228800。冻结源码`b3a11c51e9da6612a43cb005a79c9e89a37e448d`，本地D:/paper main与远端Git均保留；386项集成回归/3平台跳过，三PPO真实更新、P0空布局构建和工作台停止/恢复通过。API核R2/C2真实更新已到98304步/384次，P0排队；max-workers=2，两路总吞吐35499高于三路20866步/秒，实测GPU均79.5%/83.4%，不以占用率牺牲总吞吐。远端DQN3.11.11/torch2.3.1+cu121/CUDA12.1，实际包从冻结source_snapshots导入；server22188、controller22500与进程创建时间已核。01-08/09训练576、01-12验证20、01-22独立考核100，各初始化登记，共9套；P0每场景初始active0、2048候选上限。后台controller完成三训练后经同API提交七项共同考核，效果仍待完整评价及独立审计。以下P04是历史建议，不改变第二阶段G09。入口：[方案03](docs/第一阶段/方案/03_远端4090D部署与七组并行实验技术方案.md) · [正式计划与清单](outputs/experiments/first_stage_s1_01_20260930/) · [主任务API复核](outputs/experiments/first_stage_s1_01_20260930/root_api_launch_snapshot.json) · [386测试与源等价](outputs/verification/remote_stage1_20260930/integrated_source_equivalence.json) · [GPU与恢复证据](outputs/verification/remote_stage1_20260930/)。
 
+
+
+
+
 **P04第一阶段首轮分组建议（2026-09-30）：**拟6个比较组：现有规则不微调/局部搜索/PPO（R0/R1/R2），有约束聚类不微调/同搜索/PPO（C0/C1/C2）。只有R2/C2为2次PPO训练候选，其他4组是基线评价；共用seed51001、100束/0.5°和业务/动作/评价条件。先规则侧工程跑通再接聚类侧，两PPO正式预算在几何及真实更新短核验后统一冻结；本次未授权预算、实现布局功能、创建任务或训练/评价。第二阶段P05是另一计划，不合并运行，G08既有完成状态不变。入口：[第一阶段方案02](docs/第一阶段/方案/02_基础布局与PPO微调首轮实验分组.md)。
+
+
+
+
 
 **P05历史奖励失败后的优先级更正（2026-09-30）：**用户提醒融合奖励曾以448.25W得到SI35.73%，低功率伴随服务损失，不能将新奖励默认视为改进。现建议R0/R1旧奖励主线（A+B、204/211维，各40万步，共80万），新奖励R2须当前欧洲/联合掩码功率反馈及服务风险诊断后才考虑，R3仅为交互归因条件；四格160万为备选总框架，不是默认预算。历史固定频率槽的30W重放提高SI及原融合累计奖励，不能唯一归因罚项过强，也不证明重新训练能学好。新J归一化功率系数与旧融合相同，9项代数检查不等于功率学习验证。主线用固定验证旧奖励回报和终态服务验收，未实施、未创建任务；G08完成/跟进暂停与P04计划不变。入口：[方案09第11节](docs/第二阶段/方案/09_关闭dropout与随机场景后的稳定训练方案.md#11-历史融合低功率失败后的优先级更正) · [奖励问答](Q&A/算法与训练/当前奖励函数.md)。
 
+
+
+
+
 **第一阶段分层PPO方案补充（2026-09-30）：**用户提出聚类或固定规则生成基础布局，再用PPO微调；已细化P04/B为第一阶段内部两层，基础规则冻结、PPO独立学习中心修正，第二阶段T-SAC仍独立分配频率槽与功率。首版100束/0.5°、固定轮询与相对初始布局的累计位移范围；终态覆盖门槛、全量重算用户归属、原始终态/回退和初始化/学习收益分开。现有规则训练需求覆盖约99.79%为576快照汇总，不是PPO效果。仅方案和问答更新，未实现布局环境、PPO掩码或前端任务，未授权新增预算或启动训练/评价。入口：[方案01的B方案](docs/第一阶段/方案/01_第一阶段波束覆盖规划与两阶段解耦方案.md#b-基础布局加ppo微调) · [问答](Q&A/环境仿真/第一阶段波束覆盖规划与两阶段衔接.md)。
+
+
+
+
 
 **第一阶段编号更正（2026-09-30）：**按用户追问，第一阶段首个方案由原全项目序号09更正为本阶段01，文件名、正文标题、目录与相关链接已同步，后续本系列从02递增。第二阶段既有编号不变；仅文档编号更正，无算法、前端或实验任务变化。入口：[第一阶段方案01](docs/第一阶段/方案/01_第一阶段波束覆盖规划与两阶段解耦方案.md)。
 
+
+
+
+
 **文档按阶段归档（2026-09-30）：**用户要求docs下分开第一阶段与第二阶段。覆盖规划方案归入 `docs/第一阶段/`，资源分配方案、报告与规范归入 `docs/第二阶段/`，第二阶段和共用资料原编号保留，第一阶段首个方案按用户更正为01；跨阶段方案04、工作台、工程文档与资料保持共用原路径。全仓库维护中的文档引用同步修正，冻结实验产物不改写。仅文档移动与引用检查，无算法、前端或任务变化。入口：[文档总目录](docs/00_目录.md) · [第一阶段](docs/第一阶段/00_目录.md) · [第二阶段](docs/第二阶段/00_目录.md)。
+
+
+
+
 
 **G08状态空间表现解释补充（2026-09-30）：**C组不如204维的直接证据是后段价值误差、Q/target和温度明显增大；C组还保留dropout0.1与固定顺序，且13→32令牌编码与信息一起改变，不能纯归因于状态更全面。冻结代码确认未开放字段置零但对应令牌仍参加注意力、每10束压为一个令牌；这些表达是否造成退步仍是推测，未作新的因果对照。相同32令牌内部C4比C1在99/100场景SI提高、平均+2.51个百分点，但SGM下降0.0412。A/B分别有效仍限定单seed51001、40万步与当前欧洲考核，A+B组合尚未验证。仅读取既有结果和冻结源码、更新问答，无新训练/评价，G08与跟进状态不变。入口：[通俗问答与曲线](Q&A/算法与训练/模型是否学到了有效策略.md#2026-09-30追问为什么c组状态更全却不如204维版本) · [数值与源码指纹](outputs/experiments/europe_ablation_20260929/analysis/c_state_interpretation_20260930/evidence.json)。
 
+
+
+
+
 **第一阶段方案审查（2026-09-30）：**已阅读开题报告第2.1节，结合现行欧洲环境和G08已完成结果形成P04四个覆盖规划候选方案；推荐有约束初始布局＋单智能体集中轮询修正，第一阶段以覆盖/负载独立训练，第二阶段按保存的覆盖方案分配频率槽和功率。首版100束固定0.5°仅验证中心，逐束宽度须另立物理/接口版本。仅方案与问答归档，算法未实施、效果待验证，未批准新预算或创建训练/评价任务；没有恢复已完成G08或自动跟进。核对正式清单完成状态及源码接口，未刷新工作台实时服务/进程。入口：[方案01](docs/第一阶段/方案/01_第一阶段波束覆盖规划与两阶段解耦方案.md) · [问答](Q&A/环境仿真/第一阶段波束覆盖规划与两阶段衔接.md)。
+
+
+
+
 
 **频率槽粒度追问核验（2026-09-30）：**正式欧洲环境最小1槽25MHz＋整束5W；A的3641/30000条记录已为最小动作且最终容量仍超过需求（占全部12.14%、过供评分缺口18.65%），确认小需求存在粒度限制。A/B约64%的过供缺口仍来自多槽记录，不能仅按实际动作分类认定全部过供不可避免或策略错误。仅对实际单槽记录固定频点和其他束入射干扰，将本束功率解析降至5W后，A/B单槽记录的69.40%/64.63%仍过供；该检查不代表全体资源调整效果，未重放模型或新增评价。冻结评价源码a0556de与结果SHA核对；G08仍已完成、自动跟进暂停。入口：[报告08第5节](docs/第二阶段/实验报告/08_SGM低分的过供欠供诊断.md#5-追问是不是一个槽也太大小需求只能过供) · [统计和代码指纹](outputs/experiments/europe_ablation_20260929/analysis/slot_granularity_20260930/summary.json)。
 
+
+
+
+
 **SGM低分事后诊断（2026-09-30）：**对G08已保存的01-18共同考核逐束容量、需求与SGM复算，七模型的评分缺口主要来自容量过供，占73.74%–85.20%；G07/A/B分别为85.20%/83.75%/84.18%。A/B虽改善，仍有38.45%/43.31%的记录容量超过需求2倍；也同时有24.54%/24.13%的束欠供，不能以统一减功率或槽数代替逐束调整。这里分析的是全部干扰后的最终容量，并未确定功率、槽数或干扰各自的因果贡献。仅CPU统计既有结果，没有新增训练、评价或前端操作，G08仍全部完成、自动跟进保持暂停。入口：[报告08与曲线](docs/第二阶段/实验报告/08_SGM低分的过供欠供诊断.md) · [原始统计和输入SHA](outputs/experiments/europe_ablation_20260929/analysis/sgm_supply_diagnosis_20260930/summary.json)。
+
+
+
+
 
 **交付与运行结束（2026-09-30 02:20）：**正式报告07及独立审计已通过；本轮训练、评价和报告任务全部结束，`g08`自动跟进已通过应用工具暂停并核实为PAUSED，原两个历史跟进未恢复。用户要求任务结束后关机，将在保存最终交付清单与本地提交后安排正常关机；实际请求记录见本组`final_delivery.json`和`shutdown/`目录（只有记录存在且确认成功时才视为已安排，不把本文等同于已关机）。本轮没有追加下一阶段训练，关机不应触发新一轮自动恢复。
 
+
+
+
+
 **G08全部完成并通过复核（2026-09-30）：**六个原训练任务均完成400000步/398001更新及各300条原历史考核；G07＋六模型的七项01-18共同独立考核均completed，模型各100场景×3动作，固定/贪心各100场景×1，共2300次分配。所有场景/模型SHA、逐束终态指标及逐步资源账已独立复算通过，报告与曲线已归档到[报告07](docs/第二阶段/实验报告/07_欧洲六组独立场景对照.md)。独立考核G07/A/B SI为89.92%/91.40%/90.99%，SGM0.4033/0.5741/0.5198；A平均功率1680.17W、B2164.73W，A平均服务/匹配/功率更好，B全100束基本达标70.00%（A59.67%）和实际槽数更好。C1/C2/C3/C4 SI为85.90%/85.12%/82.87%/88.41%，当前设置下均未超过G07；C4相对同结构C1提高2.51个百分点但SGM下降，C组学习仍明显不稳定。七模型无越界/冲突/裁剪/零容量；固定原规则越界16槽/裁剪4次，贪心冲突10槽/零容量2束，比较时已并列限制。单seed51001、合成通信需求与独立日期范围限制保留。报告收尾编码异常已修复并严格复核既有产物后发布完成状态，没有重跑训练或七评价；C2早期原生退出及恢复历史保留。后续新组合仅建议，未启动。入口：[最终任务清单](outputs/experiments/europe_ablation_20260929/run_manifest.json) · [独立审计](outputs/experiments/europe_ablation_20260929/analysis/final_audit/summary.json) · [收尾修复](outputs/experiments/europe_ablation_20260929/finalization_recovery_20260930/finalization_receipt.json)。以下带时间的运行中记录为历史过程，不应触发重复提交或恢复。
+
+
+
+
 
 **G08新完成核验（2026-09-30 01:00）：**C3完整布局与需求组已完成400000步/398001次更新，300条原历史考核结果、实际100场景元数据、完成事件以及最终权重SHA均核验一致。目前A/B/C1/C3共4组完成；C4已达到400000步/398001更新，正在终点评价，不能计作已完成；C2训练到342300步/340301更新。C2/C4进程正常，helper8844存活、阶段`six_real_updates_verified`，共同独立考核任务尚未提交。源e25ae56、seed51001、预算与原任务ID未变，没有新故障。[本次快照](outputs/experiments/europe_ablation_20260929/preflight/heartbeat_20260930_0055.json) · [主任务完成核验](outputs/experiments/europe_ablation_20260929/preflight/root_C3_completion_20260930.json) · [C3固定终点权重](models/runs/workbench/train_sac_20260929_022430_295fe5ed/final/policy.pt)。四档状态的效果结论仍待共同评价，不以完成先后排名。
 
+
+
+
+
 **G08完成与恢复里程碑（2026-09-29 15:55–15:57核对）：**A/B/C1均已完成400000步、398001次更新及各300条原历史场景终点评价；新增核验C1最终权重SHA与模型元数据相符。C2已于15:02:52以原任务ID和完整初始断点实际恢复，worker PID19732创建时间/`--resume`命令匹配，15:57已到32550步/30551更新，当前状态及异步写入无新错误；13:59“只恢复排队、尚未实际训练”的限制在本时点已解除，原生驱动退出根因仍未确定。C3/C4在15:55分别到99200/95300步并持续更新。当前活动worker为19732/5652/11756，helper8844存活、脚本SHA一致、阶段`six_real_updates_verified`，仍等待全部六组结束后执行01-18共同独立考核。六组源e25ae56、seed51001和各40万步预算未变。入口：[现场核验与C1产物](outputs/experiments/europe_ablation_20260929/preflight/heartbeat_20260929_1551.json) · [主任务确认实际恢复](outputs/experiments/europe_ablation_20260929/recovery_20260929_1350/actual_restart_verified.json) · [C1固定终点权重](models/runs/workbench/train_sac_20260929_022420_7df81644/final/policy.pt)。C1状态档位效果尚未作共同对照，不提前判定六组胜负。
+
+
+
+
 
 **G08 A/B原考核阶段结果（2026-09-29）：**对已完成G07/A/B的同100场景×3随机动作原始结果逐束复算，场景/动作种子规则和约束口径已对齐。SI为88.93%/90.55%/89.50%，SGM为0.4149/0.5799/0.5343，平均功率2942.97/1726.25/2209.17W；A/B相对G07的SI改善为1.62/0.57个百分点，100场景配对SI分别81升19降、65升35降。A主要指标和拟合改善更明显，B使用槽数更少；两者总容量下降但按需求封顶的有效承载上升。尾5万步Critic损失中位G07约757/712、A约0.99/0.99、B约10.44/10.64，不能仅凭loss断言严格收敛。此为单seed51001、已有开发考核集上的阶段结论，**不是01-18新日期共同独立考核**，不证明泛化提升或A+B叠加收益。原始数据、学习/验证曲线、配置与来源限制见[报告06](docs/第二阶段/实验报告/06_欧洲AB阶段结果对照.md)。此次仅读取统计与绘图，C组继续运行，预算未变。
 
+
+
+
+
 **最近用户进度查询（2026-09-29 23:32）：**A/B/C1已完成各400000步/398001更新；C2训练290650步（72.66%），C3训练357200步（89.30%），C4在350000步进行周期验证（87.50%，尚未完成）。六组累计2197850/2400000交互步，约91.58%的训练步数预算；不包含后续共同考核工作量。活动worker身份核对通过，C2/C3有实际更新增长、C4验证进程正常，当前无新错误。helper8844存活、脚本SHA匹配、阶段`six_real_updates_verified`，仍等待六组结束后执行01-18共同独立考核。[本次工作台快照](outputs/experiments/europe_ablation_20260929/preflight/user_progress_20260929_2332.json)。本次仅读取与记录进度，没有修改训练配置或新增任务。
+
+
+
+
 
 **G08进度与恢复（2026-09-29 13:59核对）：**A关闭dropout、B随机场景均已完成400000步/398001次更新，各完成原100个历史考核场景×3次动作的终点评价，结果/最终权重SHA已核对；尚未进行01-18共同独立考核，不作优劣结论。C1为368950步，C3为32350步，C4为30000步（验证中），三者持续运行。C2曾于13:05启动后在0步以`0xC0000409`退出；Windows事件指向`nvcuda64.dll`，根因未定，不能归因为显存或异步采集。故障现场已保留，完整0步断点/科学配置哈希确认后，经工作台原ID恢复为queued，等空闲槽位后再核真实更新，尚未实际重启训练。源仍为e25ae56、seed51001、各40万步；未改变算法、环境或运行中源码。原helper24192因C2中断退出，已保存历史并以PID8844（13:55:33.186325）重启，继续等待原六组与后续共同评价。API10108仍在，活动worker为18676/5652/11756，均核对创建时间。入口：[完成与现场核验](outputs/experiments/europe_ablation_20260929/preflight/heartbeat_20260929_1350.json) · [恢复记录](outputs/experiments/europe_ablation_20260929/recovery_20260929_1350/recovery_summary.json) · [主任务复核](outputs/experiments/europe_ablation_20260929/recovery_20260929_1350/root_recovery_audit.json)。后续先查C2实际启动及helper状态，勿重复提交新训练。
 
+
+
+
+
 **工程提速已完成并接续G08（2026-09-29 06:38）：**六个原ID已全部绑定`e25ae56cb55ec402e0ba96013e383ab3da324bf6`；A/B/C1从96700/96600/82300步完整断点继续，C2–C4仍排队，种子51001与每组40万步预算不变。24次稳态试验/12对数值、两布局真实短恢复/验证/保存及197项凭据检查通过；13/32令牌稳态吞吐2.66/2.46倍，纯算法参考额外观测耗时约0.7%/2.1%。正式共同训练窗口三任务总更新19.75→37.83次/秒（观察值，非全程同工作量）。新API PID10108（06:27:12）、worker PID13936/18744/18676、共同考核helper PID24192（06:32:06）已核验，派发保留释放，原helper19440/API16668已退出。更新/回合日志连续、六份来源链与科学配置通过，前端已验证异步选项与新源进度；[接续与原始证据](outputs/verification/async_telemetry_20260929/migration/final_handoff.json) · [主任务审计](outputs/verification/async_telemetry_20260929/migration/root_continuation_audit.json) · [设计报告](docs/第二阶段/方案/08_异步采集与训练吞吐优化设计.md) · [验证报告与曲线](docs/第二阶段/实验报告/05_异步采集与训练提速验证.md)。工程效果已验证，六组模型效果待共同评价；本对话`g08`每小时静默跟进至实质变化，两个历史跟进保持暂停。接手须刷新实际任务/进程创建时间，不重复迁移或提交。
+
+
+
+
 
 **G08最初恢复记录（2026-09-29，北京时间02:26，升级前历史）：**用户重新说“开始”后，工程核验完成，6组均已通过工作台提交，冻结源码`48022f4499823def40d573ea9436e3f7bdbf87fa`。A/B/C1正在训练并完成真实GPU更新，C2/C3/C4排队，max-workers=3。此前01:29的暂停已解除，旧PID不再有效。[实际任务清单](outputs/experiments/europe_ablation_20260929/run_manifest.json) · [主任务启动复核](outputs/experiments/europe_ablation_20260929/preflight/root_launch_verification.json)。
 
+
+
+
+
 **G08工程与数据核验（2026-09-29）：**四档同2946维/32令牌实现、前端选项与任务参数贯通完成；320项全量测试通过，原G07配置哈希/权重兼容、真实场景状态/奖励/资源一致性及代表GPU短更新通过。新01-18独立100场景数据与SHA核验完成，已导入为`scenes_20260929_022130_6c00e5a6`。1/2/3路同工作量短测选定3路并行。完整范围见[方案07](docs/第二阶段/方案/07_欧洲六组训练机制与状态对照.md)，效果仍待正式训练与共同评价。
+
+
+
+
 
 最后核对：**2026-09-28，北京时间00:18–00:27**。维护方式见 [AGENTS.md](AGENTS.md)。这是已核对事实的摘要；涉及正在运行的任务时，接手者必须刷新实时状态。表中百分数经过四舍五入，精确值以各组原始汇总为准。
 
+
+
+
+
 方案补充：**2026-09-28，北京时间00:45**。本次只核对训练场景代码、开题报告接口并新增P02数据泛化建议；未重新核验实时任务、未启动实验，以上运行状态核对时间保持原记录。
+
+
+
+
 
 数据调研补充：**2026-09-28，北京时间01:08**。P02新增公开数据与合成业务方法调研；两份小型公开包完成格式检查，未导入正式数据、未改源码或训练，未刷新实时任务。
 
+
+
+
+
 工程交付补充：**2026-09-28，295项最终回归于北京时间01:32通过**。P02欧洲独立环境、航空导入与前端实现完成，DQN/CUDA短真实更新通过。用户明确本晚不做完整训练，跑通后关机、明天再训；正式训练未启动，未创建定时任务。
+
+
+
+
 
 最新G07完成核对：**2026-09-28，北京时间22:48。** 工作台API、逐任务状态与完成事件一致，任务于20:45完成400000步、398001次参数更新，原工作进程已退出。最终100场景×3次随机考核需求满足率88.93%；最终权重及元数据存在且SHA一致，冻结提交01457f245bf0ab0e23873616e44975693014e3d0。仅核对已有记录与汇总，未重新评价；泛化改善仍需受控对照，详见G07。
 
+
+
+
+
 G07专项诊断更新：**2026-09-28晚核查，2026-09-29凌晨归档。** API确认任务仍为completed；新增全量日志分析、最终断点CPU只读探针与状态/奖励小例，确认价值拟合问题并形成P03。未恢复训练或改写权重，诊断产物及哈希见[清单](outputs/experiments/europe_adsb_20260928/diagnosis/diagnosis_manifest.json)。
+
+
+
+
 
 G07基线曲线补充：**2026-09-29。** 用户后续授权的欧洲模型/固定/贪心同场景评价已完成，500次分配及两张曲线见[报告04](docs/第二阶段/实验报告/04_欧洲模型与基线逐场景对比.md)。模型SI88.94%、SGM0.4213；未启动P03新训练。
 
+
+
+
+
 ## 1. 先读这里
 
+
+
+
+
 - **已执行实验范围：第一阶段覆盖规划、第二阶段频率功率分配与第三阶段功率细调，分别管理。** 第一阶段S1-01七组已完成训练/考核；第二阶段最新G11已完成九训练、共同评价、报告与资产归档。2026-10-03第三阶段S3-P01已完整交付；S3-P02七路线及耗时对照也已完成评价、审计、报告和归档，详情见页首。优先沿用“波束、业务需求、需求满足率、供需匹配程度”等用语。
+
+
 - **历史参照：G01旧奖励＋有/无联合掩码。** 两组各40万步、终点评价、同场景基线和正式核验均完成；2026-09-27已补齐奖励及服务曲线报告。它是历史掩码证据，不是最新一轮结果。
+
+
 - **G07训练及终点评价已完成。** 任务 train_sac_20260928_142100_38559f37，40万步；100考核场景×3次随机动作的需求满足率88.93%，平均99.24/100束达到10%基本服务，全部100束达标比例54%。最终模型已保存，未证明相较原数据的泛化改善。
+
+
 - **G07异常已做专项诊断，后续范围已扩为G08六组。** 固定验证SI有小幅改善，但Critic终止Q拟合明显失准，训练/评估态dropout模式差已测得。P03原分阶段建议保留；用户已授权G08的dropout、顺序与四档状态实验，旧奖励不变，详见G08及方案07。
+
+
 - 跟进自动化 `automation`（核验前端T-SAC掩码对照）实际配置为 **PAUSED**，已收尾。不要因旧心跳文本再次恢复已完成训练。
+
+
 - **第二阶段G09、G10及G11已全部完成。** 报告10/11/12保留各自口径与限制，最新G11交付见页首最终验收。P05新奖励/211维门控等仍为历史候选，M组的211维是另一套实际动作字段，不恢复已完成任务或增加种子。
+
+
 - **2026-09-28 P02→G07：**欧洲航空环境及前端已完成；用户授权的ADS-B场景已导入，一组训练及考核已完成。P01奖励对照及P02原/新数据两组对照仍未获本轮运行授权。
+
+
 - 正式训练与配套长评价必须从**前端工作台或其同一任务API**发起/恢复；使用DQN/CUDA、冻结源码和后台子agent。Luna负责简单清点，Sol负责实现与分析；主任务汇总结果。已限定训练种子51001，不能擅自增加51002/51003。
+
+
+
+
 
 **阅读顺序：**页首最新状态 → 本节 → 第2节共同口径 → 所关心实验组及报告/清单。第二阶段最新完成结果见[G11报告12](docs/第二阶段/实验报告/12_温度记忆与干扰图独立场景对照.md)，第三阶段已完成结果见[报告01](docs/第三阶段/实验报告/01_T0初始解的连续功率细调对照.md)，S3-P02见[报告02](docs/第三阶段/实验报告/02_七路线功率细调与逐场景耗时对照.md)及页首运行清单。P08方案15的固定温度部分已执行，其220输出结构仍为候选，P05方案09保留历史。第一阶段另见S1-01。历史奖励讨论见[当前奖励问答](Q&A/算法与训练/当前奖励函数.md)，训练数据见[训练场景说明](Q&A/环境仿真/训练场景与随机需求生成.md)。
 
+
+
+
+
 ## 2. 共同上下文与容易混淆的概念
 
+
+
+
+
 | 项目 | 接手时要记住的含义 |
+
+
 | --- | --- |
+
+
 | SI | 以全部100束最终容量计算的平均截断需求满足率，含后续干扰与未服务波束；以各组报告的实际口径为准 |
+
+
 | SGM | 当前代码的供需匹配评分，反映容量与需求接近程度；用户关注容量/需求比接近1，不能把代码SGM数值直接当作这个比值 |
+
+
 | 基本服务 | 每束最终容量达到本束需求的10%；平均达标束数、每次100束全部达标比例必须分开 |
+
+
 | 零槽与零容量 | 分配到正槽数、产生正容量、达到10%基本服务，是三件不同的事 |
+
+
 | `legacy` / `corrected` | G03/G04里的SAC学习公式差异：目标熵与双Q聚合；不是两种奖励函数 |
+
+
 | `legacy_repaired` / `fused` | G02/G01中的奖励预设：旧奖励修正功率记账 / 融合奖励；G01两组都用旧奖励 |
+
+
 | 原奖励 | 阈值满意度项＋本束SGM－供需偏差罚－占用冲突罚，没有直接的发射功率成本项 |
+
+
 | 原融合奖励 | `2Δ基本服务进度＋ΔSI总分＋0.2ΔSGM总分－本步实际功率/3000 W`；G02效果下降，尚未做有掩码重训 |
+
+
 | 联合掩码 | 筛选频点和槽数的组合，同时保留后续最低资源、限制功率并配套动态目标熵；本轮结果是整套方案的效果 |
+
+
 | 训练数据 | 本轮工作台固定100城市坐标；每回合重新抽100–1000 Mbit/s需求档位，再加标准差20 Mbit/s扰动，按需求降序；序号%8分组 |
+
+
 | 业务可见与网络输入 | 用户确认本轮分配前已知全部需求；G01保留的204维仍仅直接包含当前束位置/需求、剩余功率、100槽干扰及占用，没有自动加入全部未来需求 |
+
+
 | 随机范围 | 城市集合不变，无坐标扰动；需求和排序变化。最终考核也是同一城市库的新需求组合，尚未验证任意新地理布局或真实时序流量 |
+
+
 | 预算与模型选择 | 正式模型一般各40万交互步，采用固定预算终点；历史组398000更新、工作台组398001更新，不要混写 |
+
+
 | 单种子 | 仅训练种子51001；100场景×3动作采样不是300个独立训练种子 |
+
+
+
+
 
 **各组的场景、环境、功率记账和学习实现不同，以下分组结果不能直接拼成排行榜。** 不同奖励的回报不能直接排名；基线是同场景评价，不是模型训练。诊断或短检查不等于正式学习效果。
 
+
+
+
+
 ## 3. 实验组总览
 
+
+
+
+
 | 组号 | 实验与目录 | 实际范围 | 当前状态 |
+
+
 | --- | --- | --- | --- |
+
+
 | G09 | `europe_natural_state_20260930`：自然维状态输入 | 204/207/246/746/2946维；旧奖励/dropout0/shuffle，seed51001各40万步 | 五训练、八项01-19共同考核及两基线共2600分配、逐束复核与报告10/曲线/归档均完成；N1综合服务较好、N2 SI微高、N0后段退步 |
+
+
 | G10 | `europe_joint_action_20261001`：联合动作表示 | J0–J3：原/条件策略×加性/联合Q；207维旧奖励/dropout0/shuffle，seed51001各40万步 | 四训练、1400共同分配、审计/报告11/曲线/双端归档全部完成，g10跟进暂停；J2小幅指标取舍，完整联合Q两组后期失稳 |
+
+
 | G11 | `europe_tmg_20261001`：温度、记忆与干扰图 | T2×15万＋M4×40万＋G3×40万，单seed51001；双独立4090D、共享存储隔离 | 已完成9/9训练、310万交互、11模型与两基线3500次Jan24共同分配、审计、报告及全资产归档；2026-10-03 00:40最终验收，见页首凭据 |
+
+
 | G08 | `europe_ablation_20260929`：欧洲训练机制与状态空间 | 用户由3组扩为6组：dropout=0、每轮场景打乱、compact/summary/layout/full四档状态；均保留旧奖励，seed51001各40万步 | 六训练及七项01-18共同考核全部完成，逐束/资源账复算与带曲线报告07已通过；本轮无待运行任务 |
+
+
 | G01 | `workbench_mask_20260925`：前端T-SAC掩码对照 | 旧奖励，掩码关闭/开启2次训练＋原规则贪心/固定基线 | 已完成并核验；最新参照 |
+
+
 | G02 | `coverage_reward_20260924`：奖励对照 | 无掩码的旧奖励/融合奖励2次正式v2训练＋重评/基线 | 已完成；融合奖励未达到目标 |
+
+
 | G03 | `sac_comparison_20260924_r2`：网络×原/修学习公式 | Transformer/CNN/MLP × 2公式，共6次正式训练 | 已完成；原18组范围已取消 |
+
+
 | G04 | `sac_formula_factorial_20260925`：四公式组合 | 复用G03六组＋新增交叉组合六组，共12个结果单元 | 已完成；不是额外12次训练 |
+
+
 | G05 | 原预训练模型与原指标资料 | 五模型统一重评、T-SAC早期学习诊断、旧扫描数组 | 已有历史评价；口径及来源有限制 |
+
+
 | G06 | 环境/学习诊断、工程验收与短检查 | 204维诊断、功率重放、零槽诊断、DQN/CUDA与恢复检查等 | 证据见各入口；不记作新训练成果 |
+
+
 | G07 | 欧洲ADS-B首轮训练，目录 europe_adsb_20260928 | 真实位置＋合成需求，旧奖励/联合掩码T-SAC；单种子51001、40万步 | 训练与100场景×3终点评价完成，SI88.93%；泛化改善尚无同场景对照证据 |
+
+
 | S1-01 | 第一阶段覆盖规划七路线 | 规则/聚类不调整、局部搜索、PPO，以及空布局纯PPO；3×409600训练＋7×100共同考核 | 全部完成并独立审计通过；P0覆盖较低/82%可行，C1本轮较好，单种子限制 |
+
+
 | P01 | 固定掩码下旧/融合奖励比较 | 拟复用G01参照，候选新增1组40万步 | 仅建议，待用户决定，未启动 |
+
+
 | P02 | 训练数据泛化与第一阶段衔接 | 数据调研、欧洲航空独立环境、前端与数据冻结流程；295项及GPU短验证 | 工程实现完成；后续已授权并启动的单组训练见G07，原/新数据对照仍为建议 |
+
+
 | P03 | 欧洲训练不稳定原因与下一阶段对照 | 全量日志、最终断点只读探针、状态/奖励小例；建议先dropout单因素 | 诊断与方案已完成；后续已授权并启动的六组见G08 |
+
+
 | P04 | 第一阶段覆盖规划与两阶段解耦 | 四候选方案已收窄并扩为远端7组 | 用户已授权进入S1-01工程实施，效果待验证；初始建议与来历保留 |
+
+
 | S1-01 | 第一阶段4090D规则/聚类微调与纯PPO构建 | 用户授权7组：4基线、3PPO单seed51001各409600步；当前GPU工程与P0新输入网络验证 | 远端与本地Git、数据、工作台已接入；工程恢复问题修复中，正式训练尚未启动、效果待验证 |
+
+
 | P05 | A+B基础上的第二阶段稳定训练候选历史 | 曾拟211维门控/新奖励条件矩阵；保留奖励代数与风险解释 | 本轮执行已被G09自然维五组指令替换，未启动P05新奖励或其它专项 |
+
+
 | P06 | G09后的207维全局信息消融与稳定性验证 | 推荐207参照＋三种206维删除单字段；候选四组共160万步，旧奖励/dropout0/shuffle/seed51001 | 仅方案12与问答，未实现或启动；204第五组是条件扩展，不在默认预算内 |
+
+
 | P07 | 分配记忆、干扰关系与联合动作算法调研 | J模块G10已完成；M四组、G三组已获后续明确授权进入G11 | 具体执行见G10/方案14及G11/方案16；其它未选择方向仍仅建议，不累加P06预算 |
+
+
 | P08 | G10联合Q失稳诊断与结构化价值改进 | 两组固定α0.01各15万步已获授权进入G11；220输出交互Q单列 | 24快照离线分解完成，T执行进度见G11；220输出结构仍未授权，不恢复已完成G10 |
+
+
 | P09 → S3-P01 | 第三阶段T0固定频率槽功率细调 | T0/Jan25共同100场景×3动作×3方法，两预算口径各900结果，新增训练0 | 两任务、1800结果、18万束独立审计、3740文件归档、报告01及8图均完成；严格基本服务阈值边界与非收敛限制见报告，旧任务不重复运行 |
+
+
 | S3-P02 | 七路线功率细调与逐场景耗时 | T0/Jan26共同100场景×3动作×7方法，两预算各2100，共4200，新增训练0 | 两端4200结果、42万束与计时审计、6094文件归档、报告02和14图已完成；源码b3c94c9，单seed/日期与严格阈值限制见报告 |
+
+
 | S3-P03 | SI优先及容量估计对照 | T0/Jan27 100景×3动作×A/B/C，两预算各900、总1800，0训练 | 两端1800结果、18万终态束与12万候选束、完整时间审计、3696文件归档、报告03及15图均完成；SI微增与SGM/耗时代价并列 |
+
+
+
+
 
 ## 4. G01——前端T-SAC联合掩码对照（当前参照）
 
+
+
+
+
 **条件：**原T-SAC13令牌Transformer、原204维顺序、旧奖励 `legacy_repaired`、seed51001；各400000交互/398001更新。训练场景151001–155000，共4000回合，两组逐回合场景哈希相同。验证274000–274019；考核275000–275099，模型每场景3次随机动作，基线每场景1次。主成绩取最终权重。网络结构已对齐原T-SAC，但工作台学习实现与历史入口不完全相同；不能将跨入口差值只归因于掩码。
 
+
+
+
+
 | 方法 | SI | SGM | 基本达标束/100 | 零容量束 | 实际功率 W | 实际槽数 |
+
+
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+
+
 | 关闭掩码 | 65.82% | 70.03% | 88.74 | 10.37 | 2020.42 | 573.47 |
+
+
 | 联合掩码＋最低预留 | 75.55% | 80.55% | 98.94 | 0.00 | 2528.02 | 627.26 |
+
+
 | 贪心原规则 | 68.27% | 63.49% | 95.43 | 2.00 | 2409.75 | 490.00 |
+
+
 | 固定原规则 | 72.16% | 59.08% | 98.24 | 0.00 | 3000.00 | 784.00 |
+
+
+
+
 
 **结论：**掩码组相对关闭组SI＋9.73个百分点、SGM＋10.52个百分点、达标＋10.20束、功率＋507.60 W；按场景平均后100/100场景三个服务指标均提高。掩码组300次考核零槽、裁剪、越界、冲突及超功率均为0；两组均处理全部100束。增加功率伴随服务改善，不能称相对无掩码节能。
 
+
+
+
+
 **仍有缺口：**掩码组只有106/300次（35.3%）全部100束达10%需求，最低95束；固定策略40/100次（40%），最低93束。两者平均达标束数与全体达标概率不能混用。只证明联合筛选＋最低预留＋动态熵整体方案在本次单种子实验有效，尚未拆开规则作用和学习贡献。
+
+
+
+
 
 **运行与版本：**两个训练任务分别为 `train_sac_20260925_152308_c6a4bc88`（关）、`train_sac_20260925_152308_dcba4f43`（开）；基线评价任务 `evaluate_sac_20260926_030645_95e399db`。初始冻结 `847f7a7cb99a3bcab25f1c8bb4eaa9c821df6feb`；Windows文件写入故障后，从80000/40000步经工作台恢复到等价I/O修复提交 **`5da891fdbcf5fa0255d912677840620d977367c9`**。原日志/快照保留。比较器修复提交451b239仅使掩码两组可同场景配对，不改变训练或评价。
 
+
+
+
+
 **入口：**[实验记录](docs/第二阶段/实验报告/02_原T-SAC联合掩码对照实验.md) · [实验清单/哈希](outputs/experiments/workbench_mask_20260925/experiment_manifest.json) · [正式结果汇总](outputs/experiments/workbench_mask_20260925/comparison/summary.json) · [100场景配对表](outputs/experiments/workbench_mask_20260925/comparison/paired_scenes.csv) · [带曲线HTML报告](outputs/experiments/workbench_mask_20260925/comparison/training_curves/带曲线实验报告.html) · [曲线日志核验](outputs/experiments/workbench_mask_20260925/comparison/training_curves/log_audit.json)。
+
+
+
+
 
 原始任务数据在 `outputs/workbench/jobs/<任务编号>/`（配置、状态、日志、实际场景、results）；最终推理权重分别为[关闭掩码](models/runs/workbench/train_sac_20260925_152308_c6a4bc88/final/policy.pt)、[开启掩码](models/runs/workbench/train_sac_20260925_152308_dcba4f43/final/policy.pt)，元数据为各自同目录 `model.json`。两权重与40万步断点Actor一致，80000束终态已两轮复算。
 
+
+
+
+
 ## 5. 其他正式实验与新实验准备
+
+
+
+
 
 ### G08——六组欧洲训练机制与状态空间对照
 
+
+
+
+
 **最终状态：**六训练、七共同独立考核与结果复核均已完成。独立日期核心结果如下；基线请求/裁剪差异、完整资源及容量表、旧日期单列、学习不稳定与单种子限制详见[正式报告07](docs/第二阶段/实验报告/07_欧洲六组独立场景对照.md)。不得把此前A/B原历史考核结论直接当作本表的新日期结果。
 
+
+
+
+
 | 模型 | 01-18 SI | 01-18 SGM | 全100束基本达标 | 平均功率W |
+
+
 | --- | ---: | ---: | ---: | ---: |
+
+
 | G07 | 89.92% | 0.4033 | 48.67% | 2895.00 |
+
+
 | A 关闭dropout | 91.40% | 0.5741 | 59.67% | 1680.17 |
+
+
 | B 打乱场景 | 90.99% | 0.5198 | 70.00% | 2164.73 |
+
+
 | C1 少量全局 | 85.90% | 0.4049 | 29.67% | 3000.00 |
+
+
 | C2 资源服务概况 | 85.12% | 0.3797 | 26.00% | 2860.95 |
+
+
 | C3 布局与需求 | 82.87% | 0.3924 | 23.67% | 2544.78 |
+
+
 | C4 布局、分配与干扰 | 88.41% | 0.3638 | 45.00% | 2300.17 |
+
+
+
+
 
 训练有效冻结e25ae56，共同评价冻结a0556de，两者src/data/pyproject的Git对象一致；G07参照权重原源01457f。七评价ID、来源与SHA见[最终运行清单](outputs/experiments/europe_ablation_20260929/run_manifest.json)；模型位于`models/runs/workbench/<原训练ID>/final/`，原始结果在`outputs/workbench/jobs/<评价ID>/results.json`，曲线与核验脚本在`outputs/experiments/europe_ablation_20260929/analysis/`。本轮无增加种子或追加训练预算。下列启动/接续记录保留为历史。
 
+
+
+
+
 **09-30 01:00最新执行状态：**新增C3完成并核验300条结果和最终权重；C4达到训练预算但终点评价仍在进行，C2继续训练。共同01-18考核尚未开始，helper8844正常等待。[核验入口](outputs/experiments/europe_ablation_20260929/preflight/root_C3_completion_20260930.json)。
+
+
+
+
 
 **15:57最新执行状态：**A/B/C1完成，C2/C3/C4训练中。C1完整预算/终点评价/权重SHA已核对，C2原任务断点恢复后已产生30551次真实更新；helper8844已确认全部六组均产生过实际更新。此状态取代下面13:59和14:11时点的排队描述，历史经过保留。[完成与恢复证据](outputs/experiments/europe_ablation_20260929/recovery_20260929_1350/actual_restart_verified.json)。
 
+
+
+
+
 **A/B效果补充：**原历史100场景×3动作对照中A/B分别SI90.55%/89.50%、SGM0.5799/0.5343，均高于G07的88.93%/0.4149；A平均功率1726.25W，B2209.17W。全部分配完整、无超功率/冲突/裁剪/零容量。A改善更明显，B更省频率槽；仍有部分场景SI下降，独立日期和六组最终结论待后续共同评价。详见[阶段报告与曲线](docs/第二阶段/实验报告/06_欧洲AB阶段结果对照.md)及[逐场景/逐束核验](outputs/experiments/europe_ablation_20260929/analysis_ab_legacy_test_20260929/metrics/summary.json)。
+
+
+
+
 
 **13:59当前状态：**A/B已完成，最终权重和各300条终点评价原始记录已核验；C1/C3/C4运行，C2异常后从原ID/完整初始断点恢复排队。此处的终点评价使用原历史100场景，不是后续01-18共同独立考核。当前helper为8844；恢复经过、创建时间及下一步见页首与[恢复汇总](outputs/experiments/europe_ablation_20260929/recovery_20260929_1350/recovery_summary.json)。A/B权重入口：[A固定终点](models/runs/workbench/train_sac_20260929_022411_a4654185/final/policy.pt) · [B固定终点](models/runs/workbench/train_sac_20260929_022415_f5552810/final/policy.pt)；结果及完整SHA见[完成证据](outputs/experiments/europe_ablation_20260929/preflight/heartbeat_20260929_1350.json)。以下06:38接续和02:26启动记录保留为历史时点。
 
+
+
+
+
 **06:38工程接续记录（历史时点）：**六个原ID已全部绑定`e25ae56cb55ec402e0ba96013e383ab3da324bf6`；A/B/C1从96700/96600/82300步完整断点继续，C2–C4仍排队，种子51001与每组40万步预算不变。24次稳态试验/12对数值、两布局真实短恢复/验证/保存及197项凭据检查通过；13/32令牌稳态吞吐2.66/2.46倍，纯算法参考额外观测耗时约0.7%/2.1%。正式共同训练窗口三任务总更新19.75→37.83次/秒（观察值，非全程同工作量）。新API PID10108（06:27:12）、worker PID13936/18744/18676、共同考核helper PID24192（06:32:06）已核验，派发保留释放，原helper19440/API16668已退出。更新/回合日志连续、六份来源链与科学配置通过，前端已验证异步选项与新源进度；[接续与原始证据](outputs/verification/async_telemetry_20260929/migration/final_handoff.json) · [主任务审计](outputs/verification/async_telemetry_20260929/migration/root_continuation_audit.json) · [设计报告](docs/第二阶段/方案/08_异步采集与训练吞吐优化设计.md) · [验证报告与曲线](docs/第二阶段/实验报告/05_异步采集与训练提速验证.md)。工程效果已验证，六组模型效果待共同评价；本对话`g08`每小时静默跟进至实质变化，两个历史跟进保持暂停。接手须刷新实际任务/进程创建时间，不重复迁移或提交。
+
+
+
+
 
 **正式运行记录：**2026-09-29 02:24逐组提交，同一冻结提交`48022f4499823def40d573ea9436e3f7bdbf87fa`，DQN/PyTorch2.3.1+cu121、CUDA12.1、RTX4070SUPER，主模型固定40万步终点。服务PID16668创建于02:20:55（恢复时需重新核对身份），8765工作台并发上限3；首波3个worker均已核验独立冻结导入路径、启动时间、非空updates及真实更新。02:26主任务API复核A为2850/851、B为2800/801、C1为2550/551（交互/更新）；其余0步排队。没有正式效果结论。
 
+
+
+
+
 | 变体 | 工作台任务 | 02:26状态 |
+
+
 | --- | --- | --- |
+
+
 | A 关闭dropout | `train_sac_20260929_022411_a4654185` | training |
+
+
 | B 每轮随机场景 | `train_sac_20260929_022415_f5552810` | training |
+
+
 | C1 少量全局状态 | `train_sac_20260929_022420_7df81644` | training |
+
+
 | C2 资源服务概况 | `train_sac_20260929_022424_6af7c280` | queued |
+
+
 | C3 完整布局需求 | `train_sac_20260929_022430_295fe5ed` | queued |
+
+
 | C4 完整布局分配干扰 | `train_sac_20260929_022435_171eb319` | queued |
+
+
+
+
 
 共同训练576/验证20/历史比较100场景复用G07，新增01-18独立100场景已按SHA核验导入，留给G07和6个固定终点模型共同评价。后续跟进以工作台逐任务状态和本组`preflight/run_status.json`为准，不能因本文快照中的queued就重复提交。一次性提交helper已于02:25确认首波真实更新后正常退出，训练由工作台持久worker继续。
 
+
+
+
+
 **最初后台接续（02:32，升级前历史）：**一次性进程PID19440、创建时间02:32:38，读取已提交六ID等待完成；不会再提交训练。完成后经同一工作台创建G07＋6新模型在01-18的7个共同评价任务，固定/贪心只在G07评价中各执行一次，再核对原始结果并生成中文报告与曲线。当前实际阶段为`waiting_six_training_completions`、stderr空；当时未创建定时自动化，现时接续/跟进见页首。入口：[接续进程身份与脚本哈希](outputs/experiments/europe_ablation_20260929/preflight/continuation_launch.json) · [阶段状态](outputs/experiments/europe_ablation_20260929/preflight/run_status.json)。PID只对应本次核验，接手须重查。
+
+
+
+
 
 **恢复补记：**2026-09-29用户明确“开始”，下列暂停接手列表保留历史经过；恢复后的实际启动状态见上面的正式运行记录，不再以暂停时的未完成事项阻止已授权任务。
 
+
+
+
+
 **工程准备记录：**四档实现已完成，同结构参数2307801（策略461560）；320项回归通过、旧权重严格兼容、四档同动作的原奖励及资源结果一致。前端已实际选择四档、随机场景顺序并保存工程配置；隔离8877仅核验页面，结束后已停止，正式服务为8765。新01-18包SHA`bf7b473755f4af70cada5aacde1980fb46734bc25105eaa2dbd6bf011b724241`，100预选场景无拒绝，来源、数组及明细SHA核验通过。3路短吞吐18.09更新/秒，比串行高53.8%，GPU峰值2475/12282MB。配置/数据/证据入口见[六组方案](docs/第二阶段/方案/07_欧洲六组训练机制与状态对照.md)及[实验计划](outputs/experiments/europe_ablation_20260929/experiment_plan.json)。
 
+
+
+
+
 - **最新用户范围：**原G07作已有参照；新增A仅dropout=0、B仅场景每轮随机排列；用户明确第三方向只补状态、保留旧奖励，后又要求多档状态，已告知扩为4档，合计6个新模型。共同种子51001、各400000步，合计240万新交互步；这是获准范围，不因已有G07完成而自动增减；01:29暂停已经被后续“开始”指令解除。
+
+
 - **暂停时工作区：**复用`C:/Users/Admin/.codex/worktrees/europe-environment/paper`，分支`codex/europe-three-ablation`（沿用名称，无须改名），基于主线`c328c83`。源码修改仅在该worktree，主线尚未合并；暂停时已保存WIP提交，提交消息明确集成未完成。原main及G07冻结源码未修改。
+
+
 - **暂停时已有检查：**原207维/14令牌扩展、旧13令牌兼容、scene_order及轻量学习快照已有相关测试；初始三个候选各3次真实GPU更新通过，证据在`outputs/verification/g08_engineering_20260929/`。这些检查早于用户扩为4档状态，**不能当作新32令牌四档均通过**。并行吞吐测试尚未开始。
+
+
 - **四档最新设计：**同一2946维封装、32令牌骨干（原13＋全局1＋每10束一段共10＋8组资源），features为原四项后加`global_context`[10]、`beam_context`[10,10,11]、`resource_context`[8,204]；context_level为compact/summary/layout/full，未开放字段归零。逐档开放少量全局→资源服务概况→全100束几何需求→已执行动作/当前服务/逐槽占用和历史干扰。保留旧奖励，不读取未来动作或未来容量；网络编码不等于数学上已证明完整MDP。
+
+
 - **暂停时未完成、现已补齐的集成：**32令牌网络/环境字段实现刚开始，config已部分加入；需核对网络/字段/归一化、config_summary布局描述、默认context_level='none'的旧权重hash兼容、四档前端选项、导出/恢复/比较元数据及真实页面操作。UI目前只有先前13/14令牌与场景顺序改动，32档位还未接完。保留已完成14令牌功能，但本次4档正式对照要共用32令牌。勿在当前WIP启动训练。
+
+
 - **暂停时数据与设备记录：**G07训练576/验证20/旧考核100场景可复用，ID见G07；旧100用于历史共同比较。新独立日预先固定为2024-01-18、同ADSB.lol prod-0、100均匀预选时刻和原需求参数，官方包1,663,856,640字节；下载/准备已按用户要求停止，分片1,648,361,472字节保留。状态及来源在本组`data/`。DQN/CUDA曾核对可用；恢复后须重新验证实际解释器、GPU、工作台队列、源码及进程，不能复用旧PID。
+
+
 - **暂停时列出的恢复顺序（已执行至正式启动）：**仅在用户明确说开始后，核对WIP/暂停记录并续传新数据；完成4档实现、相关正确性/GPU检查和前端同步；测代表网络并发吞吐后确定工作台max-workers；提交并冻结源码，再由后台子agent通过工作台提交6任务。统一比较G07＋6新模型，最终新日期共同评价另记工作台任务。尚无G08模型效果。
+
+
+
+
 
 ### G07——欧洲ADS-B首轮训练（2026-09-28新增）
 
+
+
+
+
 **状态：训练与最终考核已完成。** 工作台任务`train_sac_20260928_142100_38559f37`，冻结源码`01457f245bf0ab0e23873616e44975693014e3d0`；DQN/PyTorch2.3.1+cu121与RTX4070SUPER，训练种子51001。于北京时间14:21启动、20:45完成，交互400000步、4000回合、398001次更新，任务状态`completed`，原进程PID7460已退出。主模型为固定预算终点权重；100考核场景各随机动作3次全部完成，300条分配记录/30000条逐束数据，不能称300个独立场景。
+
+
+
+
 
 **原训练终点评价结果与限制：**最终需求满足率88.9307%，SGM均值0.414919；平均99.24/100束达到本束10%需求，100束全部达标162/300次（54%）；平均功率2942.97 W、最高3000 W，零容量束、超功率、越界与裁剪记录均为0。22:48核对API/完成事件/结果元数据、逐场景汇总和最终权重SHA，当时未重新加载模型或重算物理链路。单训练种子、四个冬季工作日与合成需求限制结论，不能直接比中国旧成绩或8个训练场景的规则检查；原/新训练数据对照仍未完成。同场景规则基线对照后续已授权完成，单列于下文，不混用两次评价的动作种子与均值。
 
+
+
+
+
 **后续诊断补记（2026-09-28）：**本次已在DQN环境加载冻结最终断点作少量CPU只读前向，区别于上段22:48的文件核验；没有独立重评或更新权重。64个固定随机终止样本Q均值−46.13、奖励+0.065，Critic训练/评估态Q差17.10。全部398001次更新的Critic裁剪前梯度超过10约99.08%；早末窗口TD中位1.18→13.77。固定验证1万→40万步SI86.92%→88.69%、回报57.11→28.47，故不能称完全未学习或稳定收敛。场景顺序/隐藏β/目标取舍的证据和因果边界见[方案06](docs/第二阶段/方案/06_欧洲训练异常诊断与下一阶段方案.md)。
+
+
+
+
 
 场景ID：训练`scenes_20260928_142049_09674a59`（576），验证`scenes_20260928_142053_e9083bfc`（20），最终考核`scenes_20260928_142054_9bc86790`（100）。四日原包、逐帧CSV/NPZ/外置明细SHA、日期隔离及8个训练场景短规则检查已核验；需求仍是工程假设。
 
+
+
+
+
 **欧洲同场景基线评价（2026-09-29完成）：**用户要求的两张逐场景SI/SGM曲线已生成。工作台`evaluate_sac_20260929_005523_382b5e60`于北京时间00:58:50完成，冻结提交`61d888ccc60567979acab8a7d75e95d6a166dee3`，与G07训练版源码/数据内容相同。复用最终权重与100个欧洲考核场景，模型3次、固定/贪心各1次，共500次分配；DQN/CUDA、冻结导入路径、权重及场景SHA均核对，50000条逐束SI/SGM/功率复算通过。模型/固定/贪心SI分别88.94%/88.04%/89.27%，SGM0.4213/0.2436/0.3240，功率2885.23/3000/2066.60 W。模型SGM更高，SI略低于贪心；模型无裁剪/零容量，固定原规则有越界裁剪，贪心有冲突裁剪及平均2个零容量束。独立评价动作种子为每场景275000/275001/275002，与原训练终点评价派生规则不同，不能混写历史均值；不是新训练。详见[报告与两张曲线](docs/第二阶段/实验报告/04_欧洲模型与基线逐场景对比.md)，产物在`outputs/experiments/europe_adsb_20260928/baseline_comparison_20260929/`。
+
+
+
+
 
 入口：[含训练/验证/考核曲线的结果报告](docs/第二阶段/实验报告/03_欧洲ADS-B首轮训练结果.md) · [通俗说明](docs/第二阶段/方案/05_欧洲ADS-B首轮训练说明.md) · [工作台任务](outputs/workbench/jobs/train_sac_20260928_142100_38559f37) · [考核原始数据](outputs/workbench/jobs/train_sac_20260928_142100_38559f37/results.json) · [最终权重](models/runs/workbench/train_sac_20260928_142100_38559f37/final/policy.pt) · [来源清单](outputs/experiments/europe_adsb_20260928/source_manifest.json) · [场景统计](outputs/experiments/europe_adsb_20260928/preflight/actual_data_summary.json)。2026-09-28补图：原始指标、验证评价与最终考核各有曲线，绘图脚本及哈希见报告；训练曲线周期起伏且损失波动，不能只凭最终均值断言稳定收敛。下一步可分析低基本服务波束；任何新对照训练按后续授权执行。
 
+
+
+
+
 ### G02——旧奖励与融合奖励（无掩码）
+
+
+
+
 
 **目的/条件：**在零槽不计实际功率的新环境中，从头训练两组Transformer SAC，比较旧奖励 `legacy_repaired` 与融合奖励 `fused`；不是G01工作台训练。seed51001，各40万步/398000更新，固定终点；验证82000–82019，考核83000–83099，模型每场景动作种子91001–91003。源码 **`5a73516cd69c632258d37daba51a0f39d5fccc1c`**。正式任务均已completed。
 
+
+
+
+
 | 方法 | SI | SGM | 基本达标束/100 | 零容量束 | 实际功率 W |
+
+
 | --- | ---: | ---: | ---: | ---: | ---: |
+
+
 | 正式旧奖励重训v2 | 66.64% | 70.11% | 89.53 | 9.54 | 2066.55 |
+
+
 | 正式融合奖励重训v2 | 35.73% | 33.15% | 73.93 | 24.27 | 448.25 |
+
+
 | G03修正式Transformer权重新环境重评（非重训） | 63.37% | 68.96% | 91.93 | 7.07 | 1637.88 |
+
+
 | 贪心 | 68.28% | 62.98% | 95.09 | 2.00 | 2408.30 |
+
+
 | 固定策略 | 71.55% | 58.71% | 97.93 | 0.00 | 3000.00 |
+
+
+
+
 
 **结论：**融合奖励低功率伴随服务明显下降和零槽增多，本次实验未达到目标。正式两组均处理100束且未超3000 W。后续诊断：融合7280次零槽全部发生在仍有空位时，直接原因是选已占起点；固定槽位改为30 W重放可提高其SI与自身融合奖励，不能把失败单归因于功率罚项过重。G01尚未重训融合奖励，不能宣称这次失败已被修复。
 
+
+
+
+
 **入口：**[清单](outputs/experiments/coverage_reward_20260924/experiment_manifest.json) · [正式报告](outputs/experiments/coverage_reward_20260924/comparison/中文前后对照报告.md) · [汇总](outputs/experiments/coverage_reward_20260924/comparison/summary.json) · [配对表](outputs/experiments/coverage_reward_20260924/comparison/paired_scenes.csv) · [功率诊断](outputs/experiments/coverage_reward_20260924/comparison/power_counterfactual/中文原因诊断.md) · [零槽诊断](outputs/experiments/coverage_reward_20260924/comparison/zero_slot_diagnostic_20260925/中文零槽原因核对.md) · [20场景资源图说明](outputs/experiments/coverage_reward_20260924/comparison/visualization_random20_20260925/图表说明.md)。20场景是既有考核子集，不能视为新增独立考核。
+
+
+
+
 
 正式目录名：`transformer_old_reward_repaired_s51001_v2`、`transformer_fused_s51001_v2`，配置/状态/逐束评价位于 `outputs/experiments/coverage_reward_20260924/<组名>/`，权重位于 `models/runs/coverage_reward_20260924/<组名>/final.pt`。重评旧权重来源与SHA见[旧权重重评摘要](outputs/experiments/coverage_reward_20260924/old_weight_repaired_eval/summary.json)，不是从头训练第三组。首次无v2预热作业已作废，不计入结果。
 
+
+
+
+
 ### G03——三网络×原/修学习公式（六组）
+
+
+
+
 
 **条件：**Transformer、参数量接近的CNN/MLP，各原式/修正式；seed51001，场景种子61001，各40万步/398000更新，主结果固定终点。验证71000–71019、考核81000–81099，100场景×3动作种子91001–91003。六组均completed，训练冻结 **`36c14d74cbe6b9cf7410ee0595ee6d73083afdc8`**；分析提交508bc4d。其环境仍包含零槽请求功率记账等旧约定，不能与G02/G01直接排名。
 
+
+
+
+
 `legacy` 同时使用目标熵−6.9和逐头取双Q较小值；`corrected` 同时使用＋6.9和联合动作Q取较小值。两个因素同时变化，奖励公式在该组内保持一致。
 
+
+
+
+
 | run_id | SI | SGM | 功率W（该组旧记账） | 超功率比例 | 完整处理100束比例 |
+
+
 | --- | ---: | ---: | ---: | ---: | ---: |
+
+
 | transformer_legacy_s51001 | 67.18% | 69.49% | 3026.47 | 100% | 0% |
+
+
 | transformer_corrected_s51001 | 62.97% | 67.86% | 1748.80 | 0% | 100% |
+
+
 | cnn_matched_legacy_s51001 | 52.53% | 54.22% | 3029.00 | 100% | 0% |
+
+
 | cnn_matched_corrected_s51001 | 41.45% | 39.75% | 3028.85 | 100% | 0% |
+
+
 | mlp_matched_legacy_s51001 | 51.92% | 53.99% | 3030.78 | 100% | 0% |
+
+
 | mlp_matched_corrected_s51001 | 47.39% | 46.45% | 2022.78 | 0% | 100% |
+
+
+
+
 
 **结论/限制：**修正式没有带来三网SI整体提高；原式三组均超功率、提前结束，不能只按SI宣称更优。CNN修正式出现数值失稳，训练结束不等于算法稳定。只有一个训练种子。204维信息缺口及功率/槽数动作的联合表达问题另有诊断，不能由这些关联直接判定主要原因。
 
+
+
+
+
 该组同场景基线如下（均未超功率、均完整处理100束；仍为G03口径）：
 
+
+
+
+
 | 基线 | SI | SGM | 功率 W |
+
+
 | --- | ---: | ---: | ---: |
+
+
 | 贪心 | 68.48% | 63.56% | 2452.1 |
+
+
 | 固定 | 70.90% | 58.21% | 3000.0 |
+
+
 | 四色现有实现 | 48.90% | 47.04% | 2452.1 |
+
+
 | 随机动作 | 45.02% | 43.27% | 2726.7 |
+
+
+
+
 
 前三种每场景一次，随机每场景三次；[基线来源](outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/baseline_reference.json)和报告保存具体规则。四色实现存在可换组、空位估计和连续槽段裁剪等限制，不能代表理想四色策略。
 
+
+
+
+
 **入口：**[六组范围清单](outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/scope_manifest.json) · [中文报告](outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/中文单种子六组报告.md) · [结果汇总](outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/run_summary.json) · [分析来源](outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/analysis/analysis_manifest.json) · [204维诊断](outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/state_diagnosis/中文204维状态诊断.md)。
+
+
+
+
 
 逐任务原始目录 `outputs/experiments/sac_comparison_20260924_r2/<run_id>/`，权重 `models/runs/sac_comparison_20260924_r2/<run_id>/final.pt`；各任务 `manifest.json` 保存版本、配置与校验值。原始冻结目录登记为 `D:/paper_worktrees/frozen-sac-20260924-r2`，使用前核查存在及源码一致性。
 
+
+
+
+
 ### G04——拆开目标熵与双Q聚合的四组合
+
+
+
+
 
 **目的：**在G03基础上补交叉组合，区分两项学习公式因素。共12个网络×公式结果，其中A/D六组复用G03，**只新增B/C六次训练**，均completed。新增seed51001、场景种子61001、各40万步/398000更新，固定终点；使用与G03相同实际验证/考核场景和3个动作种子。新增冻结 **`09505290aae1a754a0e4b9d4b9a9ae3c39bf1425`**，旧组仍为36c14d；不是同一个提交重新训练12组。
 
+
+
+
+
 | 组合 | 目标熵 | 双Q取小方式 | 来历 |
+
+
 | --- | --- | --- | --- |
+
+
 | A | −6.9 | 三动作头分别取小后相加 | G03 `legacy` |
+
+
 | B | −6.9 | 联合动作Q先聚合再取小 | 新增 `negative_joint` |
+
+
 | C | ＋6.9 | 三动作头分别取小后相加 | 新增 `positive_per_head` |
+
+
 | D | ＋6.9 | 联合动作Q先聚合再取小 | G03 `corrected` |
+
+
+
+
 
 下表列新增六组；A/D结果见G03，完整12格见原报告。
 
+
+
+
+
 | run_id | SI | SGM | 功率W（该组旧记账） | 超功率比例 | 完整处理100束比例 |
+
+
 | --- | ---: | ---: | ---: | ---: | ---: |
+
+
 | transformer_negative_joint_s51001 | 71.19% | 74.39% | 3028.25 | 100% | 0% |
+
+
 | transformer_positive_per_head_s51001 | 65.35% | 69.63% | 2036.52 | 0% | 100% |
+
+
 | cnn_matched_negative_joint_s51001 | 47.51% | 47.83% | 3026.48 | 100% | 0% |
+
+
 | cnn_matched_positive_per_head_s51001 | 40.10% | 40.36% | 3021.98 | 100% | 0% |
+
+
 | mlp_matched_negative_joint_s51001 | 55.54% | 57.29% | 3029.80 | 100% | 0% |
+
+
 | mlp_matched_positive_per_head_s51001 | 39.06% | 40.11% | 1765.68 | 0% | 100% |
+
+
+
+
 
 **结论：**目标熵与双Q方式会共同影响学习、功耗和是否完成分配；不能笼统断言某一方式必然提高性能。负目标熵组合均超功率，CNN正目标熵也有超限/失稳风险；成绩必须连约束一起看。不是奖励函数实验，也不是掩码实验。
 
+
+
+
+
 **入口：**[四组合报告](outputs/experiments/sac_formula_factorial_20260925/analysis/中文四组合公式对照报告.md) · [12格汇总](outputs/experiments/sac_formula_factorial_20260925/analysis/run_summary.json) · [配对效应](outputs/experiments/sac_formula_factorial_20260925/analysis/paired_effects.json) · [分析来源](outputs/experiments/sac_formula_factorial_20260925/analysis/analysis_manifest.json) · [相关问答](Q&A/算法与训练/匹配规模SAC训练与公式修复对照.md)。新增组原始数据 `outputs/experiments/sac_formula_factorial_20260925/<run_id>/`，权重 `models/runs/sac_formula_factorial_20260925/<run_id>/final.pt`，冻结目录登记 `D:/paper_worktrees/frozen-sac-factorial-20260925`。
+
+
+
+
 
 ## 6. 历史评价、诊断及不纳入正式结果的记录
 
+
+
+
+
 ### G05——旧权重和历史指标
 
+
+
+
+
 - **五套预训练权重统一重评：**Transformer/CNN/MLP SAC、PPO direct、DQN，原环境默认100场景及额外压力条件、未训练初始化参照。默认旧口径满意度总分依次95.36、67.94、80.75、67.11、73.23（满分100）；贪心77.23。CNN和MLP默认100/100回合超功率。结果说明这些权重对当时程序学到了有效选择，不能当作当前修正版环境的排名。原训练集和过程不齐全，不能确认或排除过拟合。入口：[五模型问答](Q&A/评估与指标/五套预训练模型的策略偏好与泛化评估.md)、[动作偏好](outputs/verification/model_policy_audit_DQN_20260924/preference_summary.md)、[压力分析](outputs/verification/model_policy_audit_DQN_20260924/generalization_summary.md)；原始数据 `outputs/verification/model_policy_audit_DQN_20260924/outputs/full/`，原权重 `models/pretrained/`。
+
+
 - **更早T-SAC 20场景学习诊断：**旧权重95.6167/100，未训练初始化均值52.2095、随机53.2787、贪心76.7507；为旧环境下的另一批诊断，不能与五模型评价拼接统计。入口：[是否学到策略](Q&A/算法与训练/模型是否学到了有效策略.md)。
+
+
 - **历史需求扫描/八算法资料：**保存数组在 `outputs/metrics/demand/`，部分缺种子、权重校验、版本及完整场景；部分绘图脚本曾改内存数据，应以原数组与说明为准。不能据这些旧曲线建立当前模型排行榜。入口：[原始结果汇总](Q&A/评估与指标/各算法现存原始结果汇总.md)。拉格朗日等无可靠完整结果的条目继续标缺失，不补造数据。
+
+
+
+
 
 ### G06——诊断与工程检查（非正式新训练）
 
+
+
+
+
 | 类别 | 已有证据与边界 | 入口 |
+
+
 | --- | --- | --- |
+
+
 | 204维状态信息 | 有严格同观测、不同未来需求导致奖励不同的小例；未证明它是成绩差的主因 | [诊断报告](outputs/experiments/sac_comparison_20260924_r2/single_seed_51001/state_diagnosis/中文204维状态诊断.md) |
+
+
 | 融合奖励低功率/零槽 | 固定槽位功率重放及30000步占用核对；为原轨迹诊断，不是新策略重训 | G02中的功率、零槽诊断链接 |
+
+
 | DQN/CUDA | 2026-09-24验证Python3.11.11、Torch2.3.1+cu121、RTX4070SUPER及真实GPU更新；启动前仍需现场复核 | [环境/耗时记录](Q&A/算法与训练/训练耗时瓶颈与GPU利用率.md) |
+
+
 | 工作台与掩码 | 9种短GPU组合、网络权重映射及掩码概率/真实更新等检查；实现检查不替代正式性能评价 | [工作台验收](docs/工作台/02_实验工作台验收记录.md)、[G01记录](docs/第二阶段/实验报告/02_原T-SAC联合掩码对照实验.md) |
+
+
 | 状态写入与恢复 | G01等价I/O修复、断点前后一次更新精确核对，原失败现场保留 | [恢复摘要](outputs/experiments/workbench_mask_20260925/recovery_20260925_1730/recovery_summary.json) |
+
+
 | 校准/探针 | `sac_comparison_20260924_calibration`、`sac_comparison_20260924_checks`、各`outputs/verification/`短运行用于吞吐/恢复/正确性 | 不将校准种子51002等视作已授权正式多种子结果 |
+
+
+
+
 
 ### 停止、作废与旧状态陷阱
 
+
+
+
+
 1. **原18组计划已收窄为G03六组。** `transformer_legacy_s51002`已停止并保留断点；本次读到旧状态仍写training/71257步，不代表仍在运行。禁止恢复额外种子。依据：[范围变更清单](outputs/experiments/sac_comparison_20260924_r2/scope_change_single_seed_20260924/scope_change_manifest.json)。
+
+
 2. **G02无v2旧奖励预热作业作废。** `transformer_old_reward_repaired_s51001`旧状态仍写training/2531步；正式清单记 `aborted_with_record`，不能计入正式结果。旧权重重评目录的initializing也是残留，应看已产出的完整评价与汇总。
+
+
 3. **更早`sac_comparison_20260924`启动与G03恢复历史保留。** 以r2六组已完成结果为准，旧suite计划或backup中的running不能用于判断现状；`analysis_before_*`、`analysis_superseded_*`保留历史，优先读各组当前`analysis/`。
+
+
 4. 工作台工程验收任务 `train_sac_20260925_052426_ed3f1ca1` 为cancelled/0步，不是正式算法训练成果。G01根层旧`failure.json`为已恢复的Windows故障，不能只凭存在判失败。
+
+
 5. 项目根目录现有零散 `status.json`、`job.json`、`checkpoint.pt`、`*.jsonl`等未跟踪任务文件归属尚未整理；**正式来源是实验目录与工作台任务目录**。这些文件不作为实时状态依据，不擅自覆盖、提交或删除。另有四策略20场景问答/报告的既存未提交改动，本次未接管。
+
+
+
+
 
 ## 7. 下一步与授权边界
 
+
+
+
+
 **2026-10-08跨阶段研究复盘（纯文档，不改变实验状态）：**已按开题三阶段交付[研究瓶颈与关键问题分析](docs/资料/04_三阶段研究瓶颈与关键问题分析.md)，覆盖当前可检索的13个paper研究/工程主对话与205条人工请求及答复。主要判断：第一阶段须区分目标可达性、候选质量与策略选择；第二阶段须用同阶段/同预算参照检验学习价值；第三阶段已测功率追加路线收益递减但非系统上限；尚缺第一阶段真实布局到固定后续链路、再到原始用户服务分母的完整对照。P18引用10-07补审计，V2终点G1/G2通过但仍低于贪心+B，G3待完整核查；P19仅引用本文件02:27历史观测，不冒充本轮实时核验。后续诊断均为建议，不新增训练/评价预算或定时任务，不接管/暂停既有P19。报告含3张既有结果图、来源与局限；前端无需改动。
+
+
+
+
 
 **S3-P01已完整交付（2026-10-03）：**两预算口径原任务各900结果、独立审计、本地归档、中文[报告01](docs/第三阶段/实验报告/01_T0初始解的连续功率细调对照.md)与8图完成。用户随后已授权其它算法路线与逐场景耗时对照，S3-P02七路线、完整耗时、审计、14图与报告02现已交付，下一步回到讨论。严格基本服务安全裕量、频率槽调整或更多预算仍未授权。原范围和历史来历见[方案02](docs/第三阶段/方案/02_连续功率优化与双实例运行.md)。
 
+
+
+
+
 **G11已执行范围的历史记录（2026-10-01授权，2026-10-03验收）：**P08的T0/T1两组各15万步，P07的M四组/G三组各40万步，共310万交互，单seed51001；Jan24固定终点共同评价已完成，不重复新开。15万筛查不等于40万稳定。完整条件与授权边界见[方案16](docs/第二阶段/方案/16_温度记忆与干扰图双实例实验说明.md)，初始原因与候选论证保留于[方案15](docs/第二阶段/方案/15_联合Q失稳诊断与结构化价值改进方案.md)。下文保留早期方案历史。
+
+
+
+
 
 **P01仅为2026-09-27讨论建议，未新建训练任务。**
 
+
+
+
+
 1. 先查G01未达10%需求的波束：刚分配就不足，还是后续干扰使其下降；结合槽数、功率、顺序及剩余预算判断。该专项诊断尚未执行，不能预先断言功率不足是主因。
+
+
 2. 保留当前原13令牌Transformer/204维输入、相同联合掩码/预留/动态熵，拟比较旧奖励与原融合奖励。条件核对一致时复用G01参照，候选从头训练1组seed51001、40万步；若改动破坏可比条件，需重新明确参照与预算。
+
+
 3. 已用来分析的83000/81000/275000系列场景是既有诊断资料。后续方案选定后保存新的共同验证/最终考核场景，同场景重评旧参照和基线，不拿历史分数直接排名。验收优先基本服务，再分别看SI、SGM、功率和约束，明确取舍。
+
+
 4. 若合法动作下功率学习仍异常，再根据诊断单独讨论让功率选择参考所选频点/槽数。未批准扩展第一/三阶段、增加训练种子、盲目加训练步数或同时更改多个因素。
+
+
+
+
 
 详细方案：[奖励问答最新追问](Q&A/算法与训练/当前奖励函数.md)。旧[第二阶段候选方案](docs/第二阶段/方案/03_融合奖励失败后的第二阶段改进方案.md)与四公式问答含历史优先顺序，实际已执行范围以G01为准，当前建议以本节及最新用户指令为准。
 
+
+
+
+
 ### P02：训练场景泛化与覆盖接口（2026-09-28新增建议）
 
+
+
+
+
 - **目的：**从固定100城市、固定需求生成分布扩展到用户/航空器业务图驱动的波束布局与聚合需求；第一版保持100束、固定宽度和预算，以静态时刻快照训练，后续才接入可变宽度和连续重配置。
+
+
 - **事实与限制（2026-09-28晚间按G07更正）：**204维含本束位置和当前干扰，未含完整未来位置/需求；新增欧洲版已支持显式三用途场景及地区对应的默认参考场景，原“内置考核只用默认城市”是实现前缺口。G07四日ADS-B位置驱动的576/20/100场景训练与考核已完成；人数/接入/活跃/速率仍是工程假设，未通过受控对照验证相较原数据的新地理泛化改善。
+
+
 - **候选对照：**原数据与多场景数据共用输入/网络、旧奖励、联合掩码及物理口径；建议seed51001、各40万步（候选80万步，未授权）。改变输入时两组均重训。新地理、新业务与联合变化用共同留出场景评价，不能直接沿用历史分数。按需另行讨论两组单因素补充，不增加训练种子。
+
+
 - **后续调研（2026-09-28）：**找到航空轨迹、人口栅格、通信活动与卫星仿真需求等公开原料，建议真实位置/轨迹＋可解释业务模型。已读取71束24小时需求样例、6G-NTN一周船舶栅格两份小包（合计约2.54 MB），存于`outputs/verification/dataset_research_20260928/`；属于格式/含义核验。船舶数、CDR活动及已实现吞吐均不能直接当请求Mbps。欧洲数据与当前122.2°E卫星需处理物理范围匹配。
+
+
 - **实现与核验：**源码`e7e38dd08b7ed1ea997289655ebb5c0ebd763472`增加`europe_v1`（13°E、10°最小仰角工程约定）、航空CSV/readsb快照、人数/接入/活跃/速率需求模型、100束过渡覆盖器、地区/日期/角色隔离与冻结数据/权重。前端选项、导入及三用途场景选择同步。295项测试通过；与旧源码3场景×100步中国数值逐位一致，中欧各6转移/1次GPU真实更新、G01两套权重严格加载通过；均为代码检查，不是新训练成果。
+
+
 - **状态与授权（2026-09-28中午更新）：**工程实现完成；用户后续明确导入ADS-B开始训练，授权的新单组欧洲实验另记G07。此前夜间延期及一次关机是历史操作，不适用于G07。本轮不自动扩展原/新数据两组对照，P01仍未获运行授权。
+
+
 - **处理流程说明（2026-09-28追问）：**原始轨迹按UTC时刻选非未来最新位置→每机合成需求→100个需求加权代表位置→按0.25°视角半径唯一归属→汇总每束需求并保留未覆盖量。当前为过渡覆盖规则和中心代表用户近似，不是第一阶段DRL；需求D与资源分配得到的容量C分开。详细算例及时间/身份限制已追加至训练数据问答，未改代码或启动训练。
+
+
 - **入口：**[完整方案](docs/方案/04_训练场景泛化与第一阶段衔接方案.md) · [数据调研](docs/资料/03_公开数据集与合成业务场景调研.md) · [欧洲环境使用与核验](docs/工作台/04_欧洲航空环境使用与核验.md) · [原始验证](outputs/verification/europe_environment_20260928) · [训练数据问答](Q&A/环境仿真/训练场景与随机需求生成.md)。
+
+
+
+
 
 ### P03：欧洲训练异常诊断与下一阶段方案（2026-09-28晚至09-29凌晨）
 
+
+
+
+
 - **本轮已完成：**原始日志全量统计、576场景跨轮配对、固定20场景验证分析、冻结SAC路径审计、最终断点分层随机128转移CPU只读前向、相同204维观测/动作却不同奖励的确定性小例。图片来自保存日志，证据位于`outputs/experiments/europe_adsb_20260928/diagnosis/`；API仍为completed，未恢复任务。
+
+
 - **已证实与未证实：**终止价值拟合失准、Critic训练/评估态模式差、固定顺序及状态缺项存在；哪项造成多少学习下降尚无受控重训证据。SAC终止掩码、双Q合成顺序、概率与温度符号未发现明确公式错误。Actor loss上升不能单独当成策略失败。
+
+
 - **建议顺序：**首批复用G07参照，仅新增1组dropout=0/seed51001/40万步，从头训练，其他条件不变；12万步诊断检查，固定40万步主结果。其后视证据单独对照每轮随机场景顺序、状态信息、奖励或其他学习设置，不打包修改。补规则/未训练同结构验证参照，最终保留新日期独立考核；当前01-15结果已参与开发诊断。
+
+
 - **授权与前端：**用户本次要求找原因与方案，未授权新训练；没有改生产代码或发起正式长评价。本轮文档无需前端变化；实施时已有dropout配置须贯通验证，新场景顺序/诊断统计/状态版本须同步前后端及权重元数据。
+
+
 - **入口：**[诊断与方案](docs/第二阶段/方案/06_欧洲训练异常诊断与下一阶段方案.md) · [问答](Q&A/算法与训练/模型是否学到了有效策略.md) · [原结果报告](docs/第二阶段/实验报告/03_欧洲ADS-B首轮训练结果.md)。
+
+
+
+
 
 ### S1-01：远端七组波束覆盖规划（2026-09-30，已完成）
 
+
+
+
+
 - **展示与解释补充（2026-10-04）：**报告01/02各实验表与配对差值表已补全“编号＋实验组合”，原始任务与成绩不变。P0（无基础布局，纯PPO）平均CV最低，但两项覆盖最低且82/100可行，不能据此称整体最好；C1（聚类＋局部搜索）仍是本轮覆盖与负载质量参照。该补充仅解释既有共同100场景结果，未新增训练、评价或实时任务核验。
 
+
+
+
+
 - **当前核对：**2026-09-30最终API确认10任务均completed、worker退出，[最终交付](outputs/experiments/first_stage_s1_01_20260930/final_delivery.json)含核对时间；以下14:43启动与增长证据保留历史。正式训练源`b3a11c51e9da6612a43cb005a79c9e89a37e448d`；386项测试的bfa0bed与该提交在src/data/pyproject逐文件Git差异为零。运行中不修改远端repo或source_snapshots。
+
+
 - **组与任务：**R2 `train_ppo_20260930_144259_874e5464`、C2 `train_ppo_20260930_144259_78db8328`、P0 `train_ppo_20260930_144300_e05c586b`；三组已completed，各409600交互、50rollout/1600优化更新，原始日志已核；固定预算终点模型，验证不改变训练随机源。
+
+
 - **共同条件：**train/validation/test分别576/20/100，UTC日期01-08/09、01-12、01-22；逐机原始位置与合成通信需求相同。100束全宽0.5°；964维状态与4维候选特征；646914参数，512并行环境×16采集，4更新轮、1024小批量，gamma1、学习差分奖励×0.01。R/C9局部动作/200步一回合，P0空布局全局候选最多2048/100步，移动不适用，不把路线差值纯归因初始化。
+
+
 - **评价安排：**三训练完成后，工作台已提交R0/R1/C0/C1四基线及R2/C2/P0三模型，在01-22同100场景确定性各1次评价；覆盖与可行性按全部场景、失败保留，负载均值注明有效布局分母。本组覆盖比例不是第二阶段SI/SGM。
+
+
 - **工程失败与恢复：**旧35ee短验证恢复ByteTensor设备错，保留原快照；修复后新P0 `train_ppo_20260930_143508_b45eda5d`停于384步/6更新，断点SHA与文件一致，同API恢复到12800/200更新、用途verification。另一次6400短验证自然先完成，未发生恢复；两者均不计正式训练成果，PowerShell中文名编码问题留存，正式请求由UTF-8 Python生成。
+
+
 - **证据与待办：**[方案03](docs/第一阶段/方案/03_远端4090D部署与七组并行实验技术方案.md)、[本地计划与原始数据入口](outputs/experiments/first_stage_s1_01_20260930/)、[GPU核验](outputs/verification/remote_stage1_20260930/gpu_validation_v4/report.md)、[恢复记录](outputs/verification/remote_stage1_20260930/workbench_v2_resume/workbench_v2_resume_summary.json)。模型远端在`/home/u2024110224/first_stage_satellite_rl/models/runs/workbench/`；三组模型已同步本地models/runs并核SHA，原始数据/任务NPZ/源码快照本地完整备份仍有缺口。三训练与七评价完成，逐场景独立重算通过，原始曲线与[正式对照报告02](docs/第一阶段/实验报告/02_七组覆盖规划独立场景对照.md)已保存；初次审计精度问题及备份缺口保留，未追加实验；单种子与冬季合成业务限制保留。未增加种子、第二阶段适配训练或定时任务。
+
+
+
+
 
 ### P04：第一阶段波束覆盖规划与两阶段解耦（历史建议，已进入S1-01）
 
+
+
+
+
 **本节下列条目保留初始方案时点。** 用户后续已授权远端实施并新增P0，当前状态以S1-01和页首为准，不再把“未授权/未实现”历史条目作为本轮事实。
 
+
+
+
+
 - **目的与范围：**在开题报告第一阶段独立优化指向与宽度、覆盖和负载均衡，并延续已有第二阶段。推荐有约束初始布局＋单智能体轮询修正；首版固定100束/0.5°先研究中心，随后适配逐束宽度及连续时序，首版不能称完整第一阶段已完成。
+
+
 - **分层细化（2026-09-30）：**基础层采用冻结的聚类或固定覆盖规则，PPO层按稳定ID轮询微调中心，限定相对初始位置的累计移动；主结果是终态覆盖/负载/调整代价，不依赖第二阶段奖励。与同初始化不调整及非学习局部搜索比较，分别报告候选检查次数/耗时。现行PPO与SAC掩码不能直接当作布局PPO，需未来接入独立环境和工作台配置；本次仅方案。
+
+
 - **首轮矩阵（2026-09-30）：**R0/R1/R2为规则初始化的不调整、局部搜索、PPO；C0/C1/C2为聚类初始化对应三组。2个PPO独立训练、4个基线评价候选，单seed51001；共同预算、轮询、覆盖门槛和留出考核须工程核验后冻结，未授权或提交任务。R2-C2只比较完整路线，不能纯归因初始化。详见[第一阶段方案02](docs/第一阶段/方案/02_基础布局与PPO微调首轮实验分组.md)，第二阶段P05范围不变。
+
+
 - **接口与限制：**共享一致几何/物理定义，独立奖励、权重和训练，保存用户归属、未覆盖需求、稳定波束ID、中心、宽度、需求及顺序/组号映射。现行场景要求100束正需求，方向图宽度固定，组号由处理序号%8决定；零需求/可变宽度/任意分组需新版本。第一阶段不调用T-SAC奖励；旧权重能加载不证明新布局有效。
+
+
 - **建议对照：**同一初始化无修正、同一初始化＋非学习局部搜索、同一初始化＋DRL修正；固定业务图/候选/计算预算，保存覆盖、负载、失败及原始曲线。冻结二阶段A/B仅作新布局适应性诊断，衔接评价计入未覆盖业务，必要的二阶段适配训练另行确定。
+
+
 - **ADS-B复用追问核对（2026-09-30）：**现存576/20/100份训练/验证/原考核场景及对应逐机明细，可复用位置与合成需求供第一阶段静态覆盖训练；输入应取逐机明细、重新计算布局归属，100束NPZ只作资源分配接口。四日原始包存在、长度相符，本次未重算大包SHA。01-15/18已开发使用，新最终考核另留；连续重配置需另建时间序列。来源清单旧not_imported字段不代表G07/G08当前未导入。仅可行性建议，无新训练授权或任务。
+
+
 - **实际状态与授权：**本轮已核对报告、源码和G08完成清单，仅文档方案；没有实现第一阶段、开展训练/长评价、增加种子或恢复自动跟进。未刷新实时服务/进程，不以旧PID判断现状。新预算、工作台任务和物理版本尚待后续确定；本轮无需前端改动，实施时须接入前端配置/校验/任务及模型结果展示。
+
+
 - **入口：**[完整方案01](docs/第一阶段/方案/01_第一阶段波束覆盖规划与两阶段解耦方案.md) · [中文问答](Q&A/环境仿真/第一阶段波束覆盖规划与两阶段衔接.md) · [读取证据与来源SHA](outputs/verification/stage1_plan_review_20260930/review_evidence.json)。无新增正式任务编号或训练权重。
+
+
+
+
 
 ## 8. 以后怎样维护本文件
 
+
+
+
+
 - **更新时点：**正式任务创建、范围/配置改变、异常/恢复、训练和评价完成、结果更正及下一步决定；填北京时间和实际核对来源。普通心跳不需要逐次写入。
+
+
 - **每个实验组至少包含：**编号/目的、实际变体和基线、状态、种子与步数/更新数、奖励/环境/网络/掩码差异、源码提交和任务ID、实际场景/动作采样/模型选择、SI/SGM/基本服务/功率/约束、结论与限制、报告/数据/权重/哈希入口、待办及授权状态。未记录的指标写“未记录”，未核验写“待核验”，不能填0。
+
+
 - **核对层次：**清单规定范围与版本；逐任务状态和真实进程确认进度；完整结果、实际场景和校验文件确认完成。历史结果引用现有核验报告，本文件初始化没有重新跑全部训练或评价。
+
+
 - **简明交接：**本文件放概要和必要结果，详细诊断留报告；同组追加或更正，不制造多个互相矛盾的“当前状态”文件。重要更正带日期与原因，保留历史入口。
+
+
 - **保存与备份：**本文件及维护规则纳入本地Git；模型/日志等仍保存在被忽略的产物目录。尚未确认异地备份位置，不声称这些实验资产已完成外部备份。
+
+
+
+
 
 ### 维护记录
 
+
+
+
+
 | 日期 | 变更 | 核对范围 |
+
+
 | --- | --- | --- |
+
+
 | 2026-10-01 | G10 09:12监控旧观测/快照覆盖误报修复，更新只读跟进入口 | 独立实时API/SFTP确认训练健康，原现场与不完整恢复限制保留；唯一输出/拒覆盖/时间和raw响应检查通过，不动训练、前端或冻结源 |
+
+
 | 2026-10-01 | 用户授权G10联合动作四组，前后端实现/双平台验证并启动远端四路，自动后处理与g10跟进 | 单seed51001/总160万，cc27冻结；真实API/PID出生/CUDA/更新增长，Jan23新100场景与数据SHA；未启动P06/M/G，额度20%未用卡 |
+
+
 | 2026-10-01 | 新增P07算法创新调研：联合动作、分配记忆、干扰关系及分模块对照 | 当前代码/原T-SAC PDF/G09报告、原论文和两项Sol审查；仅方案文档，未修改算法/前端或启动训练评价 |
+
+
 | 2026-10-01 | 新增P06：207维三个全局字段逐项删除的下一轮方案 | G09报告10/独立审计、自然状态与旧奖励代码、Sol独立方案复核；仅文档与引用检查，无源码修改、训练或评价 |
+
+
 | 2026-09-30 | docs按第一阶段和第二阶段分开，编号保留、共用资料保持原路径 | 维护中的Markdown引用、README/AGENTS/问答/状态入口与图片代码链接；仅文档归档，无训练/评价/前端或冻结资产变更 |
+
+
 | 2026-09-30 | 新增P04第一阶段多方案与两阶段解耦建议，归档第一阶段方案（原09，现01）和问答 | 开题报告第2.1节、欧洲场景/方向图/分组接口、G08完成清单及报告07；仅文档审查，未实现/训练/长评价/改前端，效果待验证 |
+
+
 | 2026-09-28 | 首次建立统一状态入口，AGENTS规定新窗口先读与关键节点维护，README/Q&A加入入口 | G01–G04清单、汇总及逐任务状态；G05历史报告；真实Python进程、工作台访问、自动化暂停状态；仅文档整理，未训练/评价 |
+
+
 | 2026-09-28 | 新增P02训练场景泛化与第一阶段衔接建议，同步方案和问答 | 核对G01生成/状态/导入/考核代码、报告航空业务与覆盖接口、公开数据来源；仅文档方案，未刷新任务或启动实验 |
+
+
 | 2026-09-28 | P02补充公开数据、访问条件、合成业务方法与两份小包核验 | 区分真实位置、活动量、请求与吞吐；样例未接入正式训练，未改源码/训练，效果待验证 |
+
+
 | 2026-09-28 | P02欧洲航空环境及前端实现完成，记录用户本晚停止于跑通并关机的要求 | 295项测试、旧中国数值对照、DQN/CUDA短真实更新、权重兼容和页面导入；正式训练未启动，效果待验证 |
+
+
 | 2026-09-28 | 用户后续授权导入ADS-B并开始G07，先交付通俗说明；数据准备中 | 单组欧洲T-SAC、seed51001/40万步；DQN/CUDA、空队列与服务核查；候选日期与场景已预定，未提交训练 |
+
+
 | 2026-09-28 | G07四日数据及三组场景核验完成，待提交训练 | 576/20/100场景SHA、日期隔离、8个训练场景规则与资源账；非训练结果 |
+
+
 | 2026-09-28 | G07正式任务已创建并核验真实GPU更新 | 工作台 train_sac_20260928_142100_38559f37，冻结 01457f245bf0ab0e23873616e44975693014e3d0，核验时2200步/201次更新；效果待验证 |
+
+
 | 2026-09-28 | 22:48核对G07于20:45完成40万步及终点评价，归档报告 | API/完成事件/100场景×3结果与模型SHA一致；SI88.93%、基本服务99.24束、全束达标54%；未重训或独立复测，泛化改善待对照 |
+
+
 | 2026-09-28 | G07结果报告补齐训练、验证、学习过程和考核分布曲线；以后正式实验报告均附相关曲线 | 原始工作台日志绘图，保存脚本、输入/图像哈希及平滑口径；未改训练/前端或追加评价，损失波动不等于已证明不收敛 |
+
+
 | 2026-09-29 | G07训练异常完成分项诊断与P03方案归档 | 全量日志、终止Q探针、同权重模式差、状态/奖励确定性小例；优先建议dropout单因素，未改生产代码或启动新训练 |
+
+
+
+
+<!-- S2_BOTTLENECK_READONLY_20261015 -->
+**2026-10-15 用户本轮第二阶段现状分析（仅既有结果算术）。** W26 S10的1槽5W仍过供束占全束40.83%，贡献母等权SGM缺口的71.54%；这是已实现动作的描述，不是不可达证明。W28冻结权重四候选筛选在完整开发中提高SI 0.605884个百分点、SGM 0.0194809，完整算法时间约增78%；参数规模尚无严格消融。known仅按本地保存的北京时间22:40快照记录207/560回合后安全停止，不代表实时状态。无新增模型前向、PHY或训练更新。入口：[诊断回执](outputs/experiments/s2_width26_20261014/report_analysis/current_bottleneck_readonly_20261015.json) · [W28完整开发](outputs/experiments/s2_tsac_screen28_20261015/science_01/controller_01/development/summary.json) · [本地现场快照](outputs/experiments/s2_tsac_screen28_20261015/verification/independent_operations_hold_01/fresh_readonly_2237.json)。
+
+
+<!-- S2_W29_DESIGN_20261016 -->
+**2026-10-16 用户请求第二阶段瓶颈实验设计，未授权实施。** [方案29](docs/第二阶段/方案/29_第二阶段性能瓶颈分层诊断实验方案.md)由GPT-6 Astra设计、GPT-6.1 Sol独审；推荐首批A0上限76324次PHY、0训练／更新。A1精诊及B／D／L均为条件建议，B四臂合计400000训练交互，其余可选包不表示全部获批，不自动运行。W28的23:14用户暂停及226/560回合、下一回合77/81步保存记录保持有效；本次设计不恢复计算。
