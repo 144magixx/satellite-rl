@@ -21,13 +21,13 @@ _ACTORS = {}
 
 
 def scene_rows(job):
-    index, record, models, sca, start = job
+    index, record, models, sca, start, device = job
     torch.set_num_threads(1)
     stage_input = load_input(record)
     rows = []
     for tag, path in models:
         if path not in _ACTORS:
-            _ACTORS[path] = load_actor(path)
+            _ACTORS[path] = load_actor(path, device)
         actor, config = _ACTORS[path]
         for repeat in range(3):
             started = time.perf_counter()
@@ -55,9 +55,13 @@ def main():
     parser.add_argument("--workers", type=int, default=14)
     parser.add_argument("--sca", action="store_true")
     parser.add_argument("--start", choices=("greedy", "spread"))
+    parser.add_argument("--device", default="cpu", choices=("cpu", "cuda"))
     args = parser.parse_args()
+    torch.backends.cuda.matmul.allow_tf32 = True   # 与训练一致
+    torch.backends.cudnn.allow_tf32 = True
     models = [tuple(item.split("=", 1)) for item in args.models]
-    jobs = [(i, r, models, args.sca, args.start) for i, r in enumerate(read_records(args.data_dir, args.set))]
+    jobs = [(i, r, models, args.sca, args.start, args.device)
+            for i, r in enumerate(read_records(args.data_dir, args.set))]
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with ProcessPoolExecutor(args.workers) as pool, open(args.output, "w", newline="", encoding="utf8") as stream:
         writer = None

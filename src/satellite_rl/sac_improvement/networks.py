@@ -78,16 +78,25 @@ class SetCandidateNetwork(nn.Module):
         self.head = nn.Sequential(nn.Linear(parts * dim, dim), nn.ReLU(), nn.Linear(dim, 1))
 
     def encode(self, state):
+        # 编码部分在 GPU 上用 bf16 混合精度（更新快一倍），输出转回 fp32 再进打分头
+        with torch.autocast(device_type=state.device.type, dtype=torch.bfloat16, enabled=state.is_cuda):
+            summary, rows = self._encode(state)
+        return summary.float(), rows.float()
+
+    def _encode(self, state):
         beams, global_part, mask = split_state(state)
+        # 有效波束总在前面；截到本批最长的有效长度，省掉全是填充的位置（输出不变）
+        length = int(mask.sum(1).max().clamp(min=1))
+        beams, mask = beams[:, :length], mask[:, :length]
         if self.kind == "transformer":
             tokens = torch.cat((self.global_embed(global_part).unsqueeze(1), self.beam_embed(beams)), dim=1)
             padding = torch.cat((torch.zeros_like(mask[:, :1]), ~mask), dim=1)
             out = self.final_norm(self.encoder(tokens, src_key_padding_mask=padding))
             return out[:, 0], out[:, 1:]
         rows = self.beam_mlp(self.beam_embed(beams))
-        weight = mask.float().unsqueeze(-1)
+        weight = mask.to(rows.dtype).unsqueeze(-1)
         mean = (rows * weight).sum(1) / weight.sum(1).clamp(min=1.)
-        peak = rows.masked_fill(~mask.unsqueeze(-1), -1e9).max(1).values
+        peak = rows.masked_fill(~mask.unsqueeze(-1), -1e4).max(1).values
         summary = self.pool(torch.cat((mean, peak, self.global_embed(global_part)), dim=-1))
         return summary, rows
 

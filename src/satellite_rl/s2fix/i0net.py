@@ -18,8 +18,8 @@ from .search_env import SearchEnv, ACTION_WIDTH, configuration
 
 
 def make_config(seed, steps, device, **network):
-    return configuration(seed=seed, total_steps=steps, max_episodes=max(1, steps // 32),
-                         device=device, **network)
+    # 只按交互步数停（不设回合上限），各网络的训练量相同
+    return configuration(seed=seed, total_steps=steps, max_episodes=steps, device=device, **network)
 
 
 def save_weights(agent, config, path, **extra):
@@ -41,7 +41,16 @@ def train(records, output_dir, seed, steps, device, **network):
         config=cfg, actor_parameters=parameter_count(agent.actor)), indent=1), encoding="utf8")
     actions, episodes = Counter(), 0
     returns, gains, episode_return = [], [], 0.
-    state = env.reset(load_input(rng.choice(records)))
+    cache = {}
+
+    def scene():
+        # 场景对象连同其链路核、贪心解缓存复用（结果不变，只省重复计算和 NFS 读取）
+        record = rng.choice(records)
+        if record["case_id"] not in cache:
+            cache[record["case_id"]] = load_input(record)
+        return cache[record["case_id"]]
+
+    state = env.reset(scene())
     features, mask, identifiers = pack_actions(env)
     started = time.perf_counter()
     for step in range(1, steps + 1):
@@ -65,7 +74,7 @@ def train(records, output_dir, seed, steps, device, **network):
             gains.append(env.best_eval.W - env.base_eval.W)
             episode_return = 0.
             if episodes < cfg["max_episodes"] and step < steps:
-                state = env.reset(load_input(rng.choice(records)))
+                state = env.reset(scene())
                 features, mask, identifiers = pack_actions(env)
         last = step == steps or episodes >= cfg["max_episodes"]
         if step % cfg["checkpoint_interval"] == 0 or last:

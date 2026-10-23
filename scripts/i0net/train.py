@@ -26,6 +26,9 @@ def main():
     parser.add_argument("--start", default="greedy", choices=("greedy", "spread"))
     args = parser.parse_args()
     torch.set_num_threads(args.threads)
+    # 4090 上用 TF32 做矩阵乘（所有网络一致），大 Transformer 的更新快数倍
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
     with run_manifest(args.output_dir, args):
         train(read_records(args.data_dir, "train_d432_n150"), args.output_dir, args.seed, args.steps, args.device,
               network=args.network, hidden_width=args.hidden_width, embed_dim=args.embed_dim,
