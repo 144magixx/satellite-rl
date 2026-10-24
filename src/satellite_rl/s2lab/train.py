@@ -140,7 +140,8 @@ def train(run_dir, dataset_dir, run, device, max_hours=None, log=print):
         agent.main_module().train()
         summary = summarize(results)['all']
         score = summary['SGM'] + summary['W']
-        record = dict(step=step, episodes=episodes, score=score, **{k: summary[k] for k in ('W', 'SI', 'SGM', 'power_w', 'slots', 'interference_loss', 'adj_ratio_pooled', 'unserved')})
+        record = dict(step=step, episodes=episodes, score=score, **{k: summary[k] for k in (
+            'W', 'SI', 'SGM', 'worst10', 'power_w', 'slots', 'copol_overlap', 'interference_loss', 'mean_in_db', 'adj_ratio_pooled', 'unserved')})
         with (run_dir / 'dev.jsonl').open('a', encoding='utf-8') as stream:
             stream.write(json.dumps(record) + '\n')
         torch.save(agent.policy_state(), run_dir / f'policy_{step}.pt')
