@@ -19,15 +19,25 @@ from satellite_rl.s2lab.train import write_json, now
 
 
 def claim(runs_dir, run_id, lane):
+    """原子认领：O_EXCL 创建 <run>/.claim 锁文件，先到先得（10-24 size-d512L4 曾被两卡同时认领，故改锁文件）。
+    锁已存在但该运行可认领（new/paused/心跳过期）时视为陈旧锁，删掉重建。"""
     run_dir = Path(runs_dir) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    path = run_dir / 'status.json'
+    lock = run_dir / '.claim'
     status = run_status(runs_dir, run_id)
+    if lock.exists():
+        if not claimable(status):
+            return False
+        lock.unlink()
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+        stream.write(json.dumps(dict(lane=lane, claimed_at=now())))
     status.update(state='claimed', lane=lane, claimed_at=now(), updated_at=now())
-    write_json(path, status)
-    time.sleep(2 + hash(lane) % 3)
-    status = json.loads(path.read_text(encoding='utf-8'))
-    return status.get('lane') == lane and status.get('state') == 'claimed'
+    write_json(run_dir / 'status.json', status)
+    return True
 
 
 def main():
