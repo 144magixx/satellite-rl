@@ -52,11 +52,16 @@ def build_matrix():
     # 奖励对照：delta，三种子
     for s in SEEDS:
         runs.append(base_run(f'reward-delta-s{s}', 'sac', 'tf_blocks', s, 'reward', label='delta', reward_mode='delta'))
+    # 追加（用户 10-24 13:29 待讨论事项 3、4，10-24 15:40 排入队列）：历史版＋delta 奖励；PPO/DQN 的 MLP 版
+    for s in SEEDS:
+        runs.append(base_run(f'extra-legacydelta-s{s}', 'sac', 'tf_legacy', s, 'extra', label='legacy_delta', group_mode='greedy', reward_mode='delta'))
+        runs.append(base_run(f'extra-ppomlp-s{s}', 'ppo', 'mlp', s, 'extra', label='ppo_mlp'))
+        runs.append(base_run(f'extra-dqnmlp-s{s}', 'dqn', 'mlp', s, 'extra', label='dqn_mlp'))
     return runs
 
 
-# 队列顺序：先主表 T-SAC 与奖励对照（决定口径），再主表其余，再消融，再无掩码
-PRIORITY = ('main-tsac-', 'main-tsaclegacy', 'reward-delta', 'main-cnnsac', 'main-mlpsac', 'main-ppo', 'main-dqn', 'token', 'group', 'size', 'nomask')
+# 队列顺序：先主表 T-SAC 与奖励对照（决定口径），再主表其余，再消融，再无掩码，最后追加组
+PRIORITY = ('main-tsac-', 'main-tsaclegacy', 'reward-delta', 'main-cnnsac', 'main-mlpsac', 'main-ppo', 'main-dqn', 'token', 'group', 'size', 'nomask', 'extra')
 
 
 def ordered_run_ids(runs):

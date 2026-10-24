@@ -6,7 +6,8 @@ from _common import ROOT
 from satellite_rl.s2lab.matrix import build_matrix, ordered_run_ids, SAC_CORE, PPO_CORE, DQN_CORE, MAIN_SIZE
 
 GROUP_NAMES = dict(main='主表（全掩码，3 种子）', nomask='无掩码副表（1 种子）', size='消融A：参数量（1 种子）',
-                   token='消融B：令牌划分与指针头（3 种子）', group='消融C：组的自由度（3 种子）', reward='奖励对照：delta（3 种子）')
+                   token='消融B：令牌划分与指针头（3 种子）', group='消融C：组的自由度（3 种子）', reward='奖励对照：delta（3 种子）',
+                   extra='追加（待讨论事项 3、4）：历史版＋delta 奖励、PPO/DQN 的 MLP 版（3 种子）')
 ENC = dict(tf_blocks='Transformer，80 块令牌（8 组×10 块）', tf_legacy='Transformer，本组 10 块令牌（历史 14 令牌版）',
            tf_beams='Transformer，80 块令牌＋每束一令牌', cnn='一维卷积', mlp='全连接')
 ALGO = dict(sac='SAC', ppo='PPO', dqn='DQN')
