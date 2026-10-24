@@ -32,8 +32,14 @@ def main():
         if path:
             print(path)
         groups[cfg.get('group', run_dir.name.split('-')[0])].append(run_dir)
+    reference = {}
+    summary = runs_dir.parent / 'eval' / 'dev' / 'summary.json'
+    if summary.exists():
+        for name, s in json.loads(summary.read_text(encoding='utf-8')).items():
+            if name.startswith('rule-'):
+                reference[name[5:]] = {k: s['all'][k] for k in ('SGM', 'W', 'SI')}
     for group, dirs in groups.items():
-        out = plot_group_dev(dirs, runs_dir / '_figures' / f'dev_{group}.png', title=f'开发集曲线：{group}')
+        out = plot_group_dev(dirs, runs_dir / '_figures' / f'dev_{group}.png', title=f'开发集曲线：{group}', reference=reference)
         if out:
             print(out)
 

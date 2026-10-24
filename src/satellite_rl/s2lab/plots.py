@@ -79,8 +79,8 @@ def plot_training(run_dir, window=5, title=None):
     return path
 
 
-def plot_group_dev(run_dirs, out_path, title=None):
-    """多个运行的开发集 SGM / W / SI 叠加比较。"""
+def plot_group_dev(run_dirs, out_path, title=None, reference=None):
+    """多个运行的开发集 SGM / W / SI 叠加比较；reference={名称: {SGM,W,SI}} 画成水平参考线（规则在同一开发集的直出值）。"""
     try:
         import matplotlib
         matplotlib.use('Agg')
@@ -88,14 +88,27 @@ def plot_group_dev(run_dirs, out_path, title=None):
     except ImportError:
         return None
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    palette = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    styles = ['-', '--', ':', '-.']
+    colors, seen = {}, set()
     for run_dir in run_dirs:
         dev = _read_jsonl(Path(run_dir) / 'dev.jsonl')
         if not dev:
             continue
+        name = Path(run_dir).name
+        base, _, seed = name.rpartition('-s')
+        base = base or name
+        colors.setdefault(base, palette[len(colors) % len(palette)])
+        style = styles[(int(seed) - 1) % len(styles)] if seed.isdigit() else '-'
         steps = [d['step'] for d in dev]
         for ax, key in zip(axes, ('SGM', 'W', 'SI')):
-            ax.plot(steps, [d.get(key, np.nan) for d in dev], 'o-', ms=3, lw=1.2, label=Path(run_dir).name)
+            ax.plot(steps, [d.get(key, np.nan) for d in dev], style, marker='o', ms=2.5, lw=1.3, color=colors[base],
+                    label=base if base not in seen else None)
+        seen.add(base)
     for ax, key in zip(axes, ('SGM', 'W', 'SI')):
+        for i, (name, vals) in enumerate((reference or {}).items()):
+            if key in vals and np.isfinite(vals[key]):
+                ax.axhline(vals[key], color='k', lw=1, ls=['-', '--', ':'][i % 3], alpha=.6, label=name if key == 'SGM' else None)
         ax.set_title(T(f'开发集 {key}', f'dev {key}')); ax.set_xlabel(T('环境步', 'env steps')); ax.grid(alpha=.3)
     axes[0].legend(fontsize=7)
     fig.suptitle(title or T('开发集曲线', 'dev curves'))
