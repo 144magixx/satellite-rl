@@ -146,8 +146,9 @@ def cmd_pause(args):
     for acc in args.accounts:
         for port in ACCOUNTS[acc]['ports']:
             with connect(port) as c:
-                out = run(c, 'pkill -TERM -f "scripts/s2lab/lane.py" ; pkill -TERM -f "scripts/s2lab/train_run.py"; sleep 1; '
-                             'ps -eo pid,cmd | grep -E "s2lab/(lane|train_run)" | grep -v grep | wc -l', check=False)
+                # 方括号写法避免 pkill 匹配到执行本命令的 shell 自身
+                out = run(c, 'pkill -TERM -f "[s]cripts/s2lab/lane.py" ; pkill -TERM -f "[s]cripts/s2lab/train_run.py"; sleep 1; '
+                             'ps -eo pid,cmd | grep -E "[s]2lab/(lane|train_run)" | wc -l', check=False)
                 print(f'{acc} {port}: 已发 SIGTERM，仍在存盘的进程 {out.strip()}', flush=True)
 
 
