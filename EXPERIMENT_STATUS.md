@@ -1,7 +1,9 @@
 # 实验状态与新窗口接手说明
 
 <!-- S2LAB_START -->
-## S2-LAB 第二阶段新口径模块（2026-10-24 启动，当前主线，四卡运行中）
+## S2-LAB 第二阶段新口径模块（2026-10-24 启动，当前主线；第一轮 54 个运行已全部完成，报告已交付）
+
+**2026-10-25 第一轮报告：** worktree `D:\paper-s2lab` 的 `docs/Claude维护/S2-LAB/05_第一轮实验报告.md`。确认集 287 景直出：容量感知贪心 SGM 0.877；最好的学习方法"历史版 T-SAC＋delta 奖励"0.778（差 0.10）；退火/遗传 320 次与贪心持平；所有学习方法都没学到相邻避让（共槽÷随机 ≈1.0，贪心 0.52）；Transformer 在 SAC/PPO/DQN 三条线上都比 MLP/CNN 高 0.10—0.20；无掩码五个全部学不出来。远端除 20627 外的容器已收回。
 
 来源：cc。用户 2026-10-24 要求新开模块、一次性写好全部实验代码、由用户掌握主导权；旧口径（报告01—25、S2-FIX、原版复现）一律不与本模块并表。**代码与文档在 worktree `D:\paper-s2lab`（分支 `s2lab`）**，不在主分支：口径 `docs/Claude维护/S2-LAB/00_口径.md`，接手手册与自动状态 `docs/Claude维护/S2-LAB/01_接手状态.md`（`python scripts/s2lab/remote.py status` 刷新）。远端 `~/s2lab/{repo,data/v1,runs,eval,logs}`，四卡各一个排队器（`scripts/s2lab/lane.py`），训练每 20 分钟存完整断点、窗口到点或 SIGTERM 先存后退、重启自动续。
 - 物理v3（S.672 旁瓣 −20 dB、XPD 20 dB、效率封顶 5.5、5 dB 损耗同作用于干扰）；数据集 v1：FLOW-AO v2 冻结布局，训练 864 景（1/8、1/9、1/12）、开发 60（1/15）、确认 287（1/18、2/23—24），单机需求 30—80 Mbps 抽样，按负载比分宽裕/勉强/不够三档，功率预算 2000 W。
@@ -894,6 +896,8 @@ node2000准备已核73新9017服务及永久暂停hook，但74实测无法访问
 
 
 **2026-10-14 本地磁盘维护与 DQN 路径迁移（不新增实验）。** 用户要求清理空间、将 C 盘归档及 Anaconda 向 E 盘迁移，并明确只保留 DQN 环境。`C:/paper_archives` 的 72 个 ZIP、9,627,669,040B 已移至 `E:/paper_archives`，迁移前后及旧路径入口逐 SHA256 一致；C 原路径现为指向 E 的 junction。DQN 的 34,253 文件、5,766,655,480B 经全量 SHA256 对照后迁至 `E:/anaconda3/envs/DQN`，原 `C:/Users/Admin/anaconda3/envs/DQN` 路径保留 junction；两路径实际导入 Python 3.11.11、torch 2.3.1+cu121、NumPy 1.26.4 均通过，未运行训练。按用户明确范围，已用 Conda 移除 `DQN_cpu_backup_20260924`、`pythonProject`、`RL`，并清理未引用安装包及包管理器缓存。基础 Anaconda 仍在 C：后台 base Python 尚在使用，且 16 个启动文件无读取权限，E 基础副本尚非完整迁移终点，不自动停进程或改权限。显卡、开发工具等普通缓存的直接删除受到自动策略拦截，未冒称已清；论文科学资产未删除。D 盘 G10 重复传输 ZIP 的 20,618 成员已与现有保留副本逐 SHA 核同，4.012GiB 仅列可删候选，本轮未删。[归档迁移验收](outputs/maintenance/disk_cleanup_20261014/paper_archives_migration_final.json) · [DQN 迁移验收](outputs/maintenance/disk_cleanup_20261014/DQN_migration_final.json) · [空间与环境实核](outputs/maintenance/disk_cleanup_20261014/final_space_and_envs.json)。其它实验的任务、预算、源码、模型和结果保持原记录。
+
+**2026-10-24 C 盘清理，基础 Anaconda 迁到 E 盘（不涉及实验）。** C 盘可用从 17.6 GB 增到 73 GB。基础 Anaconda 已整体移到 `E:/anaconda3`，`C:/Users/Admin/anaconda3` 现为指向它的 junction，所有原路径照常可用；与原目录 308,134 个文件逐个比对大小和时间一致，10-14 遗留的 16 个无读权限启动文件已修好权限并补齐。DQN 环境未动（仍 34,253 文件），`conda run -n DQN` 实测 torch 2.3.1+cu121、cuDNN 8907 在 RTX 4070 SUPER 上矩阵乘与卷积正常，`satellite_rl` 指向 `D:/paper/src`。按用户指令卸载了 Docker Desktop、CUDA Toolkit 12.4（含手放的 cuDNN）、Nsight 三件和雷电模拟器，删除 DiskGenius WinPE 及其两个启动项（BCD 先已备份），并清理了软件旧版本、各类缓存、Windows 安装监视日志和传递优化缓存。桌面旧项目"废品集中"（2,707 文件，3.29 GB）已移到 `E:/废品集中`。本机已没有系统 CUDA 工具包，PyTorch 不受影响，以后要编译 CUDA 代码需要重装。DISM 组件存储清理在提交阶段被拒绝访问，没有生效。[清理脚本、结果与 BCD 备份](outputs/maintenance/disk_scan_20261024/)。
 
 
 
