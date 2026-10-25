@@ -236,6 +236,25 @@ def cmd_fetch(args):
         print(f'{acc} 已下载到 {dest}', flush=True)
 
 
+def cmd_copy_policy(args):
+    """把一个账号已训完运行的 policy_best_sgm.pt / policy_best.pt 拷到另一个账号的 runs2（用于在空闲卡上做诊断与计时）。"""
+    src, dst = paths(args.source), paths(args.target)
+    local = LOCAL_OUT2 / 'transfer' / 'policies'
+    local.mkdir(parents=True, exist_ok=True)
+    with connect(first_port(args.source)) as c, c.open_sftp() as sftp:
+        for run_id in args.run_ids:
+            for name in ('policy_best_sgm.pt', 'policy_best.pt'):
+                (local / run_id).mkdir(exist_ok=True)
+                sftp.get(f'{src["runs"]}/{run_id}/{name}', str(local / run_id / name))
+    with connect(first_port(args.target)) as c, c.open_sftp() as sftp:
+        run(c, f'mkdir -p {dst["runs"]}/_copied && cp {dst["runs"]}/matrix.json {dst["runs"]}/_copied/')
+        for run_id in args.run_ids:
+            run(c, f'mkdir -p {dst["runs"]}/_copied/{run_id}')
+            for name in ('policy_best_sgm.pt', 'policy_best.pt'):
+                sftp.put(str(local / run_id / name), f'{dst["runs"]}/_copied/{run_id}/{name}')
+            print(f'{run_id}: {args.source} → {args.target} {dst["runs"]}/_copied/{run_id}', flush=True)
+
+
 def cmd_sh(args):
     p = paths(account_of(args.port))
     with connect(args.port) as c:
@@ -259,6 +278,8 @@ def main():
     p = sub.add_parser('launch'); common(p)
     p.add_argument('--window-hours', type=float, required=True); p.add_argument('--parallel', type=int, default=2)
     p.add_argument('--ports', type=int, nargs='*'); p.add_argument('--only', nargs='*')
+    p = sub.add_parser('copy-policy'); p.add_argument('--source', required=True); p.add_argument('--target', required=True)
+    p.add_argument('--run-ids', nargs='+', required=True)
     p = sub.add_parser('sh'); p.add_argument('--port', type=int, required=True); p.add_argument('--cmd', required=True); p.add_argument('--timeout', type=int, default=600)
     p = sub.add_parser('tail'); p.add_argument('--port', type=int, required=True); p.add_argument('--run-id', required=True); p.add_argument('--lines', type=int, default=30)
     args = ap.parse_args()
