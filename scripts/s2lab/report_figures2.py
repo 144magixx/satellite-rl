@@ -169,7 +169,7 @@ def main():
         return [data.rows(r, split, stratum) for r in groups[name]]
 
     numbers = dict(which=args.which, members={k: v for k, v in groups.items()}, confirm={}, dev={}, strata={}, paired={}, size={},
-                   diag={}, round1={}, checkpoint={})
+                   diag={}, round1={}, checkpoint={}, timing={})
     for name in groups:
         numbers['confirm'][name] = summary(rows_of(name))
         if all(data.path(r, 'dev') for r in groups[name]):
@@ -205,7 +205,7 @@ def main():
         params = make_agent('sac', dict(encoder='tf_blocks', size=size), 13, 'cpu', 20).parameter_count()
         numbers['size'][label] = dict(params=params, members=have, **summary([data.rows(r) for r in have]))
     # 诊断：<run>~<mode>
-    for name in ('历史版12令牌＋delta', '历史版12令牌T-SAC', '新版T-SAC', '14令牌 I/N＋delta', 'PPO（Transformer）'):
+    for name in ('历史版12令牌＋delta', '历史版12令牌T-SAC', '新版T-SAC', '14令牌 I/N＋delta', 'PPO（Transformer）', '躲干扰B 前8候选', '躲干扰D 40万步'):
         if name not in groups:
             continue
         for mode in ('random_start', 'intf_zero', 'intf_shuffle'):
@@ -227,6 +227,12 @@ def main():
             other = [read_csv(data.run_dirs[r] / 'eval_confirm_best.csv') for r in runs if (data.run_dirs[r] / 'eval_confirm_best.csv').exists()]
             if len(other) == len(runs):
                 numbers['checkpoint'][name] = dict(best_sgm=numbers['confirm'][name], best=summary(other))
+    timing = root / 'account_A' / 'eval2_timing' / 'confirm' / 'summary.json'
+    if timing.exists():
+        numbers['timing'] = {k: v['timing_s'][0] for k, v in json.loads(timing.read_text(encoding='utf-8')).items() if v.get('timing_s')}
+    meta = root / 'account_A' / 'eval2_meta' / 'confirm' / 'summary.json'
+    if meta.exists():
+        numbers['timing'].update({k: v['timing_s'][0] for k, v in json.loads(meta.read_text(encoding='utf-8')).items() if v.get('timing_s')})
     (out / 'numbers.json').write_text(json.dumps(numbers, ensure_ascii=False, indent=1), encoding='utf-8')
     plot(numbers, data, groups, figs)
     print(json.dumps({k: (len(v) if isinstance(v, dict) else v) for k, v in numbers.items() if k != 'members'}, ensure_ascii=False))
