@@ -7,6 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from _common import default_device
@@ -33,6 +34,7 @@ def main():
     ap.add_argument('--timing', action='store_true')
     ap.add_argument('--device', default=None)
     ap.add_argument('--batch', type=int, default=64)
+    ap.add_argument('--power-steps', type=float, nargs='*', help='规则改用均匀功率档（步长 W），如 0.5 1 0.1；不给则用默认 13 档')
     args = ap.parse_args()
     device = torch.device(args.device or default_device())
     dataset_dir = Path(args.dataset_dir)
@@ -58,11 +60,15 @@ def main():
               + (f" t={timing[0]:.2f}s" if timing else ''), flush=True)
 
     for rule in args.rules:
-        for mode in ('full',):
-            opts = EnvOptions(batch_size=args.batch, mask_mode=mode)
+        for step in (args.power_steps or [None]):
+            opts = EnvOptions(batch_size=args.batch)
+            name = f'rule-{rule}'
+            if step:                                   # 功率档改为 step, 2·step, …, 50 W
+                opts = EnvOptions(batch_size=args.batch, power_levels=tuple(float(v) for v in np.arange(step, 50 + 1e-9, step)))
+                name = f'rule-{rule}-p{step:g}'
             results = run_policy(lambda env, r=rule: make_rule(r, env, 0), bank, config, items, opts, device)
             timing = single_scene_timing(lambda env, r=rule: make_rule(r, env, 0), bank, config, items, opts, device) if args.timing else None
-            record(f'rule-{rule}', results, dict(group='rule', label=rule, seed=0, mask_mode=mode), timing)
+            record(name, results, dict(group='rule', label=name[5:], seed=0, mask_mode='full'), timing)
     for name in args.meta:
         from time import perf_counter
         started = perf_counter()
