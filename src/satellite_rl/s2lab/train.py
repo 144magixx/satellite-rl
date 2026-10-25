@@ -46,7 +46,9 @@ def env_options(run):
     return EnvOptions(batch_size=run.get('batch_envs', 64), mask_mode=run.get('mask_mode', 'full'),
                       group_mode=run.get('group_mode', 'free'), reward_mode=run.get('reward_mode', 'paper'),
                       order=run.get('order', 'demand'), power_levels=tuple(run.get('power_levels', DEFAULT_POWER_LEVELS)),
-                      beam_tokens=run.get('encoder') == 'tf_beams')
+                      beam_tokens=run.get('encoder') == 'tf_beams', legacy_obs=run.get('encoder') == 'tsac14',
+                      start_mode=run.get('start_mode', 'free'), start_topk=run.get('start_topk', 8),
+                      illegal_penalty=run.get('illegal_penalty', 0.), intf_lambda=run.get('intf_lambda', 1.))
 
 
 def agent_config(run):
@@ -89,6 +91,7 @@ def train(run_dir, dataset_dir, run, device, max_hours=None, log=print):
     agent = make_agent(run['algo'], agent_config(run), len(opts.power_levels), device, BEAM_DIM)
     log(f"parameters: {agent.parameter_count():,}")
     step, episodes, elapsed_before, best = 0, 0, 0., -1e9
+    best_sgm = {'v': -1e9}
     ckpt_path = run_dir / 'checkpoint.pt'
     if ckpt_path.exists():
         saved = torch.load(ckpt_path, map_location=device, weights_only=False)
@@ -96,6 +99,7 @@ def train(run_dir, dataset_dir, run, device, max_hours=None, log=print):
         if hasattr(agent, 'replay') and saved.get('replay') is not None:
             agent.replay.load_state_dict(saved['replay'])
         step, episodes, elapsed_before, best = saved['step'], saved['episodes'], saved['elapsed'], saved['best']
+        best_sgm['v'] = saved.get('best_sgm', -1e9)
         torch.set_rng_state(saved['rng']['torch'].cpu())
         if device.type == 'cuda' and saved['rng']['cuda'] is not None:
             torch.cuda.set_rng_state(saved['rng']['cuda'].cpu())
@@ -125,7 +129,7 @@ def train(run_dir, dataset_dir, run, device, max_hours=None, log=print):
 
     def save_checkpoint(final=False):
         payload = dict(agent=agent.state_dict(), replay=agent.replay.state_dict() if hasattr(agent, 'replay') else None,
-                       step=step, episodes=episodes, elapsed=elapsed_before + time.time() - started, best=best,
+                       step=step, episodes=episodes, elapsed=elapsed_before + time.time() - started, best=best, best_sgm=best_sgm['v'],
                        rng=dict(torch=torch.get_rng_state(), cuda=torch.cuda.get_rng_state() if device.type == 'cuda' else None,
                                 numpy=np.random.get_state(), python=random.getstate(), sampler=sampler.rng.bit_generator.state))
         tmp = run_dir / 'checkpoint.pt.tmp'
@@ -145,11 +149,14 @@ def train(run_dir, dataset_dir, run, device, max_hours=None, log=print):
         with (run_dir / 'dev.jsonl').open('a', encoding='utf-8') as stream:
             stream.write(json.dumps(record) + '\n')
         torch.save(agent.policy_state(), run_dir / f'policy_{step}.pt')
-        if score > best:
+        if score > best:                                    # SGM+W 最好（第一轮的选模口径，保留对照）
             best = score
             torch.save(agent.policy_state(), run_dir / 'policy_best.pt')
-        status.update(last_dev=record, best_dev=best)
-        log(f"[{now()}] dev step={step} W={summary['W']:.4f} SGM={summary['SGM']:.4f} P={summary['power_w']:.0f} adj={summary['adj_ratio_pooled']:.2f} score={score:.4f} best={best:.4f}")
+        if summary['SGM'] > best_sgm['v']:                  # SGM 最好（第二轮主口径）
+            best_sgm['v'] = summary['SGM']
+            torch.save(agent.policy_state(), run_dir / 'policy_best_sgm.pt')
+        status.update(last_dev=record, best_dev=best, best_dev_sgm=best_sgm['v'])
+        log(f"[{now()}] dev step={step} W={summary['W']:.4f} SGM={summary['SGM']:.4f} P={summary['power_w']:.0f} adj={summary['adj_ratio_pooled']:.2f} score={score:.4f} best={best:.4f} bestSGM={best_sgm['v']:.4f}")
         return record
 
     obs = env.observe()

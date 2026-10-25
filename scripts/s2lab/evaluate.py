@@ -12,6 +12,7 @@ import torch
 
 from _common import default_device
 from satellite_rl.s2lab.agents import load_policy
+from satellite_rl.s2lab.diagnostics import DiagnosticPolicy
 from satellite_rl.s2lab.env import EnvOptions, SceneBank
 from satellite_rl.s2lab.evaluate import run_policy, single_scene_timing, summarize, write_results
 from satellite_rl.s2lab.matrix import read_matrix
@@ -30,11 +31,13 @@ def main():
     ap.add_argument('--run-ids', nargs='*')
     ap.add_argument('--rules', nargs='*', default=[])
     ap.add_argument('--meta', nargs='*', default=[], help='文献方法：sa32 sa320 ga32 ga320')
-    ap.add_argument('--which', default='best', choices=['best', 'final', 'last'])
+    ap.add_argument('--which', default='best_sgm', choices=['best_sgm', 'best', 'final', 'last'],
+                    help='best_sgm：开发集 SGM 最好（第二轮主口径）；best：开发集 SGM+W 最好（第一轮口径）')
     ap.add_argument('--timing', action='store_true')
     ap.add_argument('--device', default=None)
     ap.add_argument('--batch', type=int, default=64)
     ap.add_argument('--power-steps', type=float, nargs='*', help='规则改用均匀功率档（步长 W），如 0.5 1 0.1；不给则用默认 13 档')
+    ap.add_argument('--diag', nargs='*', help='机制诊断：random_start intf_zero intf_shuffle（只对学习模型；结果名 run_id~诊断）')
     args = ap.parse_args()
     device = torch.device(args.device or default_device())
     dataset_dir = Path(args.dataset_dir)
@@ -88,9 +91,17 @@ def main():
                 continue
             agent = load_policy(path, device)
             opts = env_options(dict(run, batch_envs=args.batch))
-            results = run_policy(lambda env, a=agent: a, bank, config, items, opts, device)
-            timing = single_scene_timing(lambda env, a=agent: a, bank, config, items, opts, device) if args.timing else None
-            record(run_id, results, dict(group=run['group'], label=run.get('label', ''), seed=run['seed'], mask_mode=run['mask_mode'], which=args.which), timing)
+            for diag in (args.diag or [None]):
+                if diag:
+                    factory = lambda env, a=agent, m=diag: DiagnosticPolicy(a, env, m)
+                    name = f'{run_id}~{diag}'
+                else:
+                    factory = lambda env, a=agent: a
+                    name = run_id
+                results = run_policy(factory, bank, config, items, opts, device)
+                timing = single_scene_timing(factory, bank, config, items, opts, device) if (args.timing and not diag) else None
+                record(name, results, dict(group=run['group'], label=run.get('label', ''), seed=run['seed'], mask_mode=run['mask_mode'],
+                                           which=args.which, diag=diag or ''), timing)
 
 
 if __name__ == '__main__':

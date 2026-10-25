@@ -11,13 +11,15 @@ import torch.nn.functional as F
 
 from .nets import PolicyNet, masked, head_masks, count_parameters
 
-OBS_KEYS = ('scal', 'intf', 'occ', 'allow', 'mask_gs', 'mask_cnt', 'mask_pw', 'beam', 'beam_valid')
+OBS_KEYS = ('scal', 'intf', 'occ', 'allow', 'mask_gs', 'mask_cnt', 'mask_pw', 'beam', 'beam_valid', 'glob', 'intf_abs')
 STORE_DTYPE = dict(scal=torch.float16, intf=torch.float16, occ=torch.bool, allow=torch.bool, mask_gs=torch.bool,
-                   mask_cnt=torch.bool, mask_pw=torch.bool, beam=torch.float16, beam_valid=torch.bool)
+                   mask_cnt=torch.bool, mask_pw=torch.bool, beam=torch.float16, beam_valid=torch.bool,
+                   glob=torch.float16, intf_abs=torch.float16)
 
 
 def to_store(obs):
-    return {k: obs[k].to(STORE_DTYPE[k]) for k in OBS_KEYS if k in obs}
+    """必须是副本：.to(同类型) 不复制，PPO 缓存会跟着环境变（第一轮的实现错误之一）。"""
+    return {k: obs[k].to(STORE_DTYPE[k]).clone() for k in OBS_KEYS if k in obs}
 
 
 def to_model(obs):
@@ -116,6 +118,9 @@ class SAC(AgentBase):
         self.opt_actor = torch.optim.Adam(self.actor.parameters(), lr=cfg.get('actor_lr', cfg.get('lr', 3e-4)))
         self.opt_critic = torch.optim.Adam(list(self.q1.parameters()) + list(self.q2.parameters()), lr=cfg.get('critic_lr', cfg.get('lr', 3e-4)))
         self.alpha = float(cfg.get('alpha', .01))
+        self.auto_alpha = bool(cfg.get('auto_alpha', False))
+        self.log_alpha = torch.tensor(math.log(self.alpha), device=device, requires_grad=True)
+        self.opt_alpha = torch.optim.Adam([self.log_alpha], lr=cfg.get('alpha_lr', 3e-4))
         self.gamma, self.tau = cfg.get('gamma', .99), cfg.get('tau', .005)
         self.batch, self.warmup = cfg.get('batch', 256), cfg.get('warmup', 2000)
         self.updates_per_step = cfg.get('utd', .5)
@@ -159,13 +164,22 @@ class SAC(AgentBase):
         return info
 
     def _update_once(self):
+        """double_q='joint'（第二轮默认，历史做法）：两个评论家各自把三头的期望值加总，再取较小的一个；
+        'per_head'（第一轮做法）：每头先取两评论家较小值再相加，更悲观。
+        auto_alpha：温度自适应，目标熵 = kappa × Σ_h log(合法动作数)。"""
+        joint = self.cfg.get('double_q', 'joint') == 'joint'
+        alpha = self.log_alpha.exp().detach() if self.auto_alpha else self.alpha
         obs, action, reward, done, nxt = self.replay.sample(self.batch)
         with torch.no_grad():
             pi_next = self._policy(self.actor, nxt)
             (q1n, _), (q2n, _) = self.q1_t(nxt), self.q2_t(nxt)
-            v_next = 0.
-            for (pi, logp), a1, a2 in zip(pi_next, q1n, q2n):
-                v_next = v_next + (pi * (torch.minimum(a1, a2) - self.alpha * logp)).sum(1)
+            ent_next = sum(-(pi * logp).sum(1) for pi, logp in pi_next)
+            if joint:
+                v1 = sum((pi * a1).sum(1) for (pi, _), a1 in zip(pi_next, q1n))
+                v2 = sum((pi * a2).sum(1) for (pi, _), a2 in zip(pi_next, q2n))
+                v_next = torch.minimum(v1, v2) + alpha * ent_next
+            else:
+                v_next = sum((pi * torch.minimum(a1, a2)).sum(1) for (pi, _), a1, a2 in zip(pi_next, q1n, q2n)) + alpha * ent_next
             target = reward + self.gamma * (1 - done) * v_next
         (q1, _), (q2, _) = self.q1(obs), self.q2(obs)
         q1_sa = sum(h.gather(1, action[:, i:i + 1]).squeeze(1) for i, h in enumerate(q1))
@@ -176,30 +190,53 @@ class SAC(AgentBase):
         torch.nn.utils.clip_grad_norm_(list(self.q1.parameters()) + list(self.q2.parameters()), 10.)
         self.opt_critic.step()
         pi_obs = self._policy(self.actor, obs)
+        q1d, q2d = [h.detach() for h in q1], [h.detach() for h in q2]      # 复用本步评论家前向（已分离），省两次前向
+        if joint:
+            with torch.no_grad():
+                v1 = sum((pi.detach() * a1).sum(1) for (pi, _), a1 in zip(pi_obs, q1d))
+                v2 = sum((pi.detach() * a2).sum(1) for (pi, _), a2 in zip(pi_obs, q2d))
+                pick1 = (v1 <= v2)[:, None]
+            qsel = [torch.where(pick1, a1, a2) for a1, a2 in zip(q1d, q2d)]
+        else:
+            qsel = [torch.minimum(a1, a2) for a1, a2 in zip(q1d, q2d)]
         actor_loss, entropy = 0., 0.
-        for (pi, logp), a1, a2 in zip(pi_obs, q1, q2):      # 复用本步评论家前向（已分离），省两次前向
-            actor_loss = actor_loss + (pi * (self.alpha * logp - torch.minimum(a1.detach(), a2.detach()))).sum(1).mean()
+        for (pi, logp), q in zip(pi_obs, qsel):
+            actor_loss = actor_loss + (pi * (alpha * logp - q)).sum(1).mean()
             entropy = entropy - (pi * logp).sum(1).mean()
         self.opt_actor.zero_grad(set_to_none=True)
         actor_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.)
         self.opt_actor.step()
+        if self.auto_alpha:
+            n_legal = sum(torch.log(m.float().sum(1).clamp(min=1.)) for m in head_masks(obs))
+            target_ent = self.cfg.get('alpha_kappa', .3) * n_legal
+            ent_now = sum(-(pi * logp).sum(1) for pi, logp in pi_obs).detach()
+            alpha_loss = -(self.log_alpha * (target_ent - ent_now)).mean()
+            self.opt_alpha.zero_grad(set_to_none=True)
+            alpha_loss.backward()
+            self.opt_alpha.step()
         with torch.no_grad():
             for net, tgt in ((self.q1, self.q1_t), (self.q2, self.q2_t)):
                 for p, pt in zip(net.parameters(), tgt.parameters()):
                     pt.mul_(1 - self.tau).add_(p, alpha=self.tau)
         self.updates += 1
-        return dict(critic_loss=float(critic_loss), actor_loss=float(actor_loss), entropy=float(entropy), q=float(q1_sa.mean()))
+        return dict(critic_loss=float(critic_loss), actor_loss=float(actor_loss), entropy=float(entropy), q=float(q1_sa.mean()),
+                    alpha=float(alpha))
 
     def state_dict(self):
         return dict(actor=self.actor.state_dict(), q1=self.q1.state_dict(), q2=self.q2.state_dict(),
                     q1_t=self.q1_t.state_dict(), q2_t=self.q2_t.state_dict(), opt_actor=self.opt_actor.state_dict(),
-                    opt_critic=self.opt_critic.state_dict(), env_steps=self.env_steps, updates=self.updates, pending=self._pending)
+                    opt_critic=self.opt_critic.state_dict(), env_steps=self.env_steps, updates=self.updates, pending=self._pending,
+                    log_alpha=self.log_alpha.detach().clone(), opt_alpha=self.opt_alpha.state_dict())
 
     def load_state_dict(self, state):
         for name in ('actor', 'q1', 'q2', 'q1_t', 'q2_t', 'opt_actor', 'opt_critic'):
             getattr(self, name).load_state_dict(state[name])
         self.env_steps, self.updates, self._pending = state['env_steps'], state['updates'], state['pending']
+        if 'log_alpha' in state:
+            with torch.no_grad():
+                self.log_alpha.copy_(state['log_alpha'])
+            self.opt_alpha.load_state_dict(state['opt_alpha'])
 
     def policy_state(self):
         return dict(kind='sac', cfg=self.cfg, K=self.K, beam_dim=self.beam_dim, actor=self.actor.state_dict())

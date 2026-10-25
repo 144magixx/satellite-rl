@@ -60,6 +60,82 @@ def build_matrix():
     return runs
 
 
+def build_matrix_round2():
+    """第二轮：修复入池状态与每束令牌耦合后，第一轮 54 个全部重跑，并加待做清单第 1—6 项。
+    SAC 默认 double_q='joint'（历史做法）；检查点按开发集 SGM 选（policy_best_sgm.pt）。"""
+    runs = build_matrix()
+    for r in runs:
+        if r['algo'] == 'sac':
+            r['agent']['double_q'] = 'joint'
+        if r['group'] == 'nomask':
+            r['illegal_penalty'] = 2.                       # 第 5 项：显式非法动作惩罚
+    legacy_delta = dict(group_mode='greedy', reward_mode='delta')
+    for s in SEEDS:
+        # 第 1 项：原样 14 令牌
+        runs.append(base_run(f't14-in-paper-s{s}', 'sac', 'tsac14', s, 'tsac14', label='t14_in_paper', group_mode='greedy',
+                             size=dict(MAIN_SIZE, intf_mode='in')))
+        runs.append(base_run(f't14-in-delta-s{s}', 'sac', 'tsac14', s, 'tsac14', label='t14_in_delta', group_mode='greedy', reward_mode='delta',
+                             size=dict(MAIN_SIZE, intf_mode='in')))
+        runs.append(base_run(f't14-dbw-paper-s{s}', 'sac', 'tsac14', s, 'tsac14', label='t14_dbw_paper', group_mode='greedy',
+                             size=dict(MAIN_SIZE, intf_mode='dbw')))
+        # 第 3 项：躲干扰（都在"历史版 12 令牌＋delta"上）
+        runs.append(base_run(f'avoid-rule-s{s}', 'sac', 'tf_legacy', s, 'avoid', label='avoid_rule', start_mode='rule', **legacy_delta))
+        runs.append(base_run(f'avoid-topk-s{s}', 'sac', 'tf_legacy', s, 'avoid', label='avoid_topk', start_mode='topk', start_topk=8, **legacy_delta))
+        runs.append(base_run(f'avoid-intf-s{s}', 'sac', 'tf_legacy', s, 'avoid', label='avoid_intf', group_mode='greedy', reward_mode='delta_intf'))
+        runs.append(base_run(f'avoid-long-s{s}', 'sac', 'tf_legacy', s, 'avoid', label='avoid_long400k', total_steps=400000, **legacy_delta))
+        # 第 6 项：功率档 0.5—50 W 步长 0.5
+        runs.append(base_run(f'power100-s{s}', 'sac', 'tf_legacy', s, 'power', label='power100',
+                             power_levels=[round(.5 * i, 1) for i in range(1, 101)], **legacy_delta))
+    # 第 4 项：CNN/MLP-SAC 排除超参因素（单种子）
+    runs.append(base_run('fix-cnn-ln-s1', 'sac', 'cnn', 1, 'fix', label='cnn_layernorm', size=dict(MAIN_SIZE, layernorm=True)))
+    runs.append(base_run('fix-mlp-ln-s1', 'sac', 'mlp', 1, 'fix', label='mlp_layernorm', size=dict(MAIN_SIZE, layernorm=True)))
+    runs.append(base_run('fix-cnn-auto-s1', 'sac', 'cnn', 1, 'fix', label='cnn_autoalpha', agent=dict(SAC_CORE, auto_alpha=True)))
+    runs.append(base_run('fix-mlp-auto-s1', 'sac', 'mlp', 1, 'fix', label='mlp_autoalpha', agent=dict(SAC_CORE, auto_alpha=True)))
+    # 双 Q 取法对照（第一轮做法，单种子）
+    runs.append(base_run('dq-perhead-tsac-s1', 'sac', 'tf_blocks', 1, 'doubleq', label='tsac_perhead', agent=dict(SAC_CORE, double_q='per_head')))
+    runs.append(base_run('dq-perhead-legacy-s1', 'sac', 'tf_legacy', 1, 'doubleq', label='legacy_perhead', group_mode='greedy',
+                         agent=dict(SAC_CORE, double_q='per_head')))
+    # 卡有富余：参数量补种子 2、3（d512L4 单个约 17 h 除外），放队尾，空闲才跑
+    for d, layers in ((32, 1), (64, 2), (128, 4), (128, 8), (256, 2), (256, 4)):
+        heads = 4 if d <= 64 else 8
+        for s in (2, 3):
+            runs.append(base_run(f'size-d{d}L{layers}-s{s}', 'sac', 'tf_blocks', s, 'size', label=f'd{d}L{layers}',
+                                 size=dict(MAIN_SIZE, d=d, layers=layers, heads=heads, ff=4 * d)))
+    for r in runs:
+        if r['algo'] == 'sac':
+            r['agent'].setdefault('double_q', 'joint')
+    return runs
+
+
+# 第二轮按账号分队列：A（u2025140002）跑主表、奖励、追加、躲干扰、功率档、令牌；B（u2024018003）跑其余。慢的放前面。
+ROUND2_ACCOUNT_B = ('size-', 'group-', 'nomask-', 't14-', 'fix-', 'dq-')
+ROUND2_PRIORITY = ('size-d512', 'avoid-long', 'token-beams', 'size-d128L8', 'main-tsac-', 'main-tsaclegacy', 'extra-legacydelta', 'reward-delta',
+                   'avoid-', 'power100', 't14-', 'size-d256L4', 'group-', 'token-', 'size-', 'main-cnnsac', 'main-dqn', 'extra-dqnmlp', 'dq-',
+                   'main-mlpsac', 'fix-', 'nomask-', 'main-ppo', 'extra-ppomlp')
+
+
+def ordered_round2(runs, account):
+    def rank(run):
+        if run['group'] == 'size' and run['seed'] > 1:        # 补种子放队尾
+            return (len(ROUND2_PRIORITY) + 1, run['seed'], run['run_id'])
+        for i, prefix in enumerate(ROUND2_PRIORITY):
+            if run['run_id'].startswith(prefix):
+                return (i, run['seed'], run['run_id'])
+        return (len(ROUND2_PRIORITY), run['seed'], run['run_id'])
+    mine = [r for r in runs if r['run_id'].startswith(ROUND2_ACCOUNT_B) == (account == 'B')]
+    return [r['run_id'] for r in sorted(mine, key=rank)]
+
+
+def write_matrix_round2(runs_dir, account):
+    runs_dir = Path(runs_dir)
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    runs = build_matrix_round2()
+    (runs_dir / 'matrix.json').write_text(json.dumps(runs, ensure_ascii=False, indent=1), encoding='utf-8')
+    (runs_dir / 'queue.json').write_text(json.dumps(dict(order=ordered_round2(runs, account), account=account,
+                                                         created_at=datetime.now().isoformat()), indent=1), encoding='utf-8')
+    return runs
+
+
 # 队列顺序：先主表 T-SAC 与奖励对照（决定口径），再主表其余，再消融，再无掩码，最后追加组
 PRIORITY = ('main-tsac-', 'main-tsaclegacy', 'reward-delta', 'main-cnnsac', 'main-mlpsac', 'main-ppo', 'main-dqn', 'token', 'group', 'size', 'nomask', 'extra')
 

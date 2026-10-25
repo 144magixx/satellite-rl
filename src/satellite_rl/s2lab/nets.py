@@ -71,8 +71,39 @@ class TransformerEncoder(nn.Module):
         return x[:, 0], x[:, 2:2 + blocks.shape[1]]
 
 
+class TSAC14Encoder(nn.Module):
+    """原样 14 令牌（历史 T-SAC，t0_width/power30 那条线）：位置（纬度、经度、宽度）、需求、剩余功率各 1 令牌，
+    本组 10 个频率块（每块 10 槽干扰＋10 槽占用＝20 维），全局令牌（平均需求、进度、剩余总需求），取位置令牌读出。
+    intf_mode='in'：干扰用 I/N 映射；'dbw'：历史的绝对 dBW 映射。需要规则定组（只有一个允许组）。"""
+
+    def __init__(self, d=128, layers=2, heads=8, ff=512, activation='relu', norm_first=False, intf_mode='in', T=100):
+        super().__init__()
+        self.T, self.intf_key = T, ('intf_abs' if intf_mode == 'dbw' else 'intf')
+        self.geo, self.rate, self.power = nn.Linear(3, d), nn.Linear(1, d), nn.Linear(1, d)
+        self.slot, self.glob = nn.Linear(2 * BLOCK, d), nn.Linear(3, d)
+        self.pos = nn.Parameter(torch.zeros(1, 14, d))
+        layer = nn.TransformerEncoderLayer(d, heads, ff, dropout=0., batch_first=True, norm_first=norm_first, activation=activation)
+        self.encoder = nn.TransformerEncoder(layer, layers, enable_nested_tensor=False)
+        self.out_dim = d
+
+    def forward(self, obs):
+        scal = obs['scal']
+        B = scal.shape[0]
+        rows = torch.arange(B, device=scal.device)
+        group = obs['allow'].float().argmax(1)
+        intf = obs[self.intf_key][rows, group % 2]                            # [B,T]
+        occ = obs['occ'][rows, group].float()                                  # [B,T]
+        nb = self.T // BLOCK
+        blocks = torch.cat([intf.reshape(B, nb, BLOCK), occ.reshape(B, nb, BLOCK)], -1)
+        geo = torch.stack([scal[:, 2], scal[:, 3], scal[:, 1]], 1)
+        tokens = torch.cat([self.geo(geo)[:, None], self.rate(scal[:, 0:1])[:, None], self.power(scal[:, 6:7])[:, None],
+                            self.slot(blocks), self.glob(obs['glob'])[:, None]], 1) + self.pos
+        x = self.encoder(tokens)
+        return x[:, 0], x[:, 3:3 + nb]
+
+
 class CNNEncoder(nn.Module):
-    def __init__(self, d=128, channels=64, G=8, T=100):
+    def __init__(self, d=128, channels=64, G=8, T=100, layernorm=False):
         super().__init__()
         self.G, self.T = G, T
         self.conv = nn.Sequential(
@@ -80,6 +111,7 @@ class CNNEncoder(nn.Module):
             nn.Conv1d(channels, channels, 5, stride=2, padding=2), nn.ReLU(),
             nn.Conv1d(channels, channels, 5, stride=2, padding=2), nn.ReLU())
         self.fc = nn.Sequential(nn.Linear(channels * ((T + 3) // 4) + 10, 2 * d), nn.ReLU(), nn.Linear(2 * d, d), nn.ReLU())
+        self.norm = nn.LayerNorm(d) if layernorm else nn.Identity()
         self.out_dim = d
 
     def forward(self, obs):
@@ -88,18 +120,19 @@ class CNNEncoder(nn.Module):
         parity = torch.arange(G, device=occ.device) % 2
         x = torch.cat([obs['intf'][:, parity], occ.float(), obs['allow'][:, :, None].float().expand(B, G, T)], 1)
         h = self.conv(x).flatten(1)
-        return self.fc(torch.cat([h, obs['scal']], 1)), None
+        return self.norm(self.fc(torch.cat([h, obs['scal']], 1))), None
 
 
 class MLPEncoder(nn.Module):
-    def __init__(self, d=128, hidden=512, G=8, T=100):
+    def __init__(self, d=128, hidden=512, G=8, T=100, layernorm=False):
         super().__init__()
         self.net = nn.Sequential(nn.Linear(2 * T + G * T + G + 10, hidden), nn.ReLU(), nn.Linear(hidden, d), nn.ReLU())
+        self.norm = nn.LayerNorm(d) if layernorm else nn.Identity()
         self.out_dim = d
 
     def forward(self, obs):
         x = torch.cat([obs['intf'].flatten(1), obs['occ'].float().flatten(1), obs['allow'].float(), obs['scal']], 1)
-        return self.net(x), None
+        return self.norm(self.net(x)), None
 
 
 class Heads(nn.Module):
@@ -131,10 +164,13 @@ def build_encoder(kind, size, beam_dim=20, G=8, T=100):
     if kind in ('tf_blocks', 'tf_beams', 'tf_legacy'):
         return TransformerEncoder(size.get('d', 128), size.get('layers', 2), size.get('heads', 8), size.get('ff'), kind == 'tf_beams',
                                   beam_dim, G, T, size.get('activation', 'relu'), size.get('norm_first', False), kind == 'tf_legacy')
+    if kind == 'tsac14':
+        return TSAC14Encoder(size.get('d', 128), size.get('layers', 2), size.get('heads', 8), size.get('ff', 512),
+                             size.get('activation', 'relu'), size.get('norm_first', False), size.get('intf_mode', 'in'), T)
     if kind == 'cnn':
-        return CNNEncoder(size.get('d', 128), size.get('channels', 64), G, T)
+        return CNNEncoder(size.get('d', 128), size.get('channels', 64), G, T, size.get('layernorm', False))
     if kind == 'mlp':
-        return MLPEncoder(size.get('d', 128), size.get('hidden', 512), G, T)
+        return MLPEncoder(size.get('d', 128), size.get('hidden', 512), G, T, size.get('layernorm', False))
     raise ValueError(kind)
 
 

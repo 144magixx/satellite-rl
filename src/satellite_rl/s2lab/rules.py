@@ -30,8 +30,8 @@ class GreedyRule:
 
     name = 'greedy'
 
-    def __init__(self, env, margin=1.1):
-        self.env, self.margin = env, margin
+    def __init__(self, env, margin=1.1, interference_aware=True):
+        self.env, self.margin, self.interference_aware = env, margin, interference_aware
 
     @torch.no_grad()
     def act(self, obs=None):
@@ -65,9 +65,15 @@ class GreedyRule:
         watts = torch.minimum(share, p_need)
         pw = _levels_index(env, watts)
         # 组×起点：窗口干扰最小
-        intf = env._interference(cur)                                 # [B,2,T]
         parity = torch.arange(G, device=env.device) % 2
-        cost = _window_cost(intf[:, parity], c, free_run, allow)
+        if self.interference_aware:
+            intf = env._interference(cur)                             # [B,2,T]
+            cost = _window_cost(intf[:, parity], c, free_run, allow)
+        else:                                                         # 不看干扰：空闲槽最多的组，组内第一个放得下的位置
+            free = (~env.occ).sum(-1).float()                         # [B,G]
+            pos = torch.arange(T, device=env.device).float()
+            cost = -free[:, :, None] * T + pos[None, None, :]
+            cost = torch.where(allow[:, :, None] & (free_run >= c[:, None, None]), cost, torch.full_like(cost, float('inf')))
         flat = cost.reshape(B, G * T)
         gs = flat.argmin(1)
         none = torch.isinf(flat.min(1).values)
@@ -129,8 +135,17 @@ class RandomRule:
 def make_rule(name, env, seed=0):
     if name == 'greedy':
         return GreedyRule(env)
+    if name == 'greedy_noint':
+        return GreedyRule(env, interference_aware=False)
     if name == 'fixed':
         return FixedRule(env)
     if name == 'random':
         return RandomRule(env, seed)
+    from .rules_extra import OldFixedGreedy, PaperGreedy, DispersedRule
+    if name == 'greedy_old':
+        return OldFixedGreedy(env)
+    if name == 'greedy_paper':
+        return PaperGreedy(env)
+    if name == 'dispersed':
+        return DispersedRule(env)
     raise ValueError(name)

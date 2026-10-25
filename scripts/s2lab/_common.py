@@ -15,6 +15,15 @@ REMOTE_S2FIX_DATA = '/home/u2025140002/s2fix_20261018/data'
 LOCAL_OUT = Path('D:/paper/outputs/experiments/s2lab_20261024')
 DATASET_NAME = 'v1'
 
+# 第二轮两个账号（同一主机、同一口令 BUPT_PASSWORD、/home 各自独立）
+ACCOUNTS = {
+    'A': dict(user='u2025140002', ports=(20654, 20655, 20627, 20653, 20780, 20781, 20782, 20783),
+              py='/home/u2025140002/second_stage_satellite_rl/envs/DQN/bin/python', root='/home/u2025140002/s2lab'),
+    'B': dict(user='u2024018003', ports=tuple(range(20802, 20810)),
+              py='/opt/conda/envs/pytorch-2.1.1/bin/python', root='/home/u2024018003/s2lab'),
+}
+LOCAL_OUT2 = Path('D:/paper/outputs/experiments/s2lab_round2_20261025')
+
 
 def default_device():
     import torch

@@ -57,10 +57,16 @@ class EnvOptions:
     batch_size: int = 64
     mask_mode: str = 'full'       # full | none
     group_mode: str = 'free'      # free | mod8 | greedy
-    reward_mode: str = 'paper'    # paper | delta
+    reward_mode: str = 'paper'    # paper | delta | delta_intf（delta 再罚本步给已放波束新增的干扰损失）
     order: str = 'demand'         # demand | random
     power_levels: tuple = DEFAULT_POWER_LEVELS
     beam_tokens: bool = False     # 是否构造每束一令牌观测
+    legacy_obs: bool = False      # 额外给 glob[B,3]（平均需求、进度、剩余总需求）与 intf_abs（绝对 dBW 映射），供 14 令牌编码器
+    start_mode: str = 'free'      # free | rule（起点只许干扰最小的窗口）| topk（只许干扰最小的前 k 个窗口）
+    start_topk: int = 8
+    start_window: int = 4         # 起点打分用的窗口长度（槽）
+    illegal_penalty: float = 0.   # 无掩码时：撞已占槽/超预算的额外罚分；超预算终止时其余每束再罚 1（>0 时生效）
+    intf_lambda: float = 1.       # delta_intf 的干扰项权重
 
 
 class ItemSampler:
@@ -220,6 +226,13 @@ class BatchEnv:
         sgm = 1 - (1 - torch.exp(-torch.hypot(real, imag))) ** 3
         return torch.where(capacity > 0, sgm, torch.zeros_like(sgm)) * self.bank.valid[self.scene]
 
+    def _intf_si_loss(self, capacity):
+        """各束因干扰损失的满足率之和（无干扰 SI − 有干扰 SI），[B]。"""
+        valid = self.bank.valid[self.scene]
+        d = self.demand.clamp(min=1.)
+        cap0 = self.capacities(interference=False)
+        return (((cap0 / d).clamp(max=1.) - (capacity / d).clamp(max=1.)) * valid).sum(1)
+
     def _objective(self, capacity):
         si = (capacity / self.demand.clamp(min=1.)).clamp(max=1.) * self.bank.valid[self.scene]
         return (self._sgm(capacity) + si).sum(1)
@@ -275,6 +288,8 @@ class BatchEnv:
         budget_left = (self.budget - self.used_w - reserve).clamp(min=0)
         if self.opt.mask_mode == 'full':
             mask_gs = (allow[:, :, None] & (free_run >= 1)).reshape(B, G * T)
+            if self.opt.start_mode != 'free':
+                mask_gs = self._start_candidates(intf, allow, free_run, mask_gs)
             cmax = self.count_cap(allow, free_run)
             mask_cnt = (torch.arange(1, 11, device=self.device)[None, :] <= cmax[:, None])
             mask_pw = self.levels[None, :] <= budget_left[:, None] + 1e-6
@@ -291,20 +306,50 @@ class BatchEnv:
             demand / 1e9, self.bank.width[scene, cur], self.bank.latlon[scene, cur, 0] / 90, self.bank.latlon[scene, cur, 1] / 180,
             self.bank.members[scene, cur] / 30, self.t.float() / self.n.clamp(min=1), (self.budget - self.used_w) / self.budget,
             remaining / self.N, self.n.float() / self.N, demand / single_cap], 1)
-        obs = dict(scal=scal, intf=intf_norm, occ=self.occ, allow=allow, mask_gs=mask_gs, mask_cnt=mask_cnt, mask_pw=mask_pw)
+        # occ 必须复制：环境的占用图在 step() 里原地修改，引用会让入池的"动作前状态"变成动作后（第一轮的实现错误）
+        obs = dict(scal=scal, intf=intf_norm, occ=self.occ.clone(), allow=allow, mask_gs=mask_gs, mask_cnt=mask_cnt, mask_pw=mask_pw)
         if self.opt.beam_tokens:
             obs['beam'], obs['beam_valid'] = self._beam_tokens(cur)
+        if self.opt.legacy_obs:
+            ordered = self.demand.gather(1, self.order)
+            pos = self.arange_n[None, :]
+            remaining_demand = (ordered * ((pos >= self.t[:, None]) & (pos < self.n[:, None]))).sum(1)
+            mean_demand = self.demand.sum(1) / self.n.clamp(min=1)
+            obs['glob'] = torch.stack([mean_demand / 1e9, self.t.float() / self.n.clamp(min=1), remaining_demand / (self.N * 1e9)], 1)
+            obs['intf_abs'] = ((10 * torch.log10(intf + 1e-30) + 300) / 200).clamp(0, 1)   # 历史做法：绝对 dBW 映射
         return obs
+
+    def _start_candidates(self, intf, allow, free_run, mask_gs):
+        """起点候选：在允许组的空闲起点里，按"从该起点起 window 个槽（不超过空闲段）的平均干扰"打分，
+        rule 只留最小的 1 个，topk 留最小的 k 个。"""
+        B, G, T = self.B, self.G, self.T
+        parity = torch.arange(G, device=self.device) % 2
+        x = intf[:, parity]                                                      # [B,G,T]
+        cs = torch.cat([torch.zeros(B, G, 1, device=self.device), x.cumsum(-1)], -1)
+        w = free_run.clamp(min=1, max=self.opt.start_window)                     # [B,G,T]
+        end = (self.arange_t[None, None, :] + w).clamp(max=T)
+        cost = (cs.gather(2, end) - cs[:, :, :T]) / w.float()
+        cost = torch.where(mask_gs.reshape(B, G, T), cost, torch.full_like(cost, float('inf'))).reshape(B, G * T)
+        k = 1 if self.opt.start_mode == 'rule' else self.opt.start_topk
+        k = min(k, G * T)
+        idx = cost.topk(k, largest=False).indices
+        keep = torch.zeros_like(mask_gs)
+        keep.scatter_(1, idx, True)
+        out = keep & mask_gs
+        out[self.arange_b, 0] |= ~out.any(1)
+        return out
 
     def _beam_tokens(self, cur):
         scene = self.scene
         B, N = self.B, self.N
         allocated = (self.grp >= 0).float()
         onehot = torch.nn.functional.one_hot(self.grp.clamp(min=0), self.G).float() * allocated[:, :, None]
-        c_in = self.bank.coupling[scene, cur]                         # [B,N]  cur ← j
-        c_out = self.bank.coupling[scene][self.arange_b, :, cur]      # [B,N]  j ← cur
+        # 耦合系数不含路径损耗；折算成"每瓦每槽的干扰÷噪声"再取 dB（第一轮直接取 dB 导致全部饱和成 0/1）
+        path = self.bank.path[scene].mean(-1)                         # [B,N] 各束中心的平均路径增益
+        c_in = self.bank.coupling[scene, cur] * path[self.arange_b, cur][:, None] / self.noise      # cur ← j
+        c_out = self.bank.coupling[scene][self.arange_b, :, cur] * path / self.noise                # j ← cur
         def db(x):
-            return ((10 * torch.log10(x + 1e-30) + 90) / 60).clamp(0, 1)   # 耦合约 -30..+30 dB 范围映射
+            return ((10 * torch.log10(x + 1e-30) + 40) / 60).clamp(0, 1)   # I/N（每瓦每槽）−40..+20 dB 映射
         feats = [self.demand / 1e9, self.bank.width[scene], self.bank.latlon[scene, :, 0] / 90, self.bank.latlon[scene, :, 1] / 180,
                  allocated, self.start.float() / self.T, self.cnt.float() / 10, self.pw / 50, db(c_in), db(c_out),
                  self.bank.adjacent[scene][self.arange_b, cur].float(), (self.arange_n[None, :] == cur[:, None]).float()]
@@ -331,14 +376,18 @@ class BatchEnv:
             c = torch.minimum(torch.minimum(c, free_run), self.count_cap(allow, free_all))
             over = torch.zeros(B, dtype=torch.bool, device=self.device)
         else:
+            collided = free_run < c
             c = torch.where(free_run >= c, c, torch.zeros_like(c))          # 与同组已占槽重叠 → 不服务
             over = self.used_w + p > self.budget + 1e-6
         p = torch.where(c > 0, p, torch.zeros_like(p))
         p = torch.minimum(p, (self.budget - self.used_w).clamp(min=0))
         c = torch.where(active & ~over, c, torch.zeros_like(c))
         p = torch.where(active & ~over, p, torch.zeros_like(p))
-        if self.opt.reward_mode == 'delta':
-            before = self._objective(self.capacities())
+        if self.opt.reward_mode in ('delta', 'delta_intf'):
+            cap_before = self.capacities()
+            before = self._objective(cap_before)
+            if self.opt.reward_mode == 'delta_intf':
+                loss_before = self._intf_si_loss(cap_before)
         # 写入分配
         slot_mask = (self.arange_t[None, :] >= s[:, None]) & (self.arange_t[None, :] < (s + c)[:, None])   # [B,T]
         per_slot = torch.where(c > 0, p / c.clamp(min=1).float(), torch.zeros_like(p))
@@ -354,15 +403,21 @@ class BatchEnv:
         self.used_w += p
         # 奖励
         capacity = self.capacities()
-        if self.opt.reward_mode == 'delta':
+        if self.opt.reward_mode in ('delta', 'delta_intf'):
             after = self._objective(capacity)
             reward = after - before
+            if self.opt.reward_mode == 'delta_intf':
+                reward = reward - self.opt.intf_lambda * (self._intf_si_loss(capacity) - loss_before)
         else:
             cap_cur = capacity[self.arange_b, cur]
             dem_cur = self.demand[self.arange_b, cur]
             sgm_cur = self._sgm(capacity)[self.arange_b, cur]
             satisfied = torch.where(cap_cur >= dem_cur, torch.ones_like(cap_cur), -torch.ones_like(cap_cur))
             reward = satisfied + sgm_cur - ((cap_cur - dem_cur).abs() - 5e7).clamp(min=0) / 1e9
+        if self.opt.mask_mode != 'full' and self.opt.illegal_penalty > 0:
+            illegal = (collided | over) & active
+            remaining_after = (self.n - self.t - 1).clamp(min=0).float()
+            reward = reward - self.opt.illegal_penalty * illegal.float() - (over & active).float() * remaining_after
         reward = reward * active.float()
         self.terminated |= over & active
         self.t += active.long()
