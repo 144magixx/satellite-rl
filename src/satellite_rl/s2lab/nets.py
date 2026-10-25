@@ -28,7 +28,8 @@ def block_features(obs):
 
 class TransformerEncoder(nn.Module):
     """令牌 = [全局, 当前束标量, 80 个频率块(, N 个波束)]。返回 pooled 与块令牌输出。
-    legacy_blocks=True 时只取当前允许组的 10 个频率块（历史 T-SAC 的 14 令牌做法，需组已定）。
+    legacy_blocks=True 时只取当前允许组的 10 个频率块，共 12 个令牌（全局＋标量＋10 块）。这是历史 T-SAC
+    14 令牌（位置、需求、剩余功率各一令牌＋10 块＋全局上下文令牌，取位置令牌读出）的近似，不是原样复现。
     ff/activation/norm_first 可配：历史最好版为 512 / relu / 后置 LayerNorm。"""
 
     def __init__(self, d=128, layers=2, heads=8, ff=None, beam_tokens=False, beam_dim=20, G=8, T=100,
