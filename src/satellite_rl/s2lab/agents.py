@@ -164,8 +164,9 @@ class SAC(AgentBase):
         return info
 
     def _update_once(self):
-        """double_q='joint'（第二轮默认，历史做法）：两个评论家各自把三头的期望值加总，再取较小的一个；
-        'per_head'（第一轮做法）：每头先取两评论家较小值再相加，更悲观。
+        """double_q='joint'（第二轮默认，"求期望后取小"）：两个评论家各自把三头的期望值加总，再取较小的一个；
+        注意这不是历史代码（agents/sac_math.py、power30）的"在每个完整动作上取小、再按策略求期望"，两者不等价；
+        'per_head'（第一轮做法，"逐头取小"）：每头先取两评论家较小值再相加。
         auto_alpha：温度自适应，目标熵 = kappa × Σ_h log(合法动作数)。"""
         joint = self.cfg.get('double_q', 'joint') == 'joint'
         alpha = self.log_alpha.exp().detach() if self.auto_alpha else self.alpha

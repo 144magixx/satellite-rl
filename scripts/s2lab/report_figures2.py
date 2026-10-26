@@ -112,7 +112,8 @@ def summary(rows_by_seed):
         seeds = [np.nanmean([r[c] for r in rows]) for rows in rows_by_seed]
         out[c], out[c + '_std'] = float(np.mean(seeds)), float(np.std(seeds)) if len(seeds) > 1 else 0.
     allr = [r for rows in rows_by_seed for r in rows]
-    out['adj_ratio'] = float(sum(r['adj_overlap'] for r in allr) / max(1e-9, sum(r['adj_expected'] for r in allr)))
+    expected = sum(r['adj_expected'] for r in allr)
+    out['adj_ratio'] = float(sum(r['adj_overlap'] for r in allr) / expected) if expected > 0 else float('nan')   # 无相邻同极对时不适用
     out['seeds'] = len(rows_by_seed)
     out['seed_SGM'] = [float(np.nanmean([r['SGM'] for r in rows])) for rows in rows_by_seed]
     out['seed_W'] = [float(np.nanmean([r['W'] for r in rows])) for rows in rows_by_seed]
