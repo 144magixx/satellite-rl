@@ -20,15 +20,16 @@ from satellite_rl.s2lab.train import write_json, now
 
 def claim(runs_dir, run_id, lane):
     """原子认领：O_EXCL 创建 <run>/.claim 锁文件，先到先得（10-24 size-d512L4 曾被两卡同时认领，故改锁文件）。
-    锁已存在但该运行可认领（new/paused/心跳过期）时视为陈旧锁，删掉重建。"""
+    锁已存在、该运行可认领（new/paused/心跳过期）且锁已超过 10 分钟时才视为陈旧锁，删掉重建
+    （10-27 第三轮开跑时，另一卡刚建锁、还没写状态就被当成陈旧锁删掉，两卡同写 status.json，20654 排队器崩溃）。"""
     run_dir = Path(runs_dir) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     lock = run_dir / '.claim'
     status = run_status(runs_dir, run_id)
     if lock.exists():
-        if not claimable(status):
+        if not claimable(status) or time.time() - lock.stat().st_mtime < 600:
             return False
-        lock.unlink()
+        lock.unlink(missing_ok=True)
     try:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
