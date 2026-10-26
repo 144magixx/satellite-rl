@@ -67,7 +67,7 @@ def read_csv(path):
     out = []
     for r in rows:
         d = dict(key=r['key'], stratum=r['stratum'])
-        for c in COLS + ('adj_overlap', 'adj_expected'):
+        for c in COLS + ('adj_overlap', 'adj_expected', 'truncated_beams'):
             d[c] = float(r[c]) if r.get(c) not in (None, '', 'nan') else np.nan
         out.append(d)
     return out
@@ -117,6 +117,8 @@ def summary(rows_by_seed):
     out['seeds'] = len(rows_by_seed)
     out['seed_SGM'] = [float(np.nanmean([r['SGM'] for r in rows])) for rows in rows_by_seed]
     out['seed_W'] = [float(np.nanmean([r['W'] for r in rows])) for rows in rows_by_seed]
+    trunc = [r['truncated_beams'] for r in allr if np.isfinite(r['truncated_beams'])]
+    out['truncated'] = float(np.mean(trunc)) if trunc else float('nan')
     return out
 
 
