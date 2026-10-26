@@ -29,7 +29,7 @@ def read(path):
 
 
 def stats(d):
-    dev = read(d / 'dev.jsonl')
+    dev = list({r['step']: r for r in read(d / 'dev.jsonl')}.values())   # 按步数去重：训练结束时 20 万步会记两次
     steps = np.array([r['step'] for r in dev], float)
     sgm = np.array([r['SGM'] for r in dev])
     last, prev = sgm[-5:].mean(), sgm[-10:-5].mean()
@@ -63,7 +63,7 @@ def main():
     # 40 万步那组在 20 万步时与之后的对比
     long = [rs[f'avoid-long-s{s}'] for s in (1, 2, 3)]
     for d in long:
-        dev = read(d / 'dev.jsonl')
+        dev = list({r['step']: r for r in read(d / 'dev.jsonl')}.values())
         at = {r['step'] // 10000: r['SGM'] for r in dev}
         w = lambda a, b: np.mean([at[i] for i in range(a, b + 1) if i in at])
         print(d.name, f"16—20万 {w(16, 20):.3f}  26—30万 {w(26, 30):.3f}  36—40万 {w(36, 40):.3f}")
