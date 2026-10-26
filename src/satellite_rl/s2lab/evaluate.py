@@ -13,7 +13,14 @@ from .rules import make_rule
 
 METRIC_COLUMNS = ('key', 'per_aircraft_bps', 'load_ratio', 'stratum', 'beams', 'aircraft', 'W', 'SI', 'SGM', 'worst10', 'power_w',
                   'slots', 'copol_overlap', 'unserved', 'terminated', 'W_noint', 'interference_loss', 'mean_in_db',
-                  'adj_overlap', 'adj_expected', 'adj_ratio', 'objective', 'seconds_per_scene')
+                  'adj_overlap', 'adj_expected', 'adj_ratio', 'objective', 'requested_slots', 'truncated_beams', 'seconds_per_scene')
+
+
+def act_and_step(policy, env, obs, deterministic=True):
+    """策略出动作并执行。第三轮的 SAC3 连续功率版 act 返回 (动作, 瓦数)，其余返回动作张量。"""
+    out = policy.act(obs) if not hasattr(policy, 'off_policy') else policy.act(obs, explore=not deterministic)
+    action, power_w = out if isinstance(out, tuple) else (out, None)
+    return env.step(action, power_w)
 
 
 def run_policy(policy_factory, bank, config, items, options, device, deterministic=True):
@@ -24,9 +31,7 @@ def run_policy(policy_factory, bank, config, items, options, device, determinist
     started = perf_counter()
     steps = 0
     while env.alive.any():
-        obs = env.observe()
-        action = policy.act(obs) if not hasattr(policy, 'off_policy') else policy.act(obs, explore=not deterministic)
-        env.step(action)
+        act_and_step(policy, env, env.observe(), deterministic)
         steps += 1
     elapsed = perf_counter() - started
     results = env.finished
@@ -55,9 +60,7 @@ def single_scene_timing(policy_factory, bank, config, items, options, device, co
             torch.cuda.synchronize()
         started = perf_counter()
         while env.alive.any():
-            obs = env.observe()
-            action = policy.act(obs) if not hasattr(policy, 'off_policy') else policy.act(obs, explore=False)
-            env.step(action)
+            act_and_step(policy, env, env.observe())
         if device.type == 'cuda':
             torch.cuda.synchronize()
         times.append(perf_counter() - started)
@@ -74,7 +77,8 @@ def summarize(results):
         if not rows:
             continue
         agg = dict(n=len(rows))
-        for col in ('W', 'SI', 'SGM', 'worst10', 'power_w', 'slots', 'copol_overlap', 'unserved', 'interference_loss', 'mean_in_db', 'load_ratio'):
+        for col in ('W', 'SI', 'SGM', 'worst10', 'power_w', 'slots', 'copol_overlap', 'unserved', 'interference_loss', 'mean_in_db', 'load_ratio',
+                    'requested_slots', 'truncated_beams'):
             vals = np.asarray([r[col] for r in rows], float)
             agg[col] = float(np.nanmean(vals))
         ratios = np.asarray([r['adj_ratio'] for r in rows], float)

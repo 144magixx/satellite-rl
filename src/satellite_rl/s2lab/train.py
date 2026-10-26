@@ -46,9 +46,10 @@ def env_options(run):
     return EnvOptions(batch_size=run.get('batch_envs', 64), mask_mode=run.get('mask_mode', 'full'),
                       group_mode=run.get('group_mode', 'free'), reward_mode=run.get('reward_mode', 'paper'),
                       order=run.get('order', 'demand'), power_levels=tuple(run.get('power_levels', DEFAULT_POWER_LEVELS)),
-                      beam_tokens=run.get('encoder') == 'tf_beams', legacy_obs=run.get('encoder') == 'tsac14',
+                      beam_tokens=run.get('encoder') == 'tf_beams', legacy_obs=run.get('encoder') in ('tsac14', 'mlp14'),
                       start_mode=run.get('start_mode', 'free'), start_topk=run.get('start_topk', 8),
-                      illegal_penalty=run.get('illegal_penalty', 0.), intf_lambda=run.get('intf_lambda', 1.))
+                      illegal_penalty=run.get('illegal_penalty', 0.), intf_lambda=run.get('intf_lambda', 1.),
+                      features=tuple((run.get('size') or {}).get('feats', ())), intf_rel=run.get('agent', {}).get('topk', 0) > 0)
 
 
 def agent_config(run):
@@ -164,8 +165,9 @@ def train(run_dir, dataset_dir, run, device, max_hours=None, log=print):
     step_log = step
     while step < total and not stop['flag']:
         active = env.active.clone()
-        action = agent.act(obs, explore=True)
-        reward, done = env.step(action)
+        out = agent.act(obs, explore=True)
+        action, power_w = out if isinstance(out, tuple) else (out, None)      # SAC3 连续功率返回 (动作, 瓦数)
+        reward, done = env.step(action, power_w)
         next_obs = env.observe()
         agent.observe(obs, action, reward, done, next_obs, active)
         obs = next_obs
@@ -202,7 +204,8 @@ def train(run_dir, dataset_dir, run, device, max_hours=None, log=print):
             stop['flag'], stop['reason'] = True, 'max_hours'
     elapsed_total = elapsed_before + time.time() - started
     if step >= total and not stop['flag']:
-        dev_eval()
+        if next_dev - dev_every != step:      # 终点恰在评价节点上时循环里已评过，不再重复记一次
+            dev_eval()
         torch.save(agent.policy_state(), run_dir / 'policy_final.pt')
         save_checkpoint(final=True)
         status.update(state='done', step=step, episodes=episodes, elapsed_hours=elapsed_total / 3600, finished_at=now())

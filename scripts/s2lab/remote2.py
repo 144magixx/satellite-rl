@@ -21,11 +21,16 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import os
+
 from _common import ROOT, REMOTE_HOST, ACCOUNTS, LOCAL_OUT2
 from remote import read_password, run
 from satellite_rl.s2lab.matrix import heartbeat_stale
 
 STATE_DOC = ROOT / 'docs' / 'Claude维护' / 'S2-LAB' / '01_接手状态.md'
+ROUND = int(os.environ.get('S2LAB_ROUND', '2'))           # 第几轮：决定远端 runs{ROUND}、eval{ROUND} 与本地目录
+if ROUND == 3:
+    LOCAL_OUT2 = Path('D:/paper/outputs/experiments/s2lab_round3_20261027')
 
 
 def account_of(port):
@@ -35,7 +40,7 @@ def account_of(port):
 def paths(acc):
     a = ACCOUNTS[acc]
     root = a['root']
-    return dict(user=a['user'], py=a['py'], root=root, repo=f'{root}/repo', data=f'{root}/data/v1', runs=f'{root}/runs2',
+    return dict(user=a['user'], py=a['py'], root=root, repo=f'{root}/repo', data=f'{root}/data/v1', runs=f'{root}/runs{ROUND}',
                 env=f'export PYTHONPATH={root}/repo/src; export OMP_NUM_THREADS=4; cd {root}/repo; ')
 
 
@@ -114,7 +119,8 @@ def cmd_write_queue(args):
     for acc in args.accounts:
         p = paths(acc)
         with connect(first_port(acc)) as c:
-            out = run(c, p['env'] + f'{p["py"]} scripts/s2lab/write_matrix.py --runs-dir {p["runs"]} --round 2 --account {acc}')
+            extra = f' --extra {args.extra}' if getattr(args, 'extra', None) else ''
+            out = run(c, p['env'] + f'{p["py"]} scripts/s2lab/write_matrix.py --runs-dir {p["runs"]} --round {ROUND} --account {acc}{extra}')
             queue = json.loads(run(c, f'cat {p["runs"]}/queue.json'))['order']
             print(f'{acc}: 矩阵 {out.strip()} 个运行，本账号队列 {len(queue)} 个：{" ".join(queue[:6])} …', flush=True)
 
@@ -198,7 +204,7 @@ def cmd_status(args):
         count[r['state']] = count.get(r['state'], 0) + 1
     def f(v, d=3):
         return '' if v is None else f'{v:.{d}f}'
-    lines = [f'### 第二轮自动状态（{datetime.now():%Y-%m-%d %H:%M}）', '', f'共 {len(rows)} 个运行：' + '，'.join(f'{k} {v}' for k, v in sorted(count.items())), '',
+    lines = [f'### 第{"二三"[ROUND - 2]}轮自动状态（{datetime.now():%Y-%m-%d %H:%M}）', '', f'共 {len(rows)} 个运行：' + '，'.join(f'{k} {v}' for k, v in sorted(count.items())), '',
              '| 账号 | 运行 | 组 | 状态 | 步数 | 用时h | 卡 | 步/秒 | 开发集 W/SGM（最近） | 开发集最好SGM | 确认集 W/SGM（best_sgm） |',
              '| --- | --- | --- | --- | --- | ---: | --- | ---: | --- | ---: | --- |']
     for r in rows:
@@ -212,7 +218,7 @@ def cmd_status(args):
     (LOCAL_OUT2 / 'state2.json').write_text(json.dumps(dict(fetched_at=datetime.now().isoformat(timespec='minutes'), runs=rows, lanes=lanes_all),
                                                        ensure_ascii=False, indent=1), encoding='utf-8')
     doc = STATE_DOC.read_text(encoding='utf-8')
-    start, end = '<!-- AUTO_STATE2_START -->', '<!-- AUTO_STATE2_END -->'
+    start, end = f'<!-- AUTO_STATE{ROUND}_START -->', f'<!-- AUTO_STATE{ROUND}_END -->'
     block = f'{start}\n{text}{end}'
     doc = doc.split(start)[0] + block + doc.split(end)[1] if start in doc else doc.rstrip() + '\n\n' + block + '\n'
     STATE_DOC.write_text(doc, encoding='utf-8')
@@ -225,14 +231,15 @@ def cmd_fetch(args):
         dest = LOCAL_OUT2 / f'account_{acc}'
         dest.mkdir(parents=True, exist_ok=True)
         with connect(first_port(acc)) as c:
-            archive = f'{p["root"]}/fetch2.tgz'
-            run(c, f'cd {p["root"]} && tar czf {archive} --ignore-failed-read runs2/matrix.json runs2/queue.json runs2/_lanes runs2/_logs '
-                   f'$(ls -d runs2/*/ 2>/dev/null | sed "s#/\\$##" | while read d; do for f in status.json config.json curve.jsonl dev.jsonl train.log '
+            archive = f'{p["root"]}/fetch{ROUND}.tgz'
+            rd = f'runs{ROUND}'
+            run(c, f'cd {p["root"]} && tar czf {archive} --ignore-failed-read {rd}/matrix.json {rd}/queue.json {rd}/_lanes {rd}/_logs '
+                   f'$(ls -d {rd}/*/ 2>/dev/null | sed "s#/\\$##" | while read d; do for f in status.json config.json curve.jsonl dev.jsonl train.log '
                    f'training.png eval_summary.json eval_dev_best_sgm.csv eval_dev_best.csv eval_confirm_best_sgm.csv eval_confirm_best.csv; '
-                   f'do [ -f "$d/$f" ] && echo "$d/$f"; done; done) $(ls -d eval2 eval2_meta eval2_timing 2>/dev/null) 2>/dev/null; ls -la {archive}', timeout=900)
+                   f'do [ -f "$d/$f" ] && echo "$d/$f"; done; done) $(ls -d eval{ROUND} eval{ROUND}_meta eval{ROUND}_timing 2>/dev/null) 2>/dev/null; ls -la {archive}', timeout=900)
             with c.open_sftp() as sftp:
-                sftp.get(archive, str(dest / 'fetch2.tgz'))
-        subprocess.run(['tar', 'xzf', str(dest / 'fetch2.tgz'), '-C', str(dest)], check=True)
+                sftp.get(archive, str(dest / f'fetch{ROUND}.tgz'))
+        subprocess.run(['tar', 'xzf', str(dest / f'fetch{ROUND}.tgz'), '-C', str(dest)], check=True)
         print(f'{acc} 已下载到 {dest}', flush=True)
 
 
@@ -273,8 +280,9 @@ def main():
 
     def common(p):
         p.add_argument('--accounts', nargs='*', default=['A', 'B'])
-    for name in ('check', 'sync', 'push-data', 'write-queue', 'pause', 'status', 'fetch'):
+    for name in ('check', 'sync', 'push-data', 'pause', 'status', 'fetch'):
         common(sub.add_parser(name))
+    p = sub.add_parser('write-queue'); common(p); p.add_argument('--extra', help='远端 runs 目录下的追加运行 JSON 路径（第三轮组合版/续训）')
     p = sub.add_parser('launch'); common(p)
     p.add_argument('--window-hours', type=float, required=True); p.add_argument('--parallel', type=int, default=2)
     p.add_argument('--ports', type=int, nargs='*'); p.add_argument('--only', nargs='*')

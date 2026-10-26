@@ -11,10 +11,13 @@ import torch.nn.functional as F
 
 from .nets import PolicyNet, masked, head_masks, count_parameters
 
-OBS_KEYS = ('scal', 'intf', 'occ', 'allow', 'mask_gs', 'mask_cnt', 'mask_pw', 'beam', 'beam_valid', 'glob', 'intf_abs')
+OBS_KEYS = ('scal', 'intf', 'occ', 'allow', 'mask_gs', 'mask_cnt', 'mask_pw', 'beam', 'beam_valid', 'glob', 'intf_abs',
+            'cmax', 'pmax', 'intf_rel', 'f_pneed', 'f_share', 'f_outint', 'f_snr', 'f_sens', 'f_future', 'f_gspec')
 STORE_DTYPE = dict(scal=torch.float16, intf=torch.float16, occ=torch.bool, allow=torch.bool, mask_gs=torch.bool,
                    mask_cnt=torch.bool, mask_pw=torch.bool, beam=torch.float16, beam_valid=torch.bool,
-                   glob=torch.float16, intf_abs=torch.float16)
+                   glob=torch.float16, intf_abs=torch.float16,
+                   cmax=torch.long, pmax=torch.float32, intf_rel=torch.float32, f_pneed=torch.float16, f_share=torch.float16,
+                   f_outint=torch.float16, f_snr=torch.float16, f_sens=torch.float16, f_future=torch.float16, f_gspec=torch.float16)
 
 
 def to_store(obs):
@@ -422,6 +425,9 @@ class PPO(AgentBase):
 
 
 def make_agent(algo, cfg, K, device, beam_dim=20):
+    if algo == 'sac3':
+        from .sac3 import SAC3
+        return SAC3(cfg, K, device, beam_dim)
     cls = dict(sac=SAC, dqn=DQN, ppo=PPO)[algo]
     return cls(cfg, K, device, beam_dim)
 

@@ -76,12 +76,20 @@ class TSAC14Encoder(nn.Module):
     本组 10 个频率块（每块 10 槽干扰＋10 槽占用＝20 维），全局令牌（平均需求、进度、剩余总需求），取位置令牌读出。
     intf_mode='in'：干扰用 I/N 映射；'dbw'：历史的绝对 dBW 映射。需要规则定组（只有一个允许组）。"""
 
-    def __init__(self, d=128, layers=2, heads=8, ff=512, activation='relu', norm_first=False, intf_mode='in', T=100):
+    def __init__(self, d=128, layers=2, heads=8, ff=512, activation='relu', norm_first=False, intf_mode='in', T=100,
+                 feats=(), no_global=False, intf_zero=False):
+        """第三轮选项：feats 为补充特征（features.FEATURE_SLOT 决定进哪个令牌）；no_global 去掉全局令牌（13 令牌）；
+        intf_zero 把频率块里的干扰列置零（演员与评论家都用同一编码器，故两者同时去掉）。"""
+        from .features import FEATURE_SLOT
         super().__init__()
         self.T, self.intf_key = T, ('intf_abs' if intf_mode == 'dbw' else 'intf')
-        self.geo, self.rate, self.power = nn.Linear(3, d), nn.Linear(1, d), nn.Linear(1, d)
-        self.slot, self.glob = nn.Linear(2 * BLOCK, d), nn.Linear(3, d)
-        self.pos = nn.Parameter(torch.zeros(1, 14, d))
+        self.feats, self.no_global, self.intf_zero = tuple(feats), no_global, intf_zero
+        extra = {k: sum(FEATURE_SLOT[f][1] for f in self.feats if FEATURE_SLOT[f][0] == k) for k in ('rate', 'power', 'slot', 'glob')}
+        self.geo, self.rate, self.power = nn.Linear(3, d), nn.Linear(1 + extra['rate'], d), nn.Linear(1 + extra['power'], d)
+        self.slot = nn.Linear((2 + extra['slot']) * BLOCK, d)
+        if not no_global:
+            self.glob = nn.Linear(3 + extra['glob'], d)
+        self.pos = nn.Parameter(torch.zeros(1, 13 if no_global else 14, d))
         layer = nn.TransformerEncoderLayer(d, heads, ff, dropout=0., batch_first=True, norm_first=norm_first, activation=activation)
         self.encoder = nn.TransformerEncoder(layer, layers, enable_nested_tensor=False)
         self.out_dim = d
@@ -92,14 +100,51 @@ class TSAC14Encoder(nn.Module):
         rows = torch.arange(B, device=scal.device)
         group = obs['allow'].float().argmax(1)
         intf = obs[self.intf_key][rows, group % 2]                            # [B,T]
+        if self.intf_zero:
+            intf = torch.zeros_like(intf)
         occ = obs['occ'][rows, group].float()                                  # [B,T]
         nb = self.T // BLOCK
-        blocks = torch.cat([intf.reshape(B, nb, BLOCK), occ.reshape(B, nb, BLOCK)], -1)
+        cols = [intf, occ]
+        rate_in, power_in, glob_in = [scal[:, 0:1]], [scal[:, 6:7]], [obs['glob']] if not self.no_global else []
+        for f in self.feats:
+            v = obs['f_' + f].float()
+            if f == 'pneed':
+                rate_in.append(v)
+            elif f == 'share':
+                power_in.append(v)
+            elif f == 'snr':
+                cols += [v[:, 0], v[:, 1]]
+            elif f in ('outint', 'sens'):
+                cols.append(v)
+            else:
+                glob_in.append(v)
+        blocks = torch.cat([c.reshape(B, nb, BLOCK) for c in cols], -1)
         geo = torch.stack([scal[:, 2], scal[:, 3], scal[:, 1]], 1)
-        tokens = torch.cat([self.geo(geo)[:, None], self.rate(scal[:, 0:1])[:, None], self.power(scal[:, 6:7])[:, None],
-                            self.slot(blocks), self.glob(obs['glob'])[:, None]], 1) + self.pos
-        x = self.encoder(tokens)
+        tokens = [self.geo(geo)[:, None], self.rate(torch.cat(rate_in, 1))[:, None], self.power(torch.cat(power_in, 1))[:, None],
+                  self.slot(blocks)]
+        if not self.no_global:
+            tokens.append(self.glob(torch.cat(glob_in, 1))[:, None])
+        x = self.encoder(torch.cat(tokens, 1) + self.pos)
         return x[:, 0], x[:, 3:3 + nb]
+
+
+class MLP14Encoder(nn.Module):
+    """与 14 令牌同字段的全连接编码器（论文对照用）：位置 3、需求 1、剩余功率 1、本组 100 槽干扰与占用、全局 3。"""
+
+    def __init__(self, d=128, hidden=512, T=100):
+        super().__init__()
+        self.T = T
+        self.net = nn.Sequential(nn.Linear(3 + 1 + 1 + 2 * T + 3, hidden), nn.ReLU(), nn.Linear(hidden, d), nn.ReLU())
+        self.out_dim = d
+
+    def forward(self, obs):
+        scal = obs['scal']
+        B = scal.shape[0]
+        rows = torch.arange(B, device=scal.device)
+        group = obs['allow'].float().argmax(1)
+        x = torch.cat([scal[:, 2:4], scal[:, 1:2], scal[:, 0:1], scal[:, 6:7], obs['intf'][rows, group % 2],
+                       obs['occ'][rows, group].float(), obs['glob']], 1)
+        return self.net(x), None
 
 
 class CNNEncoder(nn.Module):
@@ -166,7 +211,10 @@ def build_encoder(kind, size, beam_dim=20, G=8, T=100):
                                   beam_dim, G, T, size.get('activation', 'relu'), size.get('norm_first', False), kind == 'tf_legacy')
     if kind == 'tsac14':
         return TSAC14Encoder(size.get('d', 128), size.get('layers', 2), size.get('heads', 8), size.get('ff', 512),
-                             size.get('activation', 'relu'), size.get('norm_first', False), size.get('intf_mode', 'in'), T)
+                             size.get('activation', 'relu'), size.get('norm_first', False), size.get('intf_mode', 'in'), T,
+                             size.get('feats', ()), size.get('no_global', False), size.get('intf_zero', False))
+    if kind == 'mlp14':
+        return MLP14Encoder(size.get('d', 128), size.get('hidden', 512), T)
     if kind == 'cnn':
         return CNNEncoder(size.get('d', 128), size.get('channels', 64), G, T, size.get('layernorm', False))
     if kind == 'mlp':

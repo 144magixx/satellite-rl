@@ -136,6 +136,84 @@ def write_matrix_round2(runs_dir, account):
     return runs
 
 
+def r3_run(name, seed, group, label, parent, agent=None, size=None, algo='sac3', **kw):
+    """第三轮运行：父组 R0＝14 令牌 T-SAC＋delta（第二轮 t14-in-delta 配置，算法用 SAC3 重新实现）。
+    agent/size 为相对 R0 的改动；parent 记录父组，报告按父组做同种子配对。"""
+    core = dict(sac3=dict(SAC_CORE, policy='indep', double_q='joint', power='discrete', q_power='plain', pi_power='count'),
+                ppo=dict(PPO_CORE), dqn=dict(DQN_CORE))[algo]
+    run = dict(run_id=f'{name}-s{seed}', group=group, label=label, parent=parent, algo=algo, encoder='tsac14',
+               size=dict(MAIN_SIZE, intf_mode='in'), pointer=False, mask_mode='full', group_mode='greedy', reward_mode='delta',
+               seed=seed, total_steps=TOTAL_STEPS, batch_envs=64, dev_every=10000, log_every=2000, ckpt_minutes=20, agent=core)
+    run['agent'] = dict(core, **(agent or {}))
+    run['size'] = dict(run['size'], **(size or {}))
+    run.update(kw)
+    return run
+
+
+# 第三轮配置：名称 → (组, 标签, 父组, 智能体改动, 编码器改动, 其它)
+ROUND3 = {
+    'r3-r0': ('base', 'R0', None, {}, {}, {}),
+    'r3-hist': ('train', '历史双Q', 'r3-r0', dict(double_q='hist'), {}, {}),
+    'r3-legal': ('action', 'L 合法落位', 'r3-r0', dict(policy='legal'), {}, {}),
+    'r3-cond': ('action', 'A 槽数条件化', 'r3-legal', dict(policy='cond'), {}, {}),
+    'r3-condtop8': ('action', "B′ 低干扰前8", 'r3-cond', dict(policy='cond', topk=8), {}, {}),
+    'r3-p1': ('power', 'P1 评论家功率项看槽数', 'r3-cond', dict(policy='cond', q_power='count'), {}, {}),
+    'r3-p2': ('power', 'P2 连续功率', 'r3-p1', dict(policy='cond', q_power='count', power='continuous', pi_power='count'), {}, {}),
+    'r3-p3': ('power', 'P3 连续功率看起点', 'r3-p2', dict(policy='cond', q_power='count_start', power='continuous', pi_power='count_start'), {}, {}),
+    'r3-wide': ('train', '加宽 d256', 'r3-r0', {}, dict(d=256, ff=1024), {}),
+    'r3-replay': ('train', '回放池10万', 'r3-r0', dict(replay=100000), {}, {}),
+    'r3-lr': ('train', '演员学习率3e-5', 'r3-r0', dict(actor_lr=3e-5), {}, {}),
+    'r3-auto': ('train', '自动温度', 'r3-r0', dict(auto_alpha=True, alpha_lr=3e-4, alpha_kappa=.3), {}, {}),
+    'r3-f-pneed': ('state', '＋所需功率', 'r3-r0', {}, dict(feats=['pneed']), {}),
+    'r3-f-share': ('state', '＋功率份额', 'r3-r0', {}, dict(feats=['share']), {}),
+    'r3-f-outint': ('state', '＋出向干扰', 'r3-r0', {}, dict(feats=['outint']), {}),
+    'r3-f-snr': ('state', '＋信噪比', 'r3-r0', {}, dict(feats=['snr']), {}),
+    'r3-f-sens': ('state', '＋邻束敏感度', 'r3-r0', {}, dict(feats=['sens']), {}),
+    'r3-f-future': ('state', '＋后续邻居', 'r3-r0', {}, dict(feats=['future']), {}),
+    'r3-f-gspec': ('state', '＋全局频谱', 'r3-r0', {}, dict(feats=['gspec']), {}),
+    'r3-f-all': ('state', '＋全部补充', 'r3-r0', {}, dict(feats=['pneed', 'share', 'outint', 'snr', 'sens', 'future', 'gspec']), {}),
+    'r3-x-nointf': ('state', '−干扰输入', 'r3-r0', {}, dict(intf_zero=True), {}),
+    'r3-x-noglobal': ('state', '−全局令牌', 'r3-r0', {}, dict(no_global=True), {}),
+    'r3-ppo': ('algo', 'PPO（14令牌）', 'r3-r0', None, {}, dict(algo='ppo')),
+    'r3-dqn': ('algo', 'DQN（14令牌）', 'r3-r0', None, {}, dict(algo='dqn')),
+    'r3-mlpsac': ('algo', 'MLP-SAC（同字段）', 'r3-r0', {}, {}, dict(encoder='mlp14')),
+}
+ROUND3_ACCOUNT_B = ('r3-p3', 'r3-hist', 'r3-cond', 'r3-p1', 'r3-f-pneed', 'r3-f-outint', 'r3-f-sens', 'r3-f-gspec', 'r3-x-nointf',
+                    'r3-replay', 'r3-auto', 'r3-dqn', 'r3-ppo')
+ROUND3_FIRST = ('r3-wide', 'r3-p3', 'r3-p2', 'r3-f-all', 'r3-r0', 'r3-hist', 'r3-legal', 'r3-cond')
+
+
+def build_matrix_round3():
+    runs = []
+    for name, (group, label, parent, agent, size, other) in ROUND3.items():
+        for s in SEEDS:
+            other = dict(other)
+            algo = other.pop('algo', 'sac3')
+            runs.append(r3_run(name, s, group, label, parent, agent, size, algo=algo, **other))
+    return runs
+
+
+def ordered_round3(runs, account):
+    def rank(run):
+        name = run['run_id'].rsplit('-s', 1)[0]
+        first = ROUND3_FIRST.index(name) if name in ROUND3_FIRST else len(ROUND3_FIRST)
+        return (first, run['seed'], list(ROUND3).index(name))
+    mine = [r for r in runs if (r['run_id'].rsplit('-s', 1)[0] in ROUND3_ACCOUNT_B) == (account == 'B')]
+    return [r['run_id'] for r in sorted(mine, key=rank)]
+
+
+def write_matrix_round3(runs_dir, account, extra_runs=()):
+    runs_dir = Path(runs_dir)
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    runs = build_matrix_round3() + list(extra_runs)
+    (runs_dir / 'matrix.json').write_text(json.dumps(runs, ensure_ascii=False, indent=1), encoding='utf-8')
+    order = ordered_round3([r for r in runs if r['run_id'].startswith('r3-') and r['run_id'].rsplit('-s', 1)[0] in ROUND3], account)
+    order += [r['run_id'] for r in extra_runs if r.get('account', 'A') == account]
+    (runs_dir / 'queue.json').write_text(json.dumps(dict(order=order, account=account, created_at=datetime.now().isoformat()), indent=1),
+                                         encoding='utf-8')
+    return runs
+
+
 # 队列顺序：先主表 T-SAC 与奖励对照（决定口径），再主表其余，再消融，再无掩码，最后追加组
 PRIORITY = ('main-tsac-', 'main-tsaclegacy', 'reward-delta', 'main-cnnsac', 'main-mlpsac', 'main-ppo', 'main-dqn', 'token', 'group', 'size', 'nomask', 'extra')
 

@@ -12,6 +12,8 @@ import math
 import numpy as np
 import torch
 
+from . import features as feature_mod
+from .masks import free_run as _free_run_of
 from .physics import PhysicsV3, path_gain
 from .scenes import DatasetConfig, load_ratio, stratum_of, STRATA, load_scene
 
@@ -67,6 +69,8 @@ class EnvOptions:
     start_window: int = 4         # 起点打分用的窗口长度（槽）
     illegal_penalty: float = 0.   # 无掩码时：撞已占槽/超预算的额外罚分；超预算终止时其余每束再罚 1（>0 时生效）
     intf_lambda: float = 1.       # delta_intf 的干扰项权重
+    features: tuple = ()          # 第三轮状态补充特征（features.FEATURE_NAMES 的子集）
+    intf_rel: bool = False        # 观测里给线性 I/N（按槽数筛低干扰窗口时用）
 
 
 class ItemSampler:
@@ -136,6 +140,7 @@ class BatchEnv:
         self.grp = torch.full((B, N), -1, dtype=torch.long, device=device)
         self.start = torch.zeros(B, N, dtype=torch.long, device=device)
         self.cnt = torch.zeros(B, N, dtype=torch.long, device=device)
+        self.req = torch.zeros(B, N, dtype=torch.long, device=device)     # 申请的槽数（执行时可能被截短）
         self.pw = torch.zeros(B, N, device=device)
         self.A = torch.zeros(B, 2, N, T, device=device)
         self.M = torch.zeros(B, 2, N, T, device=device)
@@ -174,6 +179,7 @@ class BatchEnv:
         self.grp[b] = -1
         self.start[b] = 0
         self.cnt[b] = 0
+        self.req[b] = 0
         self.pw[b] = 0.
         self.A[b] = 0.
         self.M[b] = 0.
@@ -240,9 +246,7 @@ class BatchEnv:
     # ------------------------------------------------------------ 掩码与观测
     def _free_run(self):
         """free_run[b,g,s] = 从 s 起连续空闲槽数（s 已占为 0）。"""
-        idx = torch.where(self.occ, self.arange_t[None, None, :], torch.full_like(self.occ, self.T, dtype=torch.long))
-        next_occ = torch.flip(torch.cummin(torch.flip(idx, [2]), 2)[0], [2])
-        return next_occ - self.arange_t[None, None, :]
+        return _free_run_of(self.occ)
 
     def count_cap(self, allow, free_run=None):
         """每束槽数上限：允许组内最长空闲段，且给后面每个波束至少留 1 个槽（full 模式）。"""
@@ -317,6 +321,14 @@ class BatchEnv:
             mean_demand = self.demand.sum(1) / self.n.clamp(min=1)
             obs['glob'] = torch.stack([mean_demand / 1e9, self.t.float() / self.n.clamp(min=1), remaining_demand / (self.N * 1e9)], 1)
             obs['intf_abs'] = ((10 * torch.log10(intf + 1e-30) + 300) / 200).clamp(0, 1)   # 历史做法：绝对 dBW 映射
+        # 第三轮：按槽数条件化掩码与连续功率需要的量
+        obs['cmax'] = cmax if self.opt.mask_mode == 'full' else torch.full((B,), 10, dtype=torch.long, device=self.device)
+        obs['pmax'] = torch.minimum(budget_left, torch.full_like(budget_left, self.cap_w))
+        if self.opt.intf_rel:
+            obs['intf_rel'] = intf / self.noise
+        if self.opt.features:
+            g = allow.float().argmax(1)
+            obs.update(feature_mod.compute(self, cur, g, intf, budget_left, self.opt.features))
         return obs
 
     def _start_candidates(self, intf, allow, free_run, mask_gs):
@@ -357,16 +369,17 @@ class BatchEnv:
         return beam, self.bank.valid[scene]
 
     # ------------------------------------------------------------ 一步
-    def step(self, action):
-        """action: LongTensor [B,3] = (组×起点 索引, 槽数-1, 功率档索引)。返回 (reward[B], done[B])。
-        非活动槽位的动作被忽略。结束的场景指标追加到 self.finished 并自动装入下一景。"""
+    def step(self, action, power_w=None):
+        """action: LongTensor [B,3] = (组×起点 索引, 槽数-1, 功率档索引)；power_w[B]（瓦）给出时用连续功率代替档位。
+        返回 (reward[B], done[B])。非活动槽位的动作被忽略。结束的场景指标追加到 self.finished 并自动装入下一景。"""
         B, G, T = self.B, self.G, self.T
         active = self.active
         cur = self.cur
         g = action[:, 0] // T
         s = action[:, 0] % T
         c = action[:, 1] + 1
-        p = self.levels[action[:, 2]]
+        p = self.levels[action[:, 2]] if power_w is None else power_w.float()
+        self.req[self.arange_b, cur] = torch.where(active, c, self.req[self.arange_b, cur])
         free_all = self._free_run()
         free_run = free_all[self.arange_b, g, s]
         c = torch.minimum(c, T - s)
@@ -462,7 +475,8 @@ class BatchEnv:
                 unserved=int((self.cnt[b, :n] == 0).sum()), terminated=bool(self.terminated[b]),
                 adj_overlap=float((overlap[b] * adj[b].float()).sum()), adj_expected=float((expected[b] * adj[b].float()).sum()),
                 mean_in_db=float(self._mean_in_db(intf[b, :n], occ_beam[b, :n])),
-                objective=float(objective[b]))
+                objective=float(objective[b]),
+                requested_slots=int(self.req[b, :n].sum()), truncated_beams=int((self.req[b, :n] != self.cnt[b, :n]).sum()))
             metrics['interference_loss'] = 1 - metrics['W'] / max(metrics['W_noint'], 1e-9)
             metrics['adj_ratio'] = metrics['adj_overlap'] / metrics['adj_expected'] if metrics['adj_expected'] > 0 else float('nan')
             self.finished.append(metrics)
