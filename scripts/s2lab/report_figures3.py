@@ -37,9 +37,18 @@ def main():
             return None
         return [r for r in read_csv(p / f'eval_{split}_{which}.csv') if not stratum or r['stratum'] == stratum]
 
+    def rid(name, s):
+        """组键 → 运行目录名：'<组>@30' 是续训到 30 万步的副本，'r3-combo' 是组合版。"""
+        return f"{name[:-3]}-s{s}-c30" if name.endswith('@30') else f'{name}-s{s}'
+
+    defs = {name: (grp, label, parent) for name, (grp, label, parent, *_rest) in ROUND3.items()}
+    defs['r3-combo'] = ('combo', '组合版', 'r3-r0')
+    for name, (grp, label, parent) in list(defs.items()):
+        if any(f'{name}-s{s}-c30' in run_dirs for s in SEEDS):
+            defs[f'{name}@30'] = ('cont', f'{label}（30万步）', f'{parent}@30' if parent and any(f'{parent}-s{s}-c30' in run_dirs for s in SEEDS) else parent)
     groups = {}
-    for name, (grp, label, parent, *_rest) in ROUND3.items():
-        have = [s for s in SEEDS if rows(f'{name}-s{s}') is not None]
+    for name, (grp, label, parent) in defs.items():
+        have = [s for s in SEEDS if rows(rid(name, s)) is not None]
         if have:
             groups[name] = dict(group=grp, label=label, parent=parent, seeds=have)
     rules = {'容量感知贪心': 'rule-greedy', '分散摆放规则': 'rule-dispersed', '贪心（功率100档）': 'rule-greedy-p0.5'}
@@ -47,29 +56,29 @@ def main():
 
     n = dict(groups={}, rules={}, paired_parent={}, paired_r0={}, paired_greedy={}, strata={}, checkpoint={}, convergence={})
     for name, g in groups.items():
-        rs = [rows(f'{name}-s{s}') for s in g['seeds']]
+        rs = [rows(rid(name, s)) for s in g['seeds']]
         n['groups'][name] = dict(label=g['label'], group=g['group'], parent=g['parent'], seeds=g['seeds'], **summary(rs))
-        n['strata'][name] = {s: summary([rows(f'{name}-s{x}', 'confirm', s) for x in g['seeds']]) for s in STRATA}
-        other = [rows(f'{name}-s{s}', which='best') for s in g['seeds']]
+        n['strata'][name] = {s: summary([rows(rid(name, x), 'confirm', s) for x in g['seeds']]) for s in STRATA}
+        other = [rows(rid(name, s), which='best') for s in g['seeds']]
         if all(o is not None for o in other):
             n['checkpoint'][name] = dict(best_sgm=n['groups'][name]['SGM'], best=summary(other)['SGM'])
         for ref, key in ((g['parent'], 'paired_parent'), ('r3-r0', 'paired_r0')):
             if ref and ref in groups and ref != name:
                 common = [s for s in g['seeds'] if s in groups[ref]['seeds']]
-                a = [rows(f'{name}-s{s}') for s in common]
-                b = [rows(f'{ref}-s{s}') for s in common]
+                a = [rows(rid(name, s)) for s in common]
+                b = [rows(rid(ref, s)) for s in common]
                 n[key][name] = {c: paired(a, b, c) for c in ('SGM', 'W', 'worst10')}
                 n[key][name]['seed_diff'] = [float(np.mean([r['SGM'] for r in x]) - np.mean([r['SGM'] for r in y])) for x, y in zip(a, b)]
-                n[key][name]['by_stratum'] = {st: paired([rows(f'{name}-s{s}', 'confirm', st) for s in common],
-                                                         [rows(f'{ref}-s{s}', 'confirm', st) for s in common], 'SGM') for st in STRATA}
+                n[key][name]['by_stratum'] = {st: paired([rows(rid(name, s), 'confirm', st) for s in common],
+                                                         [rows(rid(ref, s), 'confirm', st) for s in common], 'SGM') for st in STRATA}
         if '容量感知贪心' in rule_rows:
             n['paired_greedy'][name] = {c: paired(rs, [rule_rows['容量感知贪心']], c) for c in ('SGM', 'W', 'worst10')}
-            n['paired_greedy'][name]['by_stratum'] = {st: paired([rows(f'{name}-s{s}', 'confirm', st) for s in g['seeds']],
+            n['paired_greedy'][name]['by_stratum'] = {st: paired([rows(rid(name, s), 'confirm', st) for s in g['seeds']],
                                                                  [[r for r in rule_rows['容量感知贪心'] if r['stratum'] == st]], 'SGM') for st in STRATA}
         # 收敛：去重后的开发集末段变化
         gains = []
         for s in g['seeds']:
-            dev = list({r['step']: r for r in read_jsonl(run_dirs[f'{name}-s{s}'] / 'dev.jsonl')}.values())
+            dev = list({r['step']: r for r in read_jsonl(run_dirs[rid(name, s)] / 'dev.jsonl')}.values())
             sg = np.array([r['SGM'] for r in dev])
             if len(sg) >= 10:
                 gains.append(float(sg[-5:].mean() - sg[-10:-5].mean()))
@@ -153,7 +162,7 @@ def plot(n, run_dirs, figs):
                                   ('动作结构', '功率三组递进', '训练与状态')):
         pal = plt.cm.tab10(np.arange(len(members)))
         for i, k in enumerate([m for m in members if m in G]):
-            recs = [list({r['step']: r for r in read_jsonl(run_dirs[f'{k}-s{s}'] / 'dev.jsonl')}.values()) for s in G[k]['seeds']]
+            recs = [list({r['step']: r for r in read_jsonl(run_dirs[rr] / 'dev.jsonl')}.values()) for rr in G[k]['runs']]
             steps = sorted(set.intersection(*[set(r['step'] for r in rec) for rec in recs]))
             v = np.array([[next(r['SGM'] for r in rec if r['step'] == st) for st in steps] for rec in recs])
             ax.plot(steps, v.mean(0), color=pal[i], lw=2, label=G[k]['label'])
@@ -164,8 +173,8 @@ def plot(n, run_dirs, figs):
     # F5 最好组训练过程
     best = order[0]
     fig, axes = plt.subplots(2, 2, figsize=(13, 8)); pal = plt.cm.Set1(np.arange(3))
-    for i, s in enumerate(G[best]['seeds']):
-        d = run_dirs[f'{best}-s{s}']
+    for i, (s, rr) in enumerate(zip(G[best]['seeds'], G[best]['runs'])):
+        d = run_dirs[rr]
         rows_ = read_jsonl(d / 'curve.jsonl'); st = [x['step'] for x in rows_]
         axes[0, 0].plot(st, smooth([x['reward'] for x in rows_]), color=pal[i], label=f'种子 {s}')
         axes[0, 1].plot(st, smooth([x.get('loss_critic_loss', np.nan) for x in rows_]), color=pal[i], label=f'评论家 {s}')
