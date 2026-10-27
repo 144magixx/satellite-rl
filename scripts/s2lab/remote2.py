@@ -240,7 +240,7 @@ def cmd_fetch(args):
             rd = f'runs{ROUND}'
             run(c, f'cd {p["root"]} && tar czf {archive} --ignore-failed-read {rd}/matrix.json {rd}/queue.json {rd}/_lanes {rd}/_logs '
                    f'$(ls -d {rd}/*/ 2>/dev/null | sed "s#/\\$##" | while read d; do for f in status.json config.json curve.jsonl dev.jsonl train.log '
-                   f'training.png eval_summary.json eval_dev_best_sgm.csv eval_dev_best.csv eval_confirm_best_sgm.csv eval_confirm_best.csv; '
+                   f'training.png eval_summary.json eval_dev_best_sgm.csv eval_dev_best.csv eval_confirm_best_sgm.csv eval_confirm_best.csv bc.json; '
                    f'do [ -f "$d/$f" ] && echo "$d/$f"; done; done) $(ls -d eval{ROUND} eval{ROUND}_meta eval{ROUND}_timing 2>/dev/null) 2>/dev/null; ls -la {archive}', timeout=900)
             with c.open_sftp() as sftp:
                 sftp.get(archive, str(dest / f'fetch{ROUND}.tgz'))
