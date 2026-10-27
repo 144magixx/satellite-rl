@@ -13,9 +13,13 @@ PART = 16 * 2 ** 20
 
 
 def size_of(url):
-    out = subprocess.run(['curl', '-sSIL', '-m', '30', url], capture_output=True, text=True).stdout
-    lines = [l for l in out.splitlines() if l.lower().startswith('content-length')]
-    return int(lines[-1].split(':')[1]) if lines else 0
+    """资产字节数；不存在的资产 GitHub 返回 9 字节占位。网络超时拿不到长度就重试（10-28 曾因一次超时得到 0、拼出空包）。"""
+    for _ in range(30):
+        out = subprocess.run(['curl', '-sSIL', '-m', '30', url], capture_output=True, text=True).stdout
+        lines = [l for l in out.splitlines() if l.lower().startswith('content-length')]
+        if lines:
+            return int(lines[-1].split(':')[1])
+    raise RuntimeError(f'{url} 拿不到大小')
 
 
 def fetch_range(url, a, b, path):
