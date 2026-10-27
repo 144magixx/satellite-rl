@@ -19,7 +19,8 @@ DATASET_NAME = 'v1'
 ACCOUNTS = {
     'A': dict(user='u2025140002', ports=(20654, 20655, 20627, 20653, 20780, 20781, 20782, 20783),
               py='/home/u2025140002/second_stage_satellite_rl/envs/DQN/bin/python', root='/home/u2025140002/s2lab'),
-    'B': dict(user='u2024018003', ports=tuple(range(20802, 20810)),
+    # 第四轮（10-28）可用：20802、20804—20809、20878（20803 不在其中）
+    'B': dict(user='u2024018003', ports=(20802, 20804, 20805, 20806, 20807, 20808, 20809, 20878),
               py='/opt/conda/envs/pytorch-2.1.1/bin/python', root='/home/u2024018003/s2lab'),
 }
 LOCAL_OUT2 = Path('D:/paper/outputs/experiments/s2lab_round2_20261025')
