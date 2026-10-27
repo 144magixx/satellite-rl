@@ -43,6 +43,7 @@ def main():
 
     defs = {name: (grp, label, parent) for name, (grp, label, parent, *_rest) in ROUND3.items()}
     defs['r3-combo'] = ('combo', '组合版', 'r3-r0')
+    defs['r3-xcombo'] = ('combo', '探索组合（七项补充＋回放池10万）', 'r3-r0')
     for name, (grp, label, parent) in list(defs.items()):
         if any(f'{name}-s{s}-c30' in run_dirs for s in SEEDS):
             defs[f'{name}@30'] = ('cont', f'{label}（30万步）', f'{parent}@30' if parent and any(f'{parent}-s{s}-c30' in run_dirs for s in SEEDS) else parent)
