@@ -57,7 +57,8 @@ def main():
     n = dict(groups={}, rules={}, paired_parent={}, paired_r0={}, paired_greedy={}, strata={}, checkpoint={}, convergence={})
     for name, g in groups.items():
         rs = [rows(rid(name, s)) for s in g['seeds']]
-        n['groups'][name] = dict(label=g['label'], group=g['group'], parent=g['parent'], seeds=g['seeds'], **summary(rs))
+        n['groups'][name] = dict(summary(rs), label=g['label'], group=g['group'], parent=g['parent'], seeds=g['seeds'],
+                                 runs=[rid(name, s) for s in g['seeds']])
         n['strata'][name] = {s: summary([rows(rid(name, x), 'confirm', s) for x in g['seeds']]) for s in STRATA}
         other = [rows(rid(name, s), which='best') for s in g['seeds']]
         if all(o is not None for o in other):
