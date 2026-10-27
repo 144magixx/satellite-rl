@@ -113,13 +113,43 @@ def plan():
     if feats:
         size['feats'] = feats
     combo = dict(agent=agent, size=size, members=([best_chain] if best_chain else []) + singles)
-    out = dict(trends=trends, continue_groups=sorted(cont), verdict=verdict, combo=combo)
+    # 探索组合（10-27 09:25 加，不属于事先冻结的规则，报告中单列标明）：冻结规则要求 W、最差10% 都不降超过 0.005，
+    # 结果一项都没通过，组合版为空。探索规则放宽为：对 R0 开发集 SGM 至少高 0.005、至少两个种子同向，W 降不超过 0.01、最差10% 降不超过 0.02。
+    loose = {}
+    for n in names:
+        if n == 'r3-r0' or ROUND3[n][0] == 'algo':
+            continue
+        v = passes(n, 'r3-r0', dirs)
+        if v:
+            v['ok'] = bool(v['dSGM'] >= .005 and sum(x > 0 for x in v['seeds']) >= 2 and v['dW'] >= -.01 and v['d10'] >= -.02)
+            loose[n] = v
+    x_chain = [n for n in CHAIN if loose.get(n, {}).get('ok')]
+    x_best_chain = max(x_chain, key=lambda n: loose[n]['devSGM']) if x_chain else None
+    x_singles = [n for n in names if n not in CHAIN and n in loose and loose[n]['ok']]
+    x_agent, x_size, x_feats = {}, {}, []
+    if x_best_chain:
+        x_agent.update(ROUND3[x_best_chain][3])
+    for n in x_singles:
+        x_agent.update(ROUND3[n][3])
+        s = dict(ROUND3[n][4])
+        x_feats += s.pop('feats', [])
+        x_size.update(s)
+    x_feats = list(dict.fromkeys(x_feats))
+    if x_size.get('no_global') and ({'future', 'gspec'} & set(x_feats)):
+        x_size.pop('no_global')
+    if x_feats:
+        x_size['feats'] = x_feats
+    explore = dict(agent=x_agent, size=x_size, members=([x_best_chain] if x_best_chain else []) + x_singles, verdict=loose)
+    out = dict(trends=trends, continue_groups=sorted(cont), verdict=verdict, combo=combo, explore=explore)
     (LOCAL / 'followup_plan.json').write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding='utf-8')
     print('续训到 30 万步的组：', sorted(cont))
     for n, v in verdict.items():
         print(f"  {n:16s} 对父组 开发集 dSGM {v['dSGM']:+.4f} {v['seeds']} dW {v['dW']:+.4f} d10 {v['d10']:+.4f} → {'接受' if v['ok'] else '不接受'}"
               if v else f'  {n:16s} 数据不全')
-    print('组合版：', combo)
+    print('组合版（冻结规则）：', combo)
+    for n, v in loose.items():
+        print(f"  [探索] {n:16s} 对 R0 dSGM {v['dSGM']:+.4f} {v['seeds']} dW {v['dW']:+.4f} d10 {v['d10']:+.4f} → {'接受' if v['ok'] else '不接受'}")
+    print('探索组合：', {k: v for k, v in explore.items() if k != 'verdict'})
     return out
 
 
@@ -139,11 +169,17 @@ def launch(window_hours):
             run = r3_run(n, s, grp, label, parent, agent, size, algo=algo, **other)
             run.update(run_id=f'{n}-s{s}-c30', total_steps=300000, continued_from=f'{n}-s{s}', account=acc, label=f'{label}（30万步）')
             extra[acc].append(run)
-    if p['combo']['members']:
+    if len(p['combo']['members']) > 1:          # 只接受一项时组合版就是该组本身，不重跑
         for i, s in enumerate(SEEDS):
             acc = 'AB'[i % 2]
             run = r3_run('r3-combo', s, 'combo', '组合版', 'r3-r0', p['combo']['agent'], p['combo']['size'])
             run.update(account=acc, combo_members=p['combo']['members'])
+            extra[acc].append(run)
+    if p['explore']['members']:
+        for i, s in enumerate(SEEDS):
+            acc = 'BA'[i % 2]
+            run = r3_run('r3-xcombo', s, 'combo', '探索组合（放宽规则）', 'r3-r0', p['explore']['agent'], p['explore']['size'])
+            run.update(account=acc, combo_members=p['explore']['members'])
             extra[acc].append(run)
     for acc in ('A', 'B'):
         pa = remote2.paths(acc)
