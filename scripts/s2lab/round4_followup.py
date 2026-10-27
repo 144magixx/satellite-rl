@@ -108,9 +108,11 @@ def plan(stage):
 def launch(stage, window_hours):
     import remote2
     out, dirs = plan(stage)
-    if out['pending']:
-        print('有比较对象结果未齐，先不追加')
+    if stage == 'seeds' and out['pending']:
+        print('有比较对象结果未齐，先不补种子')
         return
+    if out['pending']:
+        print('这些条件组的比较对象还没齐，下次再判：', out['pending'])   # 已能判定的先追加；重复追加按运行名去重
     runs = []
     for name, spec, _ in out['runs']:
         if name == 'seeds':
