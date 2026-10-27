@@ -31,6 +31,8 @@ STATE_DOC = ROOT / 'docs' / 'Claude维护' / 'S2-LAB' / '01_接手状态.md'
 ROUND = int(os.environ.get('S2LAB_ROUND', '2'))           # 第几轮：决定远端 runs{ROUND}、eval{ROUND} 与本地目录
 if ROUND == 3:
     LOCAL_OUT2 = Path('D:/paper/outputs/experiments/s2lab_round3_20261027')
+if ROUND == 4:
+    LOCAL_OUT2 = Path('D:/paper/outputs/experiments/s2lab_round4_20261028')
 
 
 def account_of(port):
@@ -133,6 +135,9 @@ def cmd_launch(args):
             if account_of(port) != acc:
                 continue
             with connect(port) as c:
+                if run(c, 'ps -eo args | grep -c "[s]cripts/s2lab/lane.py"', check=False).strip() not in ('', '0'):
+                    print(f'{acc} lane {port} 已在运行，跳过', flush=True)      # 排队器会自己从队列里取新加的运行
+                    continue
                 only = (' --only ' + ' '.join(args.only)) if args.only else ''
                 pid = background(c, p, f'{p["py"]} scripts/s2lab/lane.py --runs-dir {p["runs"]} --dataset-dir {p["data"]} '
                                        f'--lane {port} --window-hours {args.window_hours} --parallel {args.parallel}{only}',
@@ -204,7 +209,7 @@ def cmd_status(args):
         count[r['state']] = count.get(r['state'], 0) + 1
     def f(v, d=3):
         return '' if v is None else f'{v:.{d}f}'
-    lines = [f'### 第{"二三"[ROUND - 2]}轮自动状态（{datetime.now():%Y-%m-%d %H:%M}）', '', f'共 {len(rows)} 个运行：' + '，'.join(f'{k} {v}' for k, v in sorted(count.items())), '',
+    lines = [f'### 第{"二三四"[ROUND - 2]}轮自动状态（{datetime.now():%Y-%m-%d %H:%M}）', '', f'共 {len(rows)} 个运行：' + '，'.join(f'{k} {v}' for k, v in sorted(count.items())), '',
              '| 账号 | 运行 | 组 | 状态 | 步数 | 用时h | 卡 | 步/秒 | 开发集 W/SGM（最近） | 开发集最好SGM | 确认集 W/SGM（best_sgm） |',
              '| --- | --- | --- | --- | --- | ---: | --- | ---: | --- | ---: | --- |']
     for r in rows:

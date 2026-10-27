@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 from _common import ROOT  # noqa: F401
-from satellite_rl.s2lab.matrix import write_matrix, write_matrix_round2, write_matrix_round3
+from satellite_rl.s2lab.matrix import write_matrix, write_matrix_round2, write_matrix_round3, write_matrix_round4
 
 
 def main():
@@ -24,7 +24,7 @@ def main():
         runs = write_matrix_round2(args.runs_dir, args.account)
     else:
         extra = json.loads(Path(args.extra).read_text(encoding='utf-8')) if args.extra else []
-        runs = write_matrix_round3(args.runs_dir, args.account, extra)
+        runs = write_matrix_round3(args.runs_dir, args.account, extra) if args.round == 3 else write_matrix_round4(args.runs_dir, extra)
     print(len(runs))
 
 

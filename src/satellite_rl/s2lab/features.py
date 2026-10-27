@@ -5,11 +5,13 @@
 import math
 
 import torch
+import torch.nn.functional as F
 
-FEATURE_NAMES = ('pneed', 'share', 'outint', 'snr', 'sens', 'future', 'gspec')
+FEATURE_NAMES = ('pneed', 'share', 'outint', 'snr', 'sens', 'future', 'gspec', 'hint', 'hintx')
 # 每项进入 14 令牌的位置与维度：标量令牌(rate/power) 或 每槽列(slot，每槽几列) 或 全局令牌(glob)
+# 第四轮 hint/hintx：在当前状态下贪心会给的槽数与功率档（独热 10＋13，进需求令牌）、起点窗口（每槽 0/1，进频率块）
 FEATURE_SLOT = dict(pneed=('rate', 30), share=('power', 1), outint=('slot', 1), snr=('slot', 2), sens=('slot', 1),
-                    future=('glob', 4), gspec=('glob', 17))
+                    future=('glob', 4), gspec=('glob', 17), hint=('rate', 23), hintx=('slot', 1))
 
 
 def _db(x, lo, hi):
@@ -84,4 +86,14 @@ def compute(env, cur, g, intf, budget_left, names):
         longest = env._free_run().amax(-1).float()
         remaining = (env.n - env.t).clamp(min=1).float()
         out['f_gspec'] = torch.cat([free / T, longest / T, (torch.log1p(free.sum(1) / remaining) / math.log1p(800.))[:, None]], 1)
+    if 'hint' in names or 'hintx' in names:
+        from .rules import GreedyRule
+        a = GreedyRule(env).act()                                   # 只读环境当前状态，不改动
+        c = a[:, 1]
+        if 'hint' in names:
+            out['f_hint'] = torch.cat([F.one_hot(c, 10), F.one_hot(a[:, 2], env.K)], 1).float()
+        if 'hintx' in names:
+            s = a[:, 0] % T
+            t = env.arange_t[None, :]
+            out['f_hintx'] = ((t >= s[:, None]) & (t < (s + c + 1)[:, None])).float()
     return out

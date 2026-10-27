@@ -215,6 +215,51 @@ def write_matrix_round3(runs_dir, account, extra_runs=()):
     return runs
 
 
+# ---------------------------------------------------------------- 第四轮：全部在探索组合上（用户 10-28 决定）
+XC_AGENT = dict(replay=100000)
+XC_FEATS = ['pneed', 'future', 'gspec', 'share', 'outint', 'snr', 'sens']      # 与第三轮 r3-xcombo 完全相同的顺序
+ROUND4 = {
+    'r4-base': ('base', '探索组合（本轮重跑）', None, {}, {}, {}),
+    'r4-ptr': ('struct', '＋块指针头', 'r4-base', {}, {}, dict(pointer=True)),
+    'r4-g995': ('train', 'γ=0.995', 'r4-base', dict(gamma=.995), {}, {}),
+    'r4-g1': ('train', 'γ=1.0', 'r4-base', dict(gamma=1.), {}, {}),
+    'r4-A': ('action', '＋A 先定槽数', 'r4-base', dict(policy='cond'), {}, {}),
+    'r4-AB': ('action', '＋A＋B′ 低干扰前8', 'r4-A', dict(policy='cond', topk=8), {}, {}),
+    'r4-utd2': ('train', '每步更新2次', 'r4-base', dict(utd=2.), {}, {}),
+    'r4-bc': ('train', '贪心行为克隆后SAC', 'r4-base', dict(bc_updates=20000, bc_demos=100000, bc_lr=3e-4, actor_freeze=20000), {}, {}),
+    'r4-Aqx': ('action', '＋A＋评论家起点看槽数', 'r4-A', dict(policy='cond', q_start='count'), {}, {}),
+    'r4-hint': ('state', '＋贪心建议作状态', 'r4-base', {}, dict(feats=XC_FEATS + ['hint', 'hintx']), {}),
+    'r4-rb50k': ('train', '回放池5万', 'r4-base', dict(replay=50000), {}, {}),
+    'r4-rb200k': ('train', '回放池20万', 'r4-base', dict(replay=200000), {}, {}),
+    'r4-f3': ('state', '只留三项补充', 'r4-base', {}, dict(feats=['pneed', 'gspec', 'share']), {}),
+}
+# 条件组（由 round4_followup.py 按开发集门槛追加）
+ROUND4_COND = {
+    'r4-LB': ('action', '＋L＋B′', 'r4-AB', dict(policy='legal', topk=8), {}, {}),
+}
+
+
+def r4_run(name, seed, group, label, parent, agent=None, size=None, **other):
+    """第四轮运行＝探索组合（七项补充＋回放池 10 万）＋相对它的改动。"""
+    return r3_run(name, seed, group, label, parent, dict(XC_AGENT, **(agent or {})), dict(dict(feats=XC_FEATS), **(size or {})), **other)
+
+
+def build_matrix_round4(seeds=SEEDS):
+    return [r4_run(name, s, grp, label, parent, agent, size, **other)
+            for name, (grp, label, parent, agent, size, other) in ROUND4.items() for s in seeds]
+
+
+def write_matrix_round4(runs_dir, extra_runs=()):
+    runs_dir = Path(runs_dir)
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    runs = build_matrix_round4() + list(extra_runs)
+    (runs_dir / 'matrix.json').write_text(json.dumps(runs, ensure_ascii=False, indent=1), encoding='utf-8')
+    order = [r['run_id'] for r in runs]                  # ROUND4 的书写顺序就是优先顺序：门槛要用的组在前，慢的居中
+    (runs_dir / 'queue.json').write_text(json.dumps(dict(order=order, account='B', created_at=datetime.now().isoformat()), indent=1),
+                                         encoding='utf-8')
+    return runs
+
+
 # 队列顺序：先主表 T-SAC 与奖励对照（决定口径），再主表其余，再消融，再无掩码，最后追加组
 PRIORITY = ('main-tsac-', 'main-tsaclegacy', 'reward-delta', 'main-cnnsac', 'main-mlpsac', 'main-ppo', 'main-dqn', 'token', 'group', 'size', 'nomask', 'extra')
 

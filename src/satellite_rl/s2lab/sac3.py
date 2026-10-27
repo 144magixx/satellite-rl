@@ -70,6 +70,16 @@ class Net3(nn.Module):
                 self.q_x, self.q_off = nn.Linear(d, 32), nn.Embedding(10, 32)
                 extra = 32
             self.q_mlp = nn.Sequential(nn.Linear(64 + 16 + extra + 1, 64), nn.ReLU(), nn.Linear(64, 1))
+        # 第四轮（新模块只在开关打开时创建，开关关闭时初始化与随机数消耗和第三轮完全一样）
+        if cfg.get('pointer'):
+            # 块指针头：起点打分直接由本组 10 个频率块令牌给出（块分数＋块内偏移），演员的起点概率和评论家的起点项都走这里
+            self.ptr_q = nn.Linear(d, d)
+            self.ptr_off = nn.Linear(d, 10)
+        if role == 'critic' and cfg.get('q_start') == 'count':
+            # 评论家的起点项看槽数：q_x(c,x)
+            self.qx_emb = nn.Embedding(C, 16)
+            self.qx_cond = nn.Sequential(nn.Linear(d + 16, d), nn.ReLU())
+            self.qx_head = nn.Linear(d, G * T)
 
     def _slot_feats(self, blocks, lin, off):
         """块令牌输出 [B,10,d] → 每个起点的特征 [B,T,32]：所在块的投影＋块内偏移嵌入。"""
@@ -84,6 +94,13 @@ class Net3(nn.Module):
         idx = g[:, None] * self.T + torch.arange(self.T, device=g.device)[None, :]
         out = dict(pooled=pooled, blocks=blocks, idx=idx, cnt=cnt, gs=_gather_group(gs, idx), pw=pw)
         cfg = self.cfg
+        if cfg.get('pointer'):
+            q = self.ptr_q(pooled)
+            score = torch.einsum('bkd,bd->bk', blocks, q) / math.sqrt(blocks.shape[-1])             # [B,10] 每块一个分
+            out['gs'] = (score[:, :, None] + self.ptr_off(blocks)).reshape(pooled.shape[0], self.T)   # 块 k 的第 j 个偏移＝起点 10k+j
+        if self.role == 'critic' and cfg.get('q_start') == 'count':
+            h = self.qx_cond(torch.cat([pooled[:, None].expand(-1, C, -1), self.qx_emb.weight[None].expand(pooled.shape[0], -1, -1)], -1))
+            out['qx_c'] = _gather_group(self.qx_head(h), idx)                # [B,10,T]
         if self.role == 'actor' and cfg.get('policy') == 'cond':
             h = self.cond(torch.cat([pooled[:, None].expand(-1, C, -1), self.c_emb.weight[None].expand(pooled.shape[0], -1, -1)], -1))
             out['gs_c'] = _gather_group(self.gs_c(h), idx)                 # [B,10,T]
@@ -201,7 +218,8 @@ class SAC3(AgentBase):
     # ------------------------------------------------------------ 行动
     @torch.no_grad()
     def act(self, obs, explore=True):
-        uniform = explore and self.env_steps < self.warmup
+        # 行为克隆预训练过的演员，热身期直接用它出动作，不用均匀随机（否则示范学到的东西在热身数据里体现不出来）
+        uniform = explore and self.env_steps < self.warmup and not self.cfg.get('bc_updates')
         out = self.actor(obs)
         logp_c, logp_x, logp_p, _ = self._dist(out, obs, uniform)
         B = logp_c.shape[0]
@@ -249,16 +267,17 @@ class SAC3(AgentBase):
     # ------------------------------------------------------------ 期望
     def _q_full(self, out, logp_c, logp_x, logp_p, p_w=None):
         """全部完整动作上的 Q：离散 [B,10,T,K]；连续 [B,10,T]（功率为每个 (c[,x]) 的采样值 p_w）。"""
-        qc, qx = out['cnt'], out['gs']
+        qc = out['cnt']
+        qx = out['qx_c'] if 'qx_c' in out else out['gs'][:, None, :]          # [B,10,T]（起点项看槽数）或 [B,1,T]
         if not self.continuous:
             qp = out['pw']
             qp = qp[:, None, None, :] if qp.dim() == 2 else qp[:, :, None, :]
-            return qc[:, :, None, None] + qx[:, None, :, None] + qp
+            return qc[:, :, None, None] + qx[:, :, :, None] + qp
         net = (self.q1, self.q2, self.q1_t, self.q2_t)[out['net'] - 1]
         qp = net.q_power(out, p_w)
         if qp.dim() == 2:
             qp = qp[:, :, None]
-        return qc[:, :, None] + qx[:, None, :] + qp
+        return qc[:, :, None] + qx + qp
 
     def _weights(self, logp_c, logp_x, logp_p):
         if self.continuous:
@@ -276,6 +295,29 @@ class SAC3(AgentBase):
             outs.append(o)
         return outs
 
+    @torch.no_grad()
+    def _target(self, reward, done, nxt, alpha):
+        """y = r + γ(1−done)·[V(o′)＋熵项]。done=1（本局最后一束）时不往下一局自举。"""
+        hist = self.cfg['double_q'] == 'hist'
+        dims = (1, 2) if self.continuous else (1, 2, 3)
+        a_out = self.actor(nxt)
+        lc, lx, lp, _ = self._dist(a_out, nxt)
+        w, logw = self._weights(lc, lx, lp)
+        t1, t2 = self._critic_outs(nxt, True)
+        if self.continuous:
+            p_w, logpu = self._sample_power(a_out, nxt)
+            Q1, Q2 = self._q_full(t1, lc, lx, lp, p_w), self._q_full(t2, lc, lx, lp, p_w)
+            logpu = logpu[:, :, None].expand_as(w) if logpu.dim() == 2 else logpu
+            ent = -(w * logw).sum(dims) * alpha - (w * logpu).sum(dims) * self.alpha_p
+        else:
+            Q1, Q2 = self._q_full(t1, lc, lx, lp), self._q_full(t2, lc, lx, lp)
+            ent = -(w * logw).sum(dims) * alpha
+        if hist:
+            v = (w * torch.minimum(Q1, Q2)).sum(dims)
+        else:
+            v = torch.minimum((w * Q1).sum(dims), (w * Q2).sum(dims))
+        return reward + self.gamma * (1 - done) * (v + ent)
+
     def _update_once(self):
         cfg = self.cfg
         hist = cfg['double_q'] == 'hist'
@@ -283,24 +325,7 @@ class SAC3(AgentBase):
         obs, action, reward, done, nxt, power = self._sample()
         dims = (1, 2) if self.continuous else (1, 2, 3)
         # ---- 目标值
-        with torch.no_grad():
-            a_out = self.actor(nxt)
-            lc, lx, lp, _ = self._dist(a_out, nxt)
-            w, logw = self._weights(lc, lx, lp)
-            t1, t2 = self._critic_outs(nxt, True)
-            if self.continuous:
-                p_w, logpu = self._sample_power(a_out, nxt)
-                Q1, Q2 = self._q_full(t1, lc, lx, lp, p_w), self._q_full(t2, lc, lx, lp, p_w)
-                logpu = logpu[:, :, None].expand_as(w) if logpu.dim() == 2 else logpu
-                ent = -(w * logw).sum(dims) * alpha - (w * logpu).sum(dims) * self.alpha_p
-            else:
-                Q1, Q2 = self._q_full(t1, lc, lx, lp), self._q_full(t2, lc, lx, lp)
-                ent = -(w * logw).sum(dims) * alpha
-            if hist:
-                v = (w * torch.minimum(Q1, Q2)).sum(dims)
-            else:
-                v = torch.minimum((w * Q1).sum(dims), (w * Q2).sum(dims))
-            target = reward + self.gamma * (1 - done) * (v + ent)
+        target = self._target(reward, done, nxt, alpha)
         # ---- 评论家
         o1, o2 = self._critic_outs(obs, False)
         rows = torch.arange(len(reward), device=self.device)
@@ -309,7 +334,7 @@ class SAC3(AgentBase):
         c = action[:, 1]
 
         def q_taken(o, net):
-            q = o['cnt'][rows, c] + o['gs'][rows, x]
+            q = o['cnt'][rows, c] + (o['qx_c'][rows, c, x] if 'qx_c' in o else o['gs'][rows, x])
             if self.continuous:
                 return q + net.q_power(o, power, c, x)
             pw = o['pw']
@@ -342,10 +367,11 @@ class SAC3(AgentBase):
         if not self.continuous:
             q_sel = q_sel.detach()
         actor_loss = (w * (alpha * logw + self.alpha_p * logpu - q_sel)).sum(dims).mean()
-        self.opt_actor.zero_grad(set_to_none=True)
-        actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.)
-        self.opt_actor.step()
+        if self.env_steps >= cfg.get('actor_freeze', 0):      # 行为克隆组：前若干环境步只训评论家，演员保持克隆结果
+            self.opt_actor.zero_grad(set_to_none=True)
+            actor_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.)
+            self.opt_actor.step()
         entropy = float(-(w * logw).sum(dims).mean())
         if self.auto_alpha:
             if self.continuous:
@@ -365,6 +391,33 @@ class SAC3(AgentBase):
         self.updates += 1
         return dict(critic_loss=float(critic_loss), actor_loss=float(actor_loss), entropy=entropy, q=float(q1_sa.mean()),
                     alpha=float(alpha))
+
+    def behavior_clone(self, demos, updates, log=print):
+        """贪心行为克隆：最小化 −log π(贪心动作)，只更新演员。返回克隆损失与"演员最可能动作＝贪心动作"的比例。"""
+        opt = torch.optim.Adam(self.actor.parameters(), lr=self.cfg.get('bc_lr', 3e-4))
+        M = len(demos['action'])
+        info = {}
+        for i in range(updates):
+            idx = torch.randint(0, M, (self.batch,), device=self.device)
+            obs = to_model({k: v[idx] for k, v in demos['obs'].items()})
+            a = demos['action'][idx]
+            out = self.actor(obs)
+            lc, lx, lp, _ = self._dist(out, obs)
+            rows = torch.arange(len(a), device=self.device)
+            x, c, p = a[:, 0] - group_index(obs['allow']) * 100, a[:, 1], a[:, 2]
+            loss = -(lc[rows, c] + lx[rows, c, x] + lp[rows, c, p]).mean()
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.)
+            opt.step()
+            if (i + 1) % 2000 == 0 or i + 1 == updates:
+                with torch.no_grad():
+                    c_hat = lc.argmax(-1)
+                    agree = dict(count=float((c_hat == c).float().mean()), start=float((lx[rows, c].argmax(-1) == x).float().mean()),
+                                 power=float((lp[rows, c].argmax(-1) == p).float().mean()))
+                info = dict(update=i + 1, loss=float(loss), **{f'agree_{k}': v for k, v in agree.items()})
+                log(f"[bc] {info}")
+        return info
 
     def _sample(self):
         idx = torch.randint(0, self.replay.size, (self.batch,), device=self.device)

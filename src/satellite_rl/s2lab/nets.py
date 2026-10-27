@@ -108,13 +108,13 @@ class TSAC14Encoder(nn.Module):
         rate_in, power_in, glob_in = [scal[:, 0:1]], [scal[:, 6:7]], [obs['glob']] if not self.no_global else []
         for f in self.feats:
             v = obs['f_' + f].float()
-            if f == 'pneed':
+            if f in ('pneed', 'hint'):
                 rate_in.append(v)
             elif f == 'share':
                 power_in.append(v)
             elif f == 'snr':
                 cols += [v[:, 0], v[:, 1]]
-            elif f in ('outint', 'sens'):
+            elif f in ('outint', 'sens', 'hintx'):
                 cols.append(v)
             else:
                 glob_in.append(v)

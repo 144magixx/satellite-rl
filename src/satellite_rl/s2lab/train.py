@@ -108,6 +108,20 @@ def train(run_dir, dataset_dir, run, device, max_hours=None, log=print):
         random.setstate(saved['rng']['python'])
         sampler.rng.bit_generator.state = saved['rng']['sampler']
         log(f"resumed at step {step} (elapsed {elapsed_before / 3600:.2f} h)")
+    elif run.get('agent', {}).get('bc_updates'):
+        # 第四轮行为克隆组：先收集贪心示范、克隆演员，再从头做 SAC；克隆结束时的开发集成绩单独记在 bc.json
+        from .bc import collect_greedy_demos
+        t0 = time.time()
+        demos = collect_greedy_demos(bank_train, config, splits['train'], opts, device, run['agent'].get('bc_demos', 100000), run['seed'] + 7919)
+        t1 = time.time()
+        info = agent.behavior_clone(demos, run['agent']['bc_updates'], log=log)
+        del demos
+        agent.main_module().eval()
+        bc_dev = summarize(evaluate_agent(agent, bank_dev, config, splits['dev'], opts, device))['all']
+        agent.main_module().train()
+        write_json(run_dir / 'bc.json', dict(info, demo_seconds=t1 - t0, clone_seconds=time.time() - t1,
+                                             dev={k: bc_dev[k] for k in ('SGM', 'W', 'worst10', 'power_w')}))
+        log(f"[bc] 克隆后开发集 SGM={bc_dev['SGM']:.4f} W={bc_dev['W']:.4f}")
     total = run['total_steps']
     stop = {'flag': False, 'reason': ''}
 
