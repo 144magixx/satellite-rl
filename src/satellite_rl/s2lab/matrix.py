@@ -187,9 +187,10 @@ def build_matrix_round3():
     runs = []
     for name, (group, label, parent, agent, size, other) in ROUND3.items():
         for s in SEEDS:
-            other = dict(other)
-            algo = other.pop('algo', 'sac3')
-            runs.append(r3_run(name, s, group, label, parent, agent, size, algo=algo, **other))
+            # 10-27 修正：原来写成 other = dict(other) 再 pop，种子 1 弹掉 algo 后种子 2、3 拿不到，PPO/DQN 的种子 2、3 实际跑成了 SAC3
+            kw = dict(other)
+            algo = kw.pop('algo', 'sac3')
+            runs.append(r3_run(name, s, group, label, parent, agent, size, algo=algo, **kw))
     return runs
 
 
