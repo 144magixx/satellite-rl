@@ -237,6 +237,10 @@ ROUND4 = {
 ROUND4_COND = {
     'r4-LB': ('action', '＋L＋B′', 'r4-AB', dict(policy='legal', topk=8), {}, {}),
 }
+# 事后探索组（不属于事先门槛，报告单列）：10-28 04:10 第一波显示指针头 +0.043、先定槽数 +0.021（开发集，三种子都涨），试两者合用
+ROUND4_EXPLORE = {
+    'r4-ptrA': ('explore', '探索：块指针头＋A', 'r4-ptr', dict(policy='cond'), {}, dict(pointer=True)),
+}
 
 
 def r4_run(name, seed, group, label, parent, agent=None, size=None, **other):

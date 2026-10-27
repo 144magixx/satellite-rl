@@ -103,7 +103,13 @@ class Net3(nn.Module):
             out['qx_c'] = _gather_group(self.qx_head(h), idx)                # [B,10,T]
         if self.role == 'actor' and cfg.get('policy') == 'cond':
             h = self.cond(torch.cat([pooled[:, None].expand(-1, C, -1), self.c_emb.weight[None].expand(pooled.shape[0], -1, -1)], -1))
-            out['gs_c'] = _gather_group(self.gs_c(h), idx)                 # [B,10,T]
+            if cfg.get('pointer'):
+                # 第四轮探索：先定槽数＋块指针头。每个槽数 c 各出一个查询，对本组 10 个块打分，再加块内偏移
+                q = self.ptr_q(h)                                                              # [B,10c,d]
+                score = torch.einsum('bkd,bcd->bck', blocks, q) / math.sqrt(blocks.shape[-1])   # [B,10c,10块]
+                out['gs_c'] = (score[:, :, :, None] + self.ptr_off(blocks)[:, None]).reshape(pooled.shape[0], C, self.T)
+            else:
+                out['gs_c'] = _gather_group(self.gs_c(h), idx)             # [B,10,T]
             if cfg.get('power', 'discrete') == 'discrete':
                 out['pw_c'] = self.pw_c(h)                                  # [B,10,K]
         if self.role == 'actor' and cfg.get('power') == 'continuous':

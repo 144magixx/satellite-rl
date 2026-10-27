@@ -53,6 +53,21 @@ class Round4Tests(Round3Tests):
         ref = (torch.einsum('bkd,bd->bk', out['blocks'], q) / out['blocks'].shape[-1] ** .5)[:, :, None] + agent.actor.ptr_off(out['blocks'])
         self.assertTrue(torch.allclose(out['gs'], ref.reshape(len(q), 100), atol=1e-5))
 
+    def test_pointer_with_count_conditioning(self):
+        agent, moved, cmoved = self._one_update(dict(XC, policy='cond', pointer=True))
+        self.assertTrue(any(n.startswith('ptr_') for n in moved) and any(n.startswith('ptr_') for n in cmoved))
+        self.assertFalse(any(n.startswith('gs_c') for n in moved))                 # 原线性条件起点头不再参与
+        obs = self._env4().observe()
+        out = agent.actor(obs)
+        h = agent.actor.cond(torch.cat([out['pooled'][:, None].expand(-1, 10, -1),
+                                        agent.actor.c_emb.weight[None].expand(len(out['pooled']), -1, -1)], -1))
+        q = agent.actor.ptr_q(h)
+        b = out['blocks']
+        ref = torch.einsum('bkd,bcd->bck', b, q)[:, :, :, None] / b.shape[-1] ** .5 + agent.actor.ptr_off(b)[:, None]
+        self.assertTrue(torch.allclose(out['gs_c'], ref.reshape(len(q), 10, 100), atol=1e-5))
+        # 不同槽数下同一位置的分数不同（真的看了槽数）
+        self.assertFalse(torch.allclose(out['gs_c'][:, 0], out['gs_c'][:, 5]))
+
     def test_critic_start_by_count(self):
         cfg = dict(XC, policy='cond', q_start='count')
         agent, moved, cmoved = self._one_update(cfg)

@@ -157,13 +157,46 @@ def launch(stage, window_hours):
     remote2.cmd_launch(argparse.Namespace(accounts=['B'], window_hours=window_hours, parallel=2, ports=None, only=None))
 
 
+def add_runs(runs, window_hours):
+    """把运行追加进 B 账号的 extra_runs.json（按运行名去重）、重写队列；排队器在跑就自己取，没在跑就启动。"""
+    import remote2
+    p = remote2.paths('B')
+    extra_path = f"{p['runs']}/extra_runs.json"
+    with remote2.connect(remote2.first_port('B')) as c:
+        with c.open_sftp() as sftp:
+            try:
+                with sftp.open(extra_path) as f:
+                    old = json.loads(f.read())
+            except IOError:
+                old = []
+            ids = {r['run_id'] for r in old}
+            merged = old + [r for r in runs if r['run_id'] not in ids]
+            with sftp.open(extra_path, 'w') as f:
+                f.write(json.dumps(merged, ensure_ascii=False))
+        print(remote2.run(c, p['env'] + f"{p['py']} scripts/s2lab/write_matrix.py --runs-dir {p['runs']} --round 4 --account B --extra {extra_path}"))
+    remote2.cmd_launch(argparse.Namespace(accounts=['B'], window_hours=window_hours, parallel=2, ports=None, only=None))
+
+
+def explore(names, window_hours):
+    from satellite_rl.s2lab.matrix import ROUND4_EXPLORE
+    runs = []
+    for name in names:
+        grp, label, parent, agent, size, other = ROUND4_EXPLORE[name]
+        runs += [r4_run(name, s, grp, label, parent, agent, size, **other) for s in SEEDS]
+    add_runs(runs, window_hours)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest='cmd', required=True)
+    p = sub.add_parser('explore'); p.add_argument('--names', nargs='+', required=True); p.add_argument('--window-hours', type=float, required=True)
     p = sub.add_parser('plan'); p.add_argument('--stage', default='cond', choices=('cond', 'seeds'))
     p = sub.add_parser('launch'); p.add_argument('--stage', required=True, choices=('cond', 'seeds')); p.add_argument('--window-hours', type=float, required=True)
     a = ap.parse_args()
-    plan(a.stage) if a.cmd == 'plan' else launch(a.stage, a.window_hours)
+    if a.cmd == 'explore':
+        explore(a.names, a.window_hours)
+    else:
+        plan(a.stage) if a.cmd == 'plan' else launch(a.stage, a.window_hours)
 
 
 if __name__ == '__main__':
