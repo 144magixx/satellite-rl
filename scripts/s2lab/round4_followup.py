@@ -47,39 +47,60 @@ def gate(name, parent, dirs, seeds=SEEDS):
 
 
 def hours(d):
+    """单运行实际耗时（行为克隆组加上示范与克隆两段，它们不在 elapsed_hours 里）。"""
     s = json.loads((d / 'status.json').read_text(encoding='utf-8'))
-    return float(s.get('elapsed_hours', 0))
+    h = float(s.get('elapsed_hours', 0))
+    if (d / 'bc.json').exists():
+        bc = json.loads((d / 'bc.json').read_text(encoding='utf-8'))
+        h += (bc.get('demo_seconds', 0) + bc.get('clone_seconds', 0)) / 3600
+    return h
+
+
+def ptrg_name(gamma):
+    return f"r4-ptrg{gamma:g}".replace('.', '')             # r4-ptrg0995 / r4-ptrg1：两种 γ 的组合名字不同，避免互相顶替
 
 
 def plan(stage):
+    """10-28 按 Astra 代码复核修正：比较对象的三种子结果必须齐全才下结论（缺就"待定"、不追加）；
+    补种子按事先顺序：先在全部候选里取开发集均值最高者，再看它过不过 G，不过就不补，不换次名。"""
     dirs = run_dirs()
     g = {n: gate(n, 'r4-base', dirs) for n in ROUND4 if n != 'r4-base'}
     g['r4-AB/A'] = gate('r4-AB', 'r4-A', dirs)
-    out = dict(gates=g, runs=[])
+    out = dict(gates=g, runs=[], pending=[])
     for k, v in g.items():
         print(f"{k:12s} " + (f"开发集 dSGM {v['diff']:+.4f} {v['seeds']} → {'过' if v['ok'] else '不过'}" if v else '数据不全'))
     if stage == 'cond':
         a, ab = g['r4-A'], g['r4-AB']
-        if a and ab and a['diff'] <= -.005 and not ab['ok']:
+        if a is None or ab is None:
+            out['pending'].append('r4-LB')
+        elif a['diff'] <= -.005 and not ab['ok']:
             out['runs'].append(('r4-LB', ROUND4_COND['r4-LB'], {}))
-        gammas = [(n, v) for n, v in ((n, g[n]) for n in ('r4-g995', 'r4-g1')) if v and v['ok']]
-        if g['r4-ptr'] and g['r4-ptr']['ok'] and gammas:
-            best = max(gammas, key=lambda nv: (nv[1]['dev'], nv[0] == 'r4-g995'))[0]
-            gamma = ROUND4[best][3]['gamma']
-            out['runs'].append(('r4-ptrg', ('struct', f'＋块指针头＋γ={gamma}', 'r4-base', dict(gamma=gamma), {}, dict(pointer=True)), {}))
+        need = ('r4-ptr', 'r4-g995', 'r4-g1')
+        if any(g[n] is None for n in need):
+            out['pending'].append('r4-ptrg')
+        else:
+            gammas = [(n, g[n]) for n in ('r4-g995', 'r4-g1') if g[n]['ok']]
+            if g['r4-ptr']['ok'] and gammas:
+                best = max(gammas, key=lambda nv: (nv[1]['dev'], nv[0] == 'r4-g995'))[0]   # 同分取 0.995
+                gamma = ROUND4[best][3]['gamma']
+                out['runs'].append((ptrg_name(gamma), ('struct', f'＋块指针头＋γ={gamma}', 'r4-base', dict(gamma=gamma), {}, dict(pointer=True)), {}))
     else:
-        ok = [(n, v) for n, v in g.items() if v and v['ok'] and n.startswith('r4-') and '/' not in n]
-        for n in ('r4-LB', 'r4-ptrg'):
-            v = gate(n, 'r4-base', dirs)
-            if v:
-                g[n] = v
-                if v['ok']:
-                    ok.append((n, v))
-        if ok:
-            best = max(ok, key=lambda nv: nv[1]['dev'])[0]
-            out['candidate'] = best
-            out['runs'].append(('seeds', best, {}))
-    print('追加：', [r[0] if r[0] != 'seeds' else f'补种子 {r[1]}' for r in out['runs']])
+        cond = json.loads((LOCAL / 'followup_cond.json').read_text(encoding='utf-8')) if (LOCAL / 'followup_cond.json').exists() else None
+        if cond is None or cond['pending']:
+            out['pending'].append('条件组尚未定')
+        candidates = [n for n in ROUND4 if n != 'r4-base'] + [r[0] for r in (cond or {}).get('runs', [])]
+        for n in candidates:
+            if n not in g:
+                g[n] = gate(n, 'r4-base', dirs)
+        missing = [n for n in candidates if g[n] is None]
+        if missing:
+            out['pending'] += missing
+        elif not out['pending']:
+            best = max(candidates, key=lambda n: (g[n]['dev'], -candidates.index(n)))          # 同分按方案表先后
+            out['candidate'], out['candidate_gate'] = best, g[best]
+            if g[best]['ok']:
+                out['runs'].append(('seeds', best, {}))
+    print('待定：', out['pending'], '追加：', [r[0] if r[0] != 'seeds' else f'补种子 {r[1]}' for r in out['runs']])
     (LOCAL / f'followup_{stage}.json').write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding='utf-8')
     return out, dirs
 
@@ -87,6 +108,9 @@ def plan(stage):
 def launch(stage, window_hours):
     import remote2
     out, dirs = plan(stage)
+    if out['pending']:
+        print('有比较对象结果未齐，先不追加')
+        return
     runs = []
     for name, spec, _ in out['runs']:
         if name == 'seeds':
@@ -94,8 +118,8 @@ def launch(stage, window_hours):
             defs = dict(ROUND4)
             if cand == 'r4-LB':
                 defs[cand] = ROUND4_COND[cand]
-            if cand == 'r4-ptrg':
-                defs[cand] = json.loads((dirs['r4-ptrg-s1'] / 'config.json').read_text(encoding='utf-8'))
+            if cand.startswith('r4-ptrg'):
+                defs[cand] = json.loads((dirs[f'{cand}-s1'] / 'config.json').read_text(encoding='utf-8'))
             slow = max(hours(dirs[f'{n}-s{s}']) for n in (cand, 'r4-base') for s in SEEDS)
             if window_hours < slow + 3:
                 print(f'剩余 {window_hours:.1f} h 不足（需要 {slow + 3:.1f} h），不补种子')
