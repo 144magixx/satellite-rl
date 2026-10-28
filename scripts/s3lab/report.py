@@ -19,6 +19,7 @@ M_ZH = {'none': '不细调', 'sca': 'SCA（本研究）', 'aravanis': 'Aravanis 
         'proportional': '按需求比例', 'equal': '等功率', 'target_cap': '目标容量迭代', 'maxmin': '最大最小公平',
         'wmmse': 'WMMSE', 'slsqp': 'SLSQP'}
 SET_ZH = {'old': '旧确认集', 'new': '新确认集'}
+TL = {'random': '随机', 'fixed': '固定规则', 'greedy': '容量感知\n贪心', 'ptr': '块指针头\nT-SAC'}
 STRATA = ['ample', 'marginal', 'short']
 ST_ZH = {'ample': '宽裕', 'marginal': '勉强', 'short': '不够'}
 B = 2000
@@ -250,13 +251,13 @@ def figures(n, figs):
             v = [n['main'][f'{s}|{t}|{m}']['a_W'][0] for t in TIERS]
             ax.bar(x + (i - len(METHODS) / 2 + .5) * w, v, w, color=colors[m], label=M_ZH[m], edgecolor='k', linewidth=.3)
         ax.set_xticks(x)
-        ax.set_xticklabels([TIER_ZH[t] for t in TIERS], fontsize=9)
+        ax.set_xticklabels([TL[t] for t in TIERS], fontsize=9)
         ax.set_title(SET_ZH[s], fontsize=10.5)
         ax.set_ylim(.4, 1.)
     axes[0].set_ylabel('需求满足率 W（SGM 不降）')
     fig.legend(*axes[0].get_legend_handles_labels(), loc='upper center', ncol=5, fontsize=8, frameon=False, bbox_to_anchor=(.5, 1.12))
     fig.tight_layout()
-    fig.savefig(figs / 'S1_各档细调后满足率.svg', bbox_inches='tight')
+    fig.savefig(figs / 'S1_各档细调后满足率.svg', bbox_inches='tight'); fig.savefig(figs / 'S1_各档细调后满足率.png', bbox_inches='tight', dpi=200)
     plt.close(fig)
     # 图2：W 提升—时间曲线（块指针头、贪心；旧集）
     fig, axes = plt.subplots(1, 2, figsize=(16 / 2.54, 6.5 / 2.54), sharey=False)
@@ -268,12 +269,15 @@ def figures(n, figs):
             c = n['time'][f'old|{t}|{m}']
             ax.plot([float(k) for k in marks], [c[k]['aW'] for k in marks], marker=markers[m], color=colors[m], label=M_ZH[m], ms=4, lw=1.2)
         ax.set_xscale('log')
+        ax.set_xticks([.1, .3, 1, 3, 10])
+        ax.set_xticklabels(['0.1', '0.3', '1', '3', '10'])
+        ax.minorticks_off()
         ax.set_xlabel('求解时间（秒）')
         ax.set_title(TIER_ZH[t] + '方案（旧确认集）', fontsize=10.5)
     axes[0].set_ylabel('W 提升（SGM 不降）')
     fig.legend(*axes[0].get_legend_handles_labels(), loc='upper center', ncol=5, fontsize=8, frameon=False, bbox_to_anchor=(.5, 1.13))
     fig.tight_layout()
-    fig.savefig(figs / 'S2_满足率提升随时间.svg', bbox_inches='tight')
+    fig.savefig(figs / 'S2_满足率提升随时间.svg', bbox_inches='tight'); fig.savefig(figs / 'S2_满足率提升随时间.png', bbox_inches='tight', dpi=200)
     plt.close(fig)
     # 图3：块指针头−贪心的差距，细调前后（W、最差10%、SGM）
     fig, axes = plt.subplots(1, 3, figsize=(16 / 2.54, 6 / 2.54))
@@ -289,10 +293,10 @@ def figures(n, figs):
         ax.set_yticklabels([M_ZH[m] for m in ms] if col == 'a_W' else [], fontsize=8.5)
         ax.set_title(ttl, fontsize=10)
         ax.invert_yaxis()
-    axes[0].legend(fontsize=8, loc='lower right')
+    fig.legend(*axes[0].get_legend_handles_labels(), loc='upper center', ncol=2, fontsize=8.5, frameon=False, bbox_to_anchor=(.5, 1.08))
     fig.supxlabel('块指针头 − 贪心（同一细调方法）', fontsize=9.5)
     fig.tight_layout()
-    fig.savefig(figs / 'S3_块指针头与贪心差距.svg', bbox_inches='tight')
+    fig.savefig(figs / 'S3_块指针头与贪心差距.svg', bbox_inches='tight'); fig.savefig(figs / 'S3_块指针头与贪心差距.png', bbox_inches='tight', dpi=200)
     plt.close(fig)
     # 图4：SCA 细调后 W 与两种上界（按负载档）
     fig, axes = plt.subplots(1, 2, figsize=(16 / 2.54, 6.5 / 2.54), sharey=True)
@@ -307,28 +311,29 @@ def figures(n, figs):
             ax.scatter(x + off, before, marker='_', color='k', s=60, zorder=3, label='细调前' if k == 0 else None)
             ax.scatter(x + off, WU, marker='v', color='#d62728', s=14, zorder=3, label='无干扰 50 W 上界' if k == 0 else None)
         ax.set_xticks(x)
-        ax.set_xticklabels([TIER_ZH[t] for t in TIERS], fontsize=9)
+        ax.set_xticklabels([TL[t] for t in TIERS], fontsize=9)
         ax.set_title(SET_ZH[s], fontsize=10.5)
     axes[0].set_ylabel('需求满足率 W')
     fig.legend(*axes[0].get_legend_handles_labels(), loc='upper center', ncol=5, fontsize=8, frameon=False, bbox_to_anchor=(.5, 1.1))
     fig.tight_layout()
-    fig.savefig(figs / 'S4_满足率与上界.svg', bbox_inches='tight')
+    fig.savefig(figs / 'S4_满足率与上界.svg', bbox_inches='tight'); fig.savefig(figs / 'S4_满足率与上界.png', bbox_inches='tight', dpi=200)
     plt.close(fig)
     # 图5：取舍曲线（SCA；允许 SGM 下降 δ）
     if n['tradeoff']:
         fig, axes = plt.subplots(1, 2, figsize=(16 / 2.54, 6.5 / 2.54))
         ds = [0., .005, .01, .02]
         for ax, col, ttl in zip(axes, ('a_W', 'a_worst10'), ('W 提升', '最差 10% 飞机变化')):
-            for t, mk in zip(TIERS, 'os^D'):
-                ax.plot(ds, [n['tradeoff'][f'old|{t}|{dd:g}'][col] for dd in ds], marker=mk, label=TIER_ZH[t] + '（旧）', lw=1.2, ms=4)
-                ax.plot(ds, [n['tradeoff'][f'new|{t}|{dd:g}'][col] for dd in ds], marker=mk, ls='--', label=TIER_ZH[t] + '（新）', lw=1, ms=4)
+            for t, mk, cc in zip(TIERS, 'os^D', ('#7f7f7f', '#1f77b4', '#2ca02c', '#d62728')):
+                ax.plot(ds, [n['tradeoff'][f'old|{t}|{dd:g}'][col] for dd in ds], marker=mk, color=cc, label=TIER_ZH[t] + '（旧）', lw=1.2, ms=4)
+                ax.plot(ds, [n['tradeoff'][f'new|{t}|{dd:g}'][col] for dd in ds], marker=mk, color=cc, mfc='white', ls='--', label=TIER_ZH[t] + '（新）', lw=1, ms=4)
             ax.set_xlabel('允许 SGM 下降 δ')
             ax.set_title(ttl, fontsize=10.5)
         fig.legend(*axes[0].get_legend_handles_labels(), loc='upper center', ncol=4, fontsize=8, frameon=False, bbox_to_anchor=(.5, 1.15))
         fig.tight_layout()
-        fig.savefig(figs / 'S5_取舍曲线.svg', bbox_inches='tight')
+        fig.savefig(figs / 'S5_取舍曲线.svg', bbox_inches='tight'); fig.savefig(figs / 'S5_取舍曲线.png', bbox_inches='tight', dpi=200)
         plt.close(fig)
 
 
 if __name__ == '__main__':
     main()
+

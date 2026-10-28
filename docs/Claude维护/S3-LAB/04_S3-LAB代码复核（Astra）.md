@@ -70,3 +70,11 @@
 2. **最大最小公平的证书仍会与输出脱节。** [methods.py:402](<D:/paper-s3lab/src/satellite_rl/s3lab/methods.py#L402>)、[methods.py:414](<D:/paper-s3lab/src/satellite_rl/s3lab/methods.py#L414>) 在 `Tracker.offer` 接受前就更新 `best_t`，没有处理截止后被拒收。两束无干扰 `SINR_i=p_i`、各需求 25 Mbps，起点各 0.5 W；让新点真实核验在 10.01 秒结束，结果返回原功率（实际最小满足比例 **0.585**），却报告 **`t=1`、`status='ok'`**。应在核验后再检查截止，只在 Tracker 接受时更新输出证书，并从最终保留点的真实最小满足比例生成 `t`；越界则保留旧点并标 `limit`。此外，[methods.py:400](<D:/paper-s3lab/src/satellite_rl/s3lab/methods.py#L400>) 新增的跳过条件会在起点已满足 100% 时完全跳过省功率：同一无干扰例子从各 50 W 出发返回总功率 **100 W**，各 1 W、总计 **2 W** 已同样满足 100%。应允许对相同满足比例求更低功率，并按真实满足比例、并列省功率更新。
 
 确定性核验：[脚本](<D:/paper/outputs/experiments/s3lab_20261029/astra/code_check/fix_review_checks.py>)、[输出](<D:/paper/outputs/experiments/s3lab_20261029/astra/code_check/fix_review_checks.txt>)。本次仅复核上述两处，没有修改实验源码或启动正式实验。
+
+## 第二次修正复核
+
+**结论：`ddb6446` 的两条严重问题已修正，本次未发现新的根本错误，可以按修订后的方案开跑正式矩阵。**
+
+2026-10-29，指定 DQN 环境重跑 9 项测试全部通过，并按新接口重跑 [确定性反例脚本](<D:/paper/outputs/experiments/s3lab_20261029/astra/code_check/fix_review_checks.py>)：接入在 10.01 秒完成时，10 秒主表与端点均保留原功率；在 1.02 秒完成时可进入 3 秒节点，在 3.01 秒完成时不能进入 3 秒节点。接入实际发生在运行过程中，耗时占用同一墙钟预算，已消除倒填。
+
+最大最小公平核验超过截止时，返回原功率、真实满足比例 0.585 和 `limit`，证书与输出一致；起点已满足 100% 的无干扰例子，总功率从 100 W 降至 2 W，仍满足 100%。原强干扰反例保留已知可行点，上界不再错误压低。统一接入的直接接受分支与方案新增规则一致。本次只复核、运行本地小检查并追加本文，未启动正式实验。
