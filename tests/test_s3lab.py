@@ -102,6 +102,31 @@ class S3LabTests(unittest.TestCase):
         self.assertGreaterEqual(res['t_upper'], t0 - 1e-12)
         C = fp.evaluate(res['p']).C
         self.assertTrue((C >= res['t'] * fp.demand * (1 - 1e-6)).all())
+        # 无干扰、起点已 100% 满足：仍应求出同比例下更省功率的解
+        fp.b = sparse.csr_matrix(np.zeros((2, 2)))
+        fp.a = np.array([1., 1.])
+        res = M.maxmin(fp, p0, 0., 0., M.Clock(10.))
+        self.assertAlmostEqual(res['t'], 1., places=6)
+        self.assertLess(res['p'].sum(), 10.)
+
+    def test_access_recorded_during_run(self):
+        """接入在运行中完成、时刻记在 acc 里且不超过时限；时限后的候选不进记录。"""
+        _, _, fp, p0 = self.cases[1]
+        e0 = fp.evaluate(p0)
+        clock = M.Clock(10.)
+        clock.access = lambda p: M.protect(fp, p0, p, e0.F, 0.)
+        res = M.sca(fp, p0, e0.F, 0., clock)
+        self.assertGreater(len(res['acc']), 1)
+        times = [t for t, _, _ in res['acc']]
+        self.assertEqual(times, sorted(times))
+        self.assertLessEqual(times[-1], clock.elapsed())
+        clock2 = M.Clock(0.)
+        clock2.access = clock.access
+        tr = M.Tracker(clock2, p0, (0.,), M.MARKS)
+        import time as _t
+        _t.sleep(.01)
+        self.assertFalse(tr.offer(p0 * .9, (1.,)))
+        self.assertEqual(len(tr.acc), 1)
 
     def test_wmmse_bound_and_monotone(self):
         _, _, fp, p0 = self.cases[0]

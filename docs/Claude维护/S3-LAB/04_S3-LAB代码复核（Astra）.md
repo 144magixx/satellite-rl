@@ -59,3 +59,14 @@
 新增只读核验脚本：[review_checks.py](<D:/paper/outputs/experiments/s3lab_20261029/astra/code_check/review_checks.py>)；实际输出：[review_checks.txt](<D:/paper/outputs/experiments/s3lab_20261029/astra/code_check/review_checks.txt>)。输入配对核查覆盖 24 个冻结方案文件；既有全量回放数值另见 [回放记录](<D:/paper/outputs/experiments/s3lab_20261029/plans/replay_check.json>)，本次没有重新生成输入。
 
 当前接口未提供可核验的思考档位设置，因此不登记为已确认使用 xhigh。
+
+## 修正复核
+
+**结论：`055e898` 仍不能开跑正式矩阵；原来的错误缩上界和丢失起点已修正，但接入仍倒填时间，最大最小公平仍可能报告与返回功率不符的满足比例。**
+
+2026-10-29，指定 DQN 环境重跑 8 项测试全部通过；原两束反例现在保留满足比例 0.99986、上界 1，9.99 秒候选加 0.02 秒接入的旧计时反例也已挡住。以下边界仍未通过：
+
+1. **接入时间仍不是真实完成时间。** [run_shard.py:124](<D:/paper-s3lab/scripts/s3lab/run_shard.py#L124>) 到 [run_shard.py:141](<D:/paper-s3lab/scripts/s3lab/run_shard.py#L141>) 仍在原生求解结束后做接入，却用历史候选时间 `t_i + acc_i` 回填。手动时钟复现：候选在 1 秒产生，原生求解到 10 秒结束，接入在 **10.02 秒**才完成，却记 `t_avail=1.02`，把 W 从 0.193 提升到 0.279 的结果写入 **3 秒和 10 秒**节点及主表。应在运行过程中对原生最佳点实际执行接入，使用同一个墙钟记录接入完成时刻，接入耗时也占用共同预算；各节点和主表只取此前实际完成的记录。事后逐点测耗时再相加不能代替这一过程。
+2. **最大最小公平的证书仍会与输出脱节。** [methods.py:402](<D:/paper-s3lab/src/satellite_rl/s3lab/methods.py#L402>)、[methods.py:414](<D:/paper-s3lab/src/satellite_rl/s3lab/methods.py#L414>) 在 `Tracker.offer` 接受前就更新 `best_t`，没有处理截止后被拒收。两束无干扰 `SINR_i=p_i`、各需求 25 Mbps，起点各 0.5 W；让新点真实核验在 10.01 秒结束，结果返回原功率（实际最小满足比例 **0.585**），却报告 **`t=1`、`status='ok'`**。应在核验后再检查截止，只在 Tracker 接受时更新输出证书，并从最终保留点的真实最小满足比例生成 `t`；越界则保留旧点并标 `limit`。此外，[methods.py:400](<D:/paper-s3lab/src/satellite_rl/s3lab/methods.py#L400>) 新增的跳过条件会在起点已满足 100% 时完全跳过省功率：同一无干扰例子从各 50 W 出发返回总功率 **100 W**，各 1 W、总计 **2 W** 已同样满足 100%。应允许对相同满足比例求更低功率，并按真实满足比例、并列省功率更新。
+
+确定性核验：[脚本](<D:/paper/outputs/experiments/s3lab_20261029/astra/code_check/fix_review_checks.py>)、[输出](<D:/paper/outputs/experiments/s3lab_20261029/astra/code_check/fix_review_checks.txt>)。本次仅复核上述两处，没有修改实验源码或启动正式实验。

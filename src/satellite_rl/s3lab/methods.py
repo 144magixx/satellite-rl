@@ -28,13 +28,14 @@ class Clock:
 
 
 class Tracker:
-    """按原生准则（key 越大越好）保留最好的已核验点；在每个时间点记下当时的最好点。"""
+    """按原生准则（key 越大越好）保留最好的已核验点；在每个时间点记下当时的最好点。
+    若 clock 带 access（保 SGM 接入），每接受一个新的最好点就当场做接入，并记下接入实际完成的时刻（占用同一时限）。"""
 
     def __init__(self, clock, p, key, marks):
         self.clock, self.marks = clock, [m for m in marks if m <= clock.limit + 1e-9]
         self.p, self.key, self.t_best = p.copy(), key, 0.
         self.snap = {}
-        self.hist = [(0., p.copy())]                          # 每次原生最好点更新的 (完成时刻, 功率)，运行器据此按时间点做接入
+        self.acc = [(0., p.copy(), 0.)]                       # (接入完成时刻, 接入后功率, τ)；起点即第二阶段原功率
 
     def _fill(self, upto):
         for m in self.marks:
@@ -48,7 +49,10 @@ class Tracker:
         self._fill(e)
         if key > self.key:
             self.p, self.key, self.t_best = p.copy(), key, e
-            self.hist.append((e, self.p))
+            access = getattr(self.clock, 'access', None)
+            if access is not None:
+                pa, tau = access(self.p)
+                self.acc.append((self.clock.elapsed(), pa, tau))
             return True
         return False
 
@@ -63,7 +67,7 @@ class Result(dict):
 
 def _result(tracker, status, iters, evals, **extra):
     return Result(p=tracker.p, key=tracker.key, status=status, iters=iters, evals=evals, t_best=tracker.t_best,
-                  snaps=tracker.finish(), hist=tracker.hist, **extra)
+                  snaps=tracker.finish(), acc=tracker.acc, **extra)
 
 
 # ---------------------------------------------------------------- 共用小工具
@@ -394,26 +398,32 @@ def maxmin(fp, p0, F0, delta, clock, marks=MARKS, outer=20, inner=200):
             p = v
         return 'unknown', None
 
+    def keep(t, p):
+        """只有 Tracker 真接受（未过时限、更好或同比例更省功率）才算数；返回是否接受。"""
+        return tr.offer(p, (t, -p.sum()))
+
     a, b, it = t0, t_up, 0
     c = b                                                    # 本轮试探上限（未判定时下调，不当作不可行）
-    res = 'skip'
-    if b > a + 1e-12:
-        res, p = check(b)
-        if res == 'yes':
-            best_t, best_p, a = b, p, b
-            tr.offer(best_p, (best_t, -best_p.sum()))
-        elif res == 'no':
-            c = b
-        elif res == 'unknown':
-            count['undet'] += 1
-    status = 'limit' if res == 'stop' else 'ok'
-    while res != 'stop' and c - a > 1e-3 and it < outer:
+    status = 'ok'
+    res, p = check(b)                                        # 即使起点已达上界也做：同一比例下求最小功率解
+    if res == 'yes':
+        if keep(b, p):
+            a = b
+        elif clock.over():
+            status = 'limit'
+    elif res == 'unknown':
+        count['undet'] += 1
+    elif res == 'stop':
+        status = 'limit'
+    while status == 'ok' and c - a > 1e-3 and it < outer:
         it += 1
         mid = (a + c) / 2
         res, p = check(mid)
         if res == 'yes':
-            a, best_t, best_p = mid, mid, p
-            tr.offer(best_p, (best_t, -best_p.sum()))
+            if keep(mid, p):
+                a = mid
+            elif clock.over():
+                status = 'limit'
         elif res == 'no':
             b = c = mid
         elif res == 'unknown':
@@ -421,7 +431,8 @@ def maxmin(fp, p0, F0, delta, clock, marks=MARKS, outer=20, inner=200):
             c = mid
         else:
             status = 'limit'
-    return _result(tr, status, it, count['evals'], t=best_t, t_upper=b, undetermined=count['undet'])
+    t_out = float(min(1., (fp.evaluate(tr.p).C[fp.idx] / D).min()))   # 输出证书取自最终保留点本身
+    return _result(tr, status, it, count['evals'], t=t_out, t_upper=b, undetermined=count['undet'])
 
 
 # ---------------------------------------------------------------- 8 WMMSE（需求封顶的和速率）
@@ -525,9 +536,13 @@ def wmmse(fp, p0, F0, delta, clock, marks=MARKS, max_iter=200, tol=1e-7):
 
 # ---------------------------------------------------------------- 保 SGM 接入
 def protect(fp, p0, pm, F0, delta, n=21):
-    """在 p0→pm 的连线上取 n 个点，选 F ≥ F0−δ 中 W 最高者（并列省功率）；τ=0 一定可行。"""
+    """保 SGM 接入：方法输出本身 SGM 达标且 W 不低于原功率就直接用（τ=1）；否则在 p0→pm 连线上取 n 个点，
+    选 F ≥ F0−δ 中 W 最高者（并列省功率），τ=0 一定可行。所有方法同一规则。"""
     thr = F0 - delta - 1e-12
     e0 = fp.evaluate(p0)
+    em = fp.evaluate(pm)
+    if em.F >= thr and em.W >= e0.W:
+        return pm, 1.
     best = (e0.W, -e0.power)
     best_p, best_tau = p0, 0.
     for tau in np.linspace(0, 1, n)[1:]:
