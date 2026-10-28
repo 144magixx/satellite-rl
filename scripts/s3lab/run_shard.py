@@ -119,16 +119,33 @@ def run_input(args):
             res = METHODS[name](fp, p0, F0, delta, clock, marks=marks, **kw)
             status = res['status']
         except Exception as e:                                # 真正没有输出才算失败，回用原功率
-            res = dict(p=p0, status='fail', iters=0, evals=0, t_best=0., snaps={m: p0 for m in marks}, error=repr(e))
+            res = dict(p=p0, status='fail', iters=0, evals=0, t_best=0., snaps={m: p0 for m in marks}, hist=[(0., p0)], error=repr(e))
             status = 'fail'
         t_native = clock.elapsed()
-        ta = time.perf_counter()
-        pa, tau = protect(fp, p0, res['p'], F0, delta)
-        t_access = time.perf_counter() - ta
+        acc_cache = {}
+
+        def access_at(mark):
+            """时间点 mark 能拿到的接入结果：原生最好点的完成时刻＋它的接入核验耗时都不晚于 mark（10-29 按 Astra 代码复核修正）。"""
+            for i in range(len(res['hist']) - 1, -1, -1):
+                t_i, p_i = res['hist'][i]
+                if t_i > mark:
+                    continue
+                if i == 0:
+                    return p0, 0., 0., 0.                    # 第二阶段原功率本身，开跑时就有
+                if i not in acc_cache:
+                    t1 = time.perf_counter()
+                    pa_i, tau_i = protect(fp, p0, p_i, F0, delta)
+                    acc_cache[i] = (pa_i, tau_i, time.perf_counter() - t1)
+                pa_i, tau_i, acc_i = acc_cache[i]
+                if t_i + acc_i <= mark:
+                    return pa_i, tau_i, acc_i, t_i + acc_i
+            return p0, 0., 0., 0.
+
+        pa, tau, t_access, t_avail = access_at(limit)
         mn, ma = fp.metrics(res['p']), fp.metrics(pa)
         row = dict(base, method=name, seed=seed, delta=delta, limit=limit, tag=extra.get('tag', ''), status=status,
-                   iters=res['iters'], evals=res['evals'], t_native=t_native, t_best=res['t_best'], t_access=t_access, tau=tau,
-                   **{f'n_{kk}': v for kk, v in mn.items()}, **{f'a_{kk}': v for kk, v in ma.items()})
+                   iters=res['iters'], evals=res['evals'], t_native=t_native, t_best=res['t_best'], t_access=t_access,
+                   t_avail=t_avail, tau=tau, **{f'n_{kk}': v for kk, v in mn.items()}, **{f'a_{kk}': v for kk, v in ma.items()})
         for kk in ('t', 't_upper', 'undetermined', 'error'):
             if kk in res:
                 row[kk] = res[kk]
@@ -136,8 +153,7 @@ def run_input(args):
             snaps = {}
             for mk, ps in sorted(res['snaps'].items()):
                 en = fp.evaluate(ps)
-                pas, _ = protect(fp, p0, ps, F0, delta)
-                ea = fp.evaluate(pas)
+                ea = fp.evaluate(access_at(mk)[0])
                 snaps[f'{mk:g}'] = [en.W, en.F, ea.W, ea.F]
             row['snaps'] = snaps
         rows.append(row)

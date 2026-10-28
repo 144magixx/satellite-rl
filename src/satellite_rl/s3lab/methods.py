@@ -34,6 +34,7 @@ class Tracker:
         self.clock, self.marks = clock, [m for m in marks if m <= clock.limit + 1e-9]
         self.p, self.key, self.t_best = p.copy(), key, 0.
         self.snap = {}
+        self.hist = [(0., p.copy())]                          # 每次原生最好点更新的 (完成时刻, 功率)，运行器据此按时间点做接入
 
     def _fill(self, upto):
         for m in self.marks:
@@ -47,6 +48,7 @@ class Tracker:
         self._fill(e)
         if key > self.key:
             self.p, self.key, self.t_best = p.copy(), key, e
+            self.hist.append((e, self.p))
             return True
         return False
 
@@ -61,7 +63,7 @@ class Result(dict):
 
 def _result(tracker, status, iters, evals, **extra):
     return Result(p=tracker.p, key=tracker.key, status=status, iters=iters, evals=evals, t_best=tracker.t_best,
-                  snaps=tracker.finish(), **extra)
+                  snaps=tracker.finish(), hist=tracker.hist, **extra)
 
 
 # ---------------------------------------------------------------- 共用小工具
@@ -353,17 +355,21 @@ def target_capacity(fp, p0, F0, delta, clock, marks=MARKS, damping=.3, max_iter=
 
 # ---------------------------------------------------------------- 7 最大最小公平
 def maxmin(fp, p0, F0, delta, clock, marks=MARKS, outer=20, inner=200):
+    """二分满足比例 t。已证可行的 t 记入下界 a；已证不可行才收紧上界 b；内层未判定只把本轮试探上限 c 降下来，不动 b。
+    起点：第二阶段功率本身的最小满足比例就是一个已证可行值（10-29 按 Astra 代码复核修正）。"""
     D = fp.D_act
     floor_p = fp.lo.copy()
-    tr = Tracker(clock, p0, (-1., 0.), marks)
     if fp.M < fp.N:                                          # 有无槽且有需求的束：最小值只能是 0，取最小功率解
+        tr = Tracker(clock, p0, (-1., 0.), marks)
         tr.offer(floor_p, (0., -floor_p.sum()))
         return _result(tr, 'ok', 0, 0, t=0., t_upper=0., undetermined=0)
+    e0 = fp.evaluate(p0)
+    t0 = float(min(1., (e0.C[fp.idx] / D).min()))
+    tr = Tracker(clock, p0, (t0, -p0.sum()), marks)
     U = fp.beam_rate(fp.snr_frozen(None), fp.hi)
     t_up = float(min(1., (U / D).min()))
-    best_t, best_p = 0., floor_p
-    tr.offer(best_p, (0., -best_p.sum()))
-    count = {'evals': 0, 'undet': 0}
+    best_t, best_p = t0, p0
+    count = {'evals': 1, 'undet': 0}
 
     def check(t):
         p = fp.lo.copy()
@@ -388,26 +394,31 @@ def maxmin(fp, p0, F0, delta, clock, marks=MARKS, outer=20, inner=200):
             p = v
         return 'unknown', None
 
-    a, b, it = 0., t_up, 0
-    res, p = check(b)
-    if res == 'yes':
-        best_t, best_p, a = b, p, b
-        tr.offer(best_p, (best_t, -best_p.sum()))
-    elif res == 'unknown':
-        count['undet'] += 1
+    a, b, it = t0, t_up, 0
+    c = b                                                    # 本轮试探上限（未判定时下调，不当作不可行）
+    res = 'skip'
+    if b > a + 1e-12:
+        res, p = check(b)
+        if res == 'yes':
+            best_t, best_p, a = b, p, b
+            tr.offer(best_p, (best_t, -best_p.sum()))
+        elif res == 'no':
+            c = b
+        elif res == 'unknown':
+            count['undet'] += 1
     status = 'limit' if res == 'stop' else 'ok'
-    while res != 'stop' and b - a > 1e-3 and it < outer:
+    while res != 'stop' and c - a > 1e-3 and it < outer:
         it += 1
-        mid = (a + b) / 2
+        mid = (a + c) / 2
         res, p = check(mid)
         if res == 'yes':
             a, best_t, best_p = mid, mid, p
             tr.offer(best_p, (best_t, -best_p.sum()))
         elif res == 'no':
-            b = mid
+            b = c = mid
         elif res == 'unknown':
             count['undet'] += 1
-            b = mid
+            c = mid
         else:
             status = 'limit'
     return _result(tr, status, it, count['evals'], t=best_t, t_upper=b, undetermined=count['undet'])
@@ -498,7 +509,7 @@ def wmmse(fp, p0, F0, delta, clock, marks=MARKS, max_iter=200, tol=1e-7):
         g_cross = (w * u * u / LN2)[socp.b_row] * socp.b_val
         xn = socp.solve(kappa, beta, g_own, g_cross)
         if xn is None or clock.over():
-            status = 'limit' if xn is not None else 'fail'
+            status = 'limit' if xn is not None else 'subproblem_stop'    # 子问题没解出：带着已有有效输出停下，不算失败
             break
         pn = project_budget(fp, xn * xn)
         e = fp.evaluate(pn)

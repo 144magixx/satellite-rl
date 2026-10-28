@@ -79,6 +79,30 @@ class S3LabTests(unittest.TestCase):
             self.assertTrue((C >= res['t'] * fp.D_act * (1 - 1e-6)).all())
             self.assertLessEqual(res['t'], res['t_upper'] + 1e-12)
 
+    def test_maxmin_keeps_known_feasible(self):
+        """Astra 反例：两束各一槽、需求 25 Mbps，SINR_i = 100 p_i/(1+100 p_j)；(50,50) 已有满足比例 0.99986，结果不得更差、上界不得低于它。"""
+        from scipy import sparse
+        fp = object.__new__(FixedPlan)
+        fp.N = fp.M = fp.Q = 2
+        fp.demand = fp.D_act = np.array([25e6, 25e6])
+        fp.D_total, fp.beta = 50e6, 25e6
+        fp.members = np.array([1, 1])
+        fp.idx = fp.owner = np.arange(2)
+        fp.lo, fp.hi = np.full(2, .5), np.full(2, 50.)
+        fp.budget, fp.cap, fp.floor = 2000., 50., .5
+        fp.B, fp.eta = 25e6, 5.5
+        fp.a = np.array([100., 100.])
+        fp.b = sparse.csr_matrix(np.array([[0., 100.], [100., 0.]]))
+        fp.R = sparse.csr_matrix(np.eye(2))
+        fp.H = np.full(2, 25e6 * 5.5)
+        p0 = np.array([50., 50.])
+        t0 = (fp.evaluate(p0).C / fp.demand).min()
+        res = M.maxmin(fp, p0, 0., 0., M.Clock(10.))
+        self.assertGreaterEqual(res['t'], t0 - 1e-12)
+        self.assertGreaterEqual(res['t_upper'], t0 - 1e-12)
+        C = fp.evaluate(res['p']).C
+        self.assertTrue((C >= res['t'] * fp.demand * (1 - 1e-6)).all())
+
     def test_wmmse_bound_and_monotone(self):
         _, _, fp, p0 = self.cases[0]
         x = np.sqrt(p0)
