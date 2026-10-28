@@ -49,29 +49,38 @@ class Boot:
                 idx.append(np.concatenate([blocks[i] for i in pick]))
             self.draws.append(np.concatenate(idx))
         self.impl = rng.integers(0, 3, (B, 2, 3))            # 两类三套实现（随机、块指针头）各自整体重抽
+        self.seedpick = rng.integers(0, 3, (B, 3, len(self.keys), 3)).astype(np.int8)   # 两段式求解器种子在每份输入内部重抽
+
+    def _seeds(self, v, b):
+        """v [实现, 场景, 种子]：多种子时按本次抽样在每份输入内部重抽种子再平均。"""
+        if v.shape[2] == 1:
+            return v[:, :, 0]
+        picks = self.seedpick[b, :v.shape[0], :v.shape[1], :].astype(np.int64)
+        return np.take_along_axis(v, picks, axis=2).mean(2)
 
     def stat(self, arrs, fn):
-        """arrs: {名字: [实现数, 场景数]}；fn(dict 名字→[场景]) → 标量。返回 (点估计, 下限, 上限)。"""
-        point = fn({k: v.mean(0) for k, v in arrs.items()})
+        """arrs: {名字: [实现数, 场景数, 种子数]}；fn(dict 名字→[场景]) → 标量。返回 (点估计, 下限, 上限)。"""
+        point = fn({k: v.mean(2).mean(0) for k, v in arrs.items()})
         vals = []
         for b, idx in enumerate(self.draws):
             sub = {}
             for k, v in arrs.items():
-                if v.shape[0] == 3:
+                v2 = self._seeds(v, b)
+                if v2.shape[0] == 3:
                     which = self.impl[b, 0 if k.startswith('random') else 1]
-                    sub[k] = v[which][:, idx].mean(0)
+                    sub[k] = v2[which][:, idx].mean(0)
                 else:
-                    sub[k] = v[0, idx]
+                    sub[k] = v2[0, idx]
             vals.append(fn(sub))
         lo, hi = np.percentile(vals, [2.5, 97.5])
         return float(point), float(lo), float(hi)
 
 
 def tier_array(d, s, tier, method, col, keys, delta=0., tag=''):
-    """[实现数, 场景数] 的数组（场景顺序同 keys；两段式先平均求解器种子）。"""
+    """[实现数, 场景数, 求解器种子数] 的数组（场景顺序同 keys；只有两段式有 3 个求解器种子）。"""
     x = d[(d.set == s) & (d.tier == tier) & (d.method == method) & (np.isclose(d.delta, delta)) & (d.tag == tag)]
-    x = x.groupby(['plan', 'key'])[col].mean().unstack('key')[keys]
-    return x.to_numpy()
+    p = x.pivot_table(index=['plan', 'key'], columns='seed', values=col, aggfunc='first')
+    return np.stack([p.loc[pl].reindex(keys).to_numpy() for pl in sorted(x.plan.unique())])
 
 
 def main():
@@ -156,6 +165,26 @@ def main():
                     v = np.array([sn[mk] for sn in x.snaps])
                     curve[mk] = dict(nW=float((v[:, 0] - x.W0.to_numpy()).mean()), aW=float((v[:, 2] - x.W0.to_numpy()).mean()))
                 n['time'][f'{s}|{t}|{m}'] = curve
+        # 逐实现：SCA 的 W 增量（块指针头、随机各 3 套）
+        for t in ('ptr', 'random'):
+            arr = tier_array(d, s, t, 'sca', 'd_W', keys)
+            n.setdefault('per_impl', {})[f'{s}|{t}'] = [float(v) for v in arr[:, :, 0].mean(1)]
+        # 逐日：各档 SCA 的 W 增量；块指针头 − 贪心（不细调、SCA 后）
+        cache = {}
+
+        def per_scene(t, m, col):
+            if (t, m, col) not in cache:
+                cache[(t, m, col)] = tier_array(d, s, t, m, col, keys).mean(2).mean(0)
+            return cache[(t, m, col)]
+        for dy in sorted({k[:8] for k in keys}):
+            idx = [i for i, k in enumerate(keys) if k[:8] == dy]
+            rec = {'n': len(idx)}
+            for t in TIERS:
+                rec[f'dW|{t}'] = float(per_scene(t, 'sca', 'd_W')[idx].mean())
+            for m in ('none', 'sca'):
+                for col in ('a_W', 'a_SGM', 'a_worst10'):
+                    rec[f'gap|{m}|{col}'] = float(per_scene('ptr', m, col)[idx].mean() - per_scene('greedy', m, col)[idx].mean())
+            n.setdefault('per_day', {})[f'{s}|{dy}'] = rec
     # 取舍曲线
     tp = runs / 'tradeoff' / 'rows.jsonl'
     if tp.exists():
