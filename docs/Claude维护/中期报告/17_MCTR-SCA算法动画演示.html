@@ -1,0 +1,1567 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCTR-SCA 功率精细优化算法 · 动画演示</title>
+<style>
+:root { --bg:#f4f2ed; --ink:#2b2f36; --mute:#6c7079; --line:#dcd7cc; --navy:#2d4b73; --green:#3c7a4a; --orange:#c27a2c; --purple:#6b4fa0; --red:#b5443b; }
+* { box-sizing:border-box; }
+html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+  font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC","Source Han Sans SC",sans-serif; }
+#app { display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; height:100vh; min-height:660px; }
+header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:7px 16px; background:#fff; border-bottom:1px solid var(--line); }
+header h1 { font-size:18px; margin:0; font-weight:600; letter-spacing:.3px; white-space:nowrap; }
+header h1 small { font-weight:400; color:var(--mute); font-size:13px; margin-left:8px; }
+.presets { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--mute); }
+button { font-family:inherit; font-size:13px; padding:4px 12px; border:1px solid #c9c3b6; border-radius:5px; background:#fff; color:var(--ink); cursor:pointer; }
+button:hover { background:#f3f1ea; }
+button.on { background:var(--navy); color:#fff; border-color:var(--navy); }
+#navbar { padding:6px 16px 6px; background:#faf9f5; border-bottom:1px solid var(--line); }
+#chips { display:flex; flex-wrap:wrap; gap:4px; }
+.chip { font-size:12.5px; padding:2px 9px; border:1px solid var(--line); border-left-width:4px; border-radius:4px; background:#fff; cursor:pointer; white-space:nowrap; }
+.chip.pre { border-left-color:#9aa6b5; }
+.chip.acc { border-left-color:#5f9d6f; }
+.chip.rep { border-left-color:#d1a148; }
+.chip.rej { border-left-color:#c4645b; }
+.chip.stop, .chip.end { border-left-color:#5a6f8c; }
+.chip.on { background:var(--navy); color:#fff; border-color:var(--navy); }
+#ticks { display:flex; gap:2px; margin-top:6px; height:5px; }
+#ticks span { flex:1; background:#e2ded4; border-radius:2px; cursor:pointer; }
+#ticks span.done { background:#a8b6c9; }
+#ticks span.on { background:var(--navy); }
+main { display:grid; grid-template-columns:minmax(0,1fr) 590px; min-height:0; }
+#left { display:flex; flex-direction:column; min-height:0; padding:6px 4px 4px 10px; }
+#plotWrap { flex:1; min-height:0; position:relative; }
+#plot { position:absolute; left:0; top:0; }
+#legend { font-size:12px; color:var(--mute); display:flex; flex-wrap:wrap; gap:3px 14px; padding:3px 6px 0 60px; }
+.lg { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+.sw { display:inline-block; width:18px; height:10px; }
+#right { display:flex; flex-direction:column; min-height:0; padding:8px 14px 8px 6px; gap:7px; }
+#stepHead { display:flex; align-items:baseline; gap:10px; }
+#stepNo { font-size:12px; color:var(--mute); white-space:nowrap; }
+#stepTitle { font-size:17px; margin:0; color:var(--navy); font-weight:600; }
+#stepText { flex:1; min-height:110px; overflow:auto; background:#fff; border:1px solid var(--line); border-radius:6px; padding:8px 14px; font-size:14px; line-height:1.7; }
+#stepText p { margin:0 0 7px; }
+#stepText ul { margin:0 0 7px; padding-left:20px; }
+#stepText li { margin-bottom:3px; }
+.eq { font-family:"Cambria Math","Cambria","Times New Roman",serif; font-size:15px; background:#f6f4ee; border-left:3px solid #c9c0ad; padding:4px 10px; margin:3px 0 8px; line-height:1.65; }
+i { font-family:"Cambria Math","Cambria","Times New Roman",serif; font-style:italic; }
+b.vb { font-family:"Times New Roman",serif; font-weight:700; font-style:normal; }
+sub, sup { font-size:72%; line-height:0; }
+.hl { color:var(--navy); font-weight:600; }
+.okc { color:var(--green); font-weight:600; }
+.badc { color:var(--red); font-weight:600; }
+#metrics { background:#fff; border:1px solid var(--line); border-radius:6px; padding:5px 10px 6px; font-size:13px; }
+table.mt { border-collapse:collapse; width:100%; }
+.mt th, .mt td { padding:2px 6px; text-align:right; border-bottom:1px solid #efece4; white-space:nowrap; font-weight:400; }
+.mt th { color:var(--mute); font-size:12.5px; }
+.mt th:first-child, .mt td:first-child { text-align:left; color:var(--mute); }
+.mt td.ok { color:var(--green); font-weight:600; }
+.mt td.bad { color:var(--red); font-weight:600; }
+.mt td.pr { color:#7a6a9c; }
+.kv { margin-top:4px; font-size:13px; line-height:1.6; }
+#charts { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+#charts > div { background:#fff; border:1px solid var(--line); border-radius:6px; padding:2px 4px; }
+#charts svg { width:100%; height:auto; display:block; }
+footer { display:flex; align-items:center; gap:8px; padding:6px 16px; background:#fff; border-top:1px solid var(--line); font-size:13px; }
+footer label { display:inline-flex; align-items:center; gap:5px; margin-left:8px; color:var(--mute); }
+footer select { font-family:inherit; font-size:13px; padding:2px 4px; }
+#frameNo { margin-left:auto; color:var(--mute); }
+#keys { color:#9a9ea6; font-size:12px; margin-left:12px; }
+#errlog { display:none; position:fixed; bottom:56px; left:10px; max-width:60%; background:#fdeeee; color:#8a1f1f; font-size:12px; padding:6px 10px; white-space:pre-wrap; z-index:9; border:1px solid #e3b3b3; }
+#selftest { display:none; white-space:pre-wrap; font-size:12px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>MCTR-SCA 功率精细优化算法 · 动画演示<small>匹配约束信赖域逐次凸逼近，第三阶段</small></h1>
+    <div class="presets" id="presets"><span>预设例子</span></div>
+  </header>
+  <div id="navbar"><div id="chips"></div><div id="ticks"></div></div>
+  <main>
+    <section id="left">
+      <div id="plotWrap"><canvas id="plot"></canvas></div>
+      <div id="legend">
+        <span class="lg"><span class="sw" style="background:linear-gradient(90deg,#faf8f1,#cddbe7,#7999bf)"></span>需求满足率 W 底色与等值线</span>
+        <span class="lg"><span class="sw" style="background:rgba(120,175,125,.45)"></span>可行区域 F ≥ F₀</span>
+        <span class="lg"><span class="sw" style="height:3px;background:#3c7a4a"></span>真实 SGM 边界</span>
+        <span class="lg"><span class="sw" style="border:2px dashed #c27a2c;height:12px"></span>信赖域</span>
+        <span class="lg"><span class="sw" style="height:3px;background:#6b4fa0"></span>线性化 SGM 约束</span>
+        <span class="lg"><span class="sw" style="background:rgba(120,95,175,.25)"></span>子问题可行范围</span>
+        <span class="lg"><span class="sw" style="border-top:2px dashed #7d848c;height:0"></span>线性容量等于需求</span>
+        <span class="lg"><span class="sw" style="height:3px;background:#2d4b73"></span>被接受的点的轨迹</span>
+        <span class="lg" style="color:#b5443b">× 被拒绝的候选点</span>
+      </div>
+    </section>
+    <section id="right">
+      <div id="stepHead"><span id="stepNo"></span><h2 id="stepTitle"></h2></div>
+      <div id="stepText"></div>
+      <div id="metrics"></div>
+      <div id="charts"><div id="bars"></div><div id="hist"></div></div>
+    </section>
+  </main>
+  <footer>
+    <button id="btnPrev">上一步</button>
+    <button id="btnPlay">播放</button>
+    <button id="btnNext">下一步</button>
+    <button id="btnReplay">重播本步</button>
+    <label>速度 <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="3">3×</option></select></label>
+    <label><input type="checkbox" id="autoZoom" checked> 自动缩放</label>
+    <span id="keys">键盘：← → 翻步，空格 播放/暂停，R 重播</span>
+    <span id="frameNo"></span>
+  </footer>
+</div>
+<div id="errlog"></div>
+<pre id="selftest"></pre>
+
+<!-- ===================== 算法核心：纯计算，不依赖页面，可单独测试 ===================== -->
+<script id="sca-core">
+var SCA = (function () {
+  'use strict';
+  var LN2 = Math.log(2);
+
+  // 三个预设例子。a、b 已除以噪声；D 为需求，单位 Mbps；p0 取自第二阶段 13 档离散功率
+  var PRESETS = [
+    { name: '例子一：两束互扰', a: [5.2, 0.54], b: [0.81, 0.62], D: [90, 60], L: [3, 2], D0: 30, p0: [5, 15], ptot: Infinity,
+      story: '波束1有3架飞机，信号系数大；波束2有2架飞机，信号系数小。单机需求 30 Mbps。两束互相干扰，不设总功率上限，每束功率在 0.5—50 W 之间。' },
+    { name: '例子二：需求悬殊', a: [10, 1.9], b: [1.1, 0.67], D: [135, 45], L: [3, 1], D0: 45, p0: [15, 15], ptot: 70,
+      story: '波束1有3架飞机，信号系数大；波束2只有1架飞机，信号系数小，相对更怕干扰。单机需求 45 Mbps，两束总功率不超过 70 W。' },
+    { name: '例子三：总功率受限', a: [6.8, 0.51], b: [0.15, 1.5], D: [120, 40], L: [3, 1], D0: 40, p0: [2, 20], ptot: 70,
+      story: '波束1有3架飞机，信号系数大；波束2有1架飞机，信号系数小，而且受波束1的干扰很重。单机需求 40 Mbps，两束总功率不超过 70 W，算法最后会碰到这条上限。' }
+  ];
+
+  // 式（5）中单个波束的匹配得分 Λ 及其对容量的导数
+  function sgmTerm(C, D, beta) {
+    if (C <= 0) return [0, 0];
+    var z = C / D;
+    var u = z >= 1 ? z - 1 : 1 - 1 / z;
+    var du = z >= 1 ? 1 / D : D / (C * C);
+    var v = (C - D) / beta;
+    var h = Math.sqrt(u * u + v * v);
+    var e = Math.exp(-h);
+    var dh = h > 0 ? (u * du + v / beta) / h : 0;
+    return [1 - Math.pow(1 - e, 3), -3 * (1 - e) * (1 - e) * e * dh];
+  }
+
+  // 按原模型计算容量、W、F：C_i = B·min(log2(1+Γ_i), η)，Γ_i = a_i p_i /(1 + b_i p_j)
+  function evaluate(m, p) {
+    var ev = { p: [p[0], p[1]], C: [0, 0], G: [0, 0], nu: [0, 0], capped: [false, false], Lam: [0, 0], dLam: [0, 0] };
+    for (var i = 0; i < 2; i++) {
+      var j = 1 - i;
+      ev.nu[i] = 1 + m.b[i] * p[j];
+      ev.G[i] = m.a[i] * p[i] / ev.nu[i];
+      var raw = Math.log2(1 + ev.G[i]);
+      ev.capped[i] = raw >= m.eta;
+      ev.C[i] = m.B * Math.min(raw, m.eta);
+      var s = sgmTerm(ev.C[i], m.D[i], m.beta);
+      ev.Lam[i] = s[0];
+      ev.dLam[i] = s[1];
+    }
+    ev.served = Math.min(ev.C[0], m.D[0]) + Math.min(ev.C[1], m.D[1]);
+    ev.W = ev.served / m.Dtot;
+    ev.F = (ev.Lam[0] + ev.Lam[1]) / 2;
+    return ev;
+  }
+
+  // 只算 W 与 F，用于画底图
+  function lamOnly(C, D, beta) {
+    if (C <= 0) return 0;
+    var z = C / D, u = z >= 1 ? z - 1 : 1 - 1 / z, v = (C - D) / beta;
+    return 1 - Math.pow(1 - Math.exp(-Math.sqrt(u * u + v * v)), 3);
+  }
+  function WF(m, x, y, out) {
+    var c1 = m.B * Math.min(Math.log2(1 + m.a[0] * x / (1 + m.b[0] * y)), m.eta);
+    var c2 = m.B * Math.min(Math.log2(1 + m.a[1] * y / (1 + m.b[1] * x)), m.eta);
+    out[0] = (Math.min(c1, m.D[0]) + Math.min(c2, m.D[1])) / m.Dtot;
+    out[1] = (lamOnly(c1, m.D[0], m.beta) + lamOnly(c2, m.D[1], m.beta)) / 2;
+    return out;
+  }
+
+  // 式（22）：J_ij = B/((1+Γ_i)ln2) · (χ_i·1{i=j} − Γ_i ψ_ij)/ν_i，达到频谱效率上限时取 0
+  function jacobian(m, ev) {
+    var J = [[0, 0], [0, 0]];
+    for (var i = 0; i < 2; i++) {
+      if (ev.capped[i]) continue;
+      var j = 1 - i;
+      var g = m.B / ((1 + ev.G[i]) * LN2);
+      J[i][i] = g * m.a[i] / ev.nu[i];
+      J[i][j] = -g * ev.G[i] * m.b[i] / ev.nu[i];
+    }
+    return J;
+  }
+
+  // SGM 梯度：g_F,j = (1/m) Σ_i Λ_i'(C_i) J_ij
+  function gradF(ev, J) {
+    return [0, 1].map(function (j) { return (ev.dLam[0] * J[0][j] + ev.dLam[1] * J[1][j]) / 2; });
+  }
+
+  function model(cfg) {
+    var m = Object.assign({ B: 25, eta: 5.5, pmin: 0.5, pmax: 50, delta: 0, lambda0: 5, ptot: Infinity, maxIter: 200 }, cfg);
+    m.Dtot = m.D[0] + m.D[1];
+    m.beta = m.Dtot / 2;
+    m.ev0 = evaluate(m, m.p0);
+    m.F0 = m.ev0.F;
+    m.thr = m.F0 - m.delta - 1e-12;
+    return m;
+  }
+
+  // 式（23）的二维线性规划，顶点枚举精确求解。约束写成 a·Δ ≤ b；折线为线性容量恰好等于需求处
+  function solveLP(m, p, ev, J, gF, thr, lam, margin) {
+    var lo = [0, 1].map(function (j) { return Math.max(m.pmin - p[j], -lam); });
+    var hi = [0, 1].map(function (j) { return Math.min(m.pmax - p[j], lam); });
+    var cons = [
+      { a: [1, 0], b: hi[0], kind: 'box' }, { a: [-1, 0], b: -lo[0], kind: 'box' },
+      { a: [0, 1], b: hi[1], kind: 'box' }, { a: [0, -1], b: -lo[1], kind: 'box' }
+    ];
+    if (isFinite(m.ptot)) cons.push({ a: [1, 1], b: m.ptot - p[0] - p[1], kind: 'budget' });
+    var gs = Math.max(Math.abs(gF[0]), Math.abs(gF[1]), 1e-12);
+    cons.push({ a: [-gF[0] / gs, -gF[1] / gs], b: (ev.F - thr - margin) / gs, kind: 'sgm' });
+    var brk = [];
+    for (var i = 0; i < 2; i++) {
+      var s = Math.max(Math.abs(J[i][0]), Math.abs(J[i][1]));
+      if (s > 0) brk.push({ a: [J[i][0] / s, J[i][1] / s], b: (m.D[i] - ev.C[i]) / s, kind: 'break', beam: i });
+    }
+    var lines = cons.concat(brk);
+    function feas(d) {
+      for (var c = 0; c < cons.length; c++) {
+        var L = cons[c];
+        if (L.a[0] * d[0] + L.a[1] * d[1] > L.b + 1e-9 * (1 + Math.abs(L.b))) return false;
+      }
+      return true;
+    }
+    function obj(d) {
+      var v = 0;
+      for (var i = 0; i < 2; i++) v += Math.min(ev.C[i] + J[i][0] * d[0] + J[i][1] * d[1], m.D[i]);
+      return v;
+    }
+    var verts = [];
+    for (var x = 0; x < lines.length; x++) {
+      for (var y = x + 1; y < lines.length; y++) {
+        var A = lines[x], B = lines[y];
+        var det = A.a[0] * B.a[1] - A.a[1] * B.a[0];
+        if (Math.abs(det) < 1e-12) continue;
+        var d = [(A.b * B.a[1] - A.a[1] * B.b) / det, (A.a[0] * B.b - A.b * B.a[0]) / det];
+        if (!feas(d)) continue;
+        var dup = false;
+        for (var k = 0; k < verts.length; k++) {
+          if (Math.abs(verts[k].d[0] - d[0]) < 1e-9 && Math.abs(verts[k].d[1] - d[1]) < 1e-9) { dup = true; break; }
+        }
+        if (!dup) verts.push({ d: d, val: obj(d), on: [A.kind, B.kind] });
+      }
+    }
+    var out = { lo: lo, hi: hi, cons: cons, brk: brk, margin: margin, lam: lam, verts: verts, obj: obj, feas: feas };
+    if (!verts.length) { out.feasible = false; return out; }
+    // 目标相同时取步长较小、总功率较省的顶点
+    var best = verts[0];
+    for (var k2 = 1; k2 < verts.length; k2++) {
+      var v = verts[k2], tol = 1e-9 * (1 + Math.abs(best.val));
+      if (v.val > best.val + tol) best = v;
+      else if (v.val > best.val - tol) {
+        var nb = Math.max(Math.abs(best.d[0]), Math.abs(best.d[1])), nv = Math.max(Math.abs(v.d[0]), Math.abs(v.d[1]));
+        if (nv < nb - 1e-12 || (nv < nb + 1e-12 && v.d[0] + v.d[1] < best.d[0] + best.d[1])) best = v;
+      }
+    }
+    out.feasible = true;
+    out.best = best;
+    out.d = best.d;
+    out.pred = (best.val - ev.served) / m.Dtot;
+    out.linF = ev.F + gF[0] * best.d[0] + gF[1] * best.d[1];
+    return out;
+  }
+
+  // 子问题可行范围的多边形，用于作图
+  function clipPoly(poly, a, b) {
+    var out = [];
+    for (var i = 0; i < poly.length; i++) {
+      var P = poly[i], Q = poly[(i + 1) % poly.length];
+      var fp = a[0] * P[0] + a[1] * P[1] - b, fq = a[0] * Q[0] + a[1] * Q[1] - b;
+      if (fp <= 0) out.push(P);
+      if ((fp <= 0) !== (fq <= 0)) {
+        var t = fp / (fp - fq);
+        out.push([P[0] + t * (Q[0] - P[0]), P[1] + t * (Q[1] - P[1])]);
+      }
+    }
+    return out;
+  }
+  function lpPolygon(p, lp) {
+    var poly = [[lp.lo[0], lp.lo[1]], [lp.hi[0], lp.lo[1]], [lp.hi[0], lp.hi[1]], [lp.lo[0], lp.hi[1]]];
+    lp.cons.forEach(function (c) { if (c.kind !== 'box' && poly.length) poly = clipPoly(poly, c.a, c.b); });
+    return poly.map(function (d) { return [p[0] + d[0], p[1] + d[1]]; });
+  }
+
+  function add(p, d) { return [p[0] + d[0], p[1] + d[1]]; }
+  function ninf(d) { return Math.max(Math.abs(d[0]), Math.abs(d[1])); }
+
+  // MCTR-SCA 主循环，按报告 4.4 节；逐次记录全部中间量供动画使用
+  function run(m) {
+    var p = m.p0.slice(), ev = evaluate(m, p);
+    var lam = m.lambda0, mu = 0, trace = [], k = 0, stop = null;
+    while (k < m.maxIter) {
+      var J = jacobian(m, ev), gF = gradF(ev, J);
+      var rec = { k: k, p: p.slice(), ev: ev, J: J, gF: gF, lam: lam, muIn: mu, mu: mu };
+      var lp = solveLP(m, p, ev, J, gF, m.thr, lam, mu * lam * lam);
+      if ((!lp.feasible || lp.pred < 1e-7) && mu > 0) {      // 余量使子问题无解或无预测提升：μ 清零重解
+        rec.lpFirst = lp;
+        rec.muReset = true;
+        mu = 0;
+        rec.mu = 0;
+        lp = solveLP(m, p, ev, J, gF, m.thr, lam, 0);
+      }
+      rec.lp = lp;
+      if (!lp.feasible) {
+        rec.outcome = 'lp-infeasible';
+        lam /= 2;
+      } else if (lp.pred < 1e-7) {
+        rec.outcome = 'converged';
+        stop = 'converged';
+      } else {
+        var pc = add(p, lp.d), evc = evaluate(m, pc);
+        rec.pc = pc; rec.evc = evc;
+        rec.err = ev.F + gF[0] * lp.d[0] + gF[1] * lp.d[1] - evc.F;
+        if (evc.W > ev.W + 1e-12 && evc.F >= m.thr) {        // 式（24）：直接接受
+          rec.outcome = 'accept';
+          p = pc; ev = evc; lam = Math.min(2 * lam, m.pmax); mu = mu / 2;
+        } else {
+          if (evc.F < m.thr) {
+            mu = Math.max(2 * mu, rec.err / Math.pow(Math.max(ninf(lp.d), 1e-9), 2));   // 式（25）
+            rec.muAfterErr = mu;
+            if (evc.W > ev.W) {                                 // 满足率提高：以半径 λ/2 做一次修复步
+              var J2 = jacobian(m, evc), gF2 = gradF(evc, J2);
+              var lp2 = solveLP(m, pc, evc, J2, gF2, m.thr, lam / 2, mu * lam * lam / 4);
+              rec.repair = { J: J2, gF: gF2, lp: lp2, lam: lam / 2, mu: mu };
+              if (lp2.feasible) {
+                var pr = add(pc, lp2.d), evr = evaluate(m, pr);
+                rec.repair.p = pr; rec.repair.ev = evr;
+                if (evr.W > ev.W + 1e-12 && evr.F >= m.thr) {
+                  rec.outcome = 'repair-accept';
+                  p = pr; ev = evr;
+                }
+              }
+              if (!rec.outcome) rec.outcome = 'repair-fail';
+            } else rec.outcome = 'reject-sgm';
+          } else rec.outcome = 'reject-w';
+          if (rec.outcome !== 'repair-accept') lam /= 2;
+        }
+      }
+      rec.lamNew = lam; rec.muNew = mu; rec.pNew = p.slice(); rec.evNew = ev;
+      trace.push(rec);
+      if (stop) break;
+      k++;
+      if (lam < 1e-3) { stop = 'small'; break; }
+    }
+    return { trace: trace, stop: stop || 'iter', p: p, ev: ev };
+  }
+
+  // 网格穷举：先 0.25 W 粗搜，再在最好点附近以 0.01 W 细搜。只用于讲解与核对
+  function scan(m, needF, x0, x1, y0, y1, st, best) {
+    var out = [0, 0];
+    var nx = Math.round((x1 - x0) / st), ny = Math.round((y1 - y0) / st);
+    for (var i = 0; i <= nx; i++) {
+      for (var j = 0; j <= ny; j++) {
+        var x = x0 + i * st, y = y0 + j * st;
+        if (x + y > m.ptot + 1e-9) continue;
+        WF(m, x, y, out);
+        if (needF && out[1] < m.thr) continue;
+        if (!best || out[0] > best.W + 1e-12) best = { p: [x, y], W: out[0], F: out[1] };
+      }
+    }
+    return best;
+  }
+  function gridBest(m, needF) {
+    var b = scan(m, needF, m.pmin, m.pmax, m.pmin, m.pmax, 0.25, null);
+    var c = b.p;
+    b = scan(m, needF, Math.max(m.pmin, c[0] - 0.3), Math.min(m.pmax, c[0] + 0.3), Math.max(m.pmin, c[1] - 0.3), Math.min(m.pmax, c[1] + 0.3), 0.01, b);
+    return evaluate(m, b.p);
+  }
+
+  // 报告中各方法统一的保持匹配处理：直接采用，或在原功率与方法输出的连线上取 21 个点
+  function lineFallback(m, pm) {
+    var evm = evaluate(m, pm);
+    var pts = [];
+    for (var t = 0; t <= 20; t++) {
+      var xi = t / 20, pp = [m.p0[0] + xi * (pm[0] - m.p0[0]), m.p0[1] + xi * (pm[1] - m.p0[1])];
+      var e = evaluate(m, pp);
+      pts.push({ xi: xi, p: pp, ev: e, ok: e.F >= m.thr });
+    }
+    if (evm.F >= m.thr && evm.W >= m.ev0.W) return { direct: true, pts: pts, pick: pts[20], evm: evm };
+    var pick = pts[0];
+    for (var q = 1; q < pts.length; q++) {
+      var c = pts[q];
+      if (!c.ok) continue;
+      if (c.ev.W > pick.ev.W || (c.ev.W === pick.ev.W && c.p[0] + c.p[1] < pick.p[0] + pick.p[1])) pick = c;
+    }
+    return { direct: false, pts: pts, pick: pick, evm: evm };
+  }
+
+  return { PRESETS: PRESETS, sgmTerm: sgmTerm, evaluate: evaluate, WF: WF, jacobian: jacobian, gradF: gradF, model: model,
+    solveLP: solveLP, clipPoly: clipPoly, lpPolygon: lpPolygon, run: run, gridBest: gridBest, lineFallback: lineFallback };
+})();
+if (typeof module !== 'undefined') module.exports = SCA;
+</script>
+
+<!-- ===================== 页面与动画 ===================== -->
+<script id="sca-ui">
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var ERR = [];
+  function logErr(msg) { ERR.push(msg); var el = $('errlog'); el.textContent = ERR.join('\n'); el.style.display = 'block'; }
+  window.addEventListener('error', function (e) { logErr(e.message + '，行 ' + e.lineno); });
+
+  /* ---------------- 小工具 ---------------- */
+  function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+  function ph(tau, t0, d) { return clamp01((tau - t0) / d); }
+  function ease(u) { u = clamp01(u); return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; }
+  function easeOut(u) { u = clamp01(u); return 1 - (1 - u) * (1 - u); }
+  function lerp(a, b, u) { return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]; }
+  function dot2(a, b) { return a[0] * b[0] + a[1] * b[1]; }
+  function minus(s) { return String(s).replace(/-/g, '−'); }
+  function fx(x, n) { var r = x.toFixed(n); if (/^-0\.?0*$/.test(r)) r = r.slice(1); return minus(r); }
+  function fW(x) { return fx(x, 3); }
+  function fF(x) { return fx(x, 4); }
+  function fP(x) { return fx(x, 2); }
+  function fpt(p) { return '(' + fP(p[0]) + ', ' + fP(p[1]) + ')'; }
+  function sig(x, n) {
+    if (x === 0) return '0';
+    var e = Math.floor(Math.log10(Math.abs(x)));
+    return fx(x, Math.min(Math.max(0, n - 1 - e), 9));
+  }
+  function sci(x) {
+    if (x === 0) return '0';
+    var e = Math.floor(Math.log10(Math.abs(x)));
+    if (e >= -2 && e <= 3) return sig(x, 3);
+    return fx(x / Math.pow(10, e), 2) + '×10<sup>' + minus(String(e)) + '</sup>';
+  }
+  function flam(x) { return x >= 1 ? minus(String(+x.toFixed(2))) : sig(x, 3); }
+  function niceStep(raw, set) {
+    set = set || [1, 2, 2.5, 5];
+    var e = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / e;
+    for (var i = 0; i < set.length; i++) if (f <= set[i] + 1e-9) return set[i] * e;
+    return 10 * e;
+  }
+  function decFor(step) {   // 刻度步长需要的小数位数
+    var d = 0;
+    while (d < 9 && Math.abs(step * Math.pow(10, d) - Math.round(step * Math.pow(10, d))) > 1e-6) d++;
+    return d;
+  }
+  function strip(html) { return html.replace(/<[^>]+>/g, ''); }
+
+  var H = {
+    p: '<b class="vb">p</b>', p0: '<b class="vb">p</b><sup>0</sup>', pk: '<b class="vb">p</b><sup>(<i>k</i>)</sup>',
+    pc: '<b class="vb">p</b><sup>c</sup>', F0: '<i>F</i><sub>0</sub>', F: '<i>F</i>', W: '<i>W</i>',
+    lam: '<i>λ</i><sub><i>k</i></sub>', mu: '<i>μ</i><sub><i>k</i></sub>', Dl: '<b class="vb">Δ</b>',
+    gF: '<b class="vb">g</b><sub><i>F</i></sub>', J: '<i>J</i><sub><i>ij</i></sub>', dl: '<i>δ</i>',
+    y: '<i>y</i><sub><i>i</i></sub>', pm: '<b class="vb">p</b><sup>m</sup>'
+  };
+  function pK(k) { return '<b class="vb">p</b><sup>(' + k + ')</sup>'; }
+  function iv(s, sub) { return '<i>' + s + '</i>' + (sub !== undefined ? '<sub>' + sub + '</sub>' : ''); }
+  function dI(j) { return '<i>Δ</i><sub>' + j + '</sub>'; }
+  function P(s) { return '<p>' + s + '</p>'; }
+  function EQ(s) { return '<div class="eq">' + s + '</div>'; }
+  function ok(s) { return '<span class="okc">' + s + '</span>'; }
+  function bad(s) { return '<span class="badc">' + s + '</span>'; }
+  function linExpr(c, a, cf, af) {
+    var s = cf(c);
+    for (var j = 0; j < 2; j++) {
+      if (a[j] === 0) continue;
+      s += (a[j] < 0 ? ' − ' : ' + ') + af(Math.abs(a[j])) + dI(j + 1);
+    }
+    return s;
+  }
+  function gfmt(x) { return Math.abs(x) >= 1e-3 ? sig(x, 3) : sci(x); }
+
+  var COL = { ink: '#2b2f36', navy: '#2d4b73', green: '#3c7a4a', tr: '#c27a2c', lin: '#6b4fa0', brk: '#7d848c',
+    bad: '#b5443b', good: '#2f7d4f', rep: '#2b7a78', star: '#d0892c' };
+
+  /* ---------------- 状态 ---------------- */
+  var ST = null, cur = 0, tau = 0, holdT = 0, playing = false, animating = true, speed = 1, lastTs = 0;
+  var FULL = { x0: -1, y0: -1, s: 53 };
+  var V = { x0: FULL.x0, y0: FULL.y0, s: FULL.s }, VT = null, autoZoom = true;
+
+  /* ---------------- 每个预设的计算 ---------------- */
+  function build(idx) {
+    var cfg = SCA.PRESETS[idx];
+    var m = SCA.model(cfg);
+    var R = SCA.run(m);
+    var st = { idx: idx, cfg: cfg, m: m, R: R, trace: R.trace };
+    st.hist = R.trace.map(function (r) { return { p: r.p, ev: r.ev }; });
+    var last = R.trace[R.trace.length - 1];
+    if (last.outcome !== 'converged') st.hist.push({ p: last.pNew, ev: last.evNew });
+    st.J0 = SCA.jacobian(m, m.ev0);
+    st.g0 = SCA.gradF(m.ev0, st.J0);
+    st.gU = SCA.gridBest(m, false);
+    st.gC = SCA.gridBest(m, true);
+    var tCap = m.pmax / Math.max(m.p0[0], m.p0[1]), tBud = m.ptot / (m.p0[0] + m.p0[1]);
+    var t = Math.min(tCap, tBud);
+    st.ray = SCA.evaluate(m, [m.p0[0] * t, m.p0[1] * t]);
+    st.rayByBudget = tBud < tCap;
+    var o1 = Math.max(m.pmin, Math.min(m.p0[1], m.ptot - m.pmax)), o0 = Math.max(m.pmin, Math.min(m.p0[0], m.ptot - m.pmax));
+    var e1 = SCA.evaluate(m, [m.pmax, o1]), e2 = SCA.evaluate(m, [o0, m.pmax]);
+    st.pushBeam = e1.W >= e2.W ? 0 : 1;
+    st.push = st.pushBeam === 0 ? e1 : e2;
+    var q = Math.min(m.pmax, m.ptot / 2);
+    st.eq = SCA.evaluate(m, [q, q]);
+    st.fbU = SCA.lineFallback(m, st.gU.p);
+    st.fbE = SCA.lineFallback(m, st.eq.p);
+    st.bpt = boundaryPoints(m);
+    buildFrames(st);
+    return st;
+  }
+
+  // 在 SGM 边界上找几个点，用来放标注
+  function boundaryPoints(m) {
+    var res = [], out = [0, 0];
+    for (var x = 2; x <= 48; x += 2) {
+      var prev = null;
+      for (var y = 0.5; y <= 50; y += 0.25) {
+        if (x + y > m.ptot) break;
+        var f = SCA.WF(m, x, y, out)[1] - m.thr;
+        if (prev !== null && (prev < 0) !== (f < 0)) { res.push([x, y]); break; }
+        prev = f;
+      }
+    }
+    return res;
+  }
+
+  /* ---------------- 画布与坐标 ---------------- */
+  var cv = $('plot'), ctx = cv.getContext('2d');
+  var DPR = 1, CW = 600, CH = 600, PR = { L: 58, T: 14, S: 500 };
+  function resize() {
+    var r = $('plotWrap').getBoundingClientRect();
+    DPR = window.devicePixelRatio || 1;
+    CW = Math.max(320, Math.floor(r.width)); CH = Math.max(320, Math.floor(r.height));
+    cv.width = Math.round(CW * DPR); cv.height = Math.round(CH * DPR);
+    cv.style.width = CW + 'px'; cv.style.height = CH + 'px';
+    var L = 60, T = 12, Rr = 74, B = 46;
+    PR.S = Math.max(220, Math.min(CW - L - Rr, CH - T - B));
+    PR.L = L + Math.max(0, Math.floor((CW - L - Rr - PR.S) / 2));
+    PR.T = T;
+    BG = {};
+  }
+  function X(x) { return PR.L + (x - V.x0) / V.s * PR.S; }
+  function Y(y) { return PR.T + PR.S - (y - V.y0) / V.s * PR.S; }
+  function px(p) { return [X(p[0]), Y(p[1])]; }
+  function ppw() { return PR.S / V.s; }   // 每瓦对应的像素
+
+  function cmap(t) {
+    var a = [250, 248, 241], b = [205, 219, 231], c = [121, 153, 191];
+    t = clamp01(t);
+    if (t < 0.5) { var u = t / 0.5; return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]; }
+    var w = (t - 0.5) / 0.5; return [b[0] + (c[0] - b[0]) * w, b[1] + (c[1] - b[1]) * w, b[2] + (c[2] - b[2]) * w];
+  }
+  function inBox(m, x, y) { return x >= m.pmin - 1e-9 && x <= m.pmax + 1e-9 && y >= m.pmin - 1e-9 && y <= m.pmax + 1e-9 && x + y <= m.ptot + 1e-9; }
+
+  // 等值线：marching squares，返回网格坐标下的线段
+  function contourSegs(v, n1, N, level, okm) {
+    var segs = [];
+    for (var j = 0; j < N; j++) {
+      for (var i = 0; i < N; i++) {
+        var q = j * n1 + i;
+        if (!okm[q] || !okm[q + 1] || !okm[q + n1] || !okm[q + n1 + 1]) continue;
+        var a = v[q] - level, b = v[q + 1] - level, c = v[q + n1 + 1] - level, d = v[q + n1] - level;
+        var idx = (a > 0 ? 1 : 0) | (b > 0 ? 2 : 0) | (c > 0 ? 4 : 0) | (d > 0 ? 8 : 0);
+        if (idx === 0 || idx === 15) continue;
+        var e0 = function () { return [i + a / (a - b), j]; };
+        var e1 = function () { return [i + 1, j + b / (b - c)]; };
+        var e2 = function () { return [i + d / (d - c), j + 1]; };
+        var e3 = function () { return [i, j + a / (a - d)]; };
+        var pairs;
+        switch (idx) {
+          case 1: case 14: pairs = [[e0, e3]]; break;
+          case 2: case 13: pairs = [[e0, e1]]; break;
+          case 3: case 12: pairs = [[e1, e3]]; break;
+          case 4: case 11: pairs = [[e1, e2]]; break;
+          case 6: case 9: pairs = [[e0, e2]]; break;
+          case 7: case 8: pairs = [[e2, e3]]; break;
+          case 5: pairs = [[e2, e3], [e0, e1]]; break;
+          case 10: pairs = [[e0, e3], [e1, e2]]; break;
+        }
+        for (var k = 0; k < pairs.length; k++) { var P1 = pairs[k][0](), P2 = pairs[k][1](); segs.push([P1[0], P1[1], P2[0], P2[1]]); }
+      }
+    }
+    return segs;
+  }
+
+  var BG = {};
+  function getBg(view, feas, N, size) {
+    var key = [ST.idx, feas ? 1 : 0, N, size, DPR, view.x0.toPrecision(12), view.y0.toPrecision(12), view.s.toPrecision(12)].join('|');
+    if (BG[key]) return BG[key];
+    if (Object.keys(BG).length > 8) BG = {};
+    return (BG[key] = renderBg(view, feas, N, size));
+  }
+  function renderBg(view, feas, N, size) {
+    var m = ST.m, n1 = N + 1, Wv = new Float64Array(n1 * n1), Fv = new Float64Array(n1 * n1), okm = new Uint8Array(n1 * n1), out = [0, 0];
+    var wmin = Infinity, wmax = -Infinity;
+    for (var j = 0; j < n1; j++) {
+      for (var i = 0; i < n1; i++) {
+        var x = view.x0 + view.s * i / N, y = view.y0 + view.s * j / N, q = j * n1 + i;
+        SCA.WF(m, Math.max(x, 0), Math.max(y, 0), out);
+        Wv[q] = out[0]; Fv[q] = out[1]; okm[q] = inBox(m, x, y) ? 1 : 0;
+        if (okm[q]) { if (out[0] < wmin) wmin = out[0]; if (out[0] > wmax) wmax = out[0]; }
+      }
+    }
+    if (!(wmax > wmin)) { wmin = Wv[0] - 1e-6; wmax = Wv[0] + 1e-6; }
+    var img = document.createElement('canvas'); img.width = n1; img.height = n1;
+    var ic = img.getContext('2d'), id = ic.createImageData(n1, n1), dd = id.data;
+    for (j = 0; j < n1; j++) {
+      for (i = 0; i < n1; i++) {
+        q = j * n1 + i;
+        var c = cmap((Wv[q] - wmin) / (wmax - wmin)), al;
+        if (!okm[q]) { al = 0.6; c = [c[0] * (1 - al) + 214 * al, c[1] * (1 - al) + 211 * al, c[2] * (1 - al) + 204 * al]; }
+        else if (feas && Fv[q] >= m.thr) { al = 0.33; c = [c[0] * (1 - al) + 118 * al, c[1] * (1 - al) + 176 * al, c[2] * (1 - al) + 122 * al]; }
+        var o = ((n1 - 1 - j) * n1 + i) * 4;
+        dd[o] = c[0]; dd[o + 1] = c[1]; dd[o + 2] = c[2]; dd[o + 3] = 255;
+      }
+    }
+    ic.putImageData(id, 0, 0);
+    var S = Math.round(size * DPR), cnv = document.createElement('canvas');
+    cnv.width = S; cnv.height = S;
+    var g = cnv.getContext('2d');
+    g.imageSmoothingEnabled = true;
+    g.drawImage(img, 0, 0, n1, n1, -S / (2 * N), -S / (2 * N), S + S / N, S + S / N);
+    var sc = S / N;
+    var step = niceStep((wmax - wmin) / 8), levels = [];
+    for (var lv = Math.ceil(wmin / step - 1e-9) * step; lv < wmax - 1e-12; lv += step) if (lv > wmin + 1e-12) levels.push(lv);
+    var dec = decFor(step), labels = [];
+    g.lineWidth = Math.max(1, DPR * 0.9);
+    g.strokeStyle = 'rgba(58,88,128,0.5)';
+    levels.forEach(function (lv, li) {
+      var segs = contourSegs(Wv, n1, N, lv, okm);
+      g.beginPath();
+      segs.forEach(function (s) { g.moveTo(s[0] * sc, S - s[1] * sc); g.lineTo(s[2] * sc, S - s[3] * sc); });
+      g.stroke();
+      var tx = levels.length > 1 ? 0.14 + 0.72 * li / (levels.length - 1) : 0.5, best = null, bs = -Infinity;
+      segs.forEach(function (s) {
+        var mx = (s[0] + s[2]) / 2 / N, my = (s[1] + s[3]) / 2 / N;
+        if (mx < 0.06 || mx > 0.94 || my < 0.06 || my > 0.94) return;
+        var score = -Math.abs(mx - tx) * 2 + my * 0.35;
+        if (score > bs) { bs = score; best = [mx, my]; }
+      });
+      if (best) labels.push([best, lv]);
+    });
+    if (size > 200) {
+      g.font = Math.round(10.5 * DPR) + 'px "Microsoft YaHei",sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      labels.forEach(function (L) {
+        var x = L[0][0] * S, y = S - L[0][1] * S, t = L[1].toFixed(dec);
+        g.lineWidth = 3 * DPR; g.strokeStyle = 'rgba(255,255,255,0.85)'; g.strokeText(t, x, y);
+        g.fillStyle = 'rgba(40,66,104,0.9)'; g.fillText(t, x, y);
+      });
+    }
+    if (feas) {
+      var fs = contourSegs(Fv, n1, N, m.thr, okm);
+      g.strokeStyle = COL.green; g.lineWidth = 2.3 * DPR; g.lineCap = 'round';
+      g.beginPath();
+      fs.forEach(function (s) { g.moveTo(s[0] * sc, S - s[1] * sc); g.lineTo(s[2] * sc, S - s[3] * sc); });
+      g.stroke();
+    }
+    var bx = function (x) { return (x - view.x0) / view.s * S; }, by = function (y) { return S - (y - view.y0) / view.s * S; };
+    g.strokeStyle = '#9d978c'; g.lineWidth = DPR; g.setLineDash([]);
+    g.strokeRect(bx(m.pmin), by(m.pmax), bx(m.pmax) - bx(m.pmin), by(m.pmin) - by(m.pmax));
+    if (isFinite(m.ptot)) {
+      var ext = view.s;
+      var poly = SCA.clipPoly([[view.x0 - ext, view.y0 - ext], [view.x0 + 2 * ext, view.y0 - ext], [view.x0 + 2 * ext, view.y0 + 2 * ext], [view.x0 - ext, view.y0 + 2 * ext]], [-1, -1], -m.ptot);
+      if (poly.length) {
+        g.save(); g.beginPath();
+        poly.forEach(function (p, k) { if (k) g.lineTo(bx(p[0]), by(p[1])); else g.moveTo(bx(p[0]), by(p[1])); });
+        g.closePath(); g.clip();
+        g.strokeStyle = 'rgba(120,112,100,0.35)'; g.lineWidth = DPR;
+        g.beginPath();
+        for (var hx = -S; hx < 2 * S; hx += 9 * DPR) { g.moveTo(hx, S); g.lineTo(hx + S, 0); }
+        g.stroke(); g.restore();
+        g.strokeStyle = '#7d766b'; g.lineWidth = 1.4 * DPR; g.setLineDash([7 * DPR, 4 * DPR]);
+        g.beginPath(); g.moveTo(bx(view.x0 - ext), by(m.ptot - view.x0 + ext)); g.lineTo(bx(m.ptot - view.y0 + ext), by(view.y0 - ext)); g.stroke();
+        g.setLineDash([]);
+      }
+    }
+    return { cv: cnv, wmin: wmin, wmax: wmax, step: step };
+  }
+
+  /* ---------------- 基本图元 ---------------- */
+  function rich(x, y, parts, o) {
+    o = o || {};
+    var size = o.size || 14, fonts = {
+      b: 'bold ' + size + 'px "Times New Roman",serif', i: 'italic ' + size + 'px "Times New Roman",serif',
+      n: (size - 1) + 'px "Microsoft YaHei",sans-serif', sup: Math.round(size * 0.72) + 'px "Times New Roman",serif',
+      sub: Math.round(size * 0.72) + 'px "Times New Roman",serif', ni: 'italic ' + Math.round(size * 0.72) + 'px "Times New Roman",serif'
+    };
+    var w = 0, ws = [];
+    parts.forEach(function (pt) { ctx.font = fonts[pt[1]]; var ww = ctx.measureText(pt[0]).width; ws.push(ww); w += ww; });
+    var x0 = o.align === 'center' ? x - w / 2 : o.align === 'right' ? x - w : x;
+    ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+    for (var pass = 0; pass < 2; pass++) {
+      var cx = x0;
+      parts.forEach(function (pt, k) {
+        ctx.font = fonts[pt[1]];
+        var dy = pt[1] === 'sup' ? -size * 0.42 : (pt[1] === 'sub' || pt[1] === 'ni') ? size * 0.22 : 0;
+        if (pass === 0) { ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(255,255,255,0.92)'; ctx.lineJoin = 'round'; ctx.strokeText(pt[0], cx, y + dy); }
+        else { ctx.fillStyle = o.color || COL.ink; ctx.fillText(pt[0], cx, y + dy); }
+        cx += ws[k];
+      });
+    }
+  }
+  function txt(x, y, s, o) { rich(x, y, [[s, 'n']], o); }
+  // 靠近右边缘的点，标注放到左侧
+  function side(pt) { return X(pt[0]) > PR.L + PR.S - 175 ? { dx: -12, align: 'right' } : { dx: 10, align: 'left' }; }
+  function labP(pt, sup, color, dx, dy, align) { var a = px(pt); rich(a[0] + dx, a[1] + dy, [['p', 'b'], [sup, 'sup']], { color: color, align: align }); }
+  function dot(p, r, fill, stroke, lw) {
+    var a = px(p); ctx.beginPath(); ctx.arc(a[0], a[1], r, 0, 2 * Math.PI);
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1.5; ctx.stroke(); }
+  }
+  function ring(p, r, color, lw) { dot(p, r, 'rgba(255,255,255,0.75)', color, lw || 2.2); }
+  function diamond(p, r, fill) {
+    var a = px(p); ctx.beginPath(); ctx.moveTo(a[0], a[1] - r); ctx.lineTo(a[0] + r, a[1]); ctx.lineTo(a[0], a[1] + r); ctx.lineTo(a[0] - r, a[1]); ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.stroke();
+  }
+  function star(p, r, fill) {
+    var a = px(p); ctx.beginPath();
+    for (var k = 0; k < 10; k++) { var rr = k % 2 ? r * 0.45 : r, an = -Math.PI / 2 + k * Math.PI / 5; ctx.lineTo(a[0] + rr * Math.cos(an), a[1] + rr * Math.sin(an)); }
+    ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.stroke();
+  }
+  function cross(p, r, color, lw) {
+    var a = px(p); ctx.strokeStyle = color; ctx.lineWidth = lw || 2.4; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(a[0] - r, a[1] - r); ctx.lineTo(a[0] + r, a[1] + r); ctx.moveTo(a[0] + r, a[1] - r); ctx.lineTo(a[0] - r, a[1] + r); ctx.stroke();
+  }
+  function segment(p, q, color, lw, dash) {
+    var a = px(p), b = px(q); ctx.strokeStyle = color; ctx.lineWidth = lw || 1.5; ctx.setLineDash(dash || []);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.setLineDash([]);
+  }
+  function arrow(p, q, u, color, lw) {
+    if (u <= 0) return;
+    var a = px(p), b = px(q), e = [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
+    var L = Math.hypot(e[0] - a[0], e[1] - a[1]);
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = lw || 2; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+    if (L > 8) {
+      var an = Math.atan2(e[1] - a[1], e[0] - a[0]), hs = Math.min(10, L * 0.5);
+      ctx.beginPath(); ctx.moveTo(e[0], e[1]);
+      ctx.lineTo(e[0] - hs * Math.cos(an - 0.42), e[1] - hs * Math.sin(an - 0.42));
+      ctx.lineTo(e[0] - hs * Math.cos(an + 0.42), e[1] - hs * Math.sin(an + 0.42));
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  function square(c, r, color, o) {
+    o = o || {};
+    if (r <= 0) return;
+    var a = px([c[0] - r, c[1] + r]), b = px([c[0] + r, c[1] - r]);
+    ctx.save(); ctx.globalAlpha *= (o.alpha === undefined ? 1 : o.alpha);
+    if (o.fill) { ctx.fillStyle = o.fill; ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); }
+    ctx.setLineDash(o.dash || [7, 4]); ctx.strokeStyle = color; ctx.lineWidth = o.lw || 1.8;
+    ctx.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+    ctx.restore();
+  }
+  function polyFill(poly, fill, stroke) {
+    if (!poly.length) return;
+    ctx.beginPath();
+    poly.forEach(function (q, k) { var a = px(q); if (k) ctx.lineTo(a[0], a[1]); else ctx.moveTo(a[0], a[1]); });
+    ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.stroke(); }
+  }
+  // 直线 a·x = c 与矩形的交线段
+  function clipLine(a, c, box) {
+    var nn = a[0] * a[0] + a[1] * a[1];
+    if (nn === 0) return null;
+    var P0 = [a[0] * c / nn, a[1] * c / nn], d = [-a[1], a[0]], t0 = -Infinity, t1 = Infinity;
+    var lo = [box.x0, box.y0], hi = [box.x1, box.y1];
+    for (var k = 0; k < 2; k++) {
+      if (Math.abs(d[k]) < 1e-15) { if (P0[k] < lo[k] || P0[k] > hi[k]) return null; continue; }
+      var ta = (lo[k] - P0[k]) / d[k], tb = (hi[k] - P0[k]) / d[k];
+      t0 = Math.max(t0, Math.min(ta, tb)); t1 = Math.min(t1, Math.max(ta, tb));
+    }
+    if (t0 > t1) return null;
+    return [[P0[0] + t0 * d[0], P0[1] + t0 * d[1]], [P0[0] + t1 * d[0], P0[1] + t1 * d[1]]];
+  }
+  function viewBox() { return { x0: V.x0, x1: V.x0 + V.s, y0: V.y0, y1: V.y0 + V.s }; }
+  function sqBox(c, r) { return { x0: c[0] - r, x1: c[0] + r, y0: c[1] - r, y1: c[1] + r }; }
+  // 线性化 SGM 约束 F + g·(q − p) = req 的直线
+  function linLine(p, F, g, req, color, lw, dash, alpha) {
+    var seg = clipLine(g, req - F + dot2(g, p), viewBox());
+    if (!seg) return null;
+    ctx.save(); ctx.globalAlpha *= alpha; segment(seg[0], seg[1], color, lw, dash); ctx.restore();
+    return seg;
+  }
+  // 标注放在直线伸出信赖域之后、靠近视野边缘的一段，避开候选点
+  function lineLabel(p, F, g, req, r, s, color) {
+    var seg = clipLine(g, req - F + dot2(g, p), viewBox());
+    if (!seg) return;
+    var hiEnd = seg[0][1] > seg[1][1] ? seg[0] : seg[1], loEnd = hiEnd === seg[0] ? seg[1] : seg[0];
+    var a = px(lerp(loEnd, hiEnd, 0.86));
+    txt(Math.min(a[0] + 8, PR.L + PR.S - 120), Math.max(a[1], PR.T + 18), s, { color: color, size: 13 });
+  }
+
+  /* ---------------- 坐标轴、色标、缩略图 ---------------- */
+  function drawAxes(bg) {
+    var step = niceStep(V.s / 6, [1, 2, 5]), dec = decFor(step);
+    ctx.font = '12px "Microsoft YaHei",sans-serif'; ctx.fillStyle = '#555'; ctx.strokeStyle = '#8c867b'; ctx.lineWidth = 1;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (var v = Math.ceil(V.x0 / step - 1e-9) * step; v <= V.x0 + V.s + 1e-9; v += step) {
+      var x = X(v); ctx.beginPath(); ctx.moveTo(x, PR.T + PR.S); ctx.lineTo(x, PR.T + PR.S + 5); ctx.stroke();
+      ctx.fillText(minus(v.toFixed(dec)), x, PR.T + PR.S + 7);
+    }
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (v = Math.ceil(V.y0 / step - 1e-9) * step; v <= V.y0 + V.s + 1e-9; v += step) {
+      var y = Y(v); ctx.beginPath(); ctx.moveTo(PR.L - 5, y); ctx.lineTo(PR.L, y); ctx.stroke();
+      ctx.fillText(minus(v.toFixed(dec)), PR.L - 7, y);
+    }
+    rich(PR.L + PR.S / 2, PR.T + PR.S + 38, [['波束1功率 ', 'n'], ['p', 'i'], ['1', 'sub'], [' / W', 'n']], { align: 'center', size: 14 });
+    ctx.save(); ctx.translate(PR.L - 44, PR.T + PR.S / 2); ctx.rotate(-Math.PI / 2);
+    rich(0, 0, [['波束2功率 ', 'n'], ['p', 'i'], ['2', 'sub'], [' / W', 'n']], { align: 'center', size: 14 });
+    ctx.restore();
+    var cx = PR.L + PR.S + 16, cw = 12, ch = PR.S * 0.6, cy = PR.T + PR.S * 0.2;
+    for (var k = 0; k < 60; k++) {
+      var c = cmap(1 - k / 59);
+      ctx.fillStyle = 'rgb(' + c.map(Math.round).join(',') + ')';
+      ctx.fillRect(cx, cy + ch * k / 60, cw, ch / 60 + 1);
+    }
+    ctx.strokeStyle = '#b4aea2'; ctx.strokeRect(cx + 0.5, cy + 0.5, cw, ch);
+    var d2 = Math.max(3, decFor(bg.step));
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#555'; ctx.font = '11.5px "Microsoft YaHei",sans-serif';
+    ctx.fillText(bg.wmax.toFixed(d2), cx + cw + 4, cy);
+    ctx.fillText(((bg.wmax + bg.wmin) / 2).toFixed(d2), cx + cw + 4, cy + ch / 2);
+    ctx.fillText(bg.wmin.toFixed(d2), cx + cw + 4, cy + ch);
+    rich(cx, cy - 12, [['W', 'i']], { size: 15 });
+  }
+  function drawInset(fr) {
+    var sz = 150, ox = PR.L + 8, oy = PR.T + 8, full = getBg(FULL, true, 100, sz);
+    ctx.save();
+    ctx.fillStyle = '#fff'; ctx.fillRect(ox - 2, oy - 2, sz + 4, sz + 4);
+    ctx.drawImage(full.cv, ox, oy, sz, sz);
+    var ix = function (x) { return ox + (x - FULL.x0) / FULL.s * sz; }, iy = function (y) { return oy + sz - (y - FULL.y0) / FULL.s * sz; };
+    var n = fr.kh === undefined ? 1 : fr.kh;
+    ctx.strokeStyle = COL.navy; ctx.lineWidth = 1.5; ctx.beginPath();
+    ST.hist.slice(0, Math.max(1, n)).forEach(function (h, k) { if (k) ctx.lineTo(ix(h.p[0]), iy(h.p[1])); else ctx.moveTo(ix(h.p[0]), iy(h.p[1])); });
+    ctx.stroke();
+    var w = Math.max(5, V.s / FULL.s * sz), cxv = ix(V.x0 + V.s / 2), cyv = iy(V.y0 + V.s / 2);
+    ctx.strokeStyle = COL.tr; ctx.lineWidth = 1.6; ctx.strokeRect(cxv - w / 2, cyv - w / 2, w, w);
+    ctx.strokeStyle = '#9d978c'; ctx.lineWidth = 1; ctx.strokeRect(ox - 0.5, oy - 0.5, sz + 1, sz + 1);
+    ctx.font = '11px "Microsoft YaHei",sans-serif'; ctx.fillStyle = '#666'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText('全图，橙框为当前视野', ox, oy + sz + 4);
+    ctx.restore();
+  }
+
+  /* ---------------- 历史轨迹与常用点 ---------------- */
+  function drawP0(alpha) {
+    ctx.save(); ctx.globalAlpha *= alpha === undefined ? 1 : alpha;
+    diamond(ST.m.p0, 7, '#262a30');
+    labP(ST.m.p0, '0', '#262a30', -22, 18);
+    ctx.restore();
+  }
+  // 画到第 t 次迭代开始为止：被接受点连成轨迹，之前被拒绝的候选点画成 ×
+  function drawHistory(t, moving) {
+    var tr = ST.trace;
+    for (var q = 0; q < t && q < tr.length; q++) {
+      var r = tr[q];
+      if (!r.pc || r.outcome === 'accept') continue;
+      ctx.save(); ctx.globalAlpha *= 0.55;
+      cross(r.pc, 4.5, COL.bad, 2);
+      if (r.repair && r.repair.p) {
+        segment(r.pc, r.repair.p, '#8a8f96', 1, [2, 3]);
+        if (r.outcome !== 'repair-accept') cross(r.repair.p, 3.5, COL.bad, 1.6);
+      }
+      ctx.restore();
+    }
+    var pts = ST.hist.slice(0, Math.min(t + 1, ST.hist.length)).map(function (h) { return h.p; });
+    if (moving) pts.push(moving);
+    if (pts.length > 1) {
+      ctx.strokeStyle = COL.navy; ctx.lineWidth = 2.2; ctx.setLineDash([]); ctx.lineJoin = 'round';
+      ctx.beginPath(); pts.forEach(function (p, k) { var a = px(p); if (k) ctx.lineTo(a[0], a[1]); else ctx.moveTo(a[0], a[1]); }); ctx.stroke();
+      for (var k = 1; k < pts.length - (moving ? 1 : 0); k++) dot(pts[k], 3.2, COL.navy, '#fff', 1);
+    }
+    drawP0();
+  }
+  function curMarker(p, k) {
+    dot(p, 6, COL.navy, '#fff', 1.6);
+    labP(p, '(' + k + ')', COL.navy, -14, -12, 'right');
+  }
+
+  /* ---------------- 迭代动画：s 中各分量为 0—1 的进度 ---------------- */
+  function paintIter(rec, s, opt) {
+    var m = ST.m, p = rec.p, lam = rec.lam, lp = rec.lp, R = rec.repair, out = rec.outcome;
+    var isAcc = out === 'accept', isRA = out === 'repair-accept';
+    var dec = ease(s.decide || 0), rdec = ease(s.rdecide || 0);
+    var curP = p, sqC = p, sqL = lam * easeOut(s.sq || 0), moving = null;
+    if (isAcc && dec > 0) { curP = lerp(p, rec.pc, dec); sqC = curP; sqL = lam + (rec.lamNew - lam) * dec; moving = curP; }
+    else if (!isAcc && !R && rec.pc && dec > 0) sqL = lam + (rec.lamNew - lam) * dec;
+    if (isRA && rdec > 0) { curP = lerp(p, R.p, rdec); sqC = curP; moving = curP; }
+    else if (R && !isRA && rdec > 0) sqL = lam + (rec.lamNew - lam) * rdec;
+    var base = (1 - 0.55 * ease(s.rsq || 0)) * (1 - 0.75 * Math.max(dec, rdec));
+
+    drawHistory(rec.k, moving);
+    if (s.poly) { ctx.save(); ctx.globalAlpha = s.poly * base; polyFill(SCA.lpPolygon(p, lp), 'rgba(120,95,175,0.22)', 'rgba(107,79,160,0.5)'); ctx.restore(); }
+    if (R && s.rpoly && R.lp.feasible) { ctx.save(); ctx.globalAlpha = s.rpoly * (1 - 0.7 * rdec); polyFill(SCA.lpPolygon(rec.pc, R.lp), 'rgba(43,122,120,0.2)', 'rgba(43,122,120,0.55)'); ctx.restore(); }
+    if (sqL > 0) square(sqC, sqL, COL.tr, { fill: 'rgba(214,150,80,0.07)', alpha: 0.4 + 0.6 * Math.max(base, dec, rdec) });
+    if (R && s.rsq) square(rec.pc, R.lam * easeOut(s.rsq), COL.rep, { dash: [2, 3], alpha: 1 - 0.7 * rdec, lw: 1.8 });
+    if (s.brk) {
+      ctx.save(); ctx.globalAlpha = s.brk * base;
+      lp.brk.forEach(function (b) {
+        var seg = clipLine(b.a, b.b + dot2(b.a, p), sqBox(p, lam));
+        if (!seg) return;
+        segment(seg[0], seg[1], COL.brk, 1.4, [5, 4]);
+        if (opt && opt.labels) {
+          var a = px(lerp(seg[0], seg[1], 0.5));
+          txt(Math.max(PR.L + 52, Math.min(PR.L + PR.S - 52, a[0])), a[1] - 6, '波束' + (b.beam + 1) + '刚好满足', { color: '#5f656c', size: 12, align: 'center' });
+        }
+      });
+      ctx.restore();
+    }
+    if (s.line) {
+      if (lp.margin > 0) linLine(p, rec.ev.F, rec.gF, m.thr, COL.lin, 1.3, [4, 4], 0.45 * s.line * base);
+      linLine(p, rec.ev.F, rec.gF, m.thr + lp.margin, COL.lin, 2.3, [], s.line * base);
+      if (opt && opt.labels && s.line >= 1 && base > 0.6) lineLabel(p, rec.ev.F, rec.gF, m.thr + lp.margin, lam, '线性化 SGM 约束', COL.lin);
+    }
+    if (R && s.rline) linLine(rec.pc, rec.evc.F, R.gF, m.thr + R.lp.margin, COL.rep, 2, [8, 4], s.rline * (1 - 0.7 * rdec));
+    if (s.verts && lp.feasible) {
+      ctx.save(); ctx.globalAlpha = base;
+      var nv = Math.ceil(s.verts * lp.verts.length);
+      for (var k = 0; k < nv; k++) dot([p[0] + lp.verts[k].d[0], p[1] + lp.verts[k].d[1]], 3.4, '#fff', COL.lin, 1.6);
+      if (s.best) star([p[0] + lp.d[0], p[1] + lp.d[1]], 6 + 4 * easeOut(s.best), COL.star);
+      ctx.restore();
+    }
+    if (R && s.rverts && R.lp.feasible) {
+      ctx.save(); ctx.globalAlpha = 1 - 0.6 * rdec;
+      var nr = Math.ceil(s.rverts * R.lp.verts.length);
+      for (k = 0; k < nr; k++) dot([rec.pc[0] + R.lp.verts[k].d[0], rec.pc[1] + R.lp.verts[k].d[1]], 3, '#fff', COL.rep, 1.4);
+      if (s.rverts >= 1) star(R.p, 8, COL.rep);
+      ctx.restore();
+    }
+    if (rec.pc && s.arrow) {
+      var chk = s.check || 0, okF = rec.evc.F >= m.thr, upW = rec.evc.W > rec.ev.W + 1e-12;
+      ctx.save(); ctx.globalAlpha = Math.max(0.35, base);
+      arrow(p, rec.pc, ease(s.arrow), COL.tr, 2);
+      ctx.restore();
+      if (s.arrow >= 1) {
+        var rejected = (!isAcc && !R && dec > 0) || (R && rdec > 0);
+        if (rejected || (isRA && rdec > 0)) cross(rec.pc, 6, COL.bad, 2.6);
+        else if (!(isAcc && dec >= 1)) ring(rec.pc, 7, chk > 0 ? (okF && upW ? COL.good : COL.bad) : COL.tr, 2.4);
+        var sd = side(rec.pc);
+        if (!(isAcc && dec >= 1)) labP(rec.pc, 'c', chk > 0 && !(okF && upW) ? COL.bad : COL.tr, sd.dx, -9, sd.align);
+        if (chk > 0 && !(isAcc && dec > 0.3)) {
+          var a = px(rec.pc);
+          ctx.save(); ctx.globalAlpha = ease(chk);
+          rich(a[0] + sd.dx, a[1] + 18, [['F', 'i'], [' = ' + fF(rec.evc.F) + (okF ? ' 达标' : ' 不达标'), 'n']], { color: okF ? COL.good : COL.bad, size: 13, align: sd.align });
+          rich(a[0] + sd.dx, a[1] + 35, [['W', 'i'], [' = ' + fW(rec.evc.W) + (upW ? ' 提高' : ' 未提高'), 'n']], { color: upW ? COL.good : COL.bad, size: 13, align: sd.align });
+          ctx.restore();
+        }
+      }
+    }
+    if (R && R.p && s.rarrow) {
+      arrow(rec.pc, R.p, ease(s.rarrow), COL.rep, 2);
+      if (s.rarrow >= 1 && !(isRA && rdec >= 1)) {
+        var okR = R.ev.F >= m.thr && R.ev.W > rec.ev.W + 1e-12;
+        if (!isRA && rdec > 0) cross(R.p, 5, COL.bad, 2.2); else ring(R.p, 6.5, okR ? COL.good : COL.bad, 2.2);
+        var b2 = px(R.p), sr = side(R.p);
+        txt(b2[0] + sr.dx, b2[1] - 8, '修复点', { color: COL.rep, size: 13, align: sr.align });
+        rich(b2[0] + sr.dx, b2[1] - 26, [['F', 'i'], [' = ' + fF(R.ev.F), 'n'], ['  W', 'i'], [' = ' + fW(R.ev.W), 'n']], { color: okR ? COL.good : COL.bad, size: 12.5, align: sr.align });
+      }
+    }
+    var newK = moving && (dec >= 1 || rdec >= 1);
+    curMarker(curP, newK ? rec.k + 1 : rec.k);
+  }
+
+  function panelIter(rec, s) {
+    var m = ST.m, R = rec.repair, cols = [];
+    cols.push({ h: '当前点 ' + pK(rec.k), p: rec.p, W: rec.ev.W, F: rec.ev.F });
+    var showC = rec.pc && (s.best || 0) > 0;
+    if (showC) cols.push({ h: '候选点 ' + H.pc, p: rec.pc, Wl: rec.ev.W + rec.lp.pred, Fl: rec.lp.linF, W: s.check > 0 ? rec.evc.W : null, F: s.check > 0 ? rec.evc.F : null, ref: rec.ev.W });
+    var showR = R && R.lp.feasible && (s.rverts || 0) >= 1;
+    if (showR) cols.push({ h: '修复点', p: R.p, Wl: rec.evc.W + R.lp.pred, Fl: R.lp.linF, W: s.rarrow >= 1 ? R.ev.W : null, F: s.rarrow >= 1 ? R.ev.F : null, ref: rec.ev.W });
+    var kv = '<i>k</i> = ' + rec.k + '　' + H.lam + ' = ' + flam(rec.lam) + ' W　' + H.mu + ' = ' + sci(rec.mu) + (rec.muReset ? '，由 ' + sci(rec.muIn) + ' 清零' : '') +
+      '　要求 ' + H.F + ' ≥ ' + H.F0 + ' − ' + H.dl + ' = ' + fF(m.thr);
+    if (rec.pc && s.check >= 1 && rec.evc.F < m.thr) kv += '<br>线性化误差 ' + sci(rec.err) + '，余量系数更新为 ' + sci(rec.muAfterErr);
+    var done = rec.pc && ((!R && (s.decide || 0) >= 1) || (R && (s.rdecide || 0) >= 1));
+    if (done) kv += '<br>下一次迭代：<i>λ</i><sub>' + (rec.k + 1) + '</sub> = ' + flam(rec.lamNew) + ' W，<i>μ</i><sub>' + (rec.k + 1) + '</sub> = ' + sci(rec.muNew);
+    if (rec.outcome === 'converged') kv += '<br>线性模型预测的满足率提升 ' + sci(rec.lp.pred) + '，小于 10<sup>−7</sup>';
+    var cand = null, cname = '';
+    if (showR && s.rarrow >= 1) { cand = R.ev; cname = '修复点'; }
+    else if (rec.pc && s.check > 0) { cand = rec.evc; cname = '候选点'; }
+    var accepted = (rec.outcome === 'accept' && (s.decide || 0) >= 1) || (rec.outcome === 'repair-accept' && (s.rdecide || 0) >= 1);
+    return { cols: cols, kv: kv, cur: rec.ev, cand: cand, cname: cname, hist: rec.k + 1 + (accepted ? 1 : 0) };
+  }
+
+  /* ---------------- 右侧：指标表、柱状图、折线 ---------------- */
+  var lastPanel = {};
+  function setHTML(id, html) { if (lastPanel[id] !== html) { $(id).innerHTML = html; lastPanel[id] = html; } }
+  function metricsHTML(info) {
+    var m = ST.m, cols = info.cols;
+    var hasL = cols.some(function (c) { return c.Wl !== undefined; });
+    var s = '<table class="mt"><tr><th></th>' + cols.map(function (c) { return '<th>' + c.h + '</th>'; }).join('') + '</tr>';
+    s += '<tr><td>功率 <i>p</i><sub>1</sub>, <i>p</i><sub>2</sub> / W</td>' + cols.map(function (c) { return '<td>' + fP(c.p[0]) + ', ' + fP(c.p[1]) + '</td>'; }).join('') + '</tr>';
+    function cell(v, cls) { return v === null || v === undefined ? '<td>—</td>' : '<td class="' + (cls || '') + '">' + v + '</td>'; }
+    if (hasL) s += '<tr><td>' + H.W + ' 线性预测</td>' + cols.map(function (c) { return cell(c.Wl === undefined ? null : fW(c.Wl), 'pr'); }).join('') + '</tr>';
+    s += '<tr><td>' + H.W + ' 原模型</td>' + cols.map(function (c) { return cell(c.W === null || c.W === undefined ? null : fW(c.W), c.ref !== undefined && c.W !== null ? (c.W > c.ref + 1e-12 ? 'ok' : 'bad') : ''); }).join('') + '</tr>';
+    if (hasL) s += '<tr><td>' + H.F + ' 线性预测</td>' + cols.map(function (c) { return cell(c.Fl === undefined ? null : fF(c.Fl), 'pr'); }).join('') + '</tr>';
+    s += '<tr><td>' + H.F + ' 原模型</td>' + cols.map(function (c) { return cell(c.F === null || c.F === undefined ? null : fF(c.F), c.ref !== undefined && c.F !== null ? (c.F >= m.thr ? 'ok' : 'bad') : ''); }).join('') + '</tr>';
+    s += '</table>';
+    if (info.kv) s += '<div class="kv">' + info.kv + '</div>';
+    return s;
+  }
+  function barsSVG(curEv, cand, cname) {
+    var m = ST.m, w = 300, h = 186, L = 34, T = 24, B = 50, ymax = 150;
+    var ys = function (v) { return T + (h - T - B) * (1 - Math.min(v, ymax) / ymax); };
+    var s = '<svg viewBox="0 0 ' + w + ' ' + h + '" xmlns="http://www.w3.org/2000/svg" font-family="Microsoft YaHei,sans-serif">';
+    s += '<text x="6" y="15" font-size="12" fill="#444">容量与需求 / Mbps</text>';
+    s += '<rect x="150" y="6" width="10" height="8" fill="#2d4b73"/><text x="163" y="14" font-size="10.5" fill="#555">当前点</text>';
+    if (cand) s += '<rect x="203" y="6" width="10" height="8" fill="rgba(194,122,44,0.3)" stroke="#c27a2c"/><text x="216" y="14" font-size="10.5" fill="#555">' + cname + '</text>';
+    [0, 50, 100].forEach(function (v) { s += '<line x1="' + L + '" x2="' + (w - 6) + '" y1="' + ys(v) + '" y2="' + ys(v) + '" stroke="#eee"/><text x="' + (L - 4) + '" y="' + (ys(v) + 4) + '" font-size="10" text-anchor="end" fill="#777">' + v + '</text>'; });
+    s += '<line x1="' + L + '" x2="' + (w - 6) + '" y1="' + ys(137.5) + '" y2="' + ys(137.5) + '" stroke="#bbb" stroke-dasharray="3 3"/><text x="' + (w - 8) + '" y="' + (ys(137.5) - 3) + '" font-size="9.5" text-anchor="end" fill="#999">单槽上限 137.5</text>';
+    for (var i = 0; i < 2; i++) {
+      var gx = L + 16 + i * 130, bw = 30, C = curEv.C[i], D = m.D[i];
+      s += '<rect x="' + gx + '" y="' + ys(C) + '" width="' + bw + '" height="' + (ys(0) - ys(C)) + '" fill="#2d4b73"/>';
+      s += '<text x="' + (gx + bw / 2) + '" y="' + (ys(C) - 3) + '" font-size="10.5" text-anchor="middle" fill="#2d4b73">' + C.toFixed(1) + '</text>';
+      if (cand) {
+        var C2 = cand.C[i];
+        s += '<rect x="' + (gx + bw + 6) + '" y="' + ys(C2) + '" width="' + bw + '" height="' + (ys(0) - ys(C2)) + '" fill="rgba(194,122,44,0.25)" stroke="#c27a2c"/>';
+        s += '<text x="' + (gx + 1.5 * bw + 6) + '" y="' + (ys(C2) - 3) + '" font-size="10.5" text-anchor="middle" fill="#a8641f">' + C2.toFixed(1) + '</text>';
+      }
+      s += '<line x1="' + (gx - 7) + '" x2="' + (gx + 2 * bw + 13) + '" y1="' + ys(D) + '" y2="' + ys(D) + '" stroke="#222" stroke-width="1.6" stroke-dasharray="5 3"/>';
+      s += '<text x="' + (gx + 2 * bw + 15) + '" y="' + (ys(D) + 4) + '" font-size="10.5" fill="#222">需求 ' + D + '</text>';
+      s += '<text x="' + (gx + bw) + '" y="' + (ys(0) + 14) + '" font-size="11.5" text-anchor="middle" fill="#333">波束' + (i + 1) + '</text>';
+      var sg = function (e) { return Math.min(e.C[i] / D, 1).toFixed(2); }, lg = function (e) { return e.Lam[i].toFixed(2); };
+      s += '<text x="' + (gx + bw) + '" y="' + (ys(0) + 28) + '" font-size="10.5" text-anchor="middle" fill="#555">满足率 ' + sg(curEv) + (cand ? ' → ' + sg(cand) : '') + '</text>';
+      s += '<text x="' + (gx + bw) + '" y="' + (ys(0) + 42) + '" font-size="10.5" text-anchor="middle" fill="#555">匹配得分 ' + lg(curEv) + (cand ? ' → ' + lg(cand) : '') + '</text>';
+    }
+    s += '<line x1="' + L + '" x2="' + (w - 6) + '" y1="' + ys(0) + '" y2="' + ys(0) + '" stroke="#999"/></svg>';
+    return s;
+  }
+  function histSVG(n) {
+    var m = ST.m, Hh = ST.hist, K = Math.max(1, Hh.length - 1), w = 300, h = 186, L = 40, Rr = 10, T = 26, B = 30;
+    var lo = m.F0, hi = m.F0;
+    Hh.forEach(function (x) { lo = Math.min(lo, x.ev.W, x.ev.F); hi = Math.max(hi, x.ev.W, x.ev.F); });
+    var pad = (hi - lo) * 0.08 + 0.004; lo -= pad; hi += pad;
+    var xs = function (k) { return L + (w - L - Rr) * k / K; }, ys = function (v) { return T + (h - T - B) * (1 - (v - lo) / (hi - lo)); };
+    var s = '<svg viewBox="0 0 ' + w + ' ' + h + '" xmlns="http://www.w3.org/2000/svg" font-family="Microsoft YaHei,sans-serif">';
+    s += '<text x="6" y="15" font-size="12" fill="#444">各次迭代当前点的 W 与 F</text>';
+    s += '<line x1="168" x2="182" y1="11" y2="11" stroke="#2d4b73" stroke-width="2.2"/><text x="185" y="15" font-size="11" fill="#555" font-style="italic">W</text>';
+    s += '<line x1="202" x2="216" y1="11" y2="11" stroke="#3c7a4a" stroke-width="2.2"/><text x="219" y="15" font-size="11" fill="#555" font-style="italic">F</text>';
+    s += '<line x1="234" x2="248" y1="11" y2="11" stroke="#3c7a4a" stroke-dasharray="3 2"/><text x="251" y="15" font-size="11" fill="#555">要求</text>';
+    var st = niceStep((hi - lo) / 4, [1, 2, 5]);
+    for (var v = Math.ceil(lo / st) * st; v <= hi; v += st) s += '<line x1="' + L + '" x2="' + (w - Rr) + '" y1="' + ys(v) + '" y2="' + ys(v) + '" stroke="#eee"/><text x="' + (L - 4) + '" y="' + (ys(v) + 4) + '" font-size="10" text-anchor="end" fill="#777">' + v.toFixed(decFor(st)) + '</text>';
+    var every = K > 12 ? Math.ceil(K / 12) : 1;
+    for (var k = 0; k <= K; k += every) s += '<text x="' + xs(k) + '" y="' + (h - B + 14) + '" font-size="10" text-anchor="middle" fill="#777">' + k + '</text>';
+    s += '<text x="' + (w - Rr) + '" y="' + (h - 4) + '" font-size="10.5" text-anchor="end" fill="#777">迭代次数 k</text>';
+    s += '<line x1="' + L + '" x2="' + (w - Rr) + '" y1="' + ys(m.F0) + '" y2="' + ys(m.F0) + '" stroke="#3c7a4a" stroke-dasharray="3 2"/>';
+    n = Math.max(1, Math.min(n, Hh.length));
+    ['W', 'F'].forEach(function (key) {
+      var col = key === 'W' ? '#2d4b73' : '#3c7a4a', pts = Hh.slice(0, n).map(function (x, k) { return xs(k).toFixed(1) + ',' + ys(x.ev[key]).toFixed(1); });
+      if (pts.length > 1) s += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + col + '" stroke-width="2"/>';
+      pts.forEach(function (q) { var c = q.split(','); s += '<circle cx="' + c[0] + '" cy="' + c[1] + '" r="2.8" fill="' + col + '"/>'; });
+    });
+    var lastE = Hh[n - 1].ev;
+    s += '<text x="' + Math.min(xs(n - 1) + 5, w - 46) + '" y="' + (ys(lastE.W) - 6) + '" font-size="10.5" fill="#2d4b73">' + fW(lastE.W) + '</text>';
+    s += '<line x1="' + L + '" x2="' + L + '" y1="' + T + '" y2="' + (h - B) + '" stroke="#999"/></svg>';
+    return s;
+  }
+  function updatePanel(info) {
+    setHTML('metrics', metricsHTML(info));
+    setHTML('bars', barsSVG(info.cur, info.cand, info.cname));
+    setHTML('hist', histSVG(info.hist));
+  }
+
+  /* ---------------- 文字 ---------------- */
+  var NAME = { accept: '直接接受', 'repair-accept': '修复后接受', 'repair-fail': '修复失败，拒绝', 'reject-sgm': '拒绝', 'reject-w': '拒绝', 'lp-infeasible': '子问题无解', converged: '停止' };
+  function cat(r) { return r.outcome === 'accept' ? 'acc' : r.outcome === 'repair-accept' ? 'rep' : r.outcome === 'converged' ? 'stop' : 'rej'; }
+  function budgetTxt(m) { return isFinite(m.ptot) ? '，<i>p</i><sub>1</sub> + <i>p</i><sub>2</sub> ≤ ' + m.ptot + ' W' : ''; }
+  function jTxt(J) {
+    return iv('J', '11') + ' = ' + sig(J[0][0], 3) + '，' + iv('J', '12') + ' = ' + sig(J[0][1], 3) + '，' + iv('J', '21') + ' = ' + sig(J[1][0], 3) + '，' + iv('J', '22') + ' = ' + sig(J[1][1], 3) + ' Mbps/W';
+  }
+  function gTxt(g) { return '(' + gfmt(g[0]) + ', ' + gfmt(g[1]) + ') /W'; }
+  function eqLP(rec, pt, ev, J, g, lam, margin) {
+    var m = ST.m, f2 = function (x) { return sig(x, 3); };
+    var s = 'max<sub>' + H.Dl + ', <i>y</i></sub>　' + iv('y', 1) + ' + ' + iv('y', 2) + '<br>';
+    for (var i = 0; i < 2; i++) s += iv('y', i + 1) + ' ≤ ' + linExpr(ev.C[i], J[i], function (c) { return c.toFixed(2); }, f2) + '，　' + iv('y', i + 1) + ' ≤ ' + m.D[i] + '<br>';
+    s += linExpr(ev.F, g, fF, gfmt) + ' ≥ ' + fF(m.thr) + ' + ' + (margin > 0 ? sci(margin) : '0') + '<br>';
+    s += '|' + dI(1) + '|, |' + dI(2) + '| ≤ ' + flam(lam) + '，　0.5 ≤ ' + iv('p', 'i') + ' + ' + iv('Δ', 'i') + ' ≤ 50' + (isFinite(m.ptot) ? '，　' + iv('p', 1) + ' + ' + iv('p', 2) + ' + ' + dI(1) + ' + ' + dI(2) + ' ≤ ' + m.ptot : '');
+    return EQ(s);
+  }
+  function capNote(J) {
+    var s = '';
+    for (var i = 0; i < 2; i++) if (J[i][0] === 0 && J[i][1] === 0) s += '波束' + (i + 1) + '已达到频谱效率上限，容量不再随功率变化，这一行导数取 0。';
+    return s;
+  }
+
+  function txtLin(rec, first) {
+    var m = ST.m, lp = rec.lp, s = '';
+    s += P('<b>这一步做什么：</b>在当前点 ' + pK(rec.k) + ' = ' + fpt(rec.p) + ' W 处，把容量和 SGM 都换成一次式，搭出一个线性规划子问题。' +
+      (first ? '线性规划就是目标和约束都只含一次式的优化问题，二维时可行范围是一个多边形，可以精确求解。' : ''));
+    s += P('<b>怎么做：</b>先算导数：' + jTxt(rec.J) + '；' + H.gF + ' = ' + gTxt(rec.gF) + '。' + capNote(rec.J) + '再按式（23）列出子问题：');
+    s += eqLP(rec, rec.p, rec.ev, rec.J, rec.gF, rec.lam, lp.margin);
+    if (first) s += P(H.y + ' 是辅助服务量，表示波束 <i>i</i> 实际送达的业务量。它既不能超过线性化的容量，也不能超过需求，最优时正好等于两者中较小的那个。这样，超出需求的容量不计入这个折点，就写成了两条一次不等式。第三行要求线性化的 SGM 不低于要求值加上曲率余量 ' + H.mu + H.lam + '<sup>2</sup>，' + H.mu + ' 叫余量系数，初值为 0。');
+    if (rec.muReset) s += P('上一次迭代留下的余量系数是 ' + sci(rec.muIn) + '。带着这么大的余量，子问题' + (rec.lpFirst.feasible ? '算不出满足率的提高' : '没有可行解') + '，所以按规则先把 ' + H.mu + ' 清零，再解一次。');
+    else if (lp.margin > 0) s += P('这一次余量系数 ' + H.mu + ' = ' + sci(rec.mu) + '，SGM 约束直线向可行一侧平移了 ' + H.mu + H.lam + '<sup>2</sup> = ' + sci(lp.margin) + '。淡紫虚线是不留余量时的位置。这是上一次候选点越界留下的教训。');
+    s += P('图中橙色虚线正方形是信赖域，半边长 ' + H.lam + ' = ' + flam(rec.lam) + ' W；紫色直线是线性化的 SGM 约束；灰色虚线是线性模型中某个波束容量恰好等于需求的位置，越过它该波束的服务量不再增加；淡紫色多边形是同时满足各条约束的范围。');
+    return s;
+  }
+  function txtLP(rec) {
+    var lp = rec.lp, m = ST.m, s = '';
+    s += P('<b>这一步做什么：</b>求出子问题的最优功率增量 ' + H.Dl + '，得到候选点 ' + H.pc + ' = ' + H.pk + ' + ' + H.Dl + '。');
+    s += P('<b>怎么做：</b>二维时可以直接枚举。把所有约束的边界线和灰色虚线两两求交点，留下满足全部约束的 ' + lp.verts.length + ' 个点，图中的空心小圆，逐个计算 ' + iv('y', 1) + ' + ' + iv('y', 2) + '，取最大的一个，即星号。目标在灰色虚线分出的每一块里都是一次式，最大值必然出现在某个交点上，所以这样得到的就是精确最优解。');
+    s += P('结果：' + H.Dl + ' = (' + sig(lp.d[0], 3) + ', ' + sig(lp.d[1], 3) + ') W，候选点 ' + H.pc + ' = ' + fpt(rec.pc) + ' W。线性模型预测满足率从 ' + fW(rec.ev.W) + ' 提高到 ' + fW(rec.ev.W + lp.pred) + '，SGM 为 ' + fF(lp.linF) + '，正好' + (Math.abs(lp.linF - m.thr - lp.margin) < 1e-9 ? '压在紫色直线上。' : '在紫色直线的可行一侧。'));
+    return s;
+  }
+  function txtChk(rec) {
+    var m = ST.m, e = rec.evc, okF = e.F >= m.thr, up = e.W > rec.ev.W + 1e-12, s = '';
+    s += P('<b>这一步做什么：</b>线性模型只是近似，候选点到底好不好，要回到原来的容量公式重新计算 ' + H.W + ' 和 ' + H.F + '，按式（24）判断：满足率要提高，SGM 要达标。');
+    s += P('原模型算得 ' + H.W + '(' + H.pc + ') = ' + fW(e.W) + '，' + (up ? ok('比当前的 ' + fW(rec.ev.W) + ' 高') : bad('没有超过当前的 ' + fW(rec.ev.W))) + '；' + H.F + '(' + H.pc + ') = ' + fF(e.F) + '，' +
+      (okF ? ok('不低于要求 ' + fF(m.thr)) : bad('低于要求 ' + fF(m.thr))) + '。线性模型预测的 SGM 是 ' + fF(rec.lp.linF) + '，' + (rec.err > 0 ? '实际低了 ' + sci(rec.err) : '实际还高了 ' + sci(-rec.err)) + '。');
+    if (rec.outcome === 'accept') {
+      s += P('<b>结论：直接接受。</b>当前点移到候选点。近似在这么大的范围内是可信的，于是半径加倍，' + H.lam + ' 从 ' + flam(rec.lam) + ' W 变为 ' + flam(rec.lamNew) + ' W' + (rec.lamNew < 2 * rec.lam ? '，按规则不超过 50 W' : '') + '；余量系数减半，从 ' + sci(rec.mu) + ' 变为 ' + sci(rec.muNew) + '。');
+    } else if (!okF) {
+      s += P('<b>SGM 不达标。</b>先按式（25）加大余量系数：');
+      s += EQ(H.mu + ' ← max(2' + H.mu + ', [' + iv('F') + '<sup>(<i>k</i>)</sup> + ' + H.gF + '<sup>T</sup>' + H.Dl + ' − ' + H.F + '(' + H.pc + ')] / ‖' + H.Dl + '‖<sub>∞</sub><sup>2</sup>) = max(' + sci(2 * rec.mu) + ', ' + sci(rec.err) + ' / ' + sig(Math.max(Math.abs(rec.lp.d[0]), Math.abs(rec.lp.d[1])), 3) + '<sup>2</sup>) = ' + sci(rec.muAfterErr));
+      s += P('分子是线性预测与真实 SGM 之差，也就是这一步实际出现的线性化误差。余量系数变大以后，后面的子问题会在直线内侧多留余地，减少越界。');
+      if (up) s += P('不过候选点的满足率确实提高了，直接丢掉可惜，下一步尝试<b>修复</b>。');
+      else s += P('<b>结论：拒绝。</b>满足率也没有提高，当前点不动，半径减半为 ' + flam(rec.lamNew) + ' W。');
+    } else {
+      s += P('<b>结论：拒绝。</b>SGM 达标，但满足率没有提高，说明线性模型把容量估计得太乐观。当前点不动，半径减半为 ' + flam(rec.lamNew) + ' W。');
+    }
+    return s;
+  }
+  function txtRep(rec) {
+    var m = ST.m, R = rec.repair, e = rec.evc, s = '';
+    s += P('<b>这一步做什么：</b>候选点的满足率提高了，只是 SGM 差了 ' + sci(m.thr - e.F) + '。修复步试着在候选点附近把 SGM 补回来，同时尽量保住满足率的提高。');
+    s += P('<b>怎么做：</b>在候选点 ' + H.pc + ' 处重新线性化，以一半的半径 ' + H.lam + '/2 = ' + flam(R.lam) + ' W 再解一次同类子问题，要求线性化的 SGM 回到 ' + H.F0 + ' − ' + H.dl + ' + ' + H.mu + '(' + H.lam + '/2)<sup>2</sup> = ' + fF(m.thr + R.lp.margin) + ' 以上。图中青色点线小正方形是修复用的信赖域，青色虚线是在候选点重新线性化的 SGM 约束。');
+    if (!R.lp.feasible) s += P('在这么小的范围内，线性模型也找不到能把 SGM 补到要求的方向，修复子问题无解。<b>结论：拒绝候选点。</b>当前点不动，半径减半为 ' + flam(rec.lamNew) + ' W，余量系数保留为 ' + sci(rec.muNew) + '。');
+    else if (rec.outcome === 'repair-accept') s += P('修复点 ' + fpt(R.p) + ' W：' + H.W + ' = ' + fW(R.ev.W) + '，' + ok('仍高于原来的 ' + fW(rec.ev.W)) + '；' + H.F + ' = ' + fF(R.ev.F) + '，' + ok('达标') + '。<b>结论：接受修复点。</b>半径保持 ' + flam(rec.lamNew) + ' W，余量系数保持更新后的 ' + sci(rec.muNew) + '。');
+    else s += P('修复点 ' + fpt(R.p) + ' W：' + H.W + ' = ' + fW(R.ev.W) + '，' + H.F + ' = ' + fF(R.ev.F) + '，' + bad(R.ev.F < m.thr ? 'SGM 仍不达标' : '满足率没有超过原来的点') + '。<b>结论：拒绝。</b>当前点不动，半径减半为 ' + flam(rec.lamNew) + ' W。');
+    return s;
+  }
+  function txtAll(rec) {
+    var m = ST.m, R = rec.repair, e = rec.evc, li = [];
+    li.push('在 ' + pK(rec.k) + ' = ' + fpt(rec.p) + ' W 处线性化，' + H.lam + ' = ' + flam(rec.lam) + ' W，' + H.mu + ' = ' + sci(rec.mu) + (rec.muReset ? '；上一次的余量系数 ' + sci(rec.muIn) + ' 太大，子问题' + (rec.lpFirst.feasible ? '没有预测提升' : '无解') + '，先清零重解' : '') + '。');
+    li.push('子问题在 ' + rec.lp.verts.length + ' 个交点中选出候选点 ' + H.pc + ' = ' + fpt(rec.pc) + ' W，预测满足率提高 ' + sci(rec.lp.pred) + '。');
+    li.push('原模型：' + H.W + ' = ' + fW(e.W) + '，' + H.F + ' = ' + fF(e.F) + '，' + (e.F >= m.thr ? ok('SGM 达标') : bad('SGM 不达标') + '，线性化误差 ' + sci(rec.err) + '，余量系数加大到 ' + sci(rec.muAfterErr)) + '。');
+    if (R) li.push(R.lp.feasible ? '以半径 ' + flam(R.lam) + ' W 修复，修复点 ' + fpt(R.p) + ' W：' + H.W + ' = ' + fW(R.ev.W) + '，' + H.F + ' = ' + fF(R.ev.F) + '。' : '以半径 ' + flam(R.lam) + ' W 修复，修复子问题无解。');
+    li.push('<b>结论：' + NAME[rec.outcome] + '。</b>下一次 ' + '<i>λ</i> = ' + flam(rec.lamNew) + ' W，<i>μ</i> = ' + sci(rec.muNew) + '。');
+    var s = P('<b>这一步做什么：</b>和前面讲过的步骤相同，连起来播放：线性化，解子问题，用原模型检验，' + (R ? '尝试修复，' : '') + '再按结果更新半径和余量系数。');
+    s += '<ul>' + li.map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ul>';
+    if (Math.max(Math.abs(rec.pc[0] - rec.p[0]), Math.abs(rec.pc[1] - rec.p[1])) < 2.5 && autoZoom) s += P('这一步走得很小，图已自动放大；左上角缩略图标出当前视野在全图中的位置。');
+    return s;
+  }
+  function activeTxt(p, ev) {
+    var m = ST.m, a = [];
+    if (Math.abs(ev.F - m.thr) < 2e-4) a.push('SGM 约束');
+    for (var i = 0; i < 2; i++) { if (p[i] > m.pmax - 1e-3) a.push('波束' + (i + 1) + '的 50 W 上限'); if (p[i] < m.pmin + 1e-3) a.push('波束' + (i + 1) + '的 0.5 W 下限'); }
+    if (isFinite(m.ptot) && p[0] + p[1] > m.ptot - 1e-3) a.push('总功率 ' + m.ptot + ' W 上限');
+    return a;
+  }
+  function txtStop(rec) {
+    var a = activeTxt(rec.p, rec.ev), s = '';
+    s += P('<b>这一步做什么：</b>判断还要不要继续。');
+    if (rec.muReset) s += P('上一次留下的余量系数 ' + sci(rec.muIn) + ' 使子问题' + (rec.lpFirst.feasible ? '没有预测提升' : '无解') + '，先按规则清零再解。');
+    s += P('在 ' + pK(rec.k) + ' = ' + fpt(rec.p) + ' W 处，线性模型在 ' + H.lam + ' = ' + flam(rec.lam) + ' W 的信赖域里找到的最好方向，预测满足率只能提高 ' + sci(rec.lp.pred) + '，小于 10<sup>−7</sup>，说明已经找不到能提高满足率的方向。<b>算法停止，返回当前点。</b>');
+    if (a.length) s += P('图已放大到最终点附近。这里' + a.join('、') + (a.length > 1 ? '同时' : '') + '起作用：要再提高满足率，就得让 SGM 跌破要求，或者突破功率限制。');
+    return s;
+  }
+
+  /* ---------------- 视野 ---------------- */
+  function zoomTo(pts, factor, minSide) {
+    var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    pts.forEach(function (q) { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); });
+    var side = Math.max(Math.max(x1 - x0, y1 - y0) * factor, minSide);
+    if (side >= 30) return FULL;
+    return { x0: (x0 + x1) / 2 - side / 2, y0: (y0 + y1) / 2 - side / 2, s: side };
+  }
+  function iterView(rec, phase) {
+    var step = 0, pts = [rec.p];
+    if (rec.pc) { pts.push(rec.pc); step = Math.max(Math.abs(rec.pc[0] - rec.p[0]), Math.abs(rec.pc[1] - rec.p[1])); }
+    if (rec.repair && rec.repair.p) { pts.push(rec.repair.p); step = Math.max(step, Math.abs(rec.repair.p[0] - rec.p[0]), Math.abs(rec.repair.p[1] - rec.p[1])); }
+    if (phase === 'lin') return rec.lam >= 2.5 ? FULL : zoomTo([[rec.p[0] - rec.lam, rec.p[1] - rec.lam], [rec.p[0] + rec.lam, rec.p[1] + rec.lam]], 1.5, 0.3);
+    if (step >= 2.5) return FULL;
+    return zoomTo(pts, 6, 0.3);
+  }
+
+  /* ---------------- 步骤 ---------------- */
+  function schematic() {
+    var c = ST.cfg;
+    return '<svg viewBox="0 0 380 120" width="380" height="120" style="display:block;margin:2px auto 6px" font-family="Microsoft YaHei,sans-serif">' +
+      '<rect x="176" y="8" width="28" height="14" rx="2" fill="#4a5a70"/><rect x="150" y="12" width="22" height="6" fill="#8aa0bb"/><rect x="208" y="12" width="22" height="6" fill="#8aa0bb"/>' +
+      '<text x="240" y="20" font-size="11" fill="#555">卫星</text>' +
+      '<path d="M186 22 L48 98 L148 98 Z" fill="rgba(45,75,115,0.16)" stroke="#2d4b73" stroke-width="1"/>' +
+      '<path d="M194 22 L232 98 L332 98 Z" fill="rgba(194,122,44,0.16)" stroke="#c27a2c" stroke-width="1"/>' +
+      '<ellipse cx="98" cy="98" rx="50" ry="8" fill="rgba(45,75,115,0.25)"/><ellipse cx="282" cy="98" rx="50" ry="8" fill="rgba(194,122,44,0.25)"/>' +
+      planes(98, 98, c.L[0], '#2d4b73') + planes(282, 98, c.L[1], '#a8641f') +
+      '<text x="98" y="117" font-size="11.5" text-anchor="middle" fill="#2d4b73">波束1：' + c.L[0] + ' 架飞机，需求 ' + c.D[0] + ' Mbps</text>' +
+      '<text x="282" y="117" font-size="11.5" text-anchor="middle" fill="#a8641f">波束2：' + c.L[1] + ' 架飞机，需求 ' + c.D[1] + ' Mbps</text>' +
+      '<path d="M128 70 Q190 52 252 72" fill="none" stroke="#b5443b" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#ah)"/>' +
+      '<path d="M252 82 Q190 64 128 80" fill="none" stroke="#b5443b" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#ah)"/>' +
+      '<text x="190" y="54" font-size="11" text-anchor="middle" fill="#b5443b">同频同极化，互相干扰</text>' +
+      '<defs><marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#b5443b"/></marker></defs></svg>';
+  }
+  function planes(cx, cy, n, col) {
+    var s = '';
+    for (var k = 0; k < n; k++) { var x = cx + (k - (n - 1) / 2) * 22; s += '<path d="M' + (x - 6) + ' ' + (cy + 1) + ' L' + (x + 7) + ' ' + cy + ' L' + (x - 6) + ' ' + (cy - 3) + ' Z" fill="' + col + '"/><path d="M' + (x - 1) + ' ' + (cy - 1) + ' L' + (x - 4) + ' ' + (cy - 7) + ' L' + (x + 1) + ' ' + (cy - 1) + ' Z" fill="' + col + '"/>'; }
+    return s;
+  }
+
+  function buildFrames(st) {
+    ST = st;
+    var m = st.m, F = [], chips = [];
+    function chip(label, cls) { chips.push({ label: label, cls: cls, first: F.length }); return chips.length - 1; }
+    function push(fr) { fr.hold = Math.max(2600, Math.min(9000, strip(fr.html).length * 17)); F.push(fr); }
+    var ev0 = m.ev0, c = st.cfg;
+    var colP0 = { h: '第二阶段功率 ' + H.p0, p: m.p0, W: ev0.W, F: ev0.F };
+    var kv0 = '要求 ' + H.F + ' ≥ ' + H.F0 + ' − ' + H.dl + ' = ' + fF(m.thr) + '，' + H.dl + ' = 0';
+
+    /* 0 例子与目标 */
+    var ci = chip('例子与目标', 'pre');
+    push({ chip: ci, title: '一个两波束的小例子', feas: false, view: FULL, kh: 1, dur: 1500,
+      html: P('<b>这一步做什么：</b>用一个只有两个波束的小例子，把第三阶段要解决的问题画在一张平面图上。') + schematic() +
+        P('两个波束共用同一个频率槽、同一种极化，所以一个波束发出的信号，对另一个波束来说就是干扰。' + c.story) +
+        EQ(iv('C', 'i') + ' = <i>B</i> · min(log<sub>2</sub>(1 + ' + iv('Γ', 'i') + '), <i>η</i>)，　' + iv('Γ', 1) + ' = ' + iv('a', 1) + iv('p', 1) + ' / (1 + ' + iv('b', 1) + iv('p', 2) + ')，　' + iv('Γ', 2) + ' = ' + iv('a', 2) + iv('p', 2) + ' / (1 + ' + iv('b', 2) + iv('p', 1) + ')') +
+        P(iv('C', 'i') + ' 是波束 <i>i</i> 的容量，' + iv('Γ', 'i') + ' 是信干噪比，也就是有用信号与干扰加噪声之比。' + iv('a', 'i') + ' 表示每瓦功率带来多强的信号，' + iv('b', 'i') + ' 表示另一个波束每瓦功率带来多强的干扰，二者都已除以噪声。本例 ' + iv('a', 1) + ' = ' + c.a[0] + '，' + iv('a', 2) + ' = ' + c.a[1] + '，' + iv('b', 1) + ' = ' + c.b[0] + '，' + iv('b', 2) + ' = ' + c.b[1] + '；槽宽 <i>B</i> = 25 MHz，频谱效率上限 <i>η</i> = 5.5 bit/s/Hz，所以单个波束容量最多 137.5 Mbps。') +
+        P('左图横轴是波束1的功率 ' + iv('p', 1) + '，纵轴是波束2的功率 ' + iv('p', 2) + '，图上每个点代表一种功率方案 ' + H.p + '。底色越深，需求满足率 ' + H.W + ' 越高。' + H.W + ' 是实际送达的业务量占总需求的比例，超出需求的容量不计入，按式（6）计算。') +
+        P('黑色菱形是第二阶段给出的功率 ' + H.p0 + ' = ' + fpt(m.p0) + ' W：' + H.W + ' = ' + fW(ev0.W) + '，供需匹配程度 SGM 为 ' + H.F0 + ' = ' + fF(m.F0) + '。SGM 按式（5）计算，衡量各波束容量与需求贴合得怎样，1 表示完全贴合。可以看到 SGM 不算低，满足率却只有一半左右。') +
+        P('<b>第三阶段的目标</b>是式（20）：在 SGM 不低于 ' + H.F0 + ' 的前提下，把 ' + H.W + ' 尽量提高。') +
+        EQ('max ' + H.W + '(' + H.p + ')　满足　' + H.F + '(' + H.p + ') ≥ ' + H.F0 + ' − ' + H.dl + '，　0.5 ≤ ' + iv('p', 'i') + ' ≤ 50 W' + budgetTxt(m)),
+      paint: function (tau) {
+        var u = ph(tau, 0, 1200), a = px(m.p0);
+        ctx.save(); ctx.globalAlpha = 1 - u; ctx.strokeStyle = '#262a30'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(a[0], a[1], 8 + 26 * u, 0, 2 * Math.PI); ctx.stroke(); ctx.restore();
+        drawP0();
+        if (isFinite(m.ptot)) { var b = px([m.ptot - 46, 46]); txt(b[0] + 8, b[1] - 4, '总功率上限 ' + m.ptot + ' W', { color: '#6b655b', size: 12.5 }); }
+      },
+      panel: function () { return { cols: [colP0], kv: kv0, cur: ev0, cand: null, hist: 1 }; } });
+
+    /* 1 为什么要保持 SGM 不降 */
+    var gU = st.gU;
+    ci = chip('为何保持 SGM', 'pre');
+    var lam2 = function (e, i) { return fx(e.Lam[i], 2); };
+    var starve = gU.C[0] / m.D[0] < gU.C[1] / m.D[1] ? 0 : 1;
+    push({ chip: ci, title: '为什么要保持 SGM 不降', feas: true, view: FULL, kh: 1, dur: 3600,
+      html: P('<b>这一步做什么：</b>看看只追求满足率会发生什么，从而说明为什么要给 SGM 设下限。') +
+        P('动画中的点从 ' + H.p0 + ' 移到整个图上满足率最高的方案 ' + fpt(gU.p) + ' W，' + H.W + ' 从 ' + fW(ev0.W) + ' 升到 ' + fW(gU.W) + '。但柱状图显示，波束' + (starve + 1) + '的容量从 ' + ev0.C[starve].toFixed(1) + ' 降到 ' + gU.C[starve].toFixed(1) + ' Mbps，远低于它的需求 ' + m.D[starve] + ' Mbps：满足率只看总量，于是功率和干扰都朝着划算的波束倾斜，另一个波束几乎得不到服务。') +
+        P('SGM 正好能看出这种不公平。它给每个波束算一个匹配得分 ' + iv('Λ', 'i') + '，容量恰好等于需求时为 1，欠供比过供扣分更重；' + H.F + ' 是各波束得分的平均。') +
+        EQ(iv('z', 'i') + ' = ' + iv('C', 'i') + '/' + iv('D', 'i') + '，　' + iv('u', 'i') + ' = ' + iv('z', 'i') + ' − 1 若 ' + iv('z', 'i') + ' ≥ 1，否则 ' + iv('u', 'i') + ' = 1 − 1/' + iv('z', 'i') + '，　' + iv('v', 'i') + ' = (' + iv('C', 'i') + ' − ' + iv('D', 'i') + ')/<i>β</i><br>' +
+          iv('Λ', 'i') + ' = 1 − (1 − e<sup>−√(<i>u<sub>i</sub></i>² + <i>v<sub>i</sub></i>²)</sup>)<sup>3</sup>，　' + H.F + ' = (' + iv('Λ', 1) + ' + ' + iv('Λ', 2) + ')/2') +
+        P('<i>β</i> 是平均波束需求。这里波束' + (starve + 1) + '的得分从 ' + lam2(ev0, starve) + ' 掉到 ' + lam2(gU, starve) + '，' + H.F + ' 从 ' + fF(m.F0) + ' 降到 ' + bad(fF(gU.F)) + '。') +
+        P('所以第三阶段要求 ' + H.F + '(' + H.p + ') ≥ ' + H.F0 + ' − ' + H.dl + '，' + H.dl + ' 是允许的下降量，这里取 0。图中绿色阴影是满足这一要求的方案，称为可行区域；深绿曲线是它的边界 ' + H.F + '(' + H.p + ') = ' + H.F0 + '，' + H.p0 + ' 正好在边界上。要找的，是绿色区域里底色最深的点。'),
+      paint: function (tau) {
+        var u = ease(ph(tau, 500, 2400)), q = lerp(m.p0, gU.p, u);
+        if (st.bpt.length) { var bp = st.bpt[Math.floor(st.bpt.length * 0.3)], a = px(bp); ctx.save(); ctx.globalAlpha = ph(tau, 0, 600); rich(a[0] + 8, a[1] - 8, [['F', 'i'], ['(', 'n'], ['p', 'b'], [') = ', 'n'], ['F', 'i'], ['0', 'sub']], { color: COL.green, size: 14 }); ctx.restore(); }
+        segment(m.p0, q, COL.bad, 1.6, [5, 4]);
+        drawP0();
+        if (u > 0) ring(q, 7, COL.bad, 2.4);
+        if (u >= 1) { var b = px(q); txt(b[0] - 10, b[1] - 14, '满足率最高的点', { color: COL.bad, size: 13, align: 'right' }); rich(b[0] - 10, b[1] + 22, [['W', 'i'], [' = ' + fW(gU.W) + '，', 'n'], ['F', 'i'], [' = ' + fF(gU.F), 'n']], { color: COL.bad, size: 13, align: 'right' }); }
+      },
+      panel: function (tau) {
+        var u = ease(ph(tau, 500, 2400)), e = SCA.evaluate(m, lerp(m.p0, gU.p, u));
+        return { cols: [colP0, { h: '移动中的点', p: e.p, W: e.W, F: e.F, ref: ev0.W }], kv: kv0, cur: ev0, cand: e, cname: '移动中的点', hist: 1 };
+      } });
+
+    /* 2 为什么不能直接开大 */
+    ci = chip('为何不能直接开大', 'pre');
+    var ray = st.ray, pu = st.push, pb = st.pushBeam, ob = 1 - pb;
+    push({ chip: ci, title: '为什么不能直接把功率开大', feas: true, view: FULL, kh: 1, dur: 5600,
+      html: P('<b>这一步做什么：</b>看两种最直接的做法为什么不行。') +
+        P('<b>做法一：两束按同一比例加大功率</b>，' + (st.rayByBudget ? '直到总功率达到 ' + m.ptot + ' W' : '直到有一个波束碰到 50 W 上限') + '。点沿灰色箭头走到 ' + fpt(ray.p) + ' W，' + H.W + ' 只从 ' + fW(ev0.W) + ' 变为 ' + fW(ray.W) + '。原因是两束一起加大功率时，各自收到的有用信号和干扰也一起变大，信干噪比几乎不变，容量也就上不去。') +
+        P('<b>做法二：只把波束' + (pb + 1) + '开到 50 W。</b>' + H.W + ' 升到 ' + fW(pu.W) + '，但它的干扰把波束' + (ob + 1) + '的容量从 ' + ev0.C[ob].toFixed(1) + ' 压到 ' + pu.C[ob].toFixed(1) + ' Mbps，' + H.F + ' 变为 ' + (pu.F >= m.thr ? fF(pu.F) + '，虽然仍在可行区域内，但满足率还不是最高' : bad(fF(pu.F)) + '，越出了可行区域') + '。') +
+        P('可见加功率时，帮了一个波束往往就伤了另一个；可行区域的边界又是弯曲的，没有现成公式能一步算出最好的点。MCTR-SCA 的做法是：每次只看当前点附近，用简单的近似找方向，小步试走，再用原模型检验。下一步介绍它用到的两个工具。'),
+      paint: function (tau) {
+        var u1 = ease(ph(tau, 400, 2000)), u2 = ease(ph(tau, 2900, 2000));
+        arrow(m.p0, ray.p, u1, '#6f7680', 2.2);
+        if (u1 >= 1) { ring(ray.p, 6, ray.F >= m.thr ? COL.good : COL.bad, 2.2); var a = px(ray.p), sd = side(ray.p); rich(a[0] + sd.dx, a[1] + 18, [['做法一 ', 'n'], ['W', 'i'], [' = ' + fW(ray.W), 'n']], { color: '#4a5058', size: 13, align: sd.align }); }
+        arrow(m.p0, pu.p, u2, COL.bad, 2.2);
+        if (u2 >= 1) { ring(pu.p, 6, pu.F >= m.thr ? COL.good : COL.bad, 2.2); var b = px(pu.p); rich(b[0] - 10, b[1] - 12, [['做法二 ', 'n'], ['W', 'i'], [' = ' + fW(pu.W) + '，', 'n'], ['F', 'i'], [' = ' + fF(pu.F), 'n']], { color: pu.F >= m.thr ? COL.good : COL.bad, size: 13, align: 'right' }); }
+        drawP0();
+      },
+      panel: function (tau) {
+        var u1 = ease(ph(tau, 400, 2000)), u2 = ease(ph(tau, 2900, 2000));
+        var e1 = SCA.evaluate(m, lerp(m.p0, ray.p, u1)), e2 = SCA.evaluate(m, lerp(m.p0, pu.p, u2));
+        var cols = [colP0, { h: '做法一', p: e1.p, W: e1.W, F: e1.F, ref: ev0.W }];
+        if (tau > 2900) cols.push({ h: '做法二', p: e2.p, W: e2.W, F: e2.F, ref: ev0.W });
+        return { cols: cols, kv: kv0, cur: ev0, cand: tau > 2900 ? e2 : e1, cname: tau > 2900 ? '做法二' : '做法一', hist: 1 };
+      } });
+
+    /* 3 线性化与信赖域 */
+    ci = chip('线性化与信赖域', 'pre');
+    var J0 = st.J0, g0 = st.g0, P3 = { lam: 1, pct: 0 };
+    var lamAt = function (tau) {
+      if (tau < 900) return 1;
+      if (tau < 5000) return Math.pow(25, ease((tau - 900) / 4100));
+      if (tau < 5800) return 25;
+      return 25 * Math.pow(m.lambda0 / 25, ease((tau - 5800) / 1200));
+    };
+    var gSign = function (j) { return g0[j] > 0 ? '上升' : '下降'; };
+    push({ chip: ci, title: '线性化与信赖域', feas: true, view: FULL, kh: 1, dur: 7100,
+      html: P('<b>这一步做什么：</b>介绍 MCTR-SCA 的两个基本工具，线性化和信赖域。') +
+        P('<b>线性化</b>就是在当前点附近用一次式代替弯曲的函数，好比在一小段弯路上用切线代替路面。容量和 SGM 分别近似为') +
+        EQ(iv('C', 'i') + '(' + H.pk + ' + ' + H.Dl + ') ≈ ' + iv('C', 'i') + '<sup>(<i>k</i>)</sup> + ' + iv('J', 'i1') + dI(1) + ' + ' + iv('J', 'i2') + dI(2) + '，　' + H.F + '(' + H.pk + ' + ' + H.Dl + ') ≈ ' + iv('F') + '<sup>(<i>k</i>)</sup> + ' + H.gF + '<sup>T</sup>' + H.Dl) +
+        P(H.Dl + ' 是功率增量。' + H.J + ' 是容量对功率的导数，即波束 <i>j</i> 的功率每增加 1 W，波束 <i>i</i> 的容量变化多少。在 ' + H.p0 + ' 处 ' + jTxt(J0) + '：对角线为正，自己加功率自己受益；另外两个为负，对方加功率会因干扰拖累自己。' + H.gF + ' 是 SGM 对功率的梯度，这里为 ' + gTxt(g0) + '：单独加大 ' + iv('p', 1) + '，SGM ' + gSign(0) + '；单独加大 ' + iv('p', 2) + '，SGM ' + gSign(1) + '。图中紫色直线就是线性化后的 SGM 边界，在 ' + H.p0 + ' 处与真实边界相切。') +
+        P('<b>信赖域</b>是只相信线性近似的范围。这里取以当前点为中心、半边长 ' + H.lam + ' 的正方形，即每个波束的功率变化都不超过 ' + H.lam + '，记作 ‖' + H.Dl + '‖<sub>∞</sub> ≤ ' + H.lam + '。') +
+        P('动画中 ' + H.lam + ' 从 1 W 增大到 25 W。红色区域里的点，直线认为满足 SGM，实际却不满足，称为误判区。正方形越大，误判区越大：<b>步子大了，近似就不准</b>。所以算法每次只在信赖域内走一步，再用原模型检验：近似可信就放大 ' + H.lam + '，不可信就缩小。初值 <i>λ</i><sub>0</sub> = 5 W。'),
+      paint: function (tau) {
+        var lam = lamAt(tau), n = 46, cell = 2 * lam / n, out = [0, 0], cnt = 0, badN = 0, w = cell * ppw() + 0.6;
+        var p0 = m.p0;
+        ctx.fillStyle = 'rgba(181,68,59,0.5)';
+        for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
+          var q = [p0[0] - lam + (i + 0.5) * cell, p0[1] - lam + (j + 0.5) * cell];
+          if (!inBox(m, q[0], q[1])) continue;
+          if (g0[0] * (q[0] - p0[0]) + g0[1] * (q[1] - p0[1]) < 0) continue;
+          cnt++;
+          if (SCA.WF(m, q[0], q[1], out)[1] < m.thr) { badN++; ctx.fillRect(X(q[0] - cell / 2), Y(q[1] + cell / 2), w, w); }
+        }
+        P3.lam = lam; P3.pct = cnt ? badN / cnt : 0;
+        var al = ph(tau, 0, 700);
+        linLine(p0, m.F0, g0, m.thr, COL.lin, 2.3, [], al);
+        square(p0, lam, COL.tr, { fill: 'rgba(214,150,80,0.06)' });
+        drawP0();
+        var a = px([p0[0] - lam, p0[1] + lam]);
+        rich(Math.max(PR.L + 6, a[0]), Math.max(PR.T + 16, a[1] - 8), [['λ', 'i'], [' = ' + lam.toFixed(1) + ' W，红色误判区占直线认为可行部分的 ' + Math.round(P3.pct * 100) + '%', 'n']], { color: COL.tr, size: 13 });
+        if (al >= 1) {
+          var seg = clipLine(g0, m.thr - m.F0 + dot2(g0, p0), viewBox());
+          if (seg) { var e = seg[0][1] > seg[1][1] ? seg[0] : seg[1], b = px(lerp(p0, e, 0.8)); txt(b[0] + 8, b[1], '线性化后的 SGM 边界', { color: COL.lin, size: 13 }); }
+        }
+      },
+      panel: function (tau) {
+        lamAt(tau);
+        return { cols: [colP0], kv: '<i>λ</i> = ' + P3.lam.toFixed(1) + ' W　直线认为满足 SGM 的部分里，有 ' + Math.round(P3.pct * 100) + '% 实际不满足', cur: ev0, cand: null, hist: 1 };
+      } });
+
+    /* 迭代 */
+    var seen = {}, seenMargin = false, nAcc = 0, nRep = 0, nRej = 0;
+    st.trace.forEach(function (rec) {
+      var cg = cat(rec);
+      if (cg === 'acc') nAcc++; else if (cg === 'rep') nRep++; else if (cg === 'rej') nRej++;
+      var label = '<i>k</i>=' + rec.k + ' ' + { acc: '接受', rep: '修复', rej: '拒绝', stop: '停止' }[cg];
+      var cix = chip(label, cg);
+      var kh = rec.k + 1;
+      if (rec.outcome === 'converged') {
+        push({ chip: cix, title: '第 ' + rec.k + ' 次迭代 · 停止', feas: true, view: zoomTo([rec.p], 1, 8), kh: kh, dur: 2600, html: txtStop(rec),
+          paint: function (tau) { paintIter(rec, { sq: ph(tau, 0, 600), line: ph(tau, 300, 600), brk: ph(tau, 500, 600), poly: ph(tau, 700, 600), verts: ph(tau, 1200, 800), best: ph(tau, 2000, 400) }, { labels: false }); },
+          panel: function (tau) { return panelIter(rec, { best: 0 }); } });
+        return;
+      }
+      var first = !seen[cg] || rec.k === 0 || (!seenMargin && rec.mu > 0);
+      if (rec.mu > 0) seenMargin = true;
+      seen[cg] = true;
+      var R = rec.repair, ALL = { sq: 1, line: 1, brk: 1, poly: 1, verts: 1, best: 1, arrow: 1 };
+      var mk = function (o, f) { var r = {}; for (var k in o) r[k] = o[k]; for (k in f) r[k] = f[k]; return r; };
+      if (first) {
+        var sLin = function (tau) { return { sq: ph(tau, 0, 700), line: ph(tau, 600, 800), brk: ph(tau, 1200, 700), poly: ph(tau, 1800, 800) }; };
+        push({ chip: cix, title: '第 ' + rec.k + ' 次迭代 · 在当前点线性化', feas: true, view: iterView(rec, 'lin'), kh: kh, dur: 2700, html: txtLin(rec, rec.k === 0),
+          paint: function (tau) { paintIter(rec, sLin(tau), { labels: true }); }, panel: function (tau) { return panelIter(rec, sLin(tau)); } });
+        var sLP = function (tau) { return { sq: 1, line: 1, brk: 1, poly: 1, verts: ph(tau, 0, 1300), best: ph(tau, 1400, 500), arrow: ph(tau, 2000, 900) }; };
+        push({ chip: cix, title: '第 ' + rec.k + ' 次迭代 · 求解子问题', feas: true, view: iterView(rec, 'lp'), kh: kh, dur: 3000, html: txtLP(rec),
+          paint: function (tau) { paintIter(rec, sLP(tau), { labels: true }); }, panel: function (tau) { return panelIter(rec, sLP(tau)); } });
+        var sChk = function (tau) { return mk(ALL, { check: ph(tau, 0, 700), decide: R ? 0 : ph(tau, 1100, 1300) }); };
+        push({ chip: cix, title: '第 ' + rec.k + ' 次迭代 · 用原模型检验候选点', feas: true, view: iterView(rec, 'chk'), kh: kh, dur: R ? 1200 : 2500, html: txtChk(rec),
+          paint: function (tau) { paintIter(rec, sChk(tau), { labels: false }); }, panel: function (tau) { return panelIter(rec, sChk(tau)); } });
+        if (R) {
+          var sRep = function (tau) { return mk(ALL, { check: 1, rsq: ph(tau, 0, 700), rline: ph(tau, 600, 700), rpoly: ph(tau, 1100, 600), rverts: ph(tau, 1500, 800), rarrow: ph(tau, 2300, 700), rdecide: ph(tau, 3100, 1100) }); };
+          push({ chip: cix, title: '第 ' + rec.k + ' 次迭代 · 修复步', feas: true, view: iterView(rec, 'rep'), kh: kh, dur: 4200, html: txtRep(rec),
+            paint: function (tau) { paintIter(rec, sRep(tau), { labels: false }); }, panel: function (tau) { return panelIter(rec, sRep(tau)); } });
+        }
+      } else {
+        var sAll = function (tau) {
+          var s = { sq: ph(tau, 0, 500), line: ph(tau, 300, 500), brk: ph(tau, 500, 400), poly: ph(tau, 700, 400), verts: ph(tau, 1100, 700), best: ph(tau, 1800, 300), arrow: ph(tau, 2100, 600), check: ph(tau, 2800, 500) };
+          if (R) { s.rsq = ph(tau, 3500, 400); s.rline = ph(tau, 3800, 400); s.rpoly = ph(tau, 4100, 300); s.rverts = ph(tau, 4300, 500); s.rarrow = ph(tau, 4800, 400); s.rdecide = ph(tau, 5300, 1000); }
+          else s.decide = ph(tau, 3500, 1000);
+          return s;
+        };
+        push({ chip: cix, title: '第 ' + rec.k + ' 次迭代 · ' + NAME[rec.outcome], feas: true, view: iterView(rec, 'all'), kh: kh, dur: R ? 6300 : 4500, html: txtAll(rec),
+          paint: function (tau) { paintIter(rec, sAll(tau), { labels: false }); }, panel: function (tau) { return panelIter(rec, sAll(tau)); } });
+      }
+    });
+
+    /* 结果 */
+    var fin = st.R.ev, gC = st.gC, nIt = st.trace.length;
+    ci = chip('结果', 'end');
+    var accTable = '<table class="mt" style="margin:0 0 8px"><tr><th>当前点</th>' + st.hist.map(function (h, k) { return '<th>' + pK(k) + '</th>'; }).join('') + '</tr>' +
+      '<tr><td>' + H.W + '</td>' + st.hist.map(function (h) { return '<td>' + fW(h.ev.W) + '</td>'; }).join('') + '</tr>' +
+      '<tr><td>' + H.F + '</td>' + st.hist.map(function (h) { return '<td>' + fx(h.ev.F, 3) + '</td>'; }).join('') + '</tr></table>';
+    var gDiff = gC.W - fin.W;
+    var gTxtR = Math.abs(gDiff) < 5e-4 ? '两者相差 ' + sci(Math.abs(gDiff)) + (gDiff < 0 ? '，算法结果略高，因为网格点没有恰好落在最优点上' : '') : '网格结果高出 ' + sci(gDiff);
+    push({ chip: ci, title: '结果与核对', feas: true, view: FULL, kh: st.hist.length, dur: 2000,
+      html: P('<b>结果：</b>MCTR-SCA 共做了 ' + nIt + ' 次迭代，其中直接接受 ' + nAcc + ' 次，修复后接受 ' + nRep + ' 次，拒绝并缩小半径 ' + nRej + ' 次，最后一次判断后停止。') +
+        P('功率从 ' + H.p0 + ' = ' + fpt(m.p0) + ' W 调到 ' + fpt(st.R.p) + ' W，' + H.W + ' 从 ' + fW(ev0.W) + ' 提高到 <span class="hl">' + fW(fin.W) + '</span>，' + H.F + ' = ' + fF(fin.F) + '，守住了 ' + H.F0 + ' = ' + fF(m.F0) + '。') +
+        P('每个被接受的点都按原模型检验过，所以 SGM 始终达标，满足率只升不降；被拒绝的那次当前点不动，相邻两列相同：') + accTable +
+        P('<b>核对：</b>在可行区域内先以 0.25 W、再以 0.01 W 的网格穷举，满足率最高为 ' + fW(gC.W) + '，位于 ' + fpt(gC.p) + ' W，' + gTxtR + '。不管 SGM 时满足率最高可达 ' + fW(gU.W) + '，但那时 ' + H.F + ' 只有 ' + fF(gU.F) + '，图中红圈。') +
+        P('最终点上' + activeTxt(st.R.p, fin).join('、') + '起作用：要再提高满足率，就得让 SGM 跌破要求或者突破功率限制，这正是 SGM 约束在起作用的表现。'),
+      paint: function (tau) {
+        drawHistory(nIt, null);
+        ring(gU.p, 7, COL.bad, 2.2); var a = px(gU.p), sd = side(gU.p); txt(a[0] + sd.dx, a[1] + 20, '不管 SGM 时的最优', { color: COL.bad, size: 12.5, align: sd.align });
+        dot(gC.p, 9, null, '#555', 1.2);
+        var u = easeOut(ph(tau, 0, 900));
+        star(st.R.p, 8 + 4 * u, COL.star);
+        var b = px(st.R.p); rich(b[0] - 12, b[1] - 14, [['MCTR-SCA 结果 ', 'n'], ['W', 'i'], [' = ' + fW(fin.W), 'n']], { color: COL.navy, size: 13.5, align: 'right' });
+      },
+      panel: function () {
+        return { cols: [colP0, { h: 'MCTR-SCA 结果', p: st.R.p, W: fin.W, F: fin.F, ref: ev0.W }, { h: '网格穷举最优', p: gC.p, W: gC.W, F: gC.F }, { h: '不管 SGM', p: gU.p, W: gU.W, F: gU.F, ref: ev0.W }],
+          kv: kv0, cur: ev0, cand: fin, cname: '结果', hist: st.hist.length };
+      } });
+
+    /* 对比 */
+    ci = chip('对比', 'end');
+    function cmpFrame(title, intro, pm, fb) {
+      var pick = fb.pick;
+      var html = P('<b>这一步做什么：</b>说明报告中对其它功率方法的统一处理，并和 MCTR-SCA 比较。') + intro +
+        P('报告的统一处理是：方法输出若满足 SGM 要求且 ' + H.W + ' 不低于原功率，直接采用；否则在 ' + H.p0 + ' 与输出 ' + H.pm + ' 的连线上等间距取 21 个点，即式（27）的 ' + H.p + '(<i>ξ</i>) = ' + H.p0 + ' + <i>ξ</i>(' + H.pm + ' − ' + H.p0 + ')，<i>ξ</i> = 0, 0.05, …, 1，从满足 SGM 的点里取 ' + H.W + ' 最高者。') +
+        (fb.direct ? P('这里输出本身满足 SGM，' + H.W + ' = ' + fW(fb.evm.W) + ' 不低于原来的 ' + fW(ev0.W) + '，所以<b>直接采用</b>。') :
+          P('图中绿点满足 SGM，红点不满足。选中的是 <i>ξ</i> = ' + pick.xi.toFixed(2) + ' 处的点 ' + fpt(pick.p) + ' W，' + H.W + ' = ' + fW(pick.ev.W) + '。')) +
+        P('这样处理后，任何方法的 SGM 和满足率都不会比第二阶段差，可以在同一要求下公平比较。但这种回退只能沿一条直线找，MCTR-SCA 则沿着可行区域的边界一步步走，得到 ' + H.W + ' = <span class="hl">' + fW(fin.W) + '</span>，比回退结果' + (fin.W > pick.ev.W ? '高 ' + fW(fin.W - pick.ev.W) : '不低') + '。');
+      push({ chip: ci, title: title, feas: true, view: FULL, kh: st.hist.length, dur: 3400, html: html,
+        paint: function (tau) {
+          ctx.save(); ctx.globalAlpha = 0.35; drawHistory(nIt, null); ctx.restore();
+          var u = ph(tau, 0, 600);
+          ctx.save(); ctx.globalAlpha = u; segment(m.p0, pm, '#8a8f96', 1.4, [5, 4]); ctx.restore();
+          var okm = fb.evm.F >= m.thr;
+          ring(pm, 7, okm ? COL.good : COL.bad, 2.4);
+          var a = px(pm), sd = side(pm); rich(a[0] + sd.dx, a[1] + 22, [['p', 'b'], ['m', 'sup'], [' 方法输出 ', 'n'], ['F', 'i'], [' = ' + fF(fb.evm.F), 'n']], { color: okm ? COL.good : COL.bad, size: 13, align: sd.align });
+          var nd = Math.floor(ph(tau, 600, 1500) * 21);
+          for (var q = 0; q < nd; q++) { var d = fb.pts[q]; if (d.ok) dot(d.p, 3.6, COL.good, '#fff', 1); else dot(d.p, 3.6, '#fff', COL.bad, 1.5); }
+          if (tau > 2300) { var b = px(pick.p); ctx.strokeStyle = COL.navy; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(b[0], b[1], 10, 0, 2 * Math.PI); ctx.stroke(); rich(b[0] - 12, b[1] + 22, [['回退结果 ', 'n'], ['W', 'i'], [' = ' + fW(pick.ev.W), 'n']], { color: COL.navy, size: 13, align: 'right' }); }
+          if (tau > 2800) { star(st.R.p, 10, COL.star); var c2 = px(st.R.p); rich(c2[0] - 12, c2[1] - 14, [['MCTR-SCA ', 'n'], ['W', 'i'], [' = ' + fW(fin.W), 'n']], { color: COL.navy, size: 13, align: 'right' }); }
+          drawP0();
+        },
+        panel: function () {
+          return { cols: [colP0, { h: '方法输出 ' + H.pm, p: pm, W: fb.evm.W, F: fb.evm.F, ref: ev0.W }, { h: fb.direct ? '直接采用' : '回退结果', p: pick.p, W: pick.ev.W, F: pick.ev.F, ref: ev0.W }, { h: 'MCTR-SCA', p: st.R.p, W: fin.W, F: fin.F, ref: ev0.W }],
+            kv: kv0, cur: ev0, cand: pick.ev, cname: '回退结果', hist: st.hist.length };
+        } });
+    }
+    cmpFrame('对比一：只看满足率的方法', P('其它方法大多不管 SGM。例如以按需求封顶的和速率为目标的加权最小均方误差方法 WMMSE，目标其实就是满足率。这里用网格穷举直接取满足率最高的点 ' + H.pm + ' = ' + fpt(gU.p) + ' W，代表这类方法最理想的输出：' + H.W + ' = ' + fW(gU.W) + '，但 ' + H.F + ' = ' + fF(gU.F) + '，在可行区域之外。'), gU.p, st.fbU);
+    var eqP = st.eq.p;
+    cmpFrame('对比二：等功率分配', P('等功率分配是报告中的另一种对比方法：两束取相同功率，' + (isFinite(m.ptot) && m.ptot / 2 < m.pmax ? '在总功率 ' + m.ptot + ' W 内各取 ' + fP(eqP[0]) + ' W' : '都开到 50 W') + '，得到 ' + H.W + ' = ' + fW(st.eq.W) + '，' + H.F + ' = ' + fF(st.eq.F) + '。'), eqP, st.fbE);
+
+    st.frames = F; st.chips = chips;
+  }
+
+  /* ---------------- 导航与播放 ---------------- */
+  function buildNav() {
+    $('chips').innerHTML = ST.chips.map(function (c, i) { return '<span class="chip ' + c.cls + '" data-i="' + i + '">' + c.label + '</span>'; }).join('');
+    $('ticks').innerHTML = ST.frames.map(function (f, i) { return '<span data-f="' + i + '" title="第 ' + (i + 1) + ' 步"></span>'; }).join('');
+    $('presets').innerHTML = '<span>预设例子</span>' + SCA.PRESETS.map(function (p, i) { return '<button data-p="' + i + '" class="' + (i === ST.idx ? 'on' : '') + '">' + p.name + '</button>'; }).join('');
+  }
+  function updateNav() {
+    var fr = ST.frames[cur];
+    Array.prototype.forEach.call($('chips').children, function (el, i) { el.classList.toggle('on', i === fr.chip); });
+    Array.prototype.forEach.call($('ticks').children, function (el, i) { el.className = i === cur ? 'on' : i < cur ? 'done' : ''; });
+    $('frameNo').textContent = '第 ' + (cur + 1) + ' / ' + ST.frames.length + ' 步';
+    $('stepNo').textContent = ST.chips[fr.chip].label.replace(/<[^>]+>/g, '');
+  }
+  function targetView(fr) { return autoZoom ? fr.view : FULL; }
+  function setView(t, instant) {
+    if (instant) { V = { x0: t.x0, y0: t.y0, s: t.s }; VT = null; return; }
+    if (Math.abs(t.x0 - V.x0) < 1e-12 && Math.abs(t.y0 - V.y0) < 1e-12 && Math.abs(t.s - V.s) < 1e-12) { VT = null; return; }
+    VT = { from: { x0: V.x0, y0: V.y0, s: V.s }, to: t, start: performance.now(), dur: 800 };
+  }
+  function goTo(i, instant) {
+    cur = Math.max(0, Math.min(ST.frames.length - 1, i));
+    tau = 0; holdT = 0; animating = true;
+    var fr = ST.frames[cur];
+    $('stepTitle').innerHTML = fr.title;
+    $('stepText').innerHTML = fr.html;
+    $('stepText').scrollTop = 0;
+    setView(targetView(fr), instant);
+    updateNav();
+    renderAll();
+  }
+  function setPlaying(v) { playing = v; if (v) animating = true; else animating = false; $('btnPlay').textContent = v ? '暂停' : '播放'; $('btnPlay').classList.toggle('on', v); }
+  function renderAll() {
+    var fr = ST.frames[cur], t = Math.min(tau, fr.dur);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, CW, CH);
+    var bg = getBg(V, fr.feas, VT ? 80 : 200, PR.S);
+    ctx.drawImage(bg.cv, PR.L, PR.T, PR.S, PR.S);
+    drawAxes(bg);
+    ctx.save(); ctx.beginPath(); ctx.rect(PR.L, PR.T, PR.S, PR.S); ctx.clip();
+    fr.paint(t);
+    ctx.restore();
+    if (V.s < FULL.s * 0.6) drawInset(fr);
+    ctx.strokeStyle = '#b5afa3'; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.strokeRect(PR.L + 0.5, PR.T + 0.5, PR.S - 1, PR.S - 1);
+    updatePanel(fr.panel(t));
+  }
+  function loop(ts) {
+    var dt = lastTs ? Math.min(100, ts - lastTs) : 16; lastTs = ts;
+    var fr = ST.frames[cur], changed = false;
+    if (VT) {
+      var u = ease((performance.now() - VT.start) / VT.dur), a = VT.from, b = VT.to;
+      var ls = Math.log(a.s) + (Math.log(b.s) - Math.log(a.s)) * u, s = Math.exp(ls);
+      var cx = a.x0 + a.s / 2 + (b.x0 + b.s / 2 - a.x0 - a.s / 2) * u, cy = a.y0 + a.s / 2 + (b.y0 + b.s / 2 - a.y0 - a.s / 2) * u;
+      V = { x0: cx - s / 2, y0: cy - s / 2, s: s };
+      if (u >= 1) { V = { x0: b.x0, y0: b.y0, s: b.s }; VT = null; }
+      changed = true;
+    }
+    if (playing || animating) {
+      if (tau < fr.dur) {
+        tau = Math.min(fr.dur, tau + dt * speed); changed = true;
+        if (tau >= fr.dur && !playing) animating = false;
+      } else if (playing) {
+        holdT += dt * speed;
+        if (holdT >= fr.hold) { if (cur < ST.frames.length - 1) goTo(cur + 1); else setPlaying(false); }
+      }
+    }
+    if (changed) renderAll();
+    requestAnimationFrame(loop);
+  }
+  function loadPreset(i, instant) {
+    BG = {}; lastPanel = {};
+    ST = build(i);
+    buildNav();
+    goTo(0, true);
+  }
+
+  $('btnPrev').onclick = function () { goTo(cur - 1); };
+  $('btnNext').onclick = function () { goTo(cur + 1); };
+  $('btnReplay').onclick = function () { goTo(cur, true); };
+  $('btnPlay').onclick = function () {
+    if (playing) { setPlaying(false); return; }
+    if (cur === ST.frames.length - 1 && tau >= ST.frames[cur].dur) goTo(0);
+    setPlaying(true);
+  };
+  $('speed').onchange = function () { speed = +this.value; };
+  $('autoZoom').onchange = function () { autoZoom = this.checked; setView(targetView(ST.frames[cur])); };
+  $('chips').onclick = function (e) { var el = e.target.closest('.chip'); if (el) goTo(ST.chips[+el.getAttribute('data-i')].first); };
+  $('ticks').onclick = function (e) { var f = e.target.getAttribute('data-f'); if (f !== null) goTo(+f); };
+  $('presets').onclick = function (e) { var el = e.target.closest('button'); if (el) { setPlaying(false); loadPreset(+el.getAttribute('data-p')); } };
+  window.addEventListener('keydown', function (e) {
+    if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+    if (e.key === 'ArrowRight') { goTo(cur + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft') { goTo(cur - 1); e.preventDefault(); }
+    else if (e.key === ' ') { $('btnPlay').click(); e.preventDefault(); }
+    else if (e.key === 'r' || e.key === 'R') goTo(cur, true);
+  });
+  window.addEventListener('resize', function () { resize(); renderAll(); });
+
+  /* ---------------- 启动；网址后加 #p=1&f=7&end 可直接打开某一步的末态，#selftest 逐步自检 ---------------- */
+  function hashArgs() {
+    var o = {};
+    location.hash.replace(/^#/, '').split('&').forEach(function (kv) { if (!kv) return; var a = kv.split('='); o[a[0]] = a.length > 1 ? a[1] : true; });
+    return o;
+  }
+  function selftest() {
+    var lines = [], errors = 0;
+    for (var i = 0; i < SCA.PRESETS.length; i++) {
+      loadPreset(i, true);
+      var tr = ST.trace, mono = true, feas = true;
+      for (var k = 1; k < ST.hist.length; k++) {
+        if (ST.hist[k].ev.W < ST.hist[k - 1].ev.W) mono = false;
+        if (ST.hist[k].ev.F < ST.m.thr) feas = false;
+      }
+      for (var f = 0; f < ST.frames.length; f++) {
+        try {
+          goTo(f, true);
+          [0, 0.33, 0.66, 1].forEach(function (u) { tau = ST.frames[f].dur * u; renderAll(); });
+        } catch (err) { errors++; lines.push('预设' + i + ' 第' + f + '步出错：' + err.message); }
+      }
+      lines.push('预设' + i + '：' + ST.frames.length + ' 步；迭代结果 ' + tr.map(function (r) { return r.outcome; }).join(',') +
+        '；W ' + ST.m.ev0.W.toFixed(4) + '→' + ST.R.ev.W.toFixed(4) + '；接受点 W 单调 ' + mono + '，SGM 达标 ' + feas);
+    }
+    lines.unshift('SELFTEST ' + (errors ? 'FAIL' : 'OK') + ' errors=' + errors + ' pageErrors=' + ERR.length);
+    var el = $('selftest'); el.textContent = lines.join('\n'); el.style.display = 'block';
+  }
+
+  resize();
+  var args = hashArgs();
+  if (args.selftest) { selftest(); return; }
+  loadPreset(+(args.p || 0), true);
+  if (args.nozoom) { autoZoom = false; $('autoZoom').checked = false; }
+  if (args.f) goTo(+args.f, true);
+  if (args.end) { tau = ST.frames[cur].dur; animating = false; renderAll(); }
+  if (args.t) { tau = +args.t; animating = false; renderAll(); }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
