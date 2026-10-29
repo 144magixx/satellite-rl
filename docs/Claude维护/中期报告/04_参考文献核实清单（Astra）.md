@@ -436,3 +436,14 @@ Wang J, Ma L, Wei Z, et al. Multi-beam-based Downlink Modeling and Power Allocat
 检索到 Ivari 等的《On Optimal Power Allocation in Multibeam Multicast NOMA for Satellite Communication Systems》，DOI为[10.1109/TAES.2023.3287475](https://doi.org/10.1109/TAES.2023.3287475)，但本次取得的出版注册记录仍仅给出2023年、1-20的提前发表信息，未完成正式卷期页码核定，因此未列入A—F清单、未计入总数。
 
 第一阶段可按“规则布局局限—需求驱动变束宽／变波位—容量约束与负载均衡—动态重配置”组织研究现状；第二阶段可按“数学优化和元启发式—单智能体与多智能体DRL—结构化注意力及候选指针”组织；第三阶段可按“需求匹配功率控制—干扰耦合下SCA／WMMSE—学习与优化混合”组织。比较时分别说明是否允许改变布局、频率、时隙和功率，避免把目标不同的能效、总速率和需求满足率直接当作同一指标。
+
+## 补充：2026-10-29 按用户批注新增
+
+以下 6 条由 Claude 按批注新增，元数据经 Crossref 逐条核对；DRL 覆盖类文献的摘要与局限见 `outputs/midterm_report/review_20261029/drl_coverage_refs.md`，DVB-S2X 数值取自 ETSI 官方 PDF 的 Table 20a。
+
+- 【A｜2018】**A11** Liu J, Shi Y, Fadlullah Z M, et al. Space-Air-Ground Integrated Network: A Survey[J]. IEEE Communications Surveys & Tutorials, 2018, 20(4): 2714-2741. DOI: 10.1109/comst.2018.2841996.
+- 【A｜2023】**A12** Xu G, Tan F, Ran Y, et al. Joint Beam-Hopping Scheduling and Coverage Control in Multibeam Satellite Systems[J]. IEEE Wireless Communications Letters, 2023, 12(2): 267-271. DOI: 10.1109/lwc.2022.3223507.
+- 【A｜2025】**A13** Yuan Y, Ji Z, Wu S, et al. User-Centric Beam Coverage and Resource Optimization for Multi-Beam Satellite Systems via Multi-Agent Deep Reinforcement Learning[C]//2025 11th International Conference on Computer and Communications (ICCC). IEEE, 2025: 1845-1852. DOI: 10.1109/iccc68654.2025.11438171.
+- 【A｜2025】**A14** Ngo Q T, He Y, Jayawickrama B, et al. A Fast Fuzzy DRL-Based Joint Beam Design and Power Allocation for Multi-Beam GEO-LEO Coexisting Satellite Networks[J]. IEEE Transactions on Wireless Communications, 2025, 24(10): 8741-8755. DOI: 10.1109/twc.2025.3568780.
+- 【A｜2020】**A15** Hu X, Zhang Y, Liao X, et al. Dynamic Beam Hopping Method Based on Multi-Objective Deep Reinforcement Learning for Next Generation Satellite Broadband Systems[J]. IEEE Transactions on Broadcasting, 2020, 66(3): 630-646. DOI: 10.1109/tbc.2019.2960940.
+- 【F｜2024】**F20** ETSI. Digital Video Broadcasting (DVB); Second generation framing structure, channel coding and modulation systems for Broadcasting, Interactive Services, News Gathering and other broadband satellite applications; Part 2: DVB-S2 Extensions (DVB-S2X): ETSI EN 302 307-2 V1.4.1[S]. Sophia Antipolis: ETSI, 2024.
