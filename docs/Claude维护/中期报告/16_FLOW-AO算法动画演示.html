@@ -69,9 +69,27 @@ aside.panel { flex: 1; min-width: 400px; max-width: 600px; display: flex; flex-d
 .fx-eq i { font-size: 1em; }
 .fx-eq .st { font-family: var(--font); font-size: 12.5px; color: var(--muted); margin: 0 4px; }
 .fx-eq .g { white-space: nowrap; }
-.fx-eq .t, .fx-eq .g { padding: 1px 3px; border-radius: 4px; transition: background .3s, box-shadow .3s; cursor: help; }
+.fx-eq .t, .fx-eq .g { padding: 1px 3px; border-radius: 4px; transition: background .3s, box-shadow .3s; }
 .fx-eq .hl { background: #ffe58a; box-shadow: 0 0 0 1px #e0a800; }
-.fx-eq .t:hover, .fx-eq .g:hover { background: #d9e6f5; box-shadow: 0 0 0 1px var(--acc); }
+.fx-eq .g { cursor: help; }
+.fx-eq .g:hover { background: #d9e6f5; box-shadow: 0 0 0 1px var(--acc); }
+
+/* 可悬停的符号：虚线下划线提示可查看含义；悬停、点击或聚焦时浅蓝底，旁边立即出现浮层 */
+.sym { cursor: help; border-bottom: 1px dashed #8fa5c0; border-radius: 3px; outline: none; }
+.sym.on, .sym:hover { background: #dbe8f7; border-bottom-color: var(--acc); }
+.symtip { position: fixed; z-index: 90; max-width: 340px; background: #fff; border: 1px solid #b9c7d8; border-left: 4px solid var(--acc); border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,.18); padding: 7px 11px 8px; font-size: 13px; line-height: 1.5; pointer-events: none; }
+.symtip[hidden] { display: none; }
+.symtip .s { font-family: "Times New Roman", "Cambria Math", serif; font-size: 17px; color: var(--acc); margin-bottom: 2px; }
+.symtip .m { color: var(--ink); }
+.symtip .u { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.symtip .u span { margin-right: 6px; color: #9aa3ad; }
+.modal-box.wide { width: min(860px, 94vw); }
+.modal-note { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+.symtab { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+.symtab th, .symtab td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #ece8df; vertical-align: top; line-height: 1.5; }
+.symtab th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.symtab td.s { font-family: "Times New Roman", "Cambria Math", serif; font-size: 16px; white-space: nowrap; color: #1f3f63; }
+.symtab td.u { color: var(--muted); white-space: nowrap; }
 .fx-eq .sum { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; line-height: 1; margin: 0 1px; }
 .fx-eq .sum .op { font-size: 1.3em; }
 .fx-eq .sum .lo { font-size: .64em; margin-top: 1px; white-space: nowrap; }
@@ -133,8 +151,16 @@ aside.panel { flex: 1; min-width: 400px; max-width: 600px; display: flex; flex-d
     <button id="btnRandom" title="重新生成一组飞机，全部步骤按新数据重新计算">随机换一组飞机</button>
     <button id="btnDefault">恢复默认例子</button>
     <button id="btnGloss" class="gloss-btn" title="几个关键名词的白话解释，快捷键 Esc 关闭">名词</button>
+    <button id="btnSym" class="gloss-btn" title="页面里出现的全部符号及其含义，快捷键 Esc 关闭">符号</button>
   </div>
 </header>
+<div id="symtab" class="modal" hidden>
+  <div class="modal-box wide">
+    <div class="modal-head"><h3>符号表</h3><button id="symtabClose">关闭</button></div>
+    <p class="modal-note">页面文字里带虚线下划线的符号都可以悬停、点击或用 Tab 聚焦查看含义。下表按字母顺序列出全部符号。</p>
+    <div id="symtabBody"></div>
+  </div>
+</div>
 <div id="gloss" class="modal" hidden>
   <div class="modal-box">
     <div class="modal-head"><h3>名词小词典</h3><button id="glossClose">关闭</button></div>
@@ -960,11 +986,286 @@ var FlowAO = (function () {
 if (typeof module !== 'undefined') module.exports = FlowAO;
 
 </script>
+<!-- 符号词典：自动包裹、即时提示、符号表 -->
+<script id="flowao-symkit">
+// 符号词典工具：把页面文字里的数学符号自动包成 <span class="sym">，悬停、点击或聚焦时立即显示含义；
+// 并按字母顺序渲染完整符号表。两个演示页共用这一份代码，词典各自给出。
+// 词典条目：{ id, show: 符号的 HTML, mean: 含义, unit: 单位或取值, keys: 能匹配到它的记号键 }
+// 记号键的写法：字母 + "_下标" + "^上标"，下标里的数字写成 #，粗体向量前加 "b:"，上划线前加 "ov:"。
+window.SymKit = function (entries, opts) {
+  'use strict';
+  opts = opts || {};
+  const byKey = new Map(), byId = new Map();
+  entries.forEach(e => {
+    byId.set(e.id, e);
+    (e.keys || [e.id]).forEach(k => { if (byKey.has(k)) throw new Error('符号键重复：' + k); byKey.set(k, e); });
+  });
+  const stripTags = s => s.replace(/<[^>]+>/g, '');
+  // 具体编号换成 #：先只换下标里的，再连上标一起换
+  const genSub = k => k.replace(/^[^^]*/, s => s.replace(/\d+/g, '#'));
+  const genAll = k => k.replace(/\d+/g, '#');
+  const resolve = key => byKey.get(key) || byKey.get(genSub(key)) || byKey.get(genAll(key)) || null;
+  // 文字里的 "<" 后面紧跟字母或斜杠才是标签，"最大流 < n" 这种是普通字符
+  const isTag = (h, p) => h[p] === '<' && /[A-Za-z\/!]/.test(h[p + 1] || '');
+  // 斜体字母、粗体向量，后面可跟下标、上标或 ²³
+  const SUBSUP = '((?:<i>|<\\/i>|[^<]){1,10}?)';
+  const RE_I = new RegExp('<i( class="ov")?>([^<]{1,2})(?:<sub>([^<]{1,4})<\\/sub>)?<\\/i>(?:<sub>' + SUBSUP + '<\\/sub>)?(?:<sup>' + SUBSUP + '<\\/sup>|([²³]))?', 'y');
+  const RE_B = new RegExp('<b class="vb">([^<]{1,2})<\\/b>(?:<sub>' + SUBSUP + '<\\/sub>)?(?:<sup>' + SUBSUP + '<\\/sup>)?', 'y');
+  const tokens = (opts.tokens || []).map(t => [new RegExp(t[0].source, 'y'), t[1]]);
+  const isLatin = c => /[A-Za-z]/.test(c || '');
+  const isAlnum = c => /[A-Za-z0-9]/.test(c || '');
+
+  // 在 html 的 pos 处尝试匹配一个符号；返回 { len, key, entry } 或 null。unknown 收集匹配到字形但词典没有的记号
+  function matchAt(html, pos, unknown) {
+    for (const [re, id] of tokens) {
+      re.lastIndex = pos;
+      const m = re.exec(html);
+      if (!m) continue;
+      const first = m[0][0], last = m[0][m[0].length - 1];
+      if (isLatin(first) && (isLatin(html[pos - 1]) || html[pos - 1] === '′')) continue;
+      if (isLatin(last) && isAlnum(html[pos + m[0].length])) continue;
+      if (opts.guard && !opts.guard(html, pos, m[0], id)) continue;
+      return { len: m[0].length, key: id, entry: byId.get(id) };
+    }
+    if (!isTag(html, pos)) return null;
+    let m, key, pre = '';
+    RE_B.lastIndex = pos; m = RE_B.exec(html);
+    if (m) { pre = 'b:'; key = [pre + m[1], m[2], m[3]]; }
+    else {
+      RE_I.lastIndex = pos; m = RE_I.exec(html);
+      if (!m) return null;
+      key = [(m[1] ? 'ov:' : '') + m[2], m[3] || m[4], m[5] || (m[6] ? m[6] === '²' ? '2' : '3' : undefined)];
+    }
+    const base = key[0] + (key[1] ? '_' + stripTags(key[1]) : '');
+    const full = base + (key[2] ? '^' + stripTags(key[2]) : '');
+    let e = resolve(full);
+    if (e) return { len: m[0].length, key: full, entry: e };
+    if (key[2]) {
+      // 上标不属于这个符号时退一步，只取字母和下标，上标留给后面继续扫描
+      e = resolve(base);
+      const cut = m[0].lastIndexOf(m[6] ? m[6] : '<sup>');
+      if (e) return { len: cut, key: base, entry: e };
+    }
+    if (unknown) unknown.push(full);
+    return { len: m[0].length, key: full, entry: null };
+  }
+  // 跳过已包裹的符号、SVG 以及标签本身
+  function skipLen(html, pos) {
+    if (html.startsWith('<span class="sym"', pos)) {
+      let depth = 0, i = pos;
+      for (;;) {
+        const a = html.indexOf('<span', i), b = html.indexOf('</span>', i);
+        if (a >= 0 && a < b) { depth++; i = a + 5; } else { depth--; i = b + 7; if (depth === 0) return i - pos; }
+      }
+    }
+    if (html.startsWith('<svg', pos)) return html.indexOf('</svg>', pos) + 6 - pos;
+    if (html[pos] === '&') return html.indexOf(';', pos) + 1 - pos;
+    return 0;
+  }
+  const open = e => '<span class="sym" data-sym="' + e.id + '" tabindex="0">';
+  function wrap(html) {
+    if (!html) return html;
+    let out = '', pos = 0;
+    while (pos < html.length) {
+      const sk = skipLen(html, pos);
+      if (sk) { out += html.slice(pos, pos + sk); pos += sk; continue; }
+      const m = matchAt(html, pos, null);
+      if (m && m.entry) { out += open(m.entry) + html.slice(pos, pos + m.len) + '</span>'; pos += m.len; continue; }
+      if (m) { out += html.slice(pos, pos + m.len); pos += m.len; continue; }
+      if (isTag(html, pos)) { const end = html.indexOf('>', pos) + 1; out += html.slice(pos, end); pos = end; continue; }
+      out += html[pos]; pos++;
+    }
+    return out;
+  }
+  // 测试用：列出文字里尚未包裹的符号记号——词典能匹配却没包裹的，以及带上下标或斜体但词典没有的
+  function findUnwrapped(html) {
+    const found = [];
+    let pos = 0;
+    while (pos < html.length) {
+      const sk = skipLen(html, pos);
+      if (sk) { pos += sk; continue; }
+      const unknown = [];
+      const m = matchAt(html, pos, unknown);
+      if (m) { found.push(m.entry ? '未包裹:' + m.key : '词典外:' + m.key); pos += m.len; continue; }
+      if (isTag(html, pos)) { pos = html.indexOf('>', pos) + 1; continue; }
+      // 普通文字里：单个拉丁或希腊字母紧跟下标、上标
+      const c = html[pos], nx = html.slice(pos + 1, pos + 6);
+      if (/[A-Za-zΑ-Ωα-ω]/.test(c) && !isLatin(html[pos - 1]) && /^(′?<su[bp]>|[²³₀-₉⁰-⁹⁻])/.test(nx)) found.push('词典外:' + c + (nx[0] === '′' ? '′' : '') + '+' + nx.replace(/<(su[bp])>.*/, '$1'));
+      pos++;
+    }
+    return found;
+  }
+
+  // ---------- 即时提示 ----------
+  let tip = null, cur = null, pinned = false, lastRect = null;
+  function ensureTip() {
+    if (tip) return tip;
+    tip = document.createElement('div'); tip.className = 'symtip'; tip.hidden = true;
+    document.body.appendChild(tip);
+    return tip;
+  }
+  function place(el) {
+    const r = el.getBoundingClientRect(), t = ensureTip();
+    lastRect = r;
+    const tw = t.offsetWidth, th = t.offsetHeight, W = window.innerWidth, H = window.innerHeight;
+    let top = r.bottom + 6;
+    if (top + th > H - 4) top = Math.max(4, r.top - th - 6);
+    let left = r.left;
+    if (left + tw > W - 4) left = W - 4 - tw;
+    if (left < 4) left = 4;
+    t.style.left = left + 'px'; t.style.top = top + 'px';
+  }
+  function show(el) {
+    const t = ensureTip();
+    if (cur && cur !== el) cur.classList.remove('on');
+    cur = el; el.classList.add('on');
+    if (el.classList.contains('sym')) {
+      const e = byId.get(el.dataset.sym);
+      t.innerHTML = '<div class="s">' + e.show + '</div><div class="m">' + e.mean + '</div><div class="u"><span>单位或取值</span>' + e.unit + '</div>';
+    } else t.innerHTML = '<div class="m">' + el.dataset.tip + '</div>';
+    t.hidden = false;
+    place(el);
+  }
+  function hide() {
+    if (cur) cur.classList.remove('on');
+    cur = null; pinned = false;
+    if (tip) tip.hidden = true;
+  }
+  const target = node => (node && node.closest ? node.closest('.sym, [data-tip]') : null);
+  function attach() {
+    document.addEventListener('mouseover', e => {
+      const el = target(e.target);
+      if (el) { if (el !== cur) { pinned = false; show(el); } }
+      else if (cur && !pinned) hide();
+    });
+    document.addEventListener('mouseleave', () => { if (!pinned) hide(); });
+    document.addEventListener('click', e => {
+      const el = target(e.target);
+      if (!el) { if (pinned) hide(); return; }
+      if (el === cur && pinned) { hide(); return; }
+      show(el); pinned = true;
+    });
+    document.addEventListener('focusin', e => { const el = target(e.target); if (el) show(el); });
+    document.addEventListener('focusout', e => { const el = target(e.target); if (el && el === cur && !pinned) hide(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && cur) hide(); });
+    document.addEventListener('scroll', () => { if (cur) place(cur); }, true);
+    window.addEventListener('resize', () => { if (cur) place(cur); });
+  }
+  // 页面重绘把被悬停的元素换掉后，找同一位置、同一符号的新元素接上，找不到就收起
+  function refresh() {
+    if (!cur || cur.isConnected) return;
+    const id = cur.dataset.sym;
+    let best = null, bd = 40;
+    if (id) document.querySelectorAll('.sym[data-sym="' + id + '"]').forEach(el => {
+      const r = el.getBoundingClientRect(), d = Math.hypot(r.left - lastRect.left, r.top - lastRect.top);
+      if (d < bd) { bd = d; best = el; }
+    });
+    const keep = pinned;
+    if (best) { show(best); pinned = keep; } else hide();
+  }
+  // 地址栏参数模拟悬停：在给定容器里找第一个该符号并固定显示
+  function pin(id, containers) {
+    for (const c of containers) {
+      const el = document.querySelector(c + ' .sym[data-sym="' + id + '"]');
+      if (el) { el.scrollIntoView({ block: 'nearest' }); show(el); pinned = true; return el; }
+    }
+    return null;
+  }
+
+  // ---------- 完整符号表 ----------
+  const GREEK = 'αβγδεζηθικλμνξοπρστυφχψω', GREEK_U = 'ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ';
+  const SCRIPT = { 'ℰ': 'E', '𝒰': 'U', '𝕀': 'I', 'ℓ': 'l' };
+  function sortKey(e, idx) {
+    const id = e.id.replace(/^(b:|ov:)/, ''), bold = /^b:/.test(e.id) ? 1 : 0;
+    const ch = [...id][0], base = SCRIPT[ch] || ch, script = SCRIPT[ch] ? 1 : 0;
+    if (/^[A-Za-z]$/.test(base)) return [0, base.toLowerCase(), base === base.toUpperCase() ? 1 : 0, bold + script, id.length, idx];
+    const gi = GREEK.indexOf(ch) >= 0 ? GREEK.indexOf(ch) : GREEK_U.indexOf(ch);
+    if (gi >= 0) return [1, gi, GREEK_U.indexOf(ch) >= 0 ? 1 : 0, bold, id.length, idx];
+    return [2, idx];
+  }
+  function sorted() {
+    return entries.map((e, i) => [sortKey(e, i), e]).sort((a, b) => {
+      for (let k = 0; k < Math.max(a[0].length, b[0].length); k++) {
+        const x = a[0][k], y = b[0][k];
+        if (x === y) continue;
+        if (x === undefined) return -1; if (y === undefined) return 1;
+        return x < y ? -1 : 1;
+      }
+      return 0;
+    }).map(x => x[1]);
+  }
+  function tableHtml() {
+    const rows = sorted().map(e => '<tr><td class="s">' + e.show + '</td><td>' + e.mean + '</td><td class="u">' + e.unit + '</td></tr>').join('');
+    return '<table class="symtab"><thead><tr><th>符号</th><th>含义</th><th>单位或取值</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  return { entries, byId, wrap, findUnwrapped, attach, refresh, pin, hide, tableHtml, sorted, matchAt };
+};
+
+// FLOW-AO 演示页的符号词典。含义与单位取自《13_符号表》，演示自有的符号按本页用法写。
+window.FLOW_SYM = window.SymKit([
+  // 拉丁字母
+  { id: 'a', show: '<i>a</i>', mean: '飞机编号', unit: '—' },
+  { id: 'b_i', show: '<i>b</i><sub><i>i</i></sub>', mean: '波束 i 的束宽，即天线增益比峰值低 3 dB 处的全角宽度，取成员飞机最大离轴角的 2 倍且不小于 0.3°', unit: '0.3°—1.0°；演示里束宽的一半就是覆盖圈半径', keys: ['b_i', 'b_j', 'b_#'] },
+  { id: 'cv', show: 'cv', mean: '负载离散系数，各波束飞机数的标准差除以均值，越小越均衡', unit: '无量纲' },
+  { id: 'd_ai', show: '<i>d</i><sub><i>ai</i></sub>', mean: '从卫星指向飞机 a 与指向波束 i 中心的两个单位向量之间的距离，表示飞机离中心的远近', unit: '无量纲；演示用平面距离' },
+  { id: 'd_min', show: '<i>d</i><sub>min</sub>', mean: '演示里两个波束中心之间的最小间距，对应 0.15°', unit: '5.4' },
+  { id: 'ℰ', show: '<i>ℰ</i>', mean: '允许的“飞机—波束”组合集合，即离轴角不超过允许半径的全部配对', unit: '—' },
+  { id: '|ℰ|', show: '|<i>ℰ</i>|', mean: '允许边的条数，即集合 ℰ 中元素的个数', unit: '条' },
+  { id: 'i', show: '<i>i</i>', mean: '波束编号', unit: '1—m' },
+  { id: 'i_a^−', show: '<i>i</i><sub><i>a</i></sub><sup>−</sup>', mean: '飞机 a 上一分钟所在的波束', unit: '—' },
+  { id: 'j', show: '<i>j</i>', mean: '波束编号，常用于表示另一个波束', unit: '1—m' },
+  { id: 'k', show: '<i>k</i>', mean: '序号：放初始中心时是邻居序号，均衡指派时是名额序号', unit: '正整数' },
+  { id: 'K', show: '<i>K</i>', mean: '每个波束最多服务的飞机数', unit: '架；报告取 26' },
+  { id: 'L_i', show: '<i>L</i><sub><i>i</i></sub>', mean: '波束 i 服务的飞机数，即波束负载', unit: '架', keys: ['L_i', 'L_j', 'L_#', 'L'] },
+  { id: 'L_i^2', show: '<i>L</i><sub><i>i</i></sub><sup>2</sup>', mean: '波束 i 负载的平方，各波束相加就是负载平方和', unit: '—', keys: ['L_i^2', 'L_#^2', 'L^2'] },
+  { id: 'm', show: '<i>m</i>', mean: '场景中的波束数', unit: '个，不超过上限' },
+  { id: 'm_max', show: '<i>m</i><sub>max</sub>', mean: '波束数上限', unit: '个；报告为 60—200' },
+  { id: 'n', show: '<i>n</i>', mean: '场景中的飞机数', unit: '架' },
+  { id: 'P', show: '<i>P</i>', mean: '最忙波束服务的飞机数，即第一阶段要最小化的最忙波束负载', unit: '架' },
+  { id: 'P^*', show: '<i>P</i><sup>*</sup>', mean: '波束中心固定时，最忙波束负载能达到的最小值', unit: '架' },
+  { id: 'ov:P', show: '<i class="ov">P</i>', mean: '当前布局的最忙波束负载', unit: '架' },
+  { id: 'r_a', show: '<i>r</i><sub><i>a</i></sub>', mean: '飞机 a 的局部半径，即它到第 k 近那架飞机的距离，限制在最小间距与半径上限之间', unit: '5.4—18', keys: ['r_a', 'r_#'] },
+  { id: 'R', show: '<i>R</i>', mean: '演示里允许半径的上限，对应 0.5°', unit: '18' },
+  { id: 'x_ai', show: '<i>x</i><sub><i>ai</i></sub>', mean: '归属变量，飞机 a 由波束 i 服务时取 1，否则取 0', unit: '0 或 1' },
+  { id: '𝒰_i', show: '<i>𝒰</i><sub><i>i</i></sub>', mean: '波束 i 服务的飞机集合，共 L<sub>i</sub> 架', unit: '—', keys: ['𝒰_i', '𝒰_#'] },
+  // 希腊字母
+  { id: 'δ_a^(k)', show: '<i>δ</i><sub><i>a</i></sub><sup>(<i>k</i>)</sup>', mean: '飞机 a 到第 k 近那架飞机的距离', unit: '平面距离' },
+  { id: 'Δ', show: 'Δ', mean: '退流比直接送省下的名额费用', unit: '—' },
+  { id: 'ε', show: '<i>ε</i>', mean: '距离项的权重，使距离项总和小于 0.1，只在负载平方和相同时起作用', unit: '演示取 10⁻⁴' },
+  { id: 'θ', show: '<i>θ</i>', mean: '离轴角，即从卫星看偏离波束中心的角度；演示用平面距离代替', unit: '°' },
+  { id: 'θ_ai', show: '<i>θ</i><sub><i>ai</i></sub>', mean: '飞机 a 偏离波束 i 中心的离轴角', unit: '°' },
+  { id: 'θ_ij', show: '<i>θ</i><sub><i>ij</i></sub>', mean: '从卫星看波束 i 与波束 j 中心之间的夹角', unit: '°' },
+  { id: 'Θ_i', show: '<i>Θ</i><sub><i>i</i></sub>', mean: '波束 i 的允许半径，取 0.5° 与该中心到最近其它中心夹角中的较小值；飞机离轴角不超过它才能归属该波束', unit: '≤ 0.5°；演示里 ≤ 18', keys: ['Θ_i', 'Θ_#'] },
+  { id: 'κ', show: '<i>κ</i>', mean: '动态重配置中飞机换到新波束的附加费用', unit: '3' },
+  { id: 'μ', show: '<i>μ</i>', mean: '各波束飞机数的均值', unit: '架' },
+  { id: 'σ', show: '<i>σ</i>', mean: '各波束飞机数的标准差', unit: '架' },
+  { id: 'ω_ai', show: '<i>ω</i><sub><i>ai</i></sub>', mean: '动态重配置中把飞机 a 分给波束 i 的指派费用', unit: '—' },
+  // 运算符号与记号
+  { id: '⌈⌉', show: '⌈<i>x</i>⌉', mean: '向上取整，取不小于 x 的最小整数', unit: '—' },
+  { id: '∑', show: '∑', mean: '求和', unit: '—' },
+  { id: '∀', show: '∀', mean: '对所有，例如 ∀<i>a</i> 表示对每架飞机都成立', unit: '—' },
+  { id: '⇒', show: '⇒', mean: '若前者成立，则后者成立', unit: '—' },
+  { id: '∈', show: '∈', mean: '属于某个集合', unit: '—' },
+  { id: '𝕀', show: '𝕀{·}', mean: '指示函数，花括号内的条件成立时取 1，否则取 0', unit: '0 或 1' },
+  { id: 'min', show: 'min', mean: '取较小值；作为优化问题开头时表示最小化', unit: '—' },
+  { id: 'max', show: 'max', mean: '取较大值', unit: '—' },
+  { id: 's.t.', show: 's.t.', mean: '约束条件，后面列出优化问题必须满足的条件', unit: '—' }
+], {
+  // 普通文字里独立出现的记号；带字母的会检查前后不是别的字母或数字
+  tokens: [
+    [/\|<i>ℰ<\/i>\|/, '|ℰ|'], [/P\*/, 'P^*'], [/L²/, 'L_i^2'], [/s\.t\./, 's.t.'], [/min/, 'min'], [/max/, 'max'], [/cv/, 'cv'],
+    [/P/, 'P'], [/n/, 'n'], [/m/, 'm'], [/k/, 'k'], [/K/, 'K'], [/L/, 'L_i'], [/a/, 'a'], [/i/, 'i'], [/Δ/, 'Δ'],
+    [/[∑Σ]/, '∑'], [/[⌈⌉]/, '⌈⌉'], [/∀/, '∀'], [/⇒/, '⇒'], [/∈/, '∈'], [/𝕀/, '𝕀']
+  ]
+});
+
+</script>
 <!-- 界面与动画 -->
 <script id="flowao-ui">
 (function () {
   'use strict';
-  const F = window.FlowAO;
+  const F = window.FlowAO, SK = window.FLOW_SYM, W = SK.wrap;
   const $ = s => document.querySelector(s);
   const DEFAULT_SEED = 199;
   const FONT = '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif';
@@ -1434,14 +1735,15 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
   }
 
   // ---------- 面板 ----------
-  function setCap(html) { if (html !== lastCap) { $('#caption').innerHTML = '<span>' + html + '</span>'; lastCap = html; } }
+  // 所有写进页面的文字都经 W() 把符号包成可悬停的 .sym
+  function setCap(html) { if (html !== lastCap) { $('#caption').innerHTML = '<span>' + W(html) + '</span>'; lastCap = html; } }
   function setNums(list) {
     const key = JSON.stringify(list);
     if (key === lastNums) return;
     lastNums = key;
-    $('#nums').innerHTML = list.map(([k, v, cls]) => '<div class="num"><div class="k">' + k + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>').join('');
+    $('#nums').innerHTML = W(list.map(([k, v, cls]) => '<div class="num"><div class="k">' + k + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>').join(''));
   }
-  function setChartTitle(s) { if (s !== lastChartTitle) { $('#chartTitle').innerHTML = s; lastChartTitle = s; } }
+  function setChartTitle(s) { if (s !== lastChartTitle) { $('#chartTitle').innerHTML = W(s); lastChartTitle = s; } }
   // 说明文字与动画同步：当前子步骤对应的段落高亮，其余变淡，并滚到可见位置
   let lastSeg = null;
   function setSeg(key) {
@@ -1461,31 +1763,21 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
   }
 
   // ---------- 公式面板 ----------
-  // 公式用 HTML 拼出；每个符号带 title 提示，含义取自报告符号表；data-term 用于高亮与悬停联动
-  const TITLE = {
-    n: '场景中的飞机数', m: '场景中的波束数', mmax: '波束数上限', P: '最忙波束服务的飞机数，即第一阶段要最小化的最忙波束负载',
-    Ps: '波束中心固定时，最忙波束负载能达到的最小值', Pb: '当前布局的最忙波束负载', K: '每个波束最多服务的飞机数',
-    x: '归属变量，飞机 a 由波束 i 服务时取 1，否则取 0', L: '波束 i 服务的飞机数，即波束负载', Lsq: '波束 i 负载的平方，各波束相加就是负载平方和',
-    th: '飞机 a 偏离波束 i 中心的离轴角；演示里用平面距离代替', Th: '波束 i 的允许半径，取 0.5° 与该中心到最近其它中心夹角中的较小值；飞机离轴角不超过它才能归属该波束',
-    E: '允许的飞机—波束组合集合，即离轴角不超过允许半径的全部配对', b: '波束 i 的束宽，即天线增益比峰值低 3 dB 处的全角宽度，取成员飞机最大离轴角的 2 倍且不小于 0.3°',
-    d: '从卫星指向飞机 a 与指向波束 i 中心的两个单位向量之间的距离，表示飞机离中心的远近', eps: '距离项的权重，使距离项总和小于 0.1，只在负载平方和相同时起作用',
-    kappa: '动态重配置中飞机换到新波束的附加费用，取 3', iprev: '飞机 a 上一分钟所在的波束', ind: '指示函数，花括号内的条件成立时取 1，否则取 0',
-    omega: '动态重配置中把飞机 a 分给波束 i 的指派费用', ceil: '向上取整，取不小于它的最小整数', forall: '对所有，∀a 表示对每架飞机都成立',
-    imp: '若前者成立，则后者成立', min: '最小化后面的量', U: '波束 i 服务的飞机集合，共 L 架', thij: '从卫星看波束 i 与波束 j 中心之间的夹角',
+  // 公式用 HTML 拼出；单个符号的含义由符号词典在 setFx 里统一包裹；整项的解释写在 data-tip，悬停同样即时显示；data-term 用于高亮与悬停联动
+  const TIP = {
     obj: '目标：让最忙波束的飞机数尽量小', one: '每架飞机恰好由一个波束服务', cov: '飞机只能归属覆盖圈包含它的波束，即离轴角不超过半束宽',
     cap: '每个波束服务的飞机数不超过 P', bin: '归属变量只取 0 或 1，不能出现半架飞机', sol: '最大流等于飞机数时，所有飞机都能分进去且没有波束超过 P',
-    lb: '任何可行布局的最忙负载都不低于这个值', Thdef: '允许半径的定义', sq: '负载平方和，越小负载越均衡', dterm: '距离项，让飞机归更近的中心，只在平方和相同时起作用',
+    lb: '任何可行布局的最忙负载都不低于这个值', Thdef: '允许半径的定义', E: '允许边集合的定义', sq: '负载平方和，越小负载越均衡', dterm: '距离项，让飞机归更近的中心，只在平方和相同时起作用',
     bw: '束宽由离中心最远的成员决定，即最小包围圆的直径', sep: '间隔规则：两个中心不能落进对方的覆盖圈', dmin: '任意两个中心的夹角不小于 0.15°，演示里为 5.4',
-    sw: '换束才付的附加费用，让最忙负载相同时优先少换束', dcost: '距离项，与式（10）相同', top: '最忙 10% 波束的平均负载，最忙负载相同时再比它',
-    cv: '负载离散系数，各波束飞机数的标准差除以均值，前两项相同时再比它', sigma: '各波束飞机数的标准差', mu: '各波束飞机数的均值',
-    r: '飞机 a 的局部半径，密处小、稀处大', delta: '飞机 a 到第 k 近那架飞机的距离', R: '演示里允许半径的上限 18，对应 0.5°', dmin2: '演示里的中心最小间距 5.4，对应 0.15°', k: '邻居序号，越大半径越大、中心越少', cnt: '取第一个使中心数不超过上限的 k',
+    sw: '换束才付的附加费用，让最忙负载相同时优先少换束', dcost: '距离项，与式（10）相同', P: '第一项：最忙负载', top: '最忙 10% 波束的平均负载，最忙负载相同时再比它',
+    cv: '负载离散系数，各波束飞机数的标准差除以均值，前两项相同时再比它', r: '飞机 a 的局部半径，密处小、稀处大', cnt: '取第一个使中心数不超过上限的 k',
     Sth: '全部飞机到所属中心的离轴角之和，越小波束越窄'
   };
-  const SUM = lo => `<span class="sum"><span class="op" title="求和">∑</span><span class="lo">${lo}</span></span>`;
+  const SUM = lo => `<span class="sum"><span class="op">∑</span><span class="lo">${lo}</span></span>`;
   const FA = '<i>a</i>', FI = '<i>i</i>', ST = '<span class="st">s.t.</span>';
   function fxCtx(hl) {
     const H = new Set(hl || []);
-    const sp = cls => (k, html) => `<span class="${cls}${H.has(k) ? ' hl' : ''}" data-term="${k}" title="${TITLE[k] || ''}">${html}</span>`;
+    const sp = cls => (k, html) => `<span class="${cls}${H.has(k) ? ' hl' : ''}" data-term="${k}"${cls === 'g' ? ` data-tip="${TIP[k]}"` : ''}>${html}</span>`;
     return { T: sp('t'), G: sp('g') };
   }
   const FX = {
@@ -1532,7 +1824,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     if (spec.sub) h += `<div class="fx-sub"><span class="lab">代入本例</span>${spec.sub}</div>`;
     if (parts.some(p => p.map)) h += `<div class="fx-map">${MAPLINE}</div>`;
     h += `<div class="fx-plain">${spec.plain}</div>`;
-    $('#fx').innerHTML = h;
+    $('#fx').innerHTML = W(h);
   }
   // 到最近其它中心的距离，叠放的同组波束不算
   function nearestOther(beams, i) {
@@ -2573,7 +2865,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     si = Math.max(0, Math.min(steps.length - 1, i)); pi = 0; tp = 0;
     playing = autoplay !== false;
     const st = steps[si];
-    $('#stepGroup').textContent = st.group; $('#stepTitle').textContent = st.title; $('#stepDesc').innerHTML = st.html;
+    $('#stepGroup').textContent = st.group; $('#stepTitle').textContent = st.title; $('#stepDesc').innerHTML = W(st.html);
     $('#stepDesc').scrollTop = 0; lastSeg = undefined;
     $('#btnNext').classList.remove('pulse');
     updateNav(); updatePlayBtn(); dirty = true;
@@ -2601,6 +2893,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     if (nums) setNums(nums);
     let before = 0; for (let k = 0; k < pi; k++) before += st.phases[k].dur;
     $('#progress').value = String(Math.round((before + tp) / stepTotal(st) * 1000));
+    SK.refresh();
   }
   function frame(ts) {
     const dt = lastTs ? Math.min(0.1, (ts - lastTs) / 1000) : 0;
@@ -2641,18 +2934,25 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
   $('#progress').addEventListener('input', e => { playing = false; updatePlayBtn(); seekFrac(Number(e.target.value) / 1000); });
   $('#btnRandom').addEventListener('click', () => { load(1 + Math.floor(Math.random() * 100000)); gotoStep(si); });
   $('#btnDefault').addEventListener('click', () => { load(DEFAULT_SEED); gotoStep(si); });
-  // 名词小词典
-  const gloss = $('#gloss');
+  // 名词小词典与完整符号表
+  const gloss = $('#gloss'), symtab = $('#symtab');
   const showGloss = on => { gloss.hidden = !on; gloss.classList.toggle('open', on); };
-  $('#btnGloss').addEventListener('click', () => showGloss(gloss.hidden));
+  const showSym = on => { symtab.hidden = !on; };
+  $('#gloss dl').innerHTML = W($('#gloss dl').innerHTML);
+  $('#symtabBody').innerHTML = SK.tableHtml();
+  $('#btnGloss').addEventListener('click', () => { showSym(false); showGloss(gloss.hidden); });
   $('#glossClose').addEventListener('click', () => showGloss(false));
   gloss.addEventListener('click', e => { if (e.target === gloss) showGloss(false); });
+  $('#btnSym').addEventListener('click', () => { showGloss(false); showSym(symtab.hidden); });
+  $('#symtabClose').addEventListener('click', () => showSym(false));
+  symtab.addEventListener('click', e => { if (e.target === symtab) showSym(false); });
+  SK.attach();
   // 悬停公式里的符号：动画中对应元素闪烁
   const fxBox = $('#fx');
   fxBox.addEventListener('mouseover', e => { const el = e.target.closest ? e.target.closest('[data-term]') : null; const k = el ? el.dataset.term : null; if (k !== HOV) { HOV = k; dirty = true; } });
   fxBox.addEventListener('mouseleave', () => { HOV = null; dirty = true; });
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { showGloss(false); return; }
+    if (e.key === 'Escape') { showGloss(false); showSym(false); return; }
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.key === 'ArrowRight') gotoStep(si + 1);
     else if (e.key === 'ArrowLeft') gotoStep(si - 1);
@@ -2662,19 +2962,22 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
   window.addEventListener('resize', resize);
   if (window.ResizeObserver) new ResizeObserver(resize).observe(cv.parentElement);
 
-  // 地址栏参数：?step=3&t=0.5&seed=199，或 ?step=5&phase=4&pt=0.6 直接定位到某阶段的某时刻，便于截图与定位
+  // 地址栏参数：?step=3&t=0.5&seed=199，或 ?step=5&phase=4&pt=0.6 直接定位到某阶段的某时刻，便于截图与定位；
+  // &hov=L_i 模拟悬停某个符号（&hovin=fx 指定在哪个区域找），&symtab=1 打开符号表
   const qs = new URLSearchParams(location.search);
   load(qs.has('seed') ? Number(qs.get('seed')) : DEFAULT_SEED);
   renderNav(); resize();
-  gotoStep(qs.has('step') ? Number(qs.get('step')) : 0, !qs.has('t') && !qs.has('phase'));
+  gotoStep(qs.has('step') ? Number(qs.get('step')) : 0, !qs.has('t') && !qs.has('phase') && !qs.has('hov'));
   if (qs.has('t')) seekFrac(Number(qs.get('t')));
   if (qs.has('phase')) { pi = Math.max(0, Math.min(steps[si].phases.length - 1, Number(qs.get('phase')))); tp = clamp01(Number(qs.get('pt') || 0)) * steps[si].phases[pi].dur; dirty = true; }
+  if (qs.has('hov')) { render(); SK.pin(qs.get('hov'), qs.has('hovin') ? ['#' + qs.get('hovin')] : ['#stepDesc', '#fx', '#caption', '#nums', '#chartTitle']); }
+  if (qs.has('symtab')) showSym(true);
   requestAnimationFrame(frame);
 
   window.__flowaoUI = {
     get R() { return R; }, get steps() { return steps; },
     renderAt(i, j, t) { si = i; pi = j; tp = t * steps[i].phases[j].dur; render(); },
-    load, gotoStep
+    load, gotoStep, sym: SK
   };
 })();
 

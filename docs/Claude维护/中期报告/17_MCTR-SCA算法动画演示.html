@@ -13,7 +13,7 @@ html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
 header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:7px 16px; background:#fff; border-bottom:1px solid var(--line); }
 header h1 { font-size:18px; margin:0; font-weight:600; letter-spacing:.3px; white-space:nowrap; }
 header h1 small { font-weight:400; color:var(--mute); font-size:13px; margin-left:8px; }
-.presets { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--mute); }
+.presets, #presets { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--mute); }
 button { font-family:inherit; font-size:13px; padding:4px 12px; border:1px solid #c9c3b6; border-radius:5px; background:#fff; color:var(--ink); cursor:pointer; }
 button:hover { background:#f3f1ea; }
 button.on { background:var(--navy); color:#fff; border-color:var(--navy); }
@@ -50,9 +50,29 @@ main { display:grid; grid-template-columns:minmax(0,1fr) 660px; min-height:0; }
 .fs .lab { color:#8a8f98; font-size:11.5px; margin-right:4px; }
 .tm { padding:0 3px; border-radius:3px; transition:background .2s; }
 .tm.on { background:#fff1cc; box-shadow:0 0 0 1.5px #e3b64a; }
-.lk { cursor:help; border-bottom:1px dotted #9aa6b5; }
 .lk:hover, .tm:hover { background:#e4ecf7; }
-.sy { cursor:help; }
+/* 可悬停的符号：虚线下划线提示可查看含义；悬停、点击或聚焦时浅蓝底，旁边立即出现浮层 */
+.sym { cursor:help; border-bottom:1px dashed #8fa5c0; border-radius:3px; outline:none; }
+.sym.on, .sym:hover { background:#d6e3f3; border-bottom-color:var(--navy); }
+.symtip { position:fixed; z-index:90; max-width:340px; background:#fff; border:1px solid #b9c7d8; border-left:4px solid var(--navy); border-radius:8px; box-shadow:0 6px 22px rgba(0,0,0,.18); padding:7px 11px 8px; font-size:13px; line-height:1.5; pointer-events:none; }
+.symtip[hidden] { display:none; }
+.symtip .s { font-family:"Cambria Math","Cambria","Times New Roman",serif; font-size:17px; color:var(--navy); margin-bottom:2px; }
+.symtip .m { color:var(--ink); }
+.symtip .u { color:var(--mute); font-size:12px; margin-top:2px; }
+.symtip .u span { margin-right:6px; color:#9aa3ad; }
+.symbtn { background:#fff6cc; border-color:#e0a800; color:#6b4e00; font-weight:600; margin-left:10px; }
+.symbtn:hover { background:#ffefad; }
+.modal { position:fixed; inset:0; background:rgba(30,32,36,.45); display:flex; align-items:center; justify-content:center; z-index:50; }
+.modal[hidden] { display:none; }
+.modal-box { width:min(900px,94vw); max-height:86vh; overflow-y:auto; background:#fff; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.25); padding:16px 22px 18px; }
+.modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.modal-head h3 { margin:0; font-size:18px; }
+.modal-note { margin:0 0 8px; color:var(--mute); font-size:13px; }
+.symtab { border-collapse:collapse; width:100%; font-size:13.5px; }
+.symtab th, .symtab td { text-align:left; padding:4px 8px; border-bottom:1px solid #ece8df; vertical-align:top; line-height:1.5; }
+.symtab th { color:var(--mute); font-weight:600; font-size:12.5px; }
+.symtab td.s { font-family:"Cambria Math","Cambria","Times New Roman",serif; font-size:16px; white-space:nowrap; color:var(--navy); }
+.symtab td.u { color:var(--mute); white-space:nowrap; }
 .fr { display:inline-block; vertical-align:middle; text-align:center; line-height:1.2; margin:0 2px; }
 .fr .nu { display:block; padding:0 3px; border-bottom:1px solid currentColor; }
 .fr .de { display:block; padding:0 3px; }
@@ -102,8 +122,15 @@ footer select { font-family:inherit; font-size:13px; padding:2px 4px; }
 <div id="app">
   <header>
     <h1>MCTR-SCA 功率精细优化算法 · 动画演示<small>匹配约束信赖域逐次凸逼近，第三阶段</small></h1>
-    <div class="presets" id="presets"><span>预设例子</span></div>
+    <div class="presets"><span id="presets"><span>预设例子</span></span><button id="btnSym" class="symbtn" title="页面里出现的全部符号及其含义，快捷键 Esc 关闭">符号</button></div>
   </header>
+  <div id="symtab" class="modal" hidden>
+    <div class="modal-box">
+      <div class="modal-head"><h3>符号表</h3><button id="symtabClose">关闭</button></div>
+      <p class="modal-note">页面文字里带虚线下划线的符号都可以悬停、点击或用 Tab 聚焦查看含义。下表按字母顺序列出全部符号。</p>
+      <div id="symtabBody"></div>
+    </div>
+  </div>
   <div id="navbar"><div id="chips"></div><div id="ticks"></div></div>
   <main>
     <section id="left">
@@ -428,10 +455,314 @@ if (typeof module !== 'undefined') module.exports = SCA;
 </script>
 
 <!-- ===================== 页面与动画 ===================== -->
+<!-- 符号词典：自动包裹、即时提示、符号表。内容由 html_test_sca/inject_symkit.js 从 symkit.js 与 symdict_sca.js 写入 -->
+<script id="sca-symkit">
+// 符号词典工具：把页面文字里的数学符号自动包成 <span class="sym">，悬停、点击或聚焦时立即显示含义；
+// 并按字母顺序渲染完整符号表。两个演示页共用这一份代码，词典各自给出。
+// 词典条目：{ id, show: 符号的 HTML, mean: 含义, unit: 单位或取值, keys: 能匹配到它的记号键 }
+// 记号键的写法：字母 + "_下标" + "^上标"，下标里的数字写成 #，粗体向量前加 "b:"，上划线前加 "ov:"。
+window.SymKit = function (entries, opts) {
+  'use strict';
+  opts = opts || {};
+  const byKey = new Map(), byId = new Map();
+  entries.forEach(e => {
+    byId.set(e.id, e);
+    (e.keys || [e.id]).forEach(k => { if (byKey.has(k)) throw new Error('符号键重复：' + k); byKey.set(k, e); });
+  });
+  const stripTags = s => s.replace(/<[^>]+>/g, '');
+  // 具体编号换成 #：先只换下标里的，再连上标一起换
+  const genSub = k => k.replace(/^[^^]*/, s => s.replace(/\d+/g, '#'));
+  const genAll = k => k.replace(/\d+/g, '#');
+  const resolve = key => byKey.get(key) || byKey.get(genSub(key)) || byKey.get(genAll(key)) || null;
+  // 文字里的 "<" 后面紧跟字母或斜杠才是标签，"最大流 < n" 这种是普通字符
+  const isTag = (h, p) => h[p] === '<' && /[A-Za-z\/!]/.test(h[p + 1] || '');
+  // 斜体字母、粗体向量，后面可跟下标、上标或 ²³
+  const SUBSUP = '((?:<i>|<\\/i>|[^<]){1,10}?)';
+  const RE_I = new RegExp('<i( class="ov")?>([^<]{1,2})(?:<sub>([^<]{1,4})<\\/sub>)?<\\/i>(?:<sub>' + SUBSUP + '<\\/sub>)?(?:<sup>' + SUBSUP + '<\\/sup>|([²³]))?', 'y');
+  const RE_B = new RegExp('<b class="vb">([^<]{1,2})<\\/b>(?:<sub>' + SUBSUP + '<\\/sub>)?(?:<sup>' + SUBSUP + '<\\/sup>)?', 'y');
+  const tokens = (opts.tokens || []).map(t => [new RegExp(t[0].source, 'y'), t[1]]);
+  const isLatin = c => /[A-Za-z]/.test(c || '');
+  const isAlnum = c => /[A-Za-z0-9]/.test(c || '');
+
+  // 在 html 的 pos 处尝试匹配一个符号；返回 { len, key, entry } 或 null。unknown 收集匹配到字形但词典没有的记号
+  function matchAt(html, pos, unknown) {
+    for (const [re, id] of tokens) {
+      re.lastIndex = pos;
+      const m = re.exec(html);
+      if (!m) continue;
+      const first = m[0][0], last = m[0][m[0].length - 1];
+      if (isLatin(first) && (isLatin(html[pos - 1]) || html[pos - 1] === '′')) continue;
+      if (isLatin(last) && isAlnum(html[pos + m[0].length])) continue;
+      if (opts.guard && !opts.guard(html, pos, m[0], id)) continue;
+      return { len: m[0].length, key: id, entry: byId.get(id) };
+    }
+    if (!isTag(html, pos)) return null;
+    let m, key, pre = '';
+    RE_B.lastIndex = pos; m = RE_B.exec(html);
+    if (m) { pre = 'b:'; key = [pre + m[1], m[2], m[3]]; }
+    else {
+      RE_I.lastIndex = pos; m = RE_I.exec(html);
+      if (!m) return null;
+      key = [(m[1] ? 'ov:' : '') + m[2], m[3] || m[4], m[5] || (m[6] ? m[6] === '²' ? '2' : '3' : undefined)];
+    }
+    const base = key[0] + (key[1] ? '_' + stripTags(key[1]) : '');
+    const full = base + (key[2] ? '^' + stripTags(key[2]) : '');
+    let e = resolve(full);
+    if (e) return { len: m[0].length, key: full, entry: e };
+    if (key[2]) {
+      // 上标不属于这个符号时退一步，只取字母和下标，上标留给后面继续扫描
+      e = resolve(base);
+      const cut = m[0].lastIndexOf(m[6] ? m[6] : '<sup>');
+      if (e) return { len: cut, key: base, entry: e };
+    }
+    if (unknown) unknown.push(full);
+    return { len: m[0].length, key: full, entry: null };
+  }
+  // 跳过已包裹的符号、SVG 以及标签本身
+  function skipLen(html, pos) {
+    if (html.startsWith('<span class="sym"', pos)) {
+      let depth = 0, i = pos;
+      for (;;) {
+        const a = html.indexOf('<span', i), b = html.indexOf('</span>', i);
+        if (a >= 0 && a < b) { depth++; i = a + 5; } else { depth--; i = b + 7; if (depth === 0) return i - pos; }
+      }
+    }
+    if (html.startsWith('<svg', pos)) return html.indexOf('</svg>', pos) + 6 - pos;
+    if (html[pos] === '&') return html.indexOf(';', pos) + 1 - pos;
+    return 0;
+  }
+  const open = e => '<span class="sym" data-sym="' + e.id + '" tabindex="0">';
+  function wrap(html) {
+    if (!html) return html;
+    let out = '', pos = 0;
+    while (pos < html.length) {
+      const sk = skipLen(html, pos);
+      if (sk) { out += html.slice(pos, pos + sk); pos += sk; continue; }
+      const m = matchAt(html, pos, null);
+      if (m && m.entry) { out += open(m.entry) + html.slice(pos, pos + m.len) + '</span>'; pos += m.len; continue; }
+      if (m) { out += html.slice(pos, pos + m.len); pos += m.len; continue; }
+      if (isTag(html, pos)) { const end = html.indexOf('>', pos) + 1; out += html.slice(pos, end); pos = end; continue; }
+      out += html[pos]; pos++;
+    }
+    return out;
+  }
+  // 测试用：列出文字里尚未包裹的符号记号——词典能匹配却没包裹的，以及带上下标或斜体但词典没有的
+  function findUnwrapped(html) {
+    const found = [];
+    let pos = 0;
+    while (pos < html.length) {
+      const sk = skipLen(html, pos);
+      if (sk) { pos += sk; continue; }
+      const unknown = [];
+      const m = matchAt(html, pos, unknown);
+      if (m) { found.push(m.entry ? '未包裹:' + m.key : '词典外:' + m.key); pos += m.len; continue; }
+      if (isTag(html, pos)) { pos = html.indexOf('>', pos) + 1; continue; }
+      // 普通文字里：单个拉丁或希腊字母紧跟下标、上标
+      const c = html[pos], nx = html.slice(pos + 1, pos + 6);
+      if (/[A-Za-zΑ-Ωα-ω]/.test(c) && !isLatin(html[pos - 1]) && /^(′?<su[bp]>|[²³₀-₉⁰-⁹⁻])/.test(nx)) found.push('词典外:' + c + (nx[0] === '′' ? '′' : '') + '+' + nx.replace(/<(su[bp])>.*/, '$1'));
+      pos++;
+    }
+    return found;
+  }
+
+  // ---------- 即时提示 ----------
+  let tip = null, cur = null, pinned = false, lastRect = null;
+  function ensureTip() {
+    if (tip) return tip;
+    tip = document.createElement('div'); tip.className = 'symtip'; tip.hidden = true;
+    document.body.appendChild(tip);
+    return tip;
+  }
+  function place(el) {
+    const r = el.getBoundingClientRect(), t = ensureTip();
+    lastRect = r;
+    const tw = t.offsetWidth, th = t.offsetHeight, W = window.innerWidth, H = window.innerHeight;
+    let top = r.bottom + 6;
+    if (top + th > H - 4) top = Math.max(4, r.top - th - 6);
+    let left = r.left;
+    if (left + tw > W - 4) left = W - 4 - tw;
+    if (left < 4) left = 4;
+    t.style.left = left + 'px'; t.style.top = top + 'px';
+  }
+  function show(el) {
+    const t = ensureTip();
+    if (cur && cur !== el) cur.classList.remove('on');
+    cur = el; el.classList.add('on');
+    if (el.classList.contains('sym')) {
+      const e = byId.get(el.dataset.sym);
+      t.innerHTML = '<div class="s">' + e.show + '</div><div class="m">' + e.mean + '</div><div class="u"><span>单位或取值</span>' + e.unit + '</div>';
+    } else t.innerHTML = '<div class="m">' + el.dataset.tip + '</div>';
+    t.hidden = false;
+    place(el);
+  }
+  function hide() {
+    if (cur) cur.classList.remove('on');
+    cur = null; pinned = false;
+    if (tip) tip.hidden = true;
+  }
+  const target = node => (node && node.closest ? node.closest('.sym, [data-tip]') : null);
+  function attach() {
+    document.addEventListener('mouseover', e => {
+      const el = target(e.target);
+      if (el) { if (el !== cur) { pinned = false; show(el); } }
+      else if (cur && !pinned) hide();
+    });
+    document.addEventListener('mouseleave', () => { if (!pinned) hide(); });
+    document.addEventListener('click', e => {
+      const el = target(e.target);
+      if (!el) { if (pinned) hide(); return; }
+      if (el === cur && pinned) { hide(); return; }
+      show(el); pinned = true;
+    });
+    document.addEventListener('focusin', e => { const el = target(e.target); if (el) show(el); });
+    document.addEventListener('focusout', e => { const el = target(e.target); if (el && el === cur && !pinned) hide(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && cur) hide(); });
+    document.addEventListener('scroll', () => { if (cur) place(cur); }, true);
+    window.addEventListener('resize', () => { if (cur) place(cur); });
+  }
+  // 页面重绘把被悬停的元素换掉后，找同一位置、同一符号的新元素接上，找不到就收起
+  function refresh() {
+    if (!cur || cur.isConnected) return;
+    const id = cur.dataset.sym;
+    let best = null, bd = 40;
+    if (id) document.querySelectorAll('.sym[data-sym="' + id + '"]').forEach(el => {
+      const r = el.getBoundingClientRect(), d = Math.hypot(r.left - lastRect.left, r.top - lastRect.top);
+      if (d < bd) { bd = d; best = el; }
+    });
+    const keep = pinned;
+    if (best) { show(best); pinned = keep; } else hide();
+  }
+  // 地址栏参数模拟悬停：在给定容器里找第一个该符号并固定显示
+  function pin(id, containers) {
+    for (const c of containers) {
+      const el = document.querySelector(c + ' .sym[data-sym="' + id + '"]');
+      if (el) { el.scrollIntoView({ block: 'nearest' }); show(el); pinned = true; return el; }
+    }
+    return null;
+  }
+
+  // ---------- 完整符号表 ----------
+  const GREEK = 'αβγδεζηθικλμνξοπρστυφχψω', GREEK_U = 'ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ';
+  const SCRIPT = { 'ℰ': 'E', '𝒰': 'U', '𝕀': 'I', 'ℓ': 'l' };
+  function sortKey(e, idx) {
+    const id = e.id.replace(/^(b:|ov:)/, ''), bold = /^b:/.test(e.id) ? 1 : 0;
+    const ch = [...id][0], base = SCRIPT[ch] || ch, script = SCRIPT[ch] ? 1 : 0;
+    if (/^[A-Za-z]$/.test(base)) return [0, base.toLowerCase(), base === base.toUpperCase() ? 1 : 0, bold + script, id.length, idx];
+    const gi = GREEK.indexOf(ch) >= 0 ? GREEK.indexOf(ch) : GREEK_U.indexOf(ch);
+    if (gi >= 0) return [1, gi, GREEK_U.indexOf(ch) >= 0 ? 1 : 0, bold, id.length, idx];
+    return [2, idx];
+  }
+  function sorted() {
+    return entries.map((e, i) => [sortKey(e, i), e]).sort((a, b) => {
+      for (let k = 0; k < Math.max(a[0].length, b[0].length); k++) {
+        const x = a[0][k], y = b[0][k];
+        if (x === y) continue;
+        if (x === undefined) return -1; if (y === undefined) return 1;
+        return x < y ? -1 : 1;
+      }
+      return 0;
+    }).map(x => x[1]);
+  }
+  function tableHtml() {
+    const rows = sorted().map(e => '<tr><td class="s">' + e.show + '</td><td>' + e.mean + '</td><td class="u">' + e.unit + '</td></tr>').join('');
+    return '<table class="symtab"><thead><tr><th>符号</th><th>含义</th><th>单位或取值</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  return { entries, byId, wrap, findUnwrapped, attach, refresh, pin, hide, tableHtml, sorted, matchAt };
+};
+
+// MCTR-SCA 演示页的符号词典。含义与单位取自《13_符号表》，演示自有的 a_i、b_i 按本页用法写。
+window.SCA_SYM = window.SymKit([
+  // 拉丁字母
+  { id: 'a_i', show: '<i>a</i><sub><i>i</i></sub>', mean: '演示用信号系数，本波束每瓦功率带来的信噪比，对应式（23）的 χ', unit: 'W⁻¹', keys: ['a_i', 'a_#'] },
+  { id: 'b_i', show: '<i>b</i><sub><i>i</i></sub>', mean: '演示用干扰系数，对方波束每瓦功率带来的干扰与噪声之比，对应式（23）的 ψ', unit: 'W⁻¹', keys: ['b_i', 'b_#'] },
+  { id: 'B', show: '<i>B</i>', mean: '一个频率槽的带宽', unit: '25 MHz' },
+  { id: 'c_i', show: '<i>c</i><sub><i>i</i></sub>', mean: '波束 i 实际占用的连续频率槽数', unit: '1—10；本例为 1', keys: ['c_i', 'c_j'] },
+  { id: 'C_i', show: '<i>C</i><sub><i>i</i></sub>', mean: '波束 i 的容量', unit: 'bit/s；本页按 Mbps', keys: ['C_i', 'C_#'] },
+  { id: 'C_i^(k)', show: '<i>C</i><sub><i>i</i></sub><sup>(<i>k</i>)</sup>', mean: '第 k 次迭代时波束 i 的容量', unit: 'Mbps' },
+  { id: 'D_i', show: '<i>D</i><sub><i>i</i></sub>', mean: '波束 i 的业务需求，等于飞机数乘单机需求', unit: 'Mbps', keys: ['D_i', 'D_#'] },
+  { id: 'e', show: 'e', mean: '自然常数', unit: '≈2.718' },
+  { id: 'F', show: '<i>F</i>', mean: '场景的供需匹配程度 SGM，全部波束匹配得分的平均', unit: '0—1' },
+  { id: 'F_0', show: '<i>F</i><sub>0</sub>', mean: '第二阶段输出的 SGM，即第三阶段的匹配要求', unit: '0—1', keys: ['F_0', 'F₀'] },
+  { id: 'F^(k)', show: '<i>F</i><sup>(<i>k</i>)</sup>', mean: '第 k 次迭代时的 SGM', unit: '0—1' },
+  { id: 'b:g_F', show: '<b class="vb">g</b><sub><i>F</i></sub>', mean: 'SGM 对各波束功率的梯度向量', unit: 'W⁻¹' },
+  { id: 'b:g_F^(k)', show: '<b class="vb">g</b><sub><i>F</i></sub><sup>(<i>k</i>)</sup>', mean: '第 k 次迭代时 SGM 对功率的梯度向量', unit: 'W⁻¹' },
+  { id: 'H_ij', show: '<i>H</i><sub><i>ij</i></sub>', mean: '波束 j 对波束 i 的干扰增益因子，取波束 j 在波束 i 中心方向上的增益', unit: '无量纲' },
+  { id: 'i', show: '<i>i</i>', mean: '波束编号', unit: '1—m' },
+  { id: 'j', show: '<i>j</i>', mean: '波束编号，常用于表示干扰波束或另一个波束', unit: '1—m' },
+  { id: 'J_ij', show: '<i>J</i><sub><i>ij</i></sub>', mean: '波束 i 的容量对波束 j 功率的导数', unit: 'bit/s/W；本页按 Mbps/W', keys: ['J_ij', 'J_#', 'J_i#'] },
+  { id: 'J_ij^(k)', show: '<i>J</i><sub><i>ij</i></sub><sup>(<i>k</i>)</sup>', mean: '第 k 次迭代时波束 i 的容量对波束 j 功率的导数', unit: 'Mbps/W' },
+  { id: 'k', show: '<i>k</i>', mean: '第三阶段的迭代次数，上标 (k) 表示第 k 次迭代时的取值', unit: '—' },
+  { id: 'ℓ_iq', show: '<i>ℓ</i><sub><i>iq</i></sub>', mean: '槽 q 所在频率上卫星到波束 i 中心的自由空间路径增益', unit: '无量纲' },
+  { id: 'm', show: '<i>m</i>', mean: '场景中的波束数', unit: '本例为 2' },
+  { id: 'N_0', show: '<i>N</i><sub>0</sub>', mean: '一个槽带宽内的噪声功率', unit: 'W' },
+  { id: 'p_i', show: '<i>p</i><sub><i>i</i></sub>', mean: '波束 i 的发射功率，在其占用的槽之间平均分配', unit: 'W，第三阶段 0.5—50 W', keys: ['p_i', 'p_j', 'p_#'] },
+  { id: 'p_jq', show: '<i>p</i><sub><i>jq</i></sub>', mean: '波束 j 在槽 q 上的功率', unit: 'W' },
+  { id: 'b:p', show: '<b class="vb">p</b>', mean: '各波束功率组成的向量', unit: 'W' },
+  { id: 'b:p^0', show: '<b class="vb">p</b><sup>0</sup>', mean: '第二阶段输出的功率向量，即第三阶段的起点', unit: 'W' },
+  { id: 'b:p^(k)', show: '<b class="vb">p</b><sup>(<i>k</i>)</sup>', mean: '第三阶段第 k 次迭代时的功率向量', unit: 'W', keys: ['b:p^(k)', 'b:p^(#)'] },
+  { id: 'b:p^c', show: '<b class="vb">p</b><sup>c</sup>', mean: '候选功率向量，等于当前点加上增量 Δ', unit: 'W' },
+  { id: 'b:p^m', show: '<b class="vb">p</b><sup>m</sup>', mean: '某一对比方法输出的功率向量', unit: 'W' },
+  { id: 'b:p(ξ)', show: '<b class="vb">p</b>(<i>ξ</i>)', mean: '原功率与对比方法输出之间连线上的功率向量', unit: 'W' },
+  { id: 'q', show: '<i>q</i>', mean: '频率槽编号', unit: '0—99' },
+  { id: 'S_i', show: '<i>S</i><sub><i>i</i></sub>', mean: '波束 i 的有用信号增益因子，取波束对其成员飞机增益的线性平均', unit: '无量纲' },
+  { id: '^T', show: '(·)<sup>T</sup>', mean: '上标，表示向量转置', unit: '—' },
+  { id: 'u_i', show: '<i>u</i><sub><i>i</i></sub>', mean: '波束 i 容量相对需求的偏差：过供时为 z<sub>i</sub> − 1，欠供时为 1 − 1/z<sub>i</sub>', unit: '无量纲', keys: ['u_i', 'u_#'] },
+  { id: 'v_i', show: '<i>v</i><sub><i>i</i></sub>', mean: '以平均波束需求为单位的容量差，等于 (C<sub>i</sub> − D<sub>i</sub>)/β', unit: '无量纲', keys: ['v_i', 'v_#'] },
+  { id: 'W', show: '<i>W</i>', mean: '场景需求满足率，实际满足的业务量占总需求的比例', unit: '0—1' },
+  { id: 'y_i', show: '<i>y</i><sub><i>i</i></sub>', mean: '第三阶段的辅助服务量，表示波束 i 实际满足的业务量，最优时等于 min(C<sub>i</sub>, D<sub>i</sub>)', unit: 'Mbps', keys: ['y_i', 'y_#'] },
+  { id: 'b:y', show: '<b class="vb">y</b>', mean: '辅助服务量组成的向量', unit: 'Mbps' },
+  { id: 'z_i', show: '<i>z</i><sub><i>i</i></sub>', mean: '波束 i 的容量与需求之比', unit: '无量纲', keys: ['z_i', 'z_#'] },
+  // 希腊字母
+  { id: 'β', show: '<i>β</i>', mean: '平均波束需求', unit: 'Mbps' },
+  { id: 'Γ_iq', show: '<i>Γ</i><sub><i>iq</i></sub>', mean: '波束 i 在槽 q 上的信干噪比，即有用信号与干扰加噪声之比', unit: '无量纲', keys: ['Γ_iq', 'Γ_i', 'Γ_#'] },
+  { id: 'δ', show: '<i>δ</i>', mean: '第三阶段允许的 SGM 下降量', unit: '主实验取 0' },
+  { id: 'b:Δ', show: '<b class="vb">Δ</b>', mean: '第三阶段一次迭代的功率增量向量', unit: 'W' },
+  { id: 'Δ_j', show: '<i>Δ</i><sub><i>j</i></sub>', mean: '功率增量向量的第 j 个分量，即波束 j 的功率改变量', unit: 'W', keys: ['Δ_j', 'Δ_i', 'Δ_#'] },
+  { id: 'ζ', show: '<i>ζ</i>', mean: '实现损耗因子', unit: '对应 1 dB' },
+  { id: 'η', show: '<i>η</i>', mean: '每个槽的频谱效率上限', unit: '5.5 bit/s/Hz' },
+  { id: 'λ_k', show: '<i>λ</i><sub><i>k</i></sub>', mean: '第三阶段第 k 次迭代的信赖域半径，即本次允许每个波束功率改变的最大幅度', unit: 'W，初值 5 W', keys: ['λ_k', 'λ_#', 'λ'] },
+  { id: 'Λ_i', show: '<i>Λ</i><sub><i>i</i></sub>', mean: '波束 i 的匹配得分，容量恰好等于需求时为 1，欠供或过供时下降', unit: '0—1', keys: ['Λ_i', 'Λ_#'] },
+  { id: 'Λ′_i', show: 'Λ′<sub><i>i</i></sub>', mean: '波束 i 的匹配得分对容量的导数', unit: 'Mbps⁻¹' },
+  { id: 'μ_k', show: '<i>μ</i><sub><i>k</i></sub>', mean: '第三阶段第 k 次迭代的余量系数，μ<sub>k</sub>λ<sub>k</sub>² 为 SGM 约束的曲率余量', unit: 'W⁻²', keys: ['μ_k', 'μ_#', 'μ'] },
+  { id: 'ν_iq', show: '<i>ν</i><sub><i>iq</i></sub>', mean: '波束 i 在槽 q 上的干扰加噪声与噪声之比', unit: '无量纲', keys: ['ν_iq', 'ν_#'] },
+  { id: 'ξ', show: '<i>ξ</i>', mean: '插值比例，从原功率到对比方法输出之间等间距取值', unit: '0, 0.05, …, 1' },
+  { id: 'ρ_ij', show: '<i>ρ</i><sub><i>ij</i></sub>', mean: '波束 j 对波束 i 的极化干扰系数：同极化 1，异极化 0.01，同一频率组 0', unit: '1、0.01、0' },
+  { id: 'σ_i', show: '<i>σ</i><sub><i>i</i></sub>', mean: '波束 i 的满足率', unit: '0—1' },
+  { id: 'χ_iq', show: '<i>χ</i><sub><i>iq</i></sub>', mean: '波束 i 在槽 q 上单位功率对应的信噪比', unit: 'W⁻¹' },
+  { id: 'ψ_iqj', show: '<i>ψ</i><sub><i>iqj</i></sub>', mean: '波束 j 单位功率在槽 q 上对波束 i 造成的干扰与噪声之比', unit: 'W⁻¹' },
+  // 运算符号与记号
+  { id: '‖Δ‖∞', show: '‖<b class="vb">Δ</b>‖<sub>∞</sub>', mean: '向量各分量绝对值的最大值', unit: 'W' },
+  { id: '∑', show: '∑', mean: '求和', unit: '—' },
+  { id: '∂', show: '∂', mean: '偏导数', unit: '—' },
+  { id: '←', show: '←', mean: '用右边的值更新左边的变量', unit: '—' },
+  { id: '𝕀', show: '𝕀{·}', mean: '指示函数，花括号内的条件成立时取 1，否则取 0', unit: '0 或 1' },
+  { id: 'log2', show: 'log<sub>2</sub>', mean: '以 2 为底的对数', unit: '—' },
+  { id: 'ln', show: 'ln', mean: '自然对数', unit: '—' },
+  { id: 'min', show: 'min', mean: '取较小值', unit: '—' },
+  { id: 'max', show: 'max', mean: '取较大值；作为优化问题开头时表示最大化', unit: '—' },
+  { id: 's.t.', show: 's.t.', mean: '约束条件，后面列出优化问题必须满足的条件', unit: '—' }
+], {
+  tokens: [
+    [/‖<b class="vb">Δ<\/b>‖<sub>∞<\/sub>/, '‖Δ‖∞'], [/<b class="vb">p<\/b>\(<i>ξ<\/i>\)/, 'b:p(ξ)'], [/<sup>T<\/sup>/, '^T'],
+    [/Λ′<sub>(?:<i>[a-z]<\/i>|\d+)<\/sub>/, 'Λ′_i'], [/Λ′/, 'Λ′_i'], [/log<sub>2<\/sub>/, 'log2'], [/s\.t\./, 's.t.'], [/min/, 'min'], [/max/, 'max'], [/ln/, 'ln'],
+    [/e(?=<sup>)/, 'e'], [/F₀/, 'F_0'], [/F/, 'F'], [/W/, 'W'], [/k/, 'k'],
+    [/[∑Σ]/, '∑'], [/∂/, '∂'], [/←/, '←'], [/𝕀/, '𝕀']
+  ],
+  // 普通文字里的 W 若紧跟在数字、右括号或斜杠后面，是单位瓦，不是满足率
+  guard: function (html, pos, text, id) {
+    if (id !== 'W') return true;
+    let i = pos - 1;
+    while (i >= 0 && html[i] === ' ') i--;
+    return !/[\d)\/]/.test(html[i] || '');
+  }
+});
+</script>
 <script id="sca-ui">
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
+  var SK = window.SCA_SYM, WS = SK.wrap;   // 所有写进页面的文字都经 WS() 把符号包成可悬停的 .sym
   var ERR = [];
   function logErr(msg) { ERR.push(msg); var el = $('errlog'); el.textContent = ERR.join('\n'); el.style.display = 'block'; }
   window.addEventListener('error', function (e) { logErr(e.message + '，行 ' + e.lineno); });
@@ -1083,7 +1414,7 @@ if (typeof module !== 'undefined') module.exports = SCA;
     return s;
   }
   function updatePanel(info) {
-    setHTML('metrics', metricsHTML(info));
+    setHTML('metrics', WS(metricsHTML(info)));
     setHTML('bars', barsSVG(info.cur, info.cand, info.cname));
     setHTML('hist', histSVG(info.hist));
   }
@@ -1098,7 +1429,7 @@ if (typeof module !== 'undefined') module.exports = SCA;
   function gTxt(g) { return '(' + gfmt(g[0]) + ', ' + gfmt(g[1]) + ') /W'; }
   function eqLP(rec, pt, ev, J, g, lam, margin) {
     var m = ST.m, f2 = function (x) { return sig(x, 3); };
-    var s = 'max<sub>' + H.Dl + ', <i>y</i></sub>　' + iv('y', 1) + ' + ' + iv('y', 2) + '<br>';
+    var s = 'max<sub>' + H.Dl + ', <b class="vb">y</b></sub>　' + iv('y', 1) + ' + ' + iv('y', 2) + '<br>';
     for (var i = 0; i < 2; i++) s += iv('y', i + 1) + ' ≤ ' + linExpr(ev.C[i], J[i], function (c) { return c.toFixed(2); }, f2) + '，　' + iv('y', i + 1) + ' ≤ ' + m.D[i] + '<br>';
     s += linExpr(ev.F, g, fF, gfmt) + ' ≥ ' + fF(m.thr) + ' + ' + (margin > 0 ? sci(margin) : '0') + '<br>';
     s += '|' + dI(1) + '|, |' + dI(2) + '| ≤ ' + flam(lam) + '，　0.5 ≤ ' + iv('p', 'i') + ' + ' + iv('Δ', 'i') + ' ≤ 50' + (isFinite(m.ptot) ? '，　' + iv('p', 1) + ' + ' + iv('p', 2) + ' + ' + dI(1) + ' + ' + dI(2) + ' ≤ ' + m.ptot : '');
@@ -1184,25 +1515,9 @@ if (typeof module !== 'undefined') module.exports = SCA;
     return s;
   }
 
-  /* ---------------- 公式面板：HTML+CSS 排版，符号带含义提示，数字全部取自算法状态 ---------------- */
+  /* ---------------- 公式面板：HTML+CSS 排版，数字全部取自算法状态；符号的含义提示由符号词典在 fpanel 里统一包裹 ---------------- */
   var HOV = null, HG = {}, lastAct = null, lastFormula = null;
-  var TIP = {
-    pi: '波束 i 的发射功率，第三阶段取 0.5—50 W', p: '各波束功率组成的向量', p0: '第二阶段输出的功率向量，第三阶段的起点',
-    pk: '第 k 次迭代时的功率向量', pc: '候选功率向量，等于当前点加增量 Δ', pm: '某一对比方法输出的功率向量', pxi: '原功率与对比方法输出之间连线上的功率向量',
-    Dl: '一次迭代的功率增量向量，Δj 为其第 j 个分量', ninf: '向量各分量绝对值的最大值',
-    lam: '第 k 次迭代的信赖域半径，本次允许每个波束功率改变的最大幅度，初值 5 W', mu: '第 k 次迭代的余量系数，μλ² 为 SGM 约束的曲率余量',
-    F: '场景的供需匹配程度 SGM，全部波束匹配得分的平均', F0: '第二阶段输出的 SGM，第三阶段的匹配要求', Fk: '第 k 次迭代时的 SGM',
-    W: '场景需求满足率，实际满足的业务量占总需求的比例', C: '波束 i 的容量', Ck: '第 k 次迭代时波束 i 的容量', D: '波束 i 的业务需求，等于飞机数乘单机需求',
-    y: '辅助服务量，波束 i 实际满足的业务量，最优时等于容量与需求中较小者', J: '波束 i 的容量对波束 j 功率的导数，单位 Mbps/W', gF: 'SGM 对各波束功率的梯度向量',
-    dl: '允许的 SGM 下降量，主实验取 0', G: '波束 i 在槽 q 上的信干噪比', chi: '波束 i 在槽 q 上单位功率对应的信噪比', psi: '波束 j 单位功率在槽 q 上对波束 i 造成的干扰与噪声之比',
-    nu: '波束 i 在槽 q 上的干扰加噪声与噪声之比', B: '一个频率槽的带宽，25 MHz', eta: '每个槽的频谱效率上限，5.5 bit/s/Hz', N0: '一个槽带宽内的噪声功率',
-    zeta: '实现损耗因子，对应 1 dB', S: '波束 i 的有用信号增益因子', ell: '槽 q 所在频率上卫星到波束 i 中心的自由空间路径增益', c: '波束占用的连续频率槽数',
-    rho: '波束 j 对波束 i 的极化干扰系数：同极化 1，异极化 0.01，同一频率组 0', H: '波束 j 对波束 i 的干扰增益因子', pjq: '波束 j 在槽 q 上的功率',
-    z: '波束 i 的容量与需求之比', u: '容量相对需求的偏差：过供时为 z−1，欠供时为 1−1/z', v: '以平均波束需求为单位的容量差', Lam: '波束 i 的匹配得分，容量恰好等于需求时为 1，欠供或过供时下降',
-    beta: '平均波束需求', m: '场景中的波束数，本例为 2', sig: '波束 i 的满足率', xi: '插值比例，从原功率到对比方法输出之间等间距取值', ind: '指示函数，花括号内条件成立时取 1，否则取 0',
-    a: '演示用信号系数，对应式（4）中的 ζSℓ/(cN0)，即式（23）的 χ', b: '演示用干扰系数，对应式（4）中的 ρHℓ/(cN0)，即式（23）的 ψ', k: '第三阶段的迭代次数', T: '向量转置'
-  };
-  function sy(k, html) { return '<span class="sy" title="' + TIP[k] + '">' + html + '</span>'; }
+  function sy(k, html) { return html; }
   function lk(link, html) { return '<span class="lk" data-link="' + link + '">' + html + '</span>'; }
   function frac(n, d) { return '<span class="fr"><span class="nu">' + n + '</span><span class="de">' + d + '</span></span>'; }
   function tm(id, html, link) { return '<span class="tm" data-t="' + id + '"' + (link ? ' data-link="' + link + '"' : '') + '>' + html + '</span>'; }
@@ -1214,7 +1529,7 @@ if (typeof module !== 'undefined') module.exports = SCA;
     var h = blocks.join('');
     if (act) h = h.replace('class="fq" data-b="' + act + '"', 'class="fq act" data-b="' + act + '"');
     (terms || []).forEach(function (t) { h = h.split('class="tm" data-t="' + t + '"').join('class="tm on" data-t="' + t + '"'); });
-    return { html: '<div class="fb">' + h + '</div><div class="fd">' + doing + '</div>', act: act, data: data };
+    return { html: WS('<div class="fb">' + h + '</div><div class="fd">' + doing + '</div>'), act: act, data: data };
   }
   function ninf(d) { return Math.max(Math.abs(d[0]), Math.abs(d[1])); }
   var SUM = 'Σ<sub><i>i</i></sub> ', SUMj = 'Σ<sub><i>j</i></sub> ', SUMq = 'Σ<sub><i>q</i></sub> ';
@@ -1770,7 +2085,7 @@ if (typeof module !== 'undefined') module.exports = SCA;
 
   /* ---------------- 导航与播放 ---------------- */
   function buildNav() {
-    $('chips').innerHTML = ST.chips.map(function (c, i) { return '<span class="chip ' + c.cls + '" data-i="' + i + '">' + c.label + '</span>'; }).join('');
+    $('chips').innerHTML = WS(ST.chips.map(function (c, i) { return '<span class="chip ' + c.cls + '" data-i="' + i + '">' + c.label + '</span>'; }).join(''));
     $('ticks').innerHTML = ST.frames.map(function (f, i) { return '<span data-f="' + i + '" title="第 ' + (i + 1) + ' 步"></span>'; }).join('');
     $('presets').innerHTML = '<span>预设例子</span>' + SCA.PRESETS.map(function (p, i) { return '<button data-p="' + i + '" class="' + (i === ST.idx ? 'on' : '') + '">' + p.name + '</button>'; }).join('');
   }
@@ -1792,7 +2107,7 @@ if (typeof module !== 'undefined') module.exports = SCA;
     tau = 0; holdT = 0; animating = true;
     var fr = ST.frames[cur];
     $('stepTitle').innerHTML = fr.title;
-    $('stepText').innerHTML = fr.html;
+    $('stepText').innerHTML = WS(fr.html);
     $('stepText').scrollTop = 0;
     setView(targetView(fr), instant);
     updateNav();
@@ -1821,6 +2136,7 @@ if (typeof module !== 'undefined') module.exports = SCA;
       var fo = $('formula'), el = fo.querySelector ? fo.querySelector('.fq.act') : null;
       if (el && typeof el.offsetTop === 'number') fo.scrollTop = Math.max(0, el.offsetTop - 4);
     }
+    SK.refresh();
   }
   function loop(ts) {
     var dt = lastTs ? Math.min(100, ts - lastTs) : 16; lastTs = ts;
@@ -1868,7 +2184,17 @@ if (typeof module !== 'undefined') module.exports = SCA;
   // 悬停公式项，图上对应元素闪烁；移开即恢复
   $('formula').addEventListener('mouseover', function (e) { var el = e.target.closest ? e.target.closest('[data-link]') : null, l = el ? el.getAttribute('data-link') : null; if (l !== HOV) { HOV = l; renderAll(); } });
   $('formula').addEventListener('mouseleave', function () { if (HOV) { HOV = null; renderAll(); } });
+  // 完整符号表弹窗；图例里的符号也包裹
+  var symtab = $('symtab');
+  function showSym(on) { symtab.hidden = !on; }
+  $('symtabBody').innerHTML = SK.tableHtml();
+  $('legend').innerHTML = WS($('legend').innerHTML);
+  $('btnSym').onclick = function () { showSym(symtab.hidden); };
+  $('symtabClose').onclick = function () { showSym(false); };
+  symtab.addEventListener('click', function (e) { if (e.target === symtab) showSym(false); });
+  SK.attach();
   window.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { showSym(false); return; }
     if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
     if (e.key === 'ArrowRight') { goTo(cur + 1); e.preventDefault(); }
     else if (e.key === 'ArrowLeft') { goTo(cur - 1); e.preventDefault(); }
@@ -1877,7 +2203,8 @@ if (typeof module !== 'undefined') module.exports = SCA;
   });
   window.addEventListener('resize', function () { resize(); renderAll(); });
 
-  /* ---------------- 启动；网址后加 #p=1&f=7&end 可直接打开某一步的末态，&hov=tr 模拟悬停某一公式项，#selftest 逐步自检 ---------------- */
+  /* ---------------- 启动；网址后加 #p=1&f=7&end 可直接打开某一步的末态，&hov=tr 模拟悬停某一公式项，
+     &hovsym=W 模拟悬停某个符号并显示浮层（&hovin=stepText 指定区域），&symtab 打开符号表，#selftest 逐步自检 ---------------- */
   function hashArgs() {
     var o = {};
     location.hash.replace(/^#/, '').split('&').forEach(function (kv) { if (!kv) return; var a = kv.split('='); o[a[0]] = a.length > 1 ? a[1] : true; });
@@ -1911,7 +2238,7 @@ if (typeof module !== 'undefined') module.exports = SCA;
 
   resize();
   // 测试钩子：test_sca.js 在 Node 里用桩 DOM 运行本脚本后，通过它逐步取公式面板
-  window.SCA_UI = { state: function () { return ST; }, goTo: goTo, setTau: function (t) { tau = t; animating = false; renderAll(); }, formula: function () { return lastFormula; }, html: function (id) { return $(id).innerHTML; }, errors: ERR };
+  window.SCA_UI = { state: function () { return ST; }, goTo: goTo, setTau: function (t) { tau = t; animating = false; renderAll(); }, formula: function () { return lastFormula; }, html: function (id) { return $(id).innerHTML; }, errors: ERR, sym: SK };
   var args = hashArgs();
   if (args.selftest) { selftest(); return; }
   loadPreset(+(args.p || 0), true);
@@ -1920,6 +2247,8 @@ if (typeof module !== 'undefined') module.exports = SCA;
   if (args.hov) HOV = args.hov;
   if (args.end) { tau = ST.frames[cur].dur; animating = false; renderAll(); }
   if (args.t) { tau = +args.t; animating = false; renderAll(); }
+  if (args.hovsym) SK.pin(decodeURIComponent(args.hovsym), args.hovin ? ['#' + args.hovin] : ['#stepText', '#formula', '#metrics', '#legend']);
+  if (args.symtab) showSym(true);
   requestAnimationFrame(loop);
 })();
 </script>
