@@ -1,6 +1,8 @@
 # 实验状态与新窗口接手说明
 
 <!-- S2_W30_DESIGN_START -->
+**2026-10-17 03:22北京时间已实核停止：**按用户“停止吧，我受不了你了”，W30八个原任务均已保存、闭账、退出，两工作台服务已核退；两端USER_PAUSE及原STORAGE_STOP保留，automation-2已PAUSED。不再准备、修复、训练、评价或恢复，只有此后新的人类明确继续才能恢复。回执：D:/paper/outputs/experiments/s2_power30_20261016/control/parallel4_20261017/human_stop_actual_safety_receipt.json。以下为停止前历史。
+
 **S2-W30正式训练进行中，2026-10-17 02:22（北京时间）实核。** 20627上的原5W档位无摘要组已实际3911步／1912次更新；20653上的原菜单加入0.5W无摘要组已3925步／1926次更新。两进程均正常、初始策略已保存。原始状态与永久账有正常的刷新时间差，不将缓存进度冒充同一瞬间。其余六组由唯一后台控制器排队：先完成四组无摘要，再做四组有摘要，同菜单保持同GPU。[运行清单](outputs/experiments/s2_power30_20261016/run_manifest.json) · [实际学习核验](outputs/experiments/s2_power30_20261016/preflight/resources_20261017_start/science_learning_progress_once.json) · [接手入口](outputs/experiments/s2_power30_20261016/control/execution_handoff.json)。
 
 首轮固定seed51001、八组各150000步，共120万交互；每组预计148001次更新。四功率菜单为P00原5—50W／5W步长、P10保5W下限／0.5W步长、P01原菜单仅加0.5W、P11为0.5—50W／0.5W步长，各有／无100槽余量摘要。保持原S10／Transformer主体、legacy_repaired奖励、alpha0.01、未来束5W与一槽预留，沿用已核576训练母＋20开发母及每机21.6Mbps。50k／100k／150k三个节点共同开发评价，共1440回合；0步只保存模型。**现在没有正式优劣结论。** [方案30原件](docs/第二阶段/方案/30_功率档位与余量摘要训练对照方案.md)的“仅设计”为旧时点，由[实施授权](outputs/experiments/s2_power30_20261016/control/human_implementation_authority.json)及本次实际启动覆盖。
