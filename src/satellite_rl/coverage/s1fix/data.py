@@ -11,7 +11,7 @@ import numpy as np
 from satellite_rl.coverage.geometry import visible_numpy
 
 OUT = Path("D:/paper/outputs/experiments/s1_fix_20261017")
-HISTORY = Path("D:/paper/outputs/experiments/first_stage_ai_search_20261013")
+HISTORY = OUT / "data" / "history"  # 旧轮次 first_stage_ai_search_20261013 的三份历史对照 CSV 已复制到此
 DATES = ("2024-01-08", "2024-01-09", "2024-01-12", "2024-01-15", "2024-01-18")
 HIST12 = [0, 6, 12, 18, 24, 36, 42, 48, 54, 60, 72, 78]
 HIST12_COUNTS = [293, 216, 204, 178, 175, 185, 235, 288, 318, 423, 946, 1254]
@@ -30,8 +30,7 @@ class Frame:
 
 
 def raw_path(date, outputs_root="D:/paper/outputs"):
-    folder = "europe_ablation_20260929/data/raw" if date == "2024-01-18" else "europe_adsb_20260928/raw"
-    return Path(outputs_root) / "experiments" / folder / f"v{date.replace('-', '.')}-planes-readsb-prod-0.tar"
+    return Path(outputs_root) / "experiments" / "adsb_raw" / f"v{date.replace('-', '.')}-planes-readsb-prod-0.tar"
 
 
 def number(value):
