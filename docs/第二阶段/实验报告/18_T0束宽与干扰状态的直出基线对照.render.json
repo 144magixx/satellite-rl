@@ -1,0 +1,37 @@
+{
+  "markdown_path": "D:\\paper\\docs\\第二阶段\\实验报告\\18_T0束宽与干扰状态的直出基线对照.md",
+  "markdown_SHA": "ca9bd94dc89c02966d48abb5852dbcb36bc986758a38d1290275ac22876915d0",
+  "html_path": "D:\\paper\\docs\\第二阶段\\实验报告\\18_T0束宽与干扰状态的直出基线对照.html",
+  "html_SHA": "47dd831959f5915e6f327f725ee7c96774b973ebe7573e1000b97072ddcab1a0",
+  "embedded_figures": [
+    {
+      "path": "D:\\paper\\outputs\\experiments\\s2_width26_20261014\\report_analysis\\01_confirmation_quality.png",
+      "sha256": "d4ab395101fda4b70225c450986de1cc6b752c2840fad653a38d175c91bfd021"
+    },
+    {
+      "path": "D:\\paper\\outputs\\experiments\\s2_width26_20261014\\report_analysis\\02_preregistered_contrasts.png",
+      "sha256": "73792257a1b05970512ff381afb53a32d08d5e7f425d80cbb976b2ec147f6cf7"
+    },
+    {
+      "path": "D:\\paper\\outputs\\experiments\\s2_width26_20261014\\report_analysis\\03_confirmation_resources.png",
+      "sha256": "223bd7104e9a9ec3f0900da12c8462a85544d0d4f40a054138339c239ae50f1a"
+    },
+    {
+      "path": "D:\\paper\\outputs\\experiments\\s2_width26_20261014\\report_analysis\\04_accounted_time.png",
+      "sha256": "401647689199191c3ad36b3467ecf2f0e5d5e1be3fe5deba3bc0217972ab6444"
+    },
+    {
+      "path": "D:\\paper\\outputs\\experiments\\s2_width26_20261014\\report_analysis\\05_development_curve.png",
+      "sha256": "bd660f0beec7c3b7245c2495e1737aabd1124e9ca4ca2a85f2474308b2203ab7"
+    },
+    {
+      "path": "D:\\paper\\outputs\\experiments\\s2_width26_20261014\\report_analysis\\06_training_raw_curve.png",
+      "sha256": "4b180b626f02ea85511e2492100e6ac06cbee05d0151ce16b2853a357e7a313e"
+    },
+    {
+      "path": "D:\\paper\\outputs\\experiments\\s2_width26_20261014\\report_analysis\\07_reward_learning_diagnostics.png",
+      "sha256": "36866f05f737bcbf7273b526b3181b71cd6bc94839bc28726cb9b3f5ab43517c"
+    }
+  ],
+  "external_rendering_dependency": false
+}
