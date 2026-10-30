@@ -1,23 +1,23 @@
 # 实验状态与新窗口接手说明
 
 <!-- W28_CURRENT_START -->
-**2026-10-15 S2-W28已通过16项实际工程资格，240回合开发对照在20418运行；新增训练／参数更新为0。** 本轮冻结W26 S10／150000步权重和208维状态，比较模型直出P1、四候选按原本步奖励筛选P4，以及随机提案R1／R4。原奖励、布局、请求、动作域与物理均不变；四组在同卡按事前顺序交错。开发240回合／19260真实提交／最多38520候选查询；只有完整开发门通过才放行560个已知场景复核，当前known任务仍禁用。既有场景复用，不称独立test。
+**2026-10-15 23:14用户要求立即暂停以重启服务，本组已实核保存并全部退出。** 当前known复核保存226/560完整回合及第227回合P1的77/81束，pending为空、77次提交／前向全部有账；开发240回合已完成。20418 known worker、暂停与存储守卫、工作台服务、本地恢复控制器均已退出，当前GPU compute为空。20424与20627没有本组在运行的科学任务。只有本次暂停后用户明确“继续”才能恢复；旧人类继续和操作修复授权均不能绕过新暂停。
 
-GPT-6 Astra设计，GPT-6.1 Sol代码、核验和报告。源`1edb3f4ccb48b6eeb290c02a8e883422a72772b7`，独立20418:9080／s2_w28目录与用户08:57继续对应的恢复epoch；唯一开发POST返回worker13884／generation0，已读到真实回合进展。暂停守卫与5秒存储监控均实活；仅占20418，不恢复W27结案训练或其它聊天任务。
+此前扫描误报已在23:07按同ID接续，保留原source1ed、模型、数据、已完成207回合及partial缓存；新累计known active wall3135.199064秒，开发3311.083128秒，另科学恢复保守扣30秒，原6小时预算保持。用户本轮收束要求继续有效：恢复后仅完成剩余复核、报告20、必要归档与清理，之后停止，不启动任何后继实验。当前无新训练／参数更新。
 
-首工程快照容器兼容失败已修，完整旧现场保存后在同工程ID显式付费复核；16项N1／N200、0.3／0.5／1.0°、原概率一致性、动作掩码、试算提交一致、暂停及故障意图检查均通过。累计工程33次PHY（13提交＋20试算）、10前向、18 kernel；旧实测2.950953342秒＋一次保守30秒＋新实测7.435089296秒完整保留，未重置原320 PHY／64前向上限。两个预设故障意图继续保留，不称所有记录无pending；未发现意外未知调用。
+完整开发结果：冻结S10/150k模型的P4四候选筛选相对P1直出，SI从96.3571%到96.9630%（+0.6059个百分点），SGM从0.606954到0.626435；平均功率减少74.17W，含持久化完整active墙钟增加6.90秒/回合。已通过事前开发门，但完整known结论仍待560回合闭合，不能把部分复核当完整报告。远端已核清理W27六份冗余恢复副本644368208B；W26存在日志恢复偏移差异的断点及所有活动依赖保留。
 
-入口：[方案28](docs/第二阶段/方案/28_冻结T-SAC策略的四候选一步筛选机制试验.md) · [运行清单](outputs/experiments/s2_tsac_screen28_20261015/run_manifest.json) · [实际资格独审](outputs/experiments/s2_tsac_screen28_20261015/verification/independent_recovery_01/actual16_acceptance_summary.json) · [根资格](outputs/experiments/s2_tsac_screen28_20261015/qualification_01/root_qualification.json)。
+入口：[暂停验收](outputs/experiments/s2_tsac_screen28_20261015/control/user_pause_20261015_now/root_pause_acceptance.json) · [运行清单](outputs/experiments/s2_tsac_screen28_20261015/run_manifest.json) · [方案28](docs/第二阶段/方案/28_冻结T-SAC策略的四候选一步筛选机制试验.md) · [开发材料](outputs/experiments/s2_tsac_screen28_20261015/report_analysis/development_findings_for_report20.md) · [清理回执](outputs/experiments/s2_tsac_screen28_20261015/cleanup_20261015/cleanup_receipt.json)。
 <!-- W28_CURRENT_END -->
 
 <!-- W27_CURRENT_START -->
-**2026-10-15 S2-W27三臂先导运行、持久controller已启动，尚无正式结果。** W26报告18交付后，按持续自主授权独立比较B（S10/alpha0.01）、E（仅alpha0.003）、LP（槽功率联合Actor与双Q/alpha0.01）。三臂seed51001从头训练，分别20418/20424/20627；冻结science源`2beeb1ec678631403b4a6e821ca2976ea75303c3`，task/run为`train_B_2beeb1ec`、`train_E_2beeb1ec`、`train_LP_2beeb1ec`。每臂50k先导计入150k上限，总cap450k；50k共同开发门尚未判定，候选均失败则三臂50k结案。
+**2026-10-15 09:10 S2-W27三臂50k科学结束，E/LP均未通过开发门；已知域复核修复准备中，尚未启动。** B/E/LP的science source仍为`2beeb1ec678631403b4a6e821ca2976ea75303c3`，seed51001、每臂50000真实交互/48001更新；累计**150000科学交互、144003更新、1440开发回合**（每臂8固定节点×20母×3次）。50k开发SI/SGM/功率：B=0.960847/0.603762/1723.75W，E=0.957527/0.595874/1686.92W，LP=0.947810/0.571261/2144.58W。E与LP双指标均未改善，LP功率保护亦失败，锁定三臂50k结案，不接续后100k。开发域用于选择，不能称独立test。
 
-正式工程三臂6144交互/147更新及独立守恒核验通过；CPU合成96更新与已撤销的事后64预算错误保留，CUDA微资格实际9更新另账。science01/02/03均提交前失败、科学交互0，原因和成本原件保留。science04独立现场核验（北京时间02:36:20）B14350交互/12351更新、E14700/12701、LP13600/11601；三worker及三watchdog的实际身份、冻结2bee源码与暂停合同核验通过；这是时点快照，非最终成本。后续现场状态以工作台/逐任务回执为准。复用W26的576训练/20开发母、21.6Mbps/机；已用来设计的40母不再称独立test，仅最终一次锁定复核。训练N45—104、开发N47—98，尚未覆盖>0.5°或N近200。设计Astra、实现核验报告Sol。
+本聊天用户07点暂停后于北京时间08:57:33明确“继续”，仅恢复本组S2，不恢复S1。根已实际Gate.resume三端，原epoch/原合同及回执全部保留，科学worker配置不改。三端07:00 guard历史均hard=true/live=0/unresolved=0；本地独立核验器无pause_acceptance、当前已不活，原因未知，不能补造。09点只读实核三端GPU无compute、无科学worker，18/24已重启、20627原boot仅工作台serve活；完整恢复断点与索引/日志/WAL一致，689项source manifest零差异。
 
-三端watchdog已留部署回执；06:58请求安全保存，07:00前本组训练/评价/后续调度暂停，只有此后用户明确“继续”可恢复，不代为08:00重启。本地持久pilot controller已从独立ops冻结源`2464743cde38dbf85afd6fa0a55597ce3e7f6afc`启动，PID35980的命令、解释器与创建时间只读实核一致；controller_state为observing_pilots，error.json不存在，stderr仅依赖弃用提示。controller不自动重启worker；scientific源仍为2beeb1ec，不能与ops源混淆。入口：[方案27](docs/第二阶段/方案/27_T-SAC温度与槽功率联合建模自主探索方案.md) · [运行总账](../../paper/outputs/experiments/s2_tsac_search27_20261015/run_manifest.json) · [登记计划](../../paper/outputs/experiments/s2_tsac_search27_20261015/run_plan.json) · [成本](../../paper/outputs/experiments/s2_tsac_search27_20261015/costs/ledger_index.json) · [失败](../../paper/outputs/experiments/s2_tsac_search27_20261015/failures/index.json)。根登记文件为本次提交后的证据汇总，不冒称事前冻结时间；事前方案与实际执行合同均以SHA绑定。
+最终共同复核预算680回合，当前实际**known=0**。旧final_controller_01在HIST来源匹配时失败，未POST，保留原错误。新评价source `b20487a6dc71a4eab9ae0160048016d7814e63f2`仅修历史workbench实际producer config/job来源绑定及有界恢复ops；已独核原producer的run_id/model_dir注入、config SHA、job/plan/source一致，不改科学训练。新Gate恢复探针SHA `d6d8250040ec4a29de5beec57f0a71e91d494971f26facb9f8ab9ae471b932af`绑定显式receipt/epoch并调用Gate.validate；仍需准备资格、根准入与一次POST后才可称运行。
 
-最终矩阵controller已从独立冻结源`4ec00e6abc6229ac9637ad5c01476cbc24f8d6e9`启动，PID596命令/解释器/创建时间独核匹配；748个Git blob SHA及四个审核源码的CRLF/LF归一化映射通过。当前waiting_for_locked_pilot_decision，尚无POST intent、尚未开已知40母矩阵；root audited_recipe已冻结源码/科学与原W26计划/两历史权重/门槛/560或680预算，无需未来人工确认。最晚06:00前新开矩阵，06:58停止新调度并保存、07:00硬暂停；未赶上则等待用户明确继续。截止verifier PID47008按独立验收只读等待核三端退出与断点，不作科学调度。三个源码职责为2bee科学worker、2464743c先导ops、4ec00e6最终controller/已知评价，运行中的2beeworker不变。本轮正式报告尚未形成。
+原logs/config/provenance已收至canonical `collected/`，固定节点小policy在`models/runs/s2_tsac_search27_20261015/`；大current/previous仍远端保留恢复用途。独立统计/3图及报告19准备稿在`report_analysis/`，待known680后补母配对基线/同GPU时间/完整费用归档。工程成本与失败另账保留，不以科学150k掩盖。入口：[方案27](docs/第二阶段/方案/27_T-SAC温度与槽功率联合建模自主探索方案.md) · [运行总账](outputs/experiments/s2_tsac_search27_20261015/run_manifest.json) · [恢复原件](outputs/experiments/s2_tsac_search27_20261015/control/resume_20261015_0857/root_user_continue.json) · [独立恢复核验](outputs/experiments/s2_tsac_search27_20261015/verification/resume_20261015_0857/audit_summary.json) · [统计准备](outputs/experiments/s2_tsac_search27_20261015/report_analysis/report19_preparation.md)。
 <!-- W27_CURRENT_END -->
 
 
