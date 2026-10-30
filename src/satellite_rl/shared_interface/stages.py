@@ -8,20 +8,21 @@ from .spherical_gaussian import PHYSICS,PHYSICS_SHA,validate_physics
 from .link import build_link_coefficients,capacity_bps
 
 
-def make_case(metadata,aircraft_ids,lat_lon_deg):
+def make_case(metadata,aircraft_ids,lat_lon_deg,*,request_bps=REQUEST_BPS,plain=False):
     """Pure record construction; caller pins its SHA before algorithm access."""
     required={'case_id','actual_role','source_role','original_mother_id','UTC','source_asset_SHA','source'}
     if set(metadata)!=required:raise ValueError('explicit complete case metadata required')
     ids=list(aircraft_ids);n=len(ids)
     record=dict(schema='UniformAircraftCaseV1',**copy.deepcopy(metadata),aircraft_ids=ids,
-        lat_lon_deg=np.asarray(lat_lon_deg,dtype='<f8'),fixed_request_bps=REQUEST_BPS,
-        request_bps_int64=np.full(n,REQUEST_BPS,dtype='<i8'),total_request_bps_int64=n*REQUEST_BPS,
+        lat_lon_deg=np.asarray(lat_lon_deg,dtype='<f8'),fixed_request_bps=request_bps,
+        request_bps_int64=np.full(n,request_bps,dtype='<i8'),total_request_bps_int64=n*request_bps,
         geometry_config_SHA=GEOMETRY_SHA,units=dict(position='lat_lon_degrees',request='bit/s'))
-    return seal(record)
+    return dict(record, plain=True) if plain else seal(record)
 
 
 def make_layout(case,*,beam_ids,source_slot_ids,anchor_aircraft_ids,centres_lat_lon_deg,full_width_deg,
-                owner_aircraft_to_beam_id,Ncap,geometry_Omega_cap_sr,geometry_Omega_sr,geometry_audit,source_and_cost):
+                owner_aircraft_to_beam_id,Ncap,geometry_Omega_cap_sr,geometry_Omega_sr,geometry_audit,source_and_cost,
+                stack_id=None,plain=False):
     """Pure S1 output record; no planning/reassignment or width fallback."""
     ids=list(beam_ids);N=len(ids)
     pairs=copy.deepcopy(owner_aircraft_to_beam_id)
@@ -29,13 +30,15 @@ def make_layout(case,*,beam_ids,source_slot_ids,anchor_aircraft_ids,centres_lat_
     for _,bid in pairs:
         if bid not in ids:raise ValueError('owner unknown beam')
         counts[ids.index(bid)]+=1
-    return seal(prepare_record(dict(schema='BeamLayoutV1',parent_case_SHA=case['content_sha256'],
+    record=prepare_record(dict(schema='BeamLayoutV1',parent_case_SHA=case.get('content_sha256',case['case_id']),
         aircraft_asset_SHA=case['source_asset_SHA'],owner_aircraft_to_beam_id=pairs,beam_ids=ids,
         source_slot_ids=list(source_slot_ids),anchor_aircraft_ids=list(anchor_aircraft_ids),centres_lat_lon_deg=centres_lat_lon_deg,
-        full_width_deg=full_width_deg,N=N,aircraft_count_by_beam=counts,request_bps_by_beam_int64=counts*REQUEST_BPS,
+        full_width_deg=full_width_deg,N=N,aircraft_count_by_beam=counts,request_bps_by_beam_int64=counts*case['fixed_request_bps'],
         Ncap=Ncap,geometry_Omega_cap_sr=float(geometry_Omega_cap_sr),geometry_Omega_sr=float(geometry_Omega_sr),
         geometry_audit=copy.deepcopy(geometry_audit),source_and_cost=copy.deepcopy(source_and_cost),
-        units=dict(position='lat_lon_degrees',full_width='degrees',request='bit/s',geometry_Omega='sr'))))
+        units=dict(position='lat_lon_degrees',full_width='degrees',request='bit/s',geometry_Omega='sr')))
+    if stack_id is not None: record['stack_id']=np.asarray(stack_id,dtype=np.int64)
+    return dict(record,plain=True) if plain else seal(record)
 
 
 def algorithm_scene(case,authority):
@@ -55,8 +58,10 @@ def s1_publish_import(case,layout,authority):
 
 
 class UniformStage2Input:
-    def __init__(self,case,layout,authority,physics_config):
-        validate_layout(case,layout,authority);validate_physics(physics_config)
+    def __init__(self,case,layout,authority,physics_config,*,plain=False):
+        self.plain=plain
+        if not plain: validate_layout(case,layout,authority)
+        validate_physics(physics_config)
         self.case=copy.deepcopy(case);self.layout=copy.deepcopy(layout);self.authority=authority;self.physics=copy.deepcopy(physics_config)
         self.processing_index_to_beam_id=processing_order(layout)
         self.group_by_beam_id={bid:i%8 for i,bid in enumerate(self.processing_index_to_beam_id)}
@@ -73,13 +78,17 @@ class UniformStage2Input:
             for name in ('group','start','count'):require_int(row[name])
             power=row['power_w']
             if isinstance(power,(bool,np.bool_)) or not isinstance(power,(int,float,np.integer,np.floating)) or not np.isfinite(power):raise ValueError('actual power finite numeric nonbool required')
-        record=seal(prepare_record(dict(schema='DiscreteAllocationV1',parent_case_SHA=self.case['content_sha256'],
-            parent_layout_SHA=self.layout['content_sha256'],physics_config_SHA=PHYSICS_SHA,beam_ids=ids,
+        record=prepare_record(dict(schema='DiscreteAllocationV1',parent_case_SHA=self.case.get('content_sha256',self.case['case_id']),
+            parent_layout_SHA=self.layout.get('content_sha256',self.case['case_id']),physics_config_SHA=PHYSICS_SHA,beam_ids=ids,
             processing_index_to_beam_id=ids.copy(),group_by_beam_id=self.group_by_beam_id.copy(),
             actual_start_slot=np.asarray([r['start'] for r in rows]),actual_slot_count=np.asarray([r['count'] for r in rows]),
             actual_whole_beam_power_w=np.asarray([r['power_w'] for r in rows],np.float64),
             requested_actions_separate=copy.deepcopy(requested_actions_separate),constraint_version=CONSTRAINT_VERSION,
-            units=dict(slot='integer25MHz_slot',power='whole_beam_watt'))))
+            units=dict(slot='integer25MHz_slot',power='whole_beam_watt')))
+        if self.plain:
+            record.pop('physics_config_SHA')
+            return dict(record,plain=True,physics_version=self.physics['version'])
+        record=seal(record)
         validate_allocation(self.case,self.layout,record,self.authority,PHYSICS_SHA,published=False)
         # Caller publishes this independently validated actual record in its
         # audited parent registry before S3 consumption; no auto trust by rehash.

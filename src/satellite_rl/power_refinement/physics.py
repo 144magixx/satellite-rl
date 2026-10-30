@@ -85,7 +85,10 @@ class FixedAllocationPhysics:
     """Vectorized fixed-slot link model for a complete frozen scene."""
 
     def __init__(self, demand_bps, groups, starts, slots, signal, interference,
-                 noise, slot_owner, power_budget_w):
+                 noise, slot_owner, power_budget_w, spectral_efficiency_cap=None,
+                 implementation_loss_dB=0.):
+        self.spectral_efficiency_cap = spectral_efficiency_cap
+        self.implementation_loss_dB = implementation_loss_dB
         self.demand_bps = demand_bps
         self.groups = groups
         self.starts = starts
@@ -184,8 +187,12 @@ class FixedAllocationPhysics:
                 or (power < 0).any() or (power[~self.active] != 0).any()):
             raise ValueError("Power must be finite, nonnegative, and zero for empty slots")
         denominator = self.noise + self.interference @ power
-        desired = self.signal * power[self.slot_owner]
+        signal = self.signal * 10 ** (-self.implementation_loss_dB / 10)
+        desired = signal * power[self.slot_owner]
         capacity_slot = _BW / np.log(2) * np.log1p(desired / denominator)
+        if self.spectral_efficiency_cap is not None:
+            capped = capacity_slot >= _BW * self.spectral_efficiency_cap
+            capacity_slot = np.minimum(capacity_slot, _BW * self.spectral_efficiency_cap)
         capacity = np.bincount(self.slot_owner, weights=capacity_slot,
                                minlength=self.beam_count)
         beam_si = np.minimum(capacity / self.demand_bps, 1.0)
@@ -196,7 +203,9 @@ class FixedAllocationPhysics:
         row_jac = (-_BW / np.log(2) * desired[:, None] * self.interference
                    / (denominator[:, None] * (denominator + desired)[:, None]))
         row_jac[np.arange(len(self.slot_owner)), self.slot_owner] += (
-            _BW / np.log(2) * self.signal / (denominator + desired))
+            _BW / np.log(2) * signal / (denominator + desired))
+        if self.spectral_efficiency_cap is not None:
+            row_jac[capped] = 0
         jac = np.zeros((self.beam_count, self.beam_count))
         np.add.at(jac, self.slot_owner, row_jac)
         si_prime = np.where(capacity < self.demand_bps, 1 / self.demand_bps, 0)

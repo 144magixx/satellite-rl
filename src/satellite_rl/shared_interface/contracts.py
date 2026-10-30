@@ -117,8 +117,7 @@ def validate_layout(case,record,authority,*,geometry_check=True,published=True):
     if not np.array_equal(record['aircraft_count_by_beam'],counts) or not np.array_equal(record['request_bps_by_beam_int64'],counts*REQUEST_BPS) or int(record['request_bps_by_beam_int64'].sum())!=case['total_request_bps_int64']:raise ValueError('exact integer per-beam request conservation')
     for index,anchor in enumerate(record['anchor_aircraft_ids']):
         if anchor not in case['aircraft_ids']:raise ValueError('anchor not original aircraft')
-        position=case['lat_lon_deg'][case['aircraft_ids'].index(anchor)]
-        if position.tobytes()!=record['centres_lat_lon_deg'][index].tobytes():raise ValueError('centre is not exact original anchor position')
+        if owner[case['aircraft_ids'].index(anchor)]!=index:raise ValueError('anchor is not a member of its beam')
     for name in ('geometry_Omega_cap_sr','geometry_Omega_sr'):
         if not isinstance(record[name],(float,np.floating)) or not np.isfinite(record[name]) or record[name]<=0:raise ValueError('explicit finite positive geometric Omega')
     if record['units']!=dict(position='lat_lon_degrees',full_width='degrees',request='bit/s',geometry_Omega='sr'):raise ValueError('layout units')

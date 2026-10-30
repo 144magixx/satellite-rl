@@ -19,11 +19,11 @@ MAX_ACTIONS = 17  # 16 complete candidate layouts plus STOP.
 
 
 class CandidateNetwork(nn.Module):
-    def __init__(self, width):
+    def __init__(self, width, action_width=ACTION_WIDTH):
         super().__init__()
         self.state = nn.Sequential(nn.Linear(STATE_WIDTH, width), nn.LayerNorm(width), nn.ReLU(),
                                    nn.Linear(width, width), nn.ReLU())
-        self.action = nn.Sequential(nn.Linear(ACTION_WIDTH, width // 2), nn.ReLU())
+        self.action = nn.Sequential(nn.Linear(action_width, width // 2), nn.ReLU())
         self.head = nn.Sequential(nn.Linear(width + width // 2, width), nn.ReLU(), nn.Linear(width, 1))
 
     def forward(self, state, features):
@@ -39,7 +39,7 @@ def pack_actions(environment):
     choices = environment.candidates()
     if len(choices) > MAX_ACTIONS - 1:
         raise ValueError("I0 candidate generator exceeded the frozen action limit")
-    features = np.zeros((MAX_ACTIONS, ACTION_WIDTH), dtype=np.float32)
+    features = np.zeros((MAX_ACTIONS, len(environment.action_feature(None))), dtype=np.float32)
     mask = np.zeros(MAX_ACTIONS, dtype=bool)
     identifiers = []
     for index, choice in enumerate(choices):
@@ -109,9 +109,10 @@ class ImprovementSAC:
         self.config = config
         self.device = torch.device(config["device"])
         width = config["hidden_width"]
-        self.actor = CandidateNetwork(width).to(self.device)
-        self.critic1 = CandidateNetwork(width).to(self.device)
-        self.critic2 = CandidateNetwork(width).to(self.device)
+        action_width = ACTION_WIDTH + (config["schema_version"] == "s2fix_i0_v1")
+        self.actor = CandidateNetwork(width, action_width).to(self.device)
+        self.critic1 = CandidateNetwork(width, action_width).to(self.device)
+        self.critic2 = CandidateNetwork(width, action_width).to(self.device)
         self.target1 = copy.deepcopy(self.critic1).eval()
         self.target2 = copy.deepcopy(self.critic2).eval()
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=config["actor_lr"])

@@ -50,7 +50,8 @@ def validate_config(raw):
         raise ValueError(f"Unknown I0 controls: {sorted(extra)}")
     config = default_config()
     config.update(deepcopy(raw))
-    if config["schema_version"] != DEFAULT_CONFIG["schema_version"]:
+    s2fix = config["schema_version"] == "s2fix_i0_v1"
+    if config["schema_version"] != DEFAULT_CONFIG["schema_version"] and not s2fix:
         raise ValueError("Unknown I0 schema")
     if config["profile"] != "europe_v1" or config["power_budget_w"] != 3000.0 or config["basic_fraction"] != 0.1:
         raise ValueError("I0 requires the frozen European physical domain")
@@ -60,11 +61,14 @@ def validate_config(raw):
                 "max_episodes", "checkpoint_interval"):
         if type(config[key]) is not int or config[key] < 0:
             raise ValueError(f"Invalid {key}")
-    if config["max_decisions"] != 32 or config["max_probes"] != 32 or config["candidate_limit"] != 16:
+    if not s2fix and (config["max_decisions"] != 32 or config["max_probes"] != 32 or config["candidate_limit"] != 16):
         raise ValueError("I0 decision/probe/candidate limits are frozen at 32/32/16")
+    if s2fix and (min(config["max_decisions"], config["max_probes"]) < 1
+                  or config["candidate_limit"] != 16):
+        raise ValueError("S2-FIX requires positive search limits and 16 candidates")
     if config["gamma"] != 1.0 or config["alpha_mode"] != "fixed":
         raise ValueError("I0 reward telescoping requires gamma=1 and frozen fixed-alpha SAC")
-    if (config["total_steps"] != 400000 or config["pilot_stop_steps"] != 100000
+    if not s2fix and (config["total_steps"] != 400000 or config["pilot_stop_steps"] != 100000
             or config["pilot_max_episodes"] != 3125 or config["max_episodes"] != 12500):
         raise ValueError("I0 requires a frozen 100k/3125 pilot inside 400k/12500 total")
     if config["device"] not in ("cpu", "cuda"):
