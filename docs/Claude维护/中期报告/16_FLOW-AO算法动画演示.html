@@ -62,6 +62,27 @@ aside.panel { flex: 1; min-width: 400px; max-width: 600px; display: flex; flex-d
 .desc b { color: #1f3f63; }
 .desc .note { color: var(--muted); font-size: 13.5px; }
 
+/* 公式面板：与动画同步，当前起作用的项高亮；悬停符号时动画里对应元素闪烁 */
+.fx { flex: 0 0 auto; max-height: 272px; overflow-y: auto; padding: 5px 14px 6px; border-bottom: 1px solid var(--line); background: #fbfaf7; }
+.fx-head { font-size: 12.5px; color: var(--acc); margin: 2px 0 0; }
+.fx-eq { font-family: "Times New Roman", "Cambria Math", serif; font-size: 16px; line-height: 1.75; padding: 1px 4px 1px; color: var(--ink); }
+.fx-eq i { font-size: 1em; }
+.fx-eq .st { font-family: var(--font); font-size: 12.5px; color: var(--muted); margin: 0 4px; }
+.fx-eq .g { white-space: nowrap; }
+.fx-eq .t, .fx-eq .g { padding: 1px 3px; border-radius: 4px; transition: background .3s, box-shadow .3s; cursor: help; }
+.fx-eq .hl { background: #ffe58a; box-shadow: 0 0 0 1px #e0a800; }
+.fx-eq .t:hover, .fx-eq .g:hover { background: #d9e6f5; box-shadow: 0 0 0 1px var(--acc); }
+.fx-eq .sum { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; line-height: 1; margin: 0 1px; }
+.fx-eq .sum .op { font-size: 1.3em; }
+.fx-eq .sum .lo { font-size: .64em; margin-top: 1px; white-space: nowrap; }
+.fx-eq .frac { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; line-height: 1.15; margin: 0 2px; }
+.fx-eq .frac .nm { border-bottom: 1px solid var(--ink); padding: 0 3px; }
+.fx-sub { font-size: 13px; line-height: 1.55; color: #1f3f63; padding: 1px 4px; }
+.fx-sub .lab { color: var(--muted); margin-right: 4px; }
+.fx-sub i { font-size: 1.05em; }
+.fx-map { font-size: 12px; color: var(--muted); padding: 0 4px; line-height: 1.5; }
+.fx-plain { margin-top: 4px; font-size: 13.5px; line-height: 1.5; padding: 3px 8px 3px 9px; border-left: 3px solid #e0a800; background: #fff6cc; border-radius: 0 6px 6px 0; }
+
 /* 名词小词典 */
 .gloss-btn { background: #fff6cc; border-color: #e0a800; color: #6b4e00; font-weight: 600; }
 .gloss-btn:hover { background: #ffefad; color: #6b4e00; border-color: #c89600; }
@@ -92,6 +113,8 @@ aside.panel { flex: 1; min-width: 400px; max-width: 600px; display: flex; flex-d
   .step-head { padding: 8px 16px 4px; }
   .step-head h2 { font-size: 17px; }
   .desc { font-size: 13.5px; line-height: 1.6; padding: 6px 16px 2px; }
+  .fx { max-height: 236px; padding: 4px 12px 5px; }
+  .fx-eq { font-size: 15px; line-height: 1.75; }
   .desc p { margin-bottom: 5px; }
   .nums { gap: 4px; padding: 6px 10px; }
   .num .v { font-size: 15px; }
@@ -153,6 +176,7 @@ aside.panel { flex: 1; min-width: 400px; max-width: 600px; display: flex; flex-d
   </section>
   <aside class="panel">
     <div class="step-head"><div id="stepGroup" class="step-group"></div><h2 id="stepTitle"></h2></div>
+    <div id="fx" class="fx" title=""></div>
     <div id="stepDesc" class="desc"></div>
     <div id="nums" class="nums"></div>
     <div class="chart-box"><div id="chartTitle" class="chart-title"></div><div class="chart-wrap"><canvas id="chart"></canvas></div></div>
@@ -962,8 +986,14 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
   const SYM = {
     n: '<i>n</i>', m: '<i>m</i>', mmax: '<i>m</i><sub>max</sub>', P: '<i>P</i>', Ps: '<i>P</i><sup>*</sup>', Pb: '<i class="ov">P</i>',
     K: '<i>K</i>', th: '<i>θ</i><sub><i>ai</i></sub>', Th: '<i>Θ</i><sub><i>i</i></sub>', E: '<i>ℰ</i>', x: '<i>x</i><sub><i>ai</i></sub>',
-    L: '<i>L</i><sub><i>i</i></sub>', lb: '⌈<i>n</i>/<i>m</i><sub>max</sub>⌉', kappa: '<i>κ</i>'
+    L: '<i>L</i><sub><i>i</i></sub>', lb: '⌈<i>n</i>/<i>m</i><sub>max</sub>⌉', kappa: '<i>κ</i>',
+    b: '<i>b</i><sub><i>i</i></sub>', d: '<i>d</i><sub><i>ai</i></sub>', eps: '<i>ε</i>', omega: '<i>ω</i><sub><i>ai</i></sub>',
+    iprev: '<i>i</i><sub><i>a</i></sub><sup>−</sup>', thij: '<i>θ</i><sub><i>ij</i></sub>', U: '<i>𝒰</i><sub><i>i</i></sub>', Lsq: '<i>L</i><sub><i>i</i></sub><sup>2</sup>'
   };
+  const EPS_DEMO = 1e-4; // 演示里距离费用按 0.01 取整、主费用单位为 1，相当于 ε = 10⁻⁴
+  let HOV = null; // 鼠标悬停的公式项，动画里对应元素闪烁
+  const HMAP = { one: 'x', x: 'x', d: 'x', th: 'x', obj: 'x', eps: 'x', omega: 'x', n: 'n', sol: 'n', bin: 'x', E: 'E', Thdef: 'Th', Th: 'Th', R: 'Th', r: 'Th', cap: 'P', P: 'P', Ps: 'P', Pb: 'P', K: 'P', L: 'L', sq: 'L', Lsq: 'L', top: 'L', cv: 'L', sigma: 'L', mu: 'L', b: 'b', bw: 'b', sep: 'b', dmin: 'b', thij: 'b', U: 'x', cov: 'b', sw: 'sw', kappa: 'sw', iprev: 'sw', ind: 'sw' };
+  const hov = () => (HOV ? HMAP[HOV] || null : null);
 
   // ---------- 状态 ----------
   let R = null, P = null, steps = [], si = 0, pi = 0, tp = 0, playing = false, speed = 1, dirty = true, lastTs = 0;
@@ -1118,6 +1148,25 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     for (const bs of groups.values()) if (bs.length > 1) {
       tag('叠放 ' + bs.length + ' 束', X(bs[0].x) + 10, Y(bs[0].y) + 8, { size: 12, color: '#fff', bg: 'rgba(91,78,140,0.92)', border: 'rgba(91,78,140,1)' });
     }
+    hovLayout(L, pos, bm, foot);
+  }
+  // 悬停公式项时在布局图上闪烁对应元素：x 归属边，L 负载，Θ 允许半径圆，b 覆盖圈，P 最忙波束，n 全部飞机
+  const blink = () => 0.45 + 0.5 * Math.sin(lastTs / 110);
+  function hovLayout(L, pos, bm, foot) {
+    const hv = hov();
+    if (!hv) return;
+    const al = blink();
+    if (hv === 'x' && L.own) pos.forEach((p, a) => { const b = bm.get(L.own[a]); if (b) lineW(p, b, colorOf(b.id), 2.8, al); });
+    if (hv === 'n') pos.forEach(p => circS(X(p.x), Y(p.y), 7.5, { stroke: ACC, lw: 2, alpha: al }));
+    if (hv === 'Th') { const th = thetaMap(L.beams); for (const b of L.beams) circ(b.x, b.y, th.get(b.id), { stroke: colorOf(b.id), dash: [5, 4], lw: 2.8, alpha: al }); }
+    if (hv === 'b' && foot) for (const b of L.beams) circ(b.x, b.y, foot.get(b.id), { stroke: colorOf(b.id), lw: 3.4, alpha: al });
+    if ((hv === 'L' || hv === 'P') && L.own) {
+      const ld = loadsOf(L), mx = Math.max(...ld.values());
+      for (const b of L.beams) if (hv === 'L' || ld.get(b.id) === mx) {
+        circS(X(b.x), Y(b.y), 12, { stroke: hv === 'P' ? RED : ACC, lw: 2.4, alpha: al });
+        tag((hv === 'P' ? '最忙 ' : '负载 ') + ld.get(b.id), X(b.x) + 12, Y(b.y) - 26, { size: 12, bold: true, color: hv === 'P' ? RED : ACC, alpha: al });
+      }
+    }
   }
   function tween(A, B, t, posA, posB) {
     posA = posA || R.planes; posB = posB || posA;
@@ -1218,6 +1267,16 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       ctx.fillText(lab, nd.x, nd.y + 0.5); ctx.restore();
     }
     if (o.count) tag(`流量 ${o.count.k} / ${o.count.n}`, g.S.x, g.S.y + 26, { align: 'center', size: 13, bold: true, color: o.count.k === o.count.n ? GREEN : INK });
+    // 悬停公式项：三类边分别对应 ∑x=1、ℰ、容量 P
+    const hv = hov();
+    if (hv && m >= 1) {
+      const al = blink();
+      if (hv === 'n' || (hv === 'x' && !owner)) for (let k = 0; k < nA; k++) { const q = pp(k); lineS(g.S.x, g.S.y, q.x, q.y, ACC, 2.4, al); }
+      if (hv === 'x' && owner) for (let k = 0; k < nA; k++) if (owner[k] >= 0) { const a = pp(k), b = bp(owner[k]); lineS(a.x, a.y, b.x, b.y, colorOf(sub.bIds[owner[k]]), 3.4, al); }
+      if (hv === 'E') for (let k = 0; k < nA; k++) for (const li of sub.E[k]) { const a = pp(k), b = bp(li); lineS(a.x, a.y, b.x, b.y, '#5d6672', 1.6, al); }
+      if (hv === 'P') for (let li = 0; li < mB; li++) { const q = bp(li); lineS(q.x, q.y, g.T.x, g.T.y, RED, 3.4, al); }
+      if (hv === 'L') for (let li = 0; li < mB; li++) { const q = bp(li); circS(q.x, q.y, 15, { stroke: ACC, lw: 2.4, alpha: al }); }
+    }
   }
   // 最大流检查的通用动画：t 在 [t0, t1] 内逐条亮起增广路径，之后显示结论
   function flowStates(nA, paths) {
@@ -1316,6 +1375,13 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     }
     const sl = lineSlots(lines, ymax, 0, area);
     lines.forEach((l, i) => cHLine(area, l.v, ymax, 0, l.label, l.color || RED, l.dash, sl[i]));
+    const hv = hov();
+    if (hv === 'L' || hv === 'P') {
+      const al = blink(), mx = Math.max(...vals);
+      cx2.save(); cx2.globalAlpha = al; cx2.strokeStyle = hv === 'P' ? RED : ACC; cx2.lineWidth = 2.5;
+      for (let i = 0; i < n; i++) if (hv === 'L' || vals[i] === mx) { const x = area.L + i * bw + bw * 0.16, w = bw * 0.68, h = vals[i] / ymax * (area.B - area.T); cx2.strokeRect(x - 2, area.B - h - 2, w + 4, h + 2); }
+      cx2.restore();
+    }
   }
   function cLine(o) {
     const box = o.box || { x: 0, y: 0, w: CW, h: CH };
@@ -1362,6 +1428,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
         cx2.restore();
       }
       cText(String(Math.round(v)), x + w / 2, area.B + 12, { align: 'center', color: INK, size: 11, bold: true });
+      if (hov() === 'L' || (hov() === 'P' && Math.round(v) === Pst)) { cx2.save(); cx2.globalAlpha = blink(); cx2.strokeStyle = hov() === 'P' ? RED : ACC; cx2.lineWidth = 2.5; cx2.strokeRect(x - 2, area.B - v * cell - 2, w + 4, v * cell + 2); cx2.restore(); }
     }
     cText('名额费用', 2, 9, { size: 10 });
   }
@@ -1392,6 +1459,90 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       if (pr.top < dr.top || pr.bottom > dr.bottom) desc.scrollTop += pr.top - dr.top - 6;
     }
   }
+
+  // ---------- 公式面板 ----------
+  // 公式用 HTML 拼出；每个符号带 title 提示，含义取自报告符号表；data-term 用于高亮与悬停联动
+  const TITLE = {
+    n: '场景中的飞机数', m: '场景中的波束数', mmax: '波束数上限', P: '最忙波束服务的飞机数，即第一阶段要最小化的最忙波束负载',
+    Ps: '波束中心固定时，最忙波束负载能达到的最小值', Pb: '当前布局的最忙波束负载', K: '每个波束最多服务的飞机数',
+    x: '归属变量，飞机 a 由波束 i 服务时取 1，否则取 0', L: '波束 i 服务的飞机数，即波束负载', Lsq: '波束 i 负载的平方，各波束相加就是负载平方和',
+    th: '飞机 a 偏离波束 i 中心的离轴角；演示里用平面距离代替', Th: '波束 i 的允许半径，取 0.5° 与该中心到最近其它中心夹角中的较小值；飞机离轴角不超过它才能归属该波束',
+    E: '允许的飞机—波束组合集合，即离轴角不超过允许半径的全部配对', b: '波束 i 的束宽，即天线增益比峰值低 3 dB 处的全角宽度，取成员飞机最大离轴角的 2 倍且不小于 0.3°',
+    d: '从卫星指向飞机 a 与指向波束 i 中心的两个单位向量之间的距离，表示飞机离中心的远近', eps: '距离项的权重，使距离项总和小于 0.1，只在负载平方和相同时起作用',
+    kappa: '动态重配置中飞机换到新波束的附加费用，取 3', iprev: '飞机 a 上一分钟所在的波束', ind: '指示函数，花括号内的条件成立时取 1，否则取 0',
+    omega: '动态重配置中把飞机 a 分给波束 i 的指派费用', ceil: '向上取整，取不小于它的最小整数', forall: '对所有，∀a 表示对每架飞机都成立',
+    imp: '若前者成立，则后者成立', min: '最小化后面的量', U: '波束 i 服务的飞机集合，共 L 架', thij: '从卫星看波束 i 与波束 j 中心之间的夹角',
+    obj: '目标：让最忙波束的飞机数尽量小', one: '每架飞机恰好由一个波束服务', cov: '飞机只能归属覆盖圈包含它的波束，即离轴角不超过半束宽',
+    cap: '每个波束服务的飞机数不超过 P', bin: '归属变量只取 0 或 1，不能出现半架飞机', sol: '最大流等于飞机数时，所有飞机都能分进去且没有波束超过 P',
+    lb: '任何可行布局的最忙负载都不低于这个值', Thdef: '允许半径的定义', sq: '负载平方和，越小负载越均衡', dterm: '距离项，让飞机归更近的中心，只在平方和相同时起作用',
+    bw: '束宽由离中心最远的成员决定，即最小包围圆的直径', sep: '间隔规则：两个中心不能落进对方的覆盖圈', dmin: '任意两个中心的夹角不小于 0.15°，演示里为 5.4',
+    sw: '换束才付的附加费用，让最忙负载相同时优先少换束', dcost: '距离项，与式（10）相同', top: '最忙 10% 波束的平均负载，最忙负载相同时再比它',
+    cv: '负载离散系数，各波束飞机数的标准差除以均值，前两项相同时再比它', sigma: '各波束飞机数的标准差', mu: '各波束飞机数的均值',
+    r: '飞机 a 的局部半径，密处小、稀处大', delta: '飞机 a 到第 k 近那架飞机的距离', R: '演示里允许半径的上限 18，对应 0.5°', dmin2: '演示里的中心最小间距 5.4，对应 0.15°', k: '邻居序号，越大半径越大、中心越少', cnt: '取第一个使中心数不超过上限的 k',
+    Sth: '全部飞机到所属中心的离轴角之和，越小波束越窄'
+  };
+  const SUM = lo => `<span class="sum"><span class="op" title="求和">∑</span><span class="lo">${lo}</span></span>`;
+  const FA = '<i>a</i>', FI = '<i>i</i>', ST = '<span class="st">s.t.</span>';
+  function fxCtx(hl) {
+    const H = new Set(hl || []);
+    const sp = cls => (k, html) => `<span class="${cls}${H.has(k) ? ' hl' : ''}" data-term="${k}" title="${TITLE[k] || ''}">${html}</span>`;
+    return { T: sp('t'), G: sp('g') };
+  }
+  const FX = {
+    eq7: ({ T, G }) => ({ head: '式（7）问题模型', map: true, eq:
+      G('obj', T('min', 'min') + ' ' + T('P', SYM.P)) + ' ' + ST + ' ' +
+      G('one', SUM(FI) + T('x', SYM.x) + ' = 1, ' + T('forall', '∀') + FA) + ';&ensp;' +
+      G('cov', T('x', SYM.x) + ' = 1 ' + T('imp', '⇒') + ' ' + T('th', SYM.th) + ' ≤ ' + T('b', SYM.b) + ' / 2') + ';&ensp;' +
+      G('cap', T('L', SYM.L) + ' = ' + SUM(FA) + T('x', SYM.x) + ' ≤ ' + T('P', SYM.P) + ', ' + T('forall', '∀') + FI) }),
+    eq8: ({ T, G }) => ({ head: '式（8）下界', eq:
+      G('lb', T('P', SYM.P) + ' ≥ ' + T('ceil', '⌈') + `<span class="frac"><span class="nm">${T('n', SYM.n)}</span><span class="dn">${T('mmax', SYM.mmax)}</span></span>` + T('ceil', '⌉')) }),
+    theta: ({ T, G }) => ({ head: '允许半径与允许边', map: true, eq:
+      G('Thdef', T('Th', SYM.Th) + ' = min(0.5°, min<sub><i>j</i>≠<i>i</i></sub> ' + T('thij', SYM.thij) + ')') + ';&ensp;' +
+      G('E', T('E', SYM.E) + ' = {(' + FA + ', ' + FI + ') : ' + T('th', SYM.th) + ' ≤ ' + T('Th', SYM.Th) + '}') }),
+    eq9: ({ T, G }) => ({ head: '式（9）固定 P 的可行性指派', map: true, eq:
+      G('one', SUM(`${FI}:(${FA},${FI})∈${SYM.E}`) + T('x', SYM.x) + ' = 1, ' + T('forall', '∀') + FA) + ';&ensp;' +
+      G('cap', SUM(`${FA}:(${FA},${FI})∈${SYM.E}`) + T('x', SYM.x) + ' ≤ ' + T('P', SYM.P) + ', ' + T('forall', '∀') + FI) + ';&ensp;' +
+      G('bin', T('x', SYM.x) + ' ∈ {0, 1}') + '&ensp;' + G('sol', '<span class="st">有解 ⇔ 最大流 = </span>' + T('n', SYM.n)) }),
+    eq10: ({ T, G }) => ({ head: '式（10）均衡指派', eq:
+      T('min', 'min') + ' ' + G('sq', SUM(FI) + T('Lsq', SYM.Lsq)) + ' + ' + G('dterm', T('eps', SYM.eps) + SUM(`(${FA},${FI})∈${SYM.E}`) + T('d', SYM.d) + T('x', SYM.x)) + ' ' + ST + ' ' +
+      G('one', SUM(FI) + T('x', SYM.x) + ' = 1, ' + T('forall', '∀') + FA) + ';&ensp;' + G('cap', T('L', SYM.L) + ' ≤ ' + T('Ps', SYM.Ps) + ', ' + T('forall', '∀') + FI) }),
+    eq11: ({ T, G }) => ({ head: '式（11）收紧指派', map: true, eq:
+      G('obj', T('min', 'min') + ' ' + G('Sth', SUM(`(${FA},${FI})∈${SYM.E}`) + T('th', SYM.th) + T('x', SYM.x))) + ' ' + ST + ' ' +
+      G('one', SUM(FI) + T('x', SYM.x) + ' = 1, ' + T('forall', '∀') + FA) + ';&ensp;' + G('cap', SUM(FA) + T('x', SYM.x) + ' ≤ min(' + T('Pb', SYM.Pb) + ', ' + T('K', SYM.K) + '), ' + T('forall', '∀') + FI) }),
+    bw: ({ T, G }) => ({ head: '束宽与间隔规则', map: true, eq:
+      G('bw', T('b', SYM.b) + ' = 2 · max<sub>' + FA + '∈' + T('U', SYM.U) + '</sub> ' + T('th', SYM.th)) + ';&ensp;' +
+      G('sep', T('thij', SYM.thij) + ' ≥ max(' + T('b', SYM.b) + ', <i>b</i><sub><i>j</i></sub>) / 2') + ';&ensp;' + G('dmin', T('thij', SYM.thij) + ' ≥ 0.15°') }),
+    eq27: ({ T, G }) => ({ head: '式（27）动态换束费用', eq:
+      T('omega', SYM.omega) + ' = ' + G('dcost', T('eps', SYM.eps) + ' ' + T('d', SYM.d)) + ' + ' + G('sw', T('kappa', SYM.kappa) + ' ' + T('ind', '𝕀') + '{' + FI + ' ≠ ' + T('iprev', SYM.iprev) + '}') }),
+    rec: ({ T, G }) => ({ head: '每轮记录最好布局的依据', eq:
+      '<span class="st">依次比较</span>' + G('P', '最忙负载 ' + T('P', SYM.P)) + ' → ' + G('top', '最忙 10% 负载') + ' → ' + G('cv', '负载离散系数 = ' + T('sigma', '<i>σ</i>') + ' / ' + T('mu', '<i>μ</i>')) }),
+    init: ({ T, G }) => ({ head: '初始中心：按局部密度放置', map: true, eq:
+      G('r', T('r', '<i>r</i><sub><i>a</i></sub>') + ' = min(' + T('R', '<i>R</i>') + ', max(' + T('dmin2', '<i>d</i><sub>min</sub>') + ', ' + T('delta', '<i>δ</i><sub><i>a</i></sub><sup>(<i>k</i>)</sup>') + '))') + ';&ensp;' +
+      G('cnt', '中心数 ≤ ' + T('mmax', SYM.mmax)) })
+  };
+  const MAPLINE = '演示对应：离轴角 <i>θ</i> 用平面距离代替，允许半径上限 0.5° 对应 18，最小间距 0.15° 对应 5.4';
+  let lastFx = null;
+  // spec = { f: 公式名或数组, hl: 高亮项, sub: 代入本例的数字, plain: 这一步在做什么 }
+  function setFx(spec) {
+    const key = JSON.stringify(spec);
+    if (key === lastFx) return;
+    lastFx = key;
+    const c = fxCtx(spec.hl), parts = (Array.isArray(spec.f) ? spec.f : [spec.f]).map(k => FX[k](c));
+    let h = parts.map(p => `<div class="fx-head">${p.head}</div><div class="fx-eq">${p.eq}</div>`).join('');
+    if (spec.sub) h += `<div class="fx-sub"><span class="lab">代入本例</span>${spec.sub}</div>`;
+    if (parts.some(p => p.map)) h += `<div class="fx-map">${MAPLINE}</div>`;
+    h += `<div class="fx-plain">${spec.plain}</div>`;
+    $('#fx').innerHTML = h;
+  }
+  // 到最近其它中心的距离，叠放的同组波束不算
+  function nearestOther(beams, i) {
+    let d = Infinity, j = -1;
+    beams.forEach((b, k) => { if (k !== i && b.grp !== beams[i].grp) { const dd = Math.hypot(b.x - beams[i].x, b.y - beams[i].y); if (dd < d) { d = dd; j = k; } } });
+    return { d, j };
+  }
+  const sqOf = L => { const ld = loadsOf(L); return [...ld.values()].reduce((s, v) => s + v * v, 0); };
+  const thSub = (id, d) => `${SYM.Th.replace('<i>i</i>', String(id))} = min(18, ${d === Infinity ? '∞' : f1(d)}) = ${f1(Math.min(18, d))}`;
+  const slotSeries = k => (k <= 4 ? Array.from({ length: k }, (_, q) => 2 * q + 1).join(' + ') : `1 + 3 + … + ${2 * k - 1}`) + ` = ${k}² = ${k * k}`;
 
   // =====================================================================
   // 各步骤
@@ -1442,11 +1593,14 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
 <p data-seg="rule"><b>规则。</b>每架飞机都要被覆盖且只归一个波束；波束数 ${SYM.m} 不超过上限 ${SYM.mmax} = ${mm}；任意两个波束的中心不能落进对方的覆盖圈，这叫间隔规则，用来减轻同频干扰。热点处叠放波束是例外，第二步才用到。</p>
 <p data-seg="goal"><b>目标。</b>波束服务的飞机越多，每架分到的频谱和功率越少，所以要让最忙波束的飞机数 ${SYM.P} 尽量小。${SYM.P} 不可能低于下界 ${SYM.lb}：${n} 架分给 ${mm} 个波束，平均 ${f1(n / mm)} 架，最忙的至少 ${lb} 架。达到下界的方案就是最优。</p>
 <p class="note">论文用离轴角 ${SYM.th} 衡量飞机 a 离波束 i 中心的远近，即从卫星看过去的偏离角度；演示用平面距离代替。</p>`;
+    const lbSub = `${SYM.n} = ${n}，${SYM.mmax} = ${mm}：${SYM.P} ≥ ⌈${n} / ${mm}⌉ = ⌈${f1(n / mm)}⌉ = <b>${lb}</b>`;
+    const fxGoal = { f: ['eq7', 'eq8'], hl: ['obj', 'cap', 'lb'], sub: `目标 min ${SYM.P}：${SYM.P} 是最忙波束的飞机数；${lbSub}`, plain: '这一步在做什么：算出最忙波束负载的理论下界 ' + lb + '，后面所有步骤都在把最忙负载往它压' };
     return {
       group: '问题', title: '问题与目标', html,
       phases: [
         {
           dur: 3.2, seg: 'problem', nums, chart: groupChart, chartTitle: '三类区域的飞机数',
+          fx: { f: 'eq7', hl: ['one'], sub: `${SYM.n} = ${n} 架飞机，每架飞机的 ${SYM.x} 中恰好有一个为 1；波束数 ${SYM.m} ≤ ${SYM.mmax} = ${mm}`, plain: `这一步在做什么：认识问题，${n} 架飞机要全部归入不超过 ${mm} 个波束` },
           cap: `飞机分布很不均匀：热点 ${nh} 架挤在一小块地方，中等密度区 ${nm} 架，外围零星飞机 ${ns} 架`,
           draw: t => {
             bg();
@@ -1458,6 +1612,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
         },
         {
           dur: 4.5, seg: 'rule', nums, chart: groupChart, chartTitle: '三类区域的飞机数',
+          fx: { f: 'eq7', hl: ['cov'], sub: `${SYM.x} = 1 ⇒ ${SYM.th} ≤ ${SYM.b} / 2：飞机要落在波束的覆盖圈内，${SYM.b} / 2 就是覆盖圈半径；间隔规则另要求两个中心的距离不小于 max(${SYM.b}, <i>b</i><sub><i>j</i></sub>) / 2，且不小于 ${P.dmin}`, plain: '这一步在做什么：说明飞机只能归属罩住它的波束，以及波束之间要保持的间隔' },
           cap: '间隔规则：任意两个波束的中心都不能落进对方的覆盖圈；热点处叠放的波束例外',
           draw: t => {
             bg(); drawPlanesAt(0.3);
@@ -1474,7 +1629,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
           }
         },
         {
-          dur: 5.5, seg: 'goal', nums, chartTitle: '每个波束分到的飞机数',
+          dur: 5.5, seg: 'goal', nums, chartTitle: '每个波束分到的飞机数', fx: fxGoal,
           chart: t => cBars({ vals: binCounts, from: binCounts.map(() => 0), t: seg(t, 0.2, 0.75), colors: binCounts.map(() => '#7b818a'), xlabels: binCounts.map((_, j) => '波束' + (j + 1)), lines: [{ v: lb, label: '下界 ' + lb, color: RED }] }),
           cap: t => (t < 0.78 ? `把 ${n} 架飞机尽量平均地分给 ${mm} 个波束……`
             : `若每束最多 ${per} 架，${mm} 个波束只能装 ${per * mm} 架，少于 ${n} 架，所以最忙波束至少 ${lb} 架：下界 ${SYM.lb} = ${lb}`),
@@ -1490,7 +1645,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
           }
         },
         {
-          dur: 2.5, seg: 'goal', nums, chart: groupChart, chartTitle: '三类区域的飞机数',
+          dur: 2.5, seg: 'goal', nums, chart: groupChart, chartTitle: '三类区域的飞机数', fx: fxGoal,
           cap: '接下来看 FLOW-AO 怎样一步步把最忙波束的负载压向这个下界',
           draw: t => { bg(seg(t, 0.3, 1)); binDraw(1 - t, 0); }
         }
@@ -1516,6 +1671,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       phases: [
         {
           dur: 3.5, seg: 'why', nums: nums(0), chart: sweepChart, chartTitle: '横轴为 k，纵轴为得到的中心数',
+          fx: { f: 'init', hl: ['r'], sub: `<i>k</i> = ${init.k}，<i>d</i><sub>min</sub> = ${P.dmin}，<i>R</i> = ${P.R}：半径最小 ${f1(Math.min(...init.rad))}，最大 ${f1(Math.max(...init.rad))}`, plain: '这一步在做什么：给每架飞机算一个局部半径，密处小、稀处大，作为放中心的依据' },
           cap: `每架飞机的局部半径：到第 ${init.k} 近飞机的距离，限制在 ${P.dmin} 与 ${P.R} 之间。热点里半径小，边缘半径大`,
           draw: t => {
             bg(); const u = ease(t);
@@ -1526,6 +1682,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
         {
           dur: 8, seg: 'how', chart: sweepChart, chartTitle: '横轴为 k，纵轴为得到的中心数',
           nums: t => nums(scanned(t)),
+          fx: t => { const s = scanned(t), a = s < n ? init.order[s] : null; return { f: 'init', hl: ['cnt'], sub: (a != null ? `正在看第 ${s + 1} 架：<i>r</i><sub>${a}</sub> = ${f1(init.rad[a])}；` : '') + `已放中心 ${placedAt(s)} ≤ ${SYM.mmax} = ${P.mmax}`, plain: '这一步在做什么：按局部半径从大到小逐个查看，没被罩住的飞机处放一个中心' }; },
           cap: t => `按局部半径从大到小逐个查看：没被罩住就在它的位置放一个中心。已查看 ${scanned(t)} 架，已放 ${placedAt(scanned(t))} 个中心`,
           draw: t => {
             bg(); const s = scanned(t);
@@ -1541,6 +1698,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
         },
         {
           dur: 3, seg: 'count', nums: nums(n), chart: sweepChart, chartTitle: '横轴为 k，纵轴为得到的中心数',
+          fx: { f: 'init', hl: ['cnt'], sub: `<i>k</i> = ${init.k} 时中心数 = ${init.centers.length} ≤ ${SYM.mmax} = ${P.mmax}` + (ki > 0 ? `；<i>k</i> = ${init.sweep[ki - 1].k} 时为 ${init.sweep[ki - 1].count}，超过上限` : ''), plain: `这一步在做什么：取第一个使中心数不超过 ${P.mmax} 的 k，得到 ${init.centers.length} 个初始中心` },
           cap: `得到 ${init.centers.length} 个初始中心：热点里间距小，边缘间距大。每架飞机都至少被一个中心罩住`,
           draw: () => {
             bg();
@@ -1568,16 +1726,29 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
 <p data-seg="net"><b>画成网络。</b>看成运货：源点给每架飞机 1 份货，飞机沿 ${SYM.E} 中的边交给一个波束，每个波束最多向汇点交出 ${SYM.P} 份，三类边的容量依次为 1、1、${SYM.P}。</p>
 <p data-seg="maxflow"><b>什么是最大流。</b>把每架飞机看成一单位流量，从源点经飞机、波束流到汇点，每条边不能超过容量；最大流就是最多能送多少架飞机过去。等于飞机数 ${SYM.n} 就说明所有飞机都能分进去且没有波束超过 ${SYM.P}。求法是反复找增广路径：一条从源点到汇点、每条边都还有余量的路，找到一条就多送一架。波束满了时路径可以走回头路，让它已接收的一架飞机退出去投别的波束，腾出名额，这叫改道。</p>
 <p data-seg="bisect"><b>找最小的 ${SYM.P}。</b>二分查找：每次试区间正中的值，用最大流判断，可行就往小找，不可行就往大找。区间从 ⌈n/m⌉ 到就近分配的最忙负载，几次就得到最小可行值 ${SYM.Ps}。</p>`;
+    // 允许半径逐个波束代入：t 过 0.35 后依次轮到每个波束，画出它到最近其它中心的连线
+    const near = L0.beams.map((b, i) => nearestOther(L0.beams, i));
+    const curB = t => Math.min(m - 1, Math.floor(seg(t, 0.35, 1) * m));
     const phases = [
       {
-        dur: 3, seg: 'allow', nums: base.concat(), chartTitle: '各中心的允许半径',
-        chart: t => cBars({ vals: thList, from: thList.map(() => 0), t: ease(t), colors: L0.beams.map(b => colorOf(b.id)), fmt: f1, lines: [{ v: P.R, label: '半径上限 ' + P.R, color: MUTED }] }),
-        cap: `每个中心外的虚线圆是允许半径 ${SYM.Th}：取半径上限 ${P.R} 与到最近其它中心距离的较小值。中心挤得越近，允许半径越小`,
-        draw: t => { bg(); drawLayout({ beams: L0.beams, own: null }, { theta, thetaT: ease(t), foot: false }); }
+        dur: 3 + 1.1 * m, seg: 'allow', nums: base.concat(), chartTitle: '各中心的允许半径',
+        chart: t => cBars({ vals: thList, from: thList.map(() => 0), t: ease(seg(t, 0, 0.35)), colors: L0.beams.map(b => colorOf(b.id)), fmt: f1, lines: [{ v: P.R, label: '半径上限 ' + P.R, color: MUTED }], outline: L0.beams.map((b, i) => (t > 0.35 && i === curB(t) ? INK : null)) }),
+        fx: t => { const i = curB(t), b = L0.beams[i]; return { f: 'theta', hl: ['Thdef'], sub: t < 0.35 ? `半径上限 18，共 ${m} 个中心，逐个代入` : `${dot(b.id)}${thSub(b.id, near[i].d)}` + (near[i].d > P.R ? '，最近其它中心比上限还远，取上限' : '，取到最近其它中心的距离'), plain: '这一步在做什么：给每个中心定一个允许半径，圆内的飞机才能归它' }; },
+        cap: t => `每个中心外的虚线圆是允许半径 ${SYM.Th}：取半径上限 ${P.R} 与到最近其它中心距离的较小值。` + (t < 0.35 ? '中心挤得越近，允许半径越小' : `${dot(L0.beams[curB(t)].id)}到最近其它中心 ${f1(near[curB(t)].d)}，允许半径 ${f1(thList[curB(t)])}`),
+        draw: t => {
+          bg(); drawLayout({ beams: L0.beams, own: null }, { theta, thetaT: ease(seg(t, 0, 0.35)), foot: false });
+          if (t > 0.35) {
+            const i = curB(t), b = L0.beams[i], nb = near[i].j >= 0 ? L0.beams[near[i].j] : null;
+            circ(b.x, b.y, thList[i], { stroke: colorOf(b.id), dash: [5, 4], lw: 3 });
+            if (nb) { lineW(b, nb, INK, 1.4, 0.8, [4, 3]); tag(`到最近其它中心 ${f1(near[i].d)}`, (X(b.x) + X(nb.x)) / 2 + 6, (Y(b.y) + Y(nb.y)) / 2 - 24, { size: 12 }); }
+            tag(`允许半径 = min(${P.R}, ${f1(near[i].d)}) = ${f1(thList[i])}`, X(b.x) + 12, Y(b.y) + 10, { size: 12.5, bold: true, color: colorOf(b.id) });
+          }
+        }
       },
       {
         dur: 3, seg: 'allow', nums: base, chartTitle: '各中心的允许半径',
         chart: () => cBars({ vals: thList, colors: L0.beams.map(b => colorOf(b.id)), fmt: f1, lines: [{ v: P.R, label: '半径上限 ' + P.R, color: MUTED }] }),
+        fx: { f: 'theta', hl: ['E'], sub: `|${SYM.E}| = ${nE} 条允许边，${SYM.n} = ${n} 架飞机；${multi} 架飞机落在两个圆的重叠区，有两个以上选择`, plain: '这一步在做什么：把每架飞机能归属的波束都列出来，组成允许边集合' },
         cap: `灰线是允许边集合 ${SYM.E}，共 ${nE} 条：飞机落在哪些虚线圆里，就能归哪些波束。${multi} 架飞机有不止一个选择，被圈出`,
         draw: t => {
           bg(); drawLayout({ beams: L0.beams, own: null }, { theta, foot: false });
@@ -1589,18 +1760,23 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       {
         dur: 3.2, seg: 'near', nums: base, chartTitle: '就近分配时各波束的飞机数',
         chart: t => cBars({ vals: tr.loadsNear, from: tr.loadsNear.map(() => 0), t: ease(t), colors: bColors, lines: [{ v: tr.hi, label: '最忙 ' + tr.hi, color: RED }] }),
+        fx: { f: ['eq9', 'eq8'], hl: ['cap', 'lb'], sub: `就近分配时最忙 ${tr.hi} 架，所以 ${SYM.P} = ${tr.hi} 一定可行，是上界；下界 ⌈${n} / ${P.mmax}⌉ = ${R.lb}，${SYM.P} 不会低于 ${R.lb}。要找的 ${SYM.Ps} 在 [${tr.lo}, ${tr.hi}] 之间`, plain: '这一步在做什么：用最朴素的就近分配定出二分查找的上界' },
         cap: `如果每架飞机都归最近的中心，最忙波束有 ${tr.hi} 架，热点被挤爆。这个值是二分查找的上界`,
         draw: () => { bg(); drawLayout(Lnear, { theta, links: true, foot: false }); }
       },
       {
         dur: 2.8, seg: 'net', nums: base, chartTitle: '就近分配时各波束的飞机数',
         chart: () => cBars({ vals: tr.loadsNear, colors: bColors, lines: [{ v: tr.hi, label: '最忙 ' + tr.hi, color: RED }] }),
+        fx: { f: 'eq9', hl: [], sub: `${SYM.n} = ${n} 架飞机，${SYM.m} = ${m} 个波束，|${SYM.E}| = ${nE} 条允许边，各成为网络里的节点和边`, plain: '这一步在做什么：把式（9）画成一张网络，好用最大流来判断它有没有解' },
         cap: '把指派问题画成网络：左边是源点，中间两列是飞机和波束，右边是汇点',
         draw: t => { bg(1 - ease(t)); drawNet(tr, L0.beams, null, null, { morph: ease(t), build: { s: 0, e: 0, t: 0 } }); }
       },
       {
         dur: 6, seg: 'net', nums: base, chartTitle: '就近分配时各波束的飞机数',
         chart: () => cBars({ vals: tr.loadsNear, colors: bColors, lines: [{ v: tr.hi, label: '最忙 ' + tr.hi, color: RED }] }),
+        fx: t => (t < 0.33 ? { f: 'eq9', hl: ['one'], sub: `源点 → 飞机，容量 1，共 ${n} 条：每架飞机只有一单位流量，对应每架飞机恰好一个 ${SYM.x} = 1`, plain: '这一步在做什么：第一类边把“每架飞机只归一个波束”画进网络' }
+          : t < 0.66 ? { f: 'eq9', hl: ['bin'], sub: `飞机 → 波束，容量 1，只连 (<i>a</i>, <i>i</i>) ∈ ${SYM.E} 的 ${nE} 对：边上有流就是 ${SYM.x} = 1，没有就是 0`, plain: '这一步在做什么：第二类边只在允许的飞机—波束配对之间连线' }
+            : { f: 'eq9', hl: ['cap'], sub: `波束 → 汇点，容量 ${SYM.P}，共 ${m} 条：一个波束最多送出 ${SYM.P} 单位流量，对应 ∑<sub><i>a</i></sub> ${SYM.x} ≤ ${SYM.P}`, plain: '这一步在做什么：第三类边的容量 P 就是每束飞机数上限' }),
         cap: t => (t < 0.33 ? '第一类边：源点连到每架飞机，容量 1，表示每架飞机是一单位流量' : t < 0.66 ? `第二类边：飞机连到它允许归属的波束，容量 1，共 ${nE} 条` : '第三类边：每个波束连到汇点，容量 P，表示这个波束最多接收 P 架'),
         draw: t => { plainBg(); drawNet(tr, L0.beams, null, null, { build: { s: ease(seg(t, 0, 0.3)), e: ease(seg(t, 0.33, 0.63)), t: ease(seg(t, 0.66, 0.96)) } }); }
       }
@@ -1610,9 +1786,16 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       const rounds = Math.max(...tri.paths.map(p => p.round)), rer = tri.paths.filter(p => p.nodes.some(x => x.back)).length;
       const msg = tri.ok ? `最大流 = ${tri.flow} = n，可行` : `最大流 = ${tri.flow} < n = ${n}，不可行`;
       const T1 = 0.72, prog = t => flowProgress(tri.paths, t, 0.04, T1);
+      const bis = `${SYM.P} ∈ [${tri.lo}, ${tri.hi}]，` + (tri.confirm ? `区间已缩到一点，取 ${SYM.P} = <b>${tri.P}</b>` : `取中间值 ${SYM.P} = <b>${tri.P}</b>`) + `；下界 ⌈${n} / ${P.mmax}⌉ = ${R.lb}，不会低于 ${R.lb}`;
       phases.push({
         dur: j === 0 ? 9 : 5, seg: j === 0 ? 'maxflow' : 'bisect', chartTitle: `每束不超过 P = ${tri.P} 时各波束分到的飞机数`,
         nums: t => { const pr = prog(t); return [['二分区间', `[${tri.lo}, ${tri.hi}]`], ['本次试', 'P = ' + tri.P, 'acc'], ['已找到增广路径', pr.k + ' 条'], ['流量', pr.k + ' / ' + n, pr.done ? (tri.ok ? 'good' : 'bad') : ''], ['下界', R.lb], ['就近分配最忙', tr.hi]]; },
+        fx: t => {
+          const pr = prog(t);
+          if (pr.done) return { f: ['eq9', 'eq8'], hl: ['sol', 'lb'], sub: bis + `。最大流 = ${tri.flow} ${tri.ok ? `= ${SYM.n}，式（9）有解，${SYM.P} = ${tri.P} 可行` : `< ${SYM.n} = ${n}，式（9）无解，${SYM.P} = ${tri.P} 不可行`}`, plain: tri.ok ? `这一步在做什么：确认 P = ${tri.P} 可行，接着往更小的 P 找` : `这一步在做什么：确认 P = ${tri.P} 不可行，P 必须更大` };
+          const back = pr.cur && pr.cur.nodes.some(x => x.back);
+          return { f: ['eq9', 'eq8'], hl: [back ? 'cap' : 'one', 'lb'], sub: bis + `。流量 ${pr.k} / ${n}` + (pr.cur ? (back ? `：波束的 ∑<sub><i>a</i></sub> ${SYM.x} 已到 ${tri.P}，只能让一架飞机改投别的波束` : `：这架飞机的 ${SYM.x} 从 0 变 1`) : ''), plain: '这一步在做什么：沿增广路径一架一架送飞机，看最多能送出几架' };
+        },
         chart: t => { const pr = prog(t); cBars({ vals: localLoads(states[pr.k]), colors: bColors, lines: [{ v: tri.P, label: 'P = ' + tri.P, color: pr.done ? (tri.ok ? GREEN : RED) : MUTED }] }); },
         cap: t => {
           const pr = prog(t), head = tri.confirm ? `区间已缩到 ${tri.P}，再算一次最大流取得这个值下的指派。` : `二分区间 [${tri.lo}, ${tri.hi}]，试中间值 P = ${tri.P}。`;
@@ -1632,6 +1815,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     phases.push({
       dur: 3.6, seg: 'bisect', chartTitle: `每束不超过 P* = ${tr.Pstar} 时各波束的飞机数`,
       nums: [[`最小可行值 ${SYM.Ps}`, tr.Pstar, 'acc'], ['下界', R.lb], ['就近分配最忙', tr.hi], ['二分试了', tr.trials.length + ' 次'], [`波束数 ${SYM.m}`, m], [`飞机数 ${SYM.n}`, n]],
+      fx: { f: ['eq9', 'eq8'], hl: ['cap', 'lb'], sub: `${SYM.Ps} = <b>${tr.Pstar}</b>：试过 ${tr.trials.map(x => `${SYM.P} = ${x.P} ${x.ok ? '有解' : '无解'}`).join('，')}；下界 ${R.lb}`, plain: `这一步在做什么：二分结束，中心固定时最忙负载最少 ${tr.Pstar} 架` },
       chart: () => cBars({ vals: flowLoads, colors: bColors, lines: [{ v: tr.Pstar, label: 'P* = ' + tr.Pstar, color: GREEN }, { v: R.lb, label: '下界 ' + R.lb, color: MUTED }] }),
       cap: `最小可行值 ${SYM.Ps} = ${tr.Pstar}：中心固定时，任何指派的最忙负载都不会小于它，比就近分配的 ${tr.hi} 小得多。离下界 ${R.lb} 的差距要靠后面调整中心来缩小`,
       draw: t => {
@@ -1671,16 +1855,20 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
 <p data-seg="mcf"><b>什么是最小费用流。</b>在把每架飞机都送到某个波束的前提下，让总费用最低。求法是逐次最短路：从零开始，每次找一条从源点到汇点费用最低的增广路径，沿它送一架飞机，重复 ${SYM.n} 次。费用最低的路径有时要退流：把先前某架飞机从它的波束退回，改投别的波束，腾出的便宜名额给新飞机，这样总费用比直接送更低。网络流的最优解自动是整数，不会出现半架飞机。</p>
 <p data-seg="measure"><b>怎么衡量均衡。</b>负载离散系数：各波束飞机数的标准差除以均值，越小越均衡。</p>`;
     const chartTitle = `每个波束的 ${tr.Pstar} 个名额，左侧数字是名额费用`;
+    const sqText = loads => loads.map(v => v + '²').join(' + ') + ' = ' + loads.reduce((s, v) => s + v * v, 0);
+    const epsText = `${SYM.eps} = 10<sup>−4</sup>`;
     const phases = [
       {
         dur: 3.2, seg: 'why', nums: nums(false), chartTitle,
         chart: () => cSlots(tr.loadsFlow, tr.loadsFlow, 0, tr.Pstar, bColors),
+        fx: { f: 'eq10', hl: ['cap', 'sq'], sub: `最大流的指派：各束负载都 ≤ ${SYM.Ps} = ${tr.Pstar}，但 ∑${SYM.Lsq} = ${sqText(tr.loadsFlow)}，还能更小`, plain: '这一步在做什么：最忙负载已定，再让其余波束的负载尽量接近' },
         cap: `上一步最大流给出的指派只保证每束不超过 ${tr.Pstar} 架，负载并不均匀：负载平方和 ${tr.sqFlow}，离散系数 ${f2(evF.cv)}`,
         draw: () => { bg(); drawLayout(Lflow, { loadTags: true }); }
       },
       {
         dur: 3.6, seg: 'cost', nums: nums(false), chartTitle,
         chart: () => cSlots(tr.loadsFlow.map(() => 0), tr.loadsFlow.map(() => 0), 0, tr.Pstar, bColors),
+        fx: { f: 'eq10', hl: ['sq', 'dterm'], sub: `每束 ${tr.Pstar} 个名额，第 <i>k</i> 个名额费用 2<i>k</i> − 1，装 <i>L</i> 架合计 1 + 3 + … + (2<i>L</i> − 1) = <i>L</i>²，所以名额费用之和 = ∑${SYM.Lsq}；${epsText}，距离项合计不到 1，只在平方和相同时起作用`, plain: '这一步在做什么：把平方和变成名额费用，多装一架越来越贵，飞机自然分散' },
         cap: `重新开始：每个波束 ${tr.Pstar} 个空名额，费用 1、3、5……。接下来每次沿费用最低的路径送一架飞机，右图名额逐格填满`,
         draw: () => { bg(); drawLayout({ beams: L0.beams, own: null }, { foot: false }); }
       }
@@ -1690,12 +1878,20 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       const li2 = p0.nodes[p0.nodes.length - 1].i, li1 = p0.nodes[1].i, backNode = p0.nodes.find(x => x.back);
       const kNew = loadsAt(sub0 + 1)[li2], kDirect = loadsAt(sub0)[li1] + 1, direct = 2 * kDirect - 1;
       const capText = ch.back
-        ? `第 ${sub0 + 1} 条路径出现退流：金色圈出的新飞机直接送给 ${dot(sub.bIds[li1])}要用它的第 ${kDirect} 个名额，费用 ${direct}。更便宜的路线是让 ${dot(sub.bIds[li1])}已有的一架飞机退出，沿红色虚线改投 ${dot(sub.bIds[li2])}的第 ${kNew} 个名额，费用 ${ch.main}` + (direct > ch.main ? '，名额费用更低' : '，名额费用相同，但那架飞机离新中心更近，距离项更小') + '，腾出的名额给新飞机'
+        ? `第 ${sub0 + 1} 条路径出现退流：金色圈出的新飞机直接送给 ${dot(sub.bIds[li1])}要用第 ${kDirect} 个名额，费用 ${direct}。更便宜的是让 ${dot(sub.bIds[li1])}已有的一架飞机退出，沿红色虚线改投 ${dot(sub.bIds[li2])}的第 ${kNew} 个名额，费用 ${ch.main}` + (direct > ch.main ? '，更低' : '，相同但那架飞机离新中心更近') + '，腾出的名额给新飞机'
         : ch.len === 1 ? `第 ${sub0 + 1} 条最短增广路径：金色圈出的飞机 → ${dot(sub.bIds[li1])}的第 ${kNew} 个名额，费用 ${ch.main}` + (sub0 === 0 ? '，另加很小的距离项' : '')
           : `第 ${sub0 + 1} 到 ${sub0 + ch.len} 条路径：每次都挑当前最便宜的名额，费用依次 ${[...new Set(ch.mains)].join('、')}` + (new Set(ch.mains).size > 1 ? '，便宜的名额用完才轮到更贵的' : '');
       phases.push({
         dur: ch.back ? 4.2 : ch.len === 1 ? (sub0 < 3 ? 1.7 : 1) : 0.5 * ch.len + 0.4, seg: 'mcf', chartTitle,
         nums: t => { const k = sub0 + inner(t) + 1; return [['已送出', k + ' / ' + n], ['本条路径费用', mainCost(paths[k - 1]) + (distPart(paths[k - 1]) >= 0 ? ' + ' : ' − ') + Math.abs(distPart(paths[k - 1])).toFixed(2)], ['累计名额费用', String(localLoads(states[k]).reduce((s, v) => s + v * v, 0)), 'acc'], ['退流次数', paths.slice(0, k).filter(p => p.nodes.some(x => x.back)).length, 'acc'], [`最忙负载 ${SYM.Ps}`, tr.Pstar], ['下界', R.lb]]; },
+        fx: t => {
+          const k = sub0 + inner(t), p = paths[k], liT = p.nodes[p.nodes.length - 1].i, kk = loadsAt(k + 1)[liT], total = loadsAt(k + 1).reduce((s, v) => s + v * v, 0);
+          const Li = SYM.L.replace('<i>i</i>', String(sub.bIds[liT]));
+          const acc = `${dot(sub.bIds[liT])}第 ${kk} 个名额：${Li}² = ${slotSeries(kk)}；当前 ∑${SYM.Lsq} = <b>${total}</b>`;
+          if (!ch.back) return { f: 'eq10', hl: ['sq'], sub: acc + (k === 0 ? `；${epsText}，这条边距离项 ${(distPart(p)).toFixed(2)} × 10<sup>−4</sup>` : ''), plain: '这一步在做什么：每次把一架飞机送到当前最便宜的名额，累计费用就是负载平方和' };
+          const delta = direct - ch.main;
+          return { f: 'eq10', hl: delta > 0 ? ['sq'] : ['dterm'], sub: `退流：直接送进 ${dot(sub.bIds[li1])}要用第 ${kDirect} 个名额，费用 ${direct}；改道后 ${acc.replace('当前 ', '')}` + (delta > 0 ? `。总费用因此减小 Δ = ${direct} − ${ch.main} = <b>${delta}</b>` : `。名额费用相同，Δ = 0，这时 ${epsText} 的距离项起作用，改投更近的中心`), plain: '这一步在做什么：直接送太贵，先让一架飞机退出改投更便宜的名额，再把新飞机放进去' };
+        },
         chart: t => { const i = inner(t), k = sub0 + i; cSlots(loadsAt(k), loadsAt(k + 1), ease(clamp01((t * ch.len - i) * 1.4)), tr.Pstar, bColors); },
         cap: capText,
         draw: t => {
@@ -1722,6 +1918,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     phases.push({
       dur: 3.6, seg: 'measure', nums: nums(true), chartTitle,
       chart: () => cSlots(tr.loadsBal, tr.loadsBal, 0, tr.Pstar, bColors),
+      fx: { f: 'eq10', hl: ['sq', 'dterm'], sub: `∑${SYM.Lsq} = ${sqText(tr.loadsBal)}，由 ${tr.sqFlow} 降到 ${tr.sqBal}；距离项 ${SYM.eps}∑${SYM.d} = 10<sup>−4</sup> × ${f1(tr.distBal)} = ${(tr.distBal * EPS_DEMO).toFixed(3)} < 1；离散系数 ${f2(evF.cv)} → ${f2(evB.cv)}`, plain: '这一步在做什么：均衡完成，负载平方和最小，最忙负载仍不超过 P*' },
       cap: `${np} 条路径送完，其中 ${rerouteN} 次退流。` + (fillChanged ? '空波束再从负载不少于 2 的波束接一架。' : '') + `与最大流的指派相比，${changed.size} 架飞机换了波束，被圈出。负载平方和 ${tr.sqFlow} → ${tr.sqBal}，离散系数 ${f2(evF.cv)} → ${f2(evB.cv)}，最忙负载仍是 ${tr.Pstar}`,
       draw: () => { bg(); drawLayout(Lbal, { loadTags: true, ring: a => (changed.has(a) ? ACC : null) }); }
     });
@@ -1756,8 +1953,10 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
 <p data-seg="welzl"><b>怎么求最小包围圆。</b>用 Welzl 算法：把点随机打乱后逐个加入，手里始终拿着“已加入的点”的最小包围圆。新点若在当前圆内，圆不用变，跳过；若在圆外，它一定落在新圆的边界上，于是以它为边界点，在已加入的点里重新找出 1 到 3 个边界点确定新圆。平均计算量只与点数成正比。</p>
 <p data-seg="rule"><b>间隔规则。</b>逐个波束移动，每移一个都检查：新中心不能落进别的覆盖圈，别的中心也不能落进它的新覆盖圈，两个中心还要相距至少 ${P.dmin}。违反就保持原位。</p>`;
     const chartTitle = '各波束覆盖圈半径，虚线框为移动前';
+    const bwSub = (id, before, after) => `${dot(id)}${SYM.b.replace('<i>i</i>', String(id))} / 2 = 最远成员的 ${SYM.th} = ${f1(before)} → ${f1(after)}，束宽 ${SYM.b.replace('<i>i</i>', String(id))} = ${f1(2 * before)} → ${f1(2 * after)}`;
     const phases = [{
       dur: 2.4, seg: 'what', nums: nums(0), chartTitle, chart: () => footChart(0, 0),
+      fx: { f: 'bw', hl: ['bw'], sub: `覆盖圈半径 ${SYM.b} / 2 由最远的成员决定，且不小于 0.15° 对应的 ${P.rmin}；现在平均 ${f1(avgOf(footA))}。把中心移到最小包围圆圆心，最远成员的 ${SYM.th} 最小，束宽最窄`, plain: '这一步在做什么：成员不变，挪中心让覆盖圈最小' },
       cap: '从均衡指派的结果出发，逐个把中心移到其成员的最小包围圆圆心',
       draw: () => { bg(); drawLayout(A, { links: true }); }
     }];
@@ -1767,6 +1966,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       if (j === demo) {
         phases.push({
           dur: 2.2, seg: 'welzl', nums: nums(j), chartTitle, chart: () => footChart(j, 0),
+          fx: { f: 'bw', hl: ['bw'], sub: `${dot(e.ids[0])}${SYM.U.replace('<i>i</i>', String(e.ids[0]))} 有 ${Pts.length} 架成员，现在最远成员的 ${SYM.th} = ${f1(e.before)}；最小包围圆的半径就是新中心下的 max ${SYM.th}`, plain: '这一步在做什么：用 Welzl 算法求能圈住全部成员的最小圆' },
           cap: `以 ${dot(e.ids[0])}这个波束为例演示 Welzl 算法：它有 ${Pts.length} 架成员，随机打乱后逐个加入`,
           draw: t => {
             bg(); drawLayout(Ls[j], Object.assign({ foot: false }, dimOthers));
@@ -1780,6 +1980,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
               : `加入第 ${i + 1} 架：它在圆外，所以新圆必定经过它。以它为边界点重新求圆，${s.support.length === 1 ? '只有它一个点' : s.support.length === 2 ? '两个边界点，圆是以两点为直径的圆' : '三个边界点，圆是过三点的圆'}，半径 ${f1(s.c.r)}`;
           phases.push({
             dur: i === 0 ? 1.6 : s.inside ? 1.5 : 2.6, seg: 'welzl', nums: nums(j), chartTitle, chart: () => footChart(j, 0),
+            fx: { f: 'bw', hl: ['bw'], sub: `已加入 ${i + 1} / ${Pts.length} 架，当前圆半径 ${f1(Math.max(0, s.c.r))}` + (s.inside ? '，新点在圆内，半径不变' : i === 0 ? '' : `，新点在圆外，${s.support.length} 个边界点重新确定圆`) + `；全部加完后半径 ${f1(e.mec.r)}，即新中心下的 max ${SYM.th}`, plain: '这一步在做什么：逐个加入成员，圆外的点就成为新圆的边界点' },
             cap,
             draw: t => {
               bg(); drawLayout(Ls[j], Object.assign({ foot: false }, dimOthers));
@@ -1797,8 +1998,12 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
           });
         });
       }
+      const blB = e.blocker != null ? Ls[j].beams.find(b => b.id === e.blocker) : null, blD = blB ? Math.hypot(blB.x - e.to.x, blB.y - e.to.y) : 0;
+      const fxRule = e.ok
+        ? { f: 'bw', hl: ['bw', 'sep'], sub: bwSub(e.ids[0], e.before, e.after) + (tiny ? '，中心几乎不动' : `；新中心与其它中心的距离都 ≥ max(${SYM.b}, <i>b</i><sub><i>j</i></sub>) / 2 且 ≥ ${P.dmin}，接受`), plain: '这一步在做什么：检查新中心不违反间隔规则，然后把中心移过去' }
+        : { f: 'bw', hl: ['sep', 'dmin'], sub: `${dot(e.ids[0])}最小包围圆半径 ${f1(e.mec.r)}，但新中心到 ${dot(e.blocker)}只有 ${f1(blD)}` + (blD < P.dmin ? ` < ${P.dmin}` : `，小于两者覆盖圈半径的较大值 ${f1(Math.max(e.after, footUI(R.planes, Ls[j]).get(e.blocker)))}`) + '，违反间隔规则，保持原位', plain: '这一步在做什么：移过去会和邻居挤在一起，所以不动' };
       phases.push({
-        dur: j === demo ? 2.6 : 3.2, seg: 'rule', nums: nums(j + 1), chartTitle,
+        dur: j === demo ? 2.6 : 3.2, seg: 'rule', nums: nums(j + 1), chartTitle, fx: fxRule,
         chart: t => footChart(j, e.ok ? ease(seg(t, 0.45, 0.85)) : 0),
         cap: t => `${dot(e.ids[0])}第 ${j + 1} 个波束：` + (t < 0.3 && j !== demo && Pts.length > 1 ? `快放 Welzl：${Pts.length} 架成员逐个加入，${steps.filter(s => !s.inside).length} 次重新求圆` : `最小包围圆半径 ${f1(e.mec.r)}，` + (e.ok ? (tiny ? '中心已在圆心附近，几乎不动' : `覆盖圈半径 ${f1(e.before)} → ${f1(e.after)}，新中心与其它中心都满足间隔规则，接受`) : `移过去会违反间隔规则，与 ${dot(e.blocker)}冲突，保持原位`)),
         draw: t => {
@@ -1826,6 +2031,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     });
     phases.push({
       dur: 3, seg: 'what', nums: nums(evs.length), chartTitle, chart: () => footChart(evs.length, 0),
+      fx: { f: 'bw', hl: ['bw'], sub: `平均覆盖圈半径 ${SYM.b} / 2：${f1(avgOf(footA))} → ${f1(avgOf(footZ))}，平均束宽 ${f1(2 * avgOf(footA))} → ${f1(2 * avgOf(footZ))}；接受 ${okN} 个，拒绝 ${evs.length - okN} 个`, plain: '这一步在做什么：中心移完，波束变窄，允许半径也随之改变' },
       cap: `移动完成：接受 ${okN} 个，拒绝 ${evs.length - okN} 个；平均覆盖圈半径 ${f1(avgOf(footA))} → ${f1(avgOf(footZ))}。中心变了，各波束的允许半径也随之改变`,
       draw: () => { bg(); drawLayout(Ls[Ls.length - 1], { links: true }); }
     });
@@ -1848,8 +2054,15 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
 <p data-seg="reassign"><b>删除后重新指派。</b>删除通过后，用最小费用流重新均衡全部飞机。上一步移动中心已经改变了允许半径，这次重新指派让各波束的负载重新分布` + (peakAfterDel != null && peakAfterDel < peak0 ? `，最忙波束从 ${peak0} 架降到 ${peakAfterDel} 架` : '') + `。</p>
 <p data-seg="split"><b>拆分最忙波束。</b>按负载从高到低取三个候选，先试最忙的，不行再试次忙的。拆法：取相距最远的两架飞机作种子，其余飞机归离自己近的种子，再把种子换成每堆的中心点，反复几次分成两堆。两堆各自的最小包围圆圆心就是两个新中心；两个新中心太近时沿连线推开到最小间距 ${P.dmin}。</p>
 <p data-seg="splitcheck"><b>拆分要过两关。</b>一是间隔：两个新中心与其它中心都至少相距 ${P.dmin}；二是最大流：每束容量 ${r1.Pcur} 时全部飞机都能分进去。两关都过才接受，否则放弃，换下一个候选。拆分一直进行到波束数用满上限。</p>`;
+    const flowFx = (chk, prog, Pcur, ok, flow, what) => t => {
+      const pr = prog(t), base = `${SYM.P} = 本轮开始时最忙 <b>${Pcur}</b>，${SYM.n} = ${chk.nA}`;
+      if (pr.done) return { f: 'eq9', hl: ['sol'], sub: base + `。最大流 = ${flow} ${ok ? `= ${SYM.n}，式（9）有解，${what}通过` : `< ${SYM.n}，式（9）无解，${what}不通过`}`, plain: ok ? `这一步在做什么：最大流证明${what}后每架飞机都有波束接收，且没有波束超过 ${Pcur}` : `这一步在做什么：最大流证明${what}后有飞机无处可去` };
+      const back = pr.cur && pr.cur.nodes.some(x => x.back);
+      return { f: 'eq9', hl: [back ? 'cap' : 'one'], sub: base + `。流量 ${pr.k} / ${chk.nA}` + (back ? `：波束已到 ${Pcur}，让一架飞机改投别的波束` : ''), plain: `这一步在做什么：用式（9）检查${what}后是否仍能让每束不超过 ${Pcur}` };
+    };
     const phases = [{
       dur: 2.6, seg: 'why', nums: nums(L0), chartTitle, chart: () => loadChart(L0, null, 1),
+      fx: { f: 'eq9', hl: ['cap'], sub: `${SYM.m} = ${L0.beams.length}，${SYM.mmax} = ${mm}；本轮所有改动都要满足式（9），${SYM.P} 取本轮开始时的最忙负载 <b>${r1.Pcur}</b>`, plain: '这一步在做什么：删掉闲的波束、拆开忙的波束，波束总数不超过上限' },
       cap: `移动中心之后，现在有 ${L0.beams.length} 个波束` + (L0.beams.length >= mm ? '，已用满上限。先试着删掉最闲的波束，腾出名额' : `，还有 ${mm - L0.beams.length} 个空名额。先试着删掉最闲的波束`),
       draw: () => { bg(); drawLayout(L0, { loadTags: true }); }
     }];
@@ -1865,9 +2078,11 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       const Lrel = { beams: e.beams2, own: L0.own.map(id => (id === e.id ? -1 : id)) };
       const hiMem = a => (L0.own[a] === e.id ? ACC : null);
       const extra = [['试删的波束负载', e.load], ['释放的飞机', mem.length]];
+      const thSubs = grown.map(b => { const i2 = e.beams2.indexOf(b), i0 = L0.beams.findIndex(x => x.id === b.id); return `${dot(b.id)}${thSub(b.id, nearestOther(e.beams2, i2).d)}，删前是 min(18, ${f1(nearestOther(L0.beams, i0).d)}) = ${f1(thB.get(b.id))}，即 <b>${f1(thB.get(b.id))} → ${f1(thA.get(b.id))}</b>`; });
       // ① 选中最闲的候选
       phases.push({
         dur: 2.2, seg: 'del', nums: nums(L0, extra), chartTitle, chart: () => loadChart(L0, [e.id], 1),
+        fx: { f: 'theta', hl: [], sub: `${dot(e.id)}负载 ${e.load} < ${SYM.P} = ${r1.Pcur}，是${j === 0 ? '最闲的' : '剩下最闲的'}；删掉它后，它的 ${mem.length} 架飞机要落进别的波束的 ${SYM.Th} 之内`, plain: '这一步在做什么：挑最闲的波束试删' },
         cap: `${dot(e.id)}试删第 ${j + 1} 个候选：它只有 ${e.load} 架飞机，是${j === 0 ? '最闲的波束' : '剩下最闲的波束'}。实线圆是它目前罩住成员的覆盖圈`,
         draw: t => {
           bg(); drawLayout(L0, { beamAlpha: id => (id === e.id ? 1 : 0.4), loadTags: true, ring: t > 0.3 ? hiMem : null });
@@ -1878,6 +2093,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       // ② 释放飞机，③ 其余波束的允许半径重算并画出变化，连线表示可以归属
       phases.push({
         dur: 4.6, seg: 'del', nums: nums(L0, extra.concat([['允许半径变大的波束', grown.length, grown.length ? 'acc' : ''], ['能被接收的飞机', (mem.length - orphans.length) + ' / ' + mem.length, orphans.length ? 'bad' : 'good']])), chartTitle, chart: () => loadChart(L0, [e.id], 1),
+        fx: t => ({ f: 'theta', hl: t > 0.25 ? ['Thdef'] : ['E'], sub: t > 0.25 ? (thSubs.length ? `删掉 ${dot(e.id)}后重算：` + thSubs.join('；') : `删掉 ${dot(e.id)}后重算，它不是任何波束的最近其它中心，${SYM.Th} 都不变，仍为 ${e.beams2.map(b => f1(thA.get(b.id))).join('、')}`) + (t > 0.6 ? `；${mem.length - orphans.length} / ${mem.length} 架落进了新的 ${SYM.E}` : '') : `释放 ${mem.length} 架飞机，它们原来的允许边随 ${dot(e.id)}一起消失`, plain: '这一步在做什么：删掉一个中心，邻居的允许半径按公式重算，常常会变大' }),
         cap: t => `释放它的 ${mem.length} 架飞机，蓝圈标出。` + (t > 0.25 ? `删掉后其余波束的允许半径重算，虚线圆：` + (grown.length ? `${grown.map(b => dot(b.id)).join('')}的最近其它中心变远，允许半径从 ${grown.map(b => f1(thB.get(b.id))).join('、')} 变到 ${grown.map(b => f1(thA.get(b.id))).join('、')}` : '没有波束的允许半径变化') : '') + (t > 0.6 ? `。${mem.length - orphans.length} 架落在别的波束允许范围内，连线所示` + (rescued.length ? `，其中 ${rescued.length} 架是靠变大的允许半径才接得住` : '') + (orphans.length ? `；${orphans.length} 架不在任何允许范围内，标红` : '') : ''),
         draw: t => {
           bg();
@@ -1901,7 +2117,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       const chk = e.check, states = flowStates(chk.nA, chk.paths), T1 = 0.72, prog = t => flowProgress(chk.paths, t, 0.08, T1);
       const msg = e.ok ? `最大流 = ${e.flow} = n，每架飞机都有波束接收，没有波束超过 ${e.Pcur}` : `最大流 = ${e.flow} < n，${e.nA - e.flow} 架飞机无处可去`;
       phases.push({
-        dur: j === 0 ? 5 : 3.8, seg: 'delcheck', chartTitle: `每束容量 ${e.Pcur} 时各波束分到的飞机数`,
+        dur: j === 0 ? 5 : 3.8, seg: 'delcheck', chartTitle: `每束容量 ${e.Pcur} 时各波束分到的飞机数`, fx: flowFx(chk, prog, e.Pcur, e.ok, e.flow, '删除'),
         nums: t => { const pr = prog(t); return nums(Lrel, [['流量', pr.k + ' / ' + chk.nA, pr.done ? (e.ok ? 'good' : 'bad') : ''], ['结果', pr.done ? (e.ok ? '删除' : '保留') : '检查中', pr.done ? (e.ok ? 'good' : 'bad') : '']]); },
         chart: t => { const pr = prog(t); const ld = new Array(chk.sub.bIds.length).fill(0); states[pr.k].forEach(li => { if (li >= 0) ld[li]++; }); cBars({ vals: ld, colors: chk.sub.bIds.map(colorOf), lines: [{ v: e.Pcur, label: 'P = ' + e.Pcur, color: pr.done ? (e.ok ? GREEN : RED) : MUTED }] }); },
         cap: t => { const pr = prog(t); return `最大流检查：全部 ${chk.nA} 架飞机重新放进网络，每束容量 ${e.Pcur}。` + (pr.done ? msg + (e.ok ? '，可以删除' : '，保留它，试下一个') : (pr.cur ? `第 ${pr.k} 条增广路径，` + pathText(pr.cur, chk.sub.bIds) : '开始找增广路径')); },
@@ -1917,6 +2133,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
         const pk = F.evaluate(e.L).peak;
         phases.push({
           dur: 3.6, seg: 'reassign', nums: nums(e.L, [['结果', '删除', 'good'], ['最忙负载', `${peak0} → ${pk}`, 'acc']]), chartTitle,
+          fx: { f: 'eq10', hl: ['sq', 'cap'], sub: `删除通过，按式（10）重新均衡：${SYM.Ps} 取 ${e.Pcur}，∑${SYM.Lsq} = ${sqOf(L0)} → ${sqOf(e.L)}，最忙负载 ${peak0} → ${pk}`, plain: '这一步在做什么：删掉后把全部飞机重新均衡一遍' },
           chart: t => loadChart(e.L, null, ease(seg(t, 0.3, 0.8)), loadsOf(L0)),
           cap: `通过，删除 ${dot(e.id)}。随后用最小费用流在每束不超过 ${e.Pcur} 的前提下重新均衡全部飞机：最忙波束 ${peak0} → ${pk}` + (pk < peak0 ? '，因为移动中心后允许半径变了，热点旁边的波束能分走更多飞机' : ''),
           draw: t => {
@@ -1928,6 +2145,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       } else {
         phases.push({
           dur: 2.4, seg: 'del', nums: nums(L0, extra.concat([['结果', '保留', 'bad']])), chartTitle, chart: () => loadChart(L0, [e.id], 1),
+          fx: { f: 'eq9', hl: ['sol'], sub: `最大流 = ${e.flow} < ${SYM.n} = ${e.nA}，${SYM.P} = ${e.Pcur} 时式（9）无解，${e.nA - e.flow} 架飞机无处可去，保留 ${dot(e.id)}`, plain: '这一步在做什么：删不掉就保留，试下一个' },
           cap: `${e.nA - e.flow} 架飞机无处可去，保留 ${dot(e.id)}，接着试下一个较闲的波束`,
           draw: () => {
             bg(); drawLayout(L0, { beamAlpha: id => (id === e.id ? 1 : 0.4), ring: a => (L0.own[a] === e.id ? (optsAfter.get(a).length ? ACC : RED) : null), loadTags: true });
@@ -1940,6 +2158,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       const Lb = sps[0].Lbefore, cands = sps[0].cands, evb = F.evaluate(Lb);
       phases.push({
         dur: 3, seg: 'split', nums: nums(Lb, [['最忙负载', evb.peak], ['候选', cands.map(c => c.id).join('、')]]), chartTitle, chart: () => loadChart(Lb, cands.map(c => c.id), 1),
+        fx: { f: 'bw', hl: ['dmin'], sub: `${SYM.m} = ${Lb.beams.length} < ${SYM.mmax} = ${mm}，候选负载 ${cands.map(c => dot(c.id) + c.load).join('，')}；拆出的两个新中心互相之间、与其它中心之间都要满足 ${SYM.thij} ≥ 0.15°，即距离 ≥ ${P.dmin}`, plain: '这一步在做什么：有空名额，就把最忙的波束一分为二' },
         cap: `现在波束数 ${Lb.beams.length}，${Lb.beams.length < mm ? `还有 ${mm - Lb.beams.length} 个名额，` : ''}拆分最忙的波束。按负载从高到低取三个候选：${cands.map(c => dot(c.id) + c.load + ' 架').join('，')}。先试第一个，不行再试下一个`,
         draw: t => {
           bg(); drawLayout(Lb, { loadTags: true, beamAlpha: id => (cands.some(c => c.id === id) ? 1 : 0.4) });
@@ -1956,6 +2175,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       // 两堆聚类的迭代过程
       phases.push({
         dur: 2 + 0.9 * e.iters.length, seg: 'split', nums: t => nums(Lb, extra.concat([['聚类迭代', Math.min(e.iters.length, Math.max(0, Math.floor(seg(t, 0.3, 0.95) * e.iters.length + 0.999))) + ' / ' + e.iters.length], ['分成两堆', g0 + ' + ' + g1]])), chartTitle, chart: () => loadChart(Lb, [e.id], 1),
+        fx: { f: 'bw', hl: ['bw'], sub: `${dot(e.id)}负载 ${e.load}，${e.iters.length} 次迭代后分成 ${g0} + ${g1} 架；两堆各自的最小包围圆半径 ${f1(e.mec[0].r)} 和 ${f1(e.mec[1].r)}，即两个新波束的 ${SYM.b} / 2`, plain: '这一步在做什么：把成员分成两堆，每堆成为一个新波束' },
         cap: t => `${dot(e.id)}试拆候选 ${j + 1}，它有 ${e.load} 架飞机。` + (t < 0.3 ? '先取相距最远的两架作种子' : (() => { const it = Math.min(e.iters.length - 1, Math.floor(seg(t, 0.3, 0.95) * e.iters.length)); const nl = e.iters[it].lab, a0 = nl.filter(v => v === 0).length; return `第 ${it + 1} 次迭代：每架飞机归离自己近的那个中心，分成 ${a0} + ${nl.length - a0} 架，再把中心换成每堆的平均位置`; })()),
         draw: t => {
           bg();
@@ -1980,6 +2200,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       // 两堆的最小包围圆圆心作为新中心，太近则推开
       phases.push({
         dur: 2.6, seg: 'split', nums: nums(Lb, extra.concat([['分成两堆', g0 + ' + ' + g1], ['新中心间距', f1(e.pushed ? P.dmin : e.d12) + (e.pushed ? '，推开后' : '')]])), chartTitle, chart: () => loadChart(Lb, [e.id], 1),
+        fx: { f: 'bw', hl: ['dmin'], sub: `两个新中心的 ${SYM.thij} 对应距离 ${f1(e.d12)}` + (e.pushed ? ` < ${P.dmin}，违反 ${SYM.thij} ≥ 0.15°，沿连线推开到 <b>${P.dmin}</b>` : ` ≥ ${P.dmin}，满足 ${SYM.thij} ≥ 0.15°，不用推开`), plain: '这一步在做什么：两堆的最小包围圆圆心作新中心，太近就推开' },
         cap: `分成 ${g0} 架和 ${g1} 架两堆。两堆各自的最小包围圆圆心就是两个新中心` + (e.pushed ? `，二者相距 ${f1(e.d12)} 小于最小间距 ${P.dmin}，沿连线推开到 ${P.dmin}` : `，相距 ${f1(e.d12)}，不小于最小间距 ${P.dmin}，不用推开`),
         draw: t => {
           bg(); drawLayout(Lb, Object.assign({ planeColor: a => (mem.has(a) ? colAt(e.lab, a) : null) }, dim));
@@ -1997,6 +2218,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       const Lsp = { beams: Lb.beams.filter(b => b.id !== e.id).concat([{ id: e.ids[0], x: e.p1.x, y: e.p1.y, grp: e.ids[0] }, { id: e.ids[1], x: e.p2.x, y: e.p2.y, grp: e.ids[1] }]), own: Lb.own.map((id, a) => (id === e.id ? e.ids[e.lab[mem.get(a)]] : id)) };
       phases.push({
         dur: 3, seg: 'splitcheck', nums: nums(Lb, extra.concat([['间隔检查', e.blocker ? '不通过' : '通过', e.blocker ? 'bad' : 'good']])), chartTitle, chart: () => loadChart(Lb, [e.id], 1),
+        fx: { f: 'bw', hl: ['dmin'], sub: e.blocker ? `${dot(e.ids[e.blocker.which])}新中心到 ${dot(e.blocker.id)}的距离 ${f1(e.blocker.d)} < ${P.dmin}，违反 ${SYM.thij} ≥ 0.15°，放弃` : `两个新中心到其它 ${Lb.beams.length - 1} 个中心的距离都 ≥ ${P.dmin}，满足 ${SYM.thij} ≥ 0.15°`, plain: '这一步在做什么：第一关，新中心与其它中心保持最小间距' },
         cap: `第一关，间隔检查：两个新中心与其它中心都要至少相距 ${P.dmin}，灰色虚线圆是这个距离。` + (e.blocker ? `${dot(e.ids[e.blocker.which])}新中心与 ${dot(e.blocker.id)}只相距 ${f1(e.blocker.d)}，间隔不足，放弃，换下一个候选` : '都满足，通过'),
         draw: t => {
           bg(); drawLayout(Lsp, { foot: false, beamAlpha: id => (e.ids.includes(id) || (bl && id === bl.id) ? 1 : 0.4), planeAlpha: a => (mem.has(a) ? 1 : 0.3) });
@@ -2016,7 +2238,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
         const chk = e.check, states = flowStates(chk.nA, chk.paths), T1 = 0.72, prog = t => flowProgress(chk.paths, t, 0.08, T1);
         const msg = e.ok ? `最大流 = ${e.flow} = n，每束不超过 ${e.Pcur}` : `最大流 = ${e.flow} < n，${e.nA - e.flow} 架飞机分不进去`;
         phases.push({
-          dur: 4, seg: 'splitcheck', chartTitle: `每束容量 ${e.Pcur} 时各波束分到的飞机数`,
+          dur: 4, seg: 'splitcheck', chartTitle: `每束容量 ${e.Pcur} 时各波束分到的飞机数`, fx: flowFx(chk, prog, e.Pcur, e.ok, e.flow, '拆分'),
           nums: t => { const pr = prog(t); return nums({ beams: e.nb }, extra.concat([['流量', pr.k + ' / ' + chk.nA, pr.done ? (e.ok ? 'good' : 'bad') : ''], ['结果', pr.done ? (e.ok ? '接受' : '放弃') : '检查中', pr.done ? (e.ok ? 'good' : 'bad') : '']])); },
           chart: t => { const pr = prog(t); const ld = new Array(chk.sub.bIds.length).fill(0); states[pr.k].forEach(li => { if (li >= 0) ld[li]++; }); cBars({ vals: ld, colors: chk.sub.bIds.map(colorOf), lines: [{ v: e.Pcur, label: 'P = ' + e.Pcur, color: pr.done ? (e.ok ? GREEN : RED) : MUTED }] }); },
           cap: t => { const pr = prog(t); return `第二关，最大流检查：${e.nb.length} 个波束，每束容量 ${e.Pcur}，全部 ${chk.nA} 架飞机重新放进网络。` + (pr.done ? msg + (e.ok ? '，接受这次拆分' : '，放弃，换下一个候选') : (pr.cur ? `第 ${pr.k} 条增广路径，` + pathText(pr.cur, chk.sub.bIds) : '开始找增广路径')); },
@@ -2033,6 +2255,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
         const pk = F.evaluate(e.L).peak;
         phases.push({
           dur: 3.2, seg: 'splitcheck', nums: nums(e.L, extra.concat([['结果', '接受', 'good'], ['最忙负载', `${F.evaluate(Lb).peak} → ${pk}`, 'acc']])), chartTitle,
+          fx: { f: 'eq10', hl: ['sq', 'cap'], sub: `拆分通过，按式（10）重新均衡：${SYM.Ps} 取 ${e.Pcur}，∑${SYM.Lsq} = ${sqOf(Lb)} → ${sqOf(e.L)}，最忙负载 ${F.evaluate(Lb).peak} → ${pk}`, plain: '这一步在做什么：拆分后把全部飞机重新均衡一遍' },
           chart: t => loadChart(e.L, e.ids, ease(seg(t, 0.2, 0.8)), loadsOf(Lb)),
           cap: `两关都过，接受：${dot(e.id)}拆成 ${dot(e.ids[0])}和 ${dot(e.ids[1])}，随后用最小费用流重新均衡全部飞机，最忙负载 ${F.evaluate(Lb).peak} → ${pk}`,
           draw: t => { const tw = tween(Lb, e.L, ease(seg(t, 0.2, 0.8))); bg(); drawLayout(tw.L, { foot: tw.foot, beamAlpha: tw.beamAlpha, loadTags: t > 0.8 }); }
@@ -2040,6 +2263,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       } else if (e.reason === 'flow') {
         phases.push({
           dur: 2, seg: 'splitcheck', nums: nums(Lb, extra.concat([['结果', '放弃', 'bad']])), chartTitle, chart: () => loadChart(Lb, [e.id], 1),
+          fx: { f: 'eq9', hl: ['sol'], sub: `最大流 = ${e.flow} < ${SYM.n} = ${e.nA}，${SYM.P} = ${e.Pcur} 时式（9）无解，放弃拆分 ${dot(e.id)}`, plain: '这一步在做什么：拆开后反而有飞机分不进去，放弃' },
           cap: `最大流检查未通过，放弃拆分 ${dot(e.id)}` + (j + 1 < sps.length ? '，换下一个候选' : ''),
           draw: () => { bg(); drawLayout(Lb, Object.assign({ loadTags: true }, dim)); tag('最大流检查未通过，放弃', X(e.from.x) + 12, Y(e.from.y) - 34, { bold: true, color: RED }); }
         });
@@ -2049,6 +2273,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     phases.push({
       dur: 3, seg: 'why', nums: nums(Lend, [['本轮删除', delN], ['本轮拆分', spN], ['最忙负载', F.evaluate(Lend).peak]]),
       chartTitle, chart: () => loadChart(Lend, null, 1),
+      fx: { f: 'eq9', hl: ['cap'], sub: `${SYM.m} = ${Lend.beams.length} ≤ ${SYM.mmax} = ${mm}，每束 ≤ ${SYM.P} = ${r1.Pcur}，现在最忙 ${F.evaluate(Lend).peak}`, plain: `这一步在做什么：本轮删除 ${delN} 个、拆分 ${spN} 个，每次改动都经式（9）确认` },
       cap: `本轮删除 ${delN} 个、拆分 ${spN} 个，波束数 ${SYM.m} = ${Lend.beams.length}。每次改动都用最大流确认每束不超过 ${r1.Pcur}` + (dels.length === 0 && sps.length === 0 ? '；本轮没有可删除或可拆分的波束' : ''),
       draw: () => { bg(); drawLayout(Lend, { loadTags: true }); }
     });
@@ -2066,21 +2291,31 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
 <p data-seg="compare"><b>怎么比较。</b>每轮结束依次比较三项：最忙负载，最忙 10% 波束的平均负载，负载离散系数。前一项相同才看后一项，始终记下最好的布局。本例只有 ${P.mmax} 个波束，最忙 10% 就是最忙的那一个。</p>
 <p data-seg="stop"><b>何时停止。</b>连续 3 轮没有改进就停止。右侧曲线是每轮的最忙负载，实心点表示这一轮有改进，虚线是下界 ${SYM.lb}。</p>
 <p data-seg="result"><b>本例结果。</b>最好布局的最忙负载 ${SYM.Pb} = ${best.ev.peak}，` + (gap > 0 ? `比下界多 ${gap} 架。差距主要来自热点：间隔规则限制了热点处能放的中心数，每个中心还要兼顾周围的飞机。第二步的叠放正是为此准备的。</p>` : '已达到下界，说明这个布局已是最优。</p>');
+    const n = R.n;
+    const evSub = ev => { const mean = n / ev.m, sd = ev.cv * mean; return `${SYM.P} = <b>${ev.peak}</b>，最忙 10% 负载 = ${f1(ev.top10)}，<i>σ</i> / <i>μ</i> = ${f2(sd)} / ${f2(mean)} = ${f2(ev.cv)}`; };
     const phases = [{
       dur: 2.6, seg: 'round', nums: nums(rounds[0]), chartTitle: '每轮的最忙负载', chart: () => curve(0, false),
+      fx: { f: 'rec', hl: ['P'], sub: `第 0 轮：${evSub(rounds[0].ev)}，记为最好布局`, plain: '这一步在做什么：每轮结束按三项指标依次比较，记下最好的布局' },
       cap: `第 0 轮：初始中心经过精确指派与均衡后，最忙负载 ${rounds[0].ev.peak}`,
       draw: () => { bg(); drawLayout(rounds[0].L, { loadTags: true }); }
     }];
+    let bestSoFar = rounds[0];
     for (let i = 1; i < rounds.length; i++) {
-      const r = rounds[i];
+      const r = rounds[i], bv = bestSoFar.ev;
+      // 哪一项决定了这一轮的胜负
+      const by = r.ev.peak !== bv.peak ? 'P' : Math.abs(r.ev.top10 - bv.top10) > 1e-9 ? 'top' : 'cv';
+      const byName = by === 'P' ? '最忙负载' : by === 'top' ? '最忙 10% 负载' : '负载离散系数';
+      const fxR = { f: 'rec', hl: [by], sub: `第 ${i} 轮：${evSub(r.ev)}；与最好的第 ${bestSoFar.r} 轮比，${byName}${r.improved ? '更小' : '不更小'}` + (by !== 'P' ? '，前面的指标相同' : ''), plain: r.improved ? `这一步在做什么：第 ${i} 轮比之前都好，记为最好布局` : `这一步在做什么：第 ${i} 轮没有改进，已连续 ${stale[i]} 轮` };
+      if (r.improved) bestSoFar = r;
       phases.push({
-        dur: 2.6, seg: r.improved ? 'compare' : 'stop', nums: nums(r), chartTitle: '每轮的最忙负载', chart: t => curve(i - 1 + ease(seg(t, 0, 0.7)), false),
+        dur: 2.6, seg: r.improved ? 'compare' : 'stop', nums: nums(r), chartTitle: '每轮的最忙负载', chart: t => curve(i - 1 + ease(seg(t, 0, 0.7)), false), fx: fxR,
         cap: `第 ${i} 轮：最忙负载 ${r.ev.peak}，最忙 10% 平均 ${f1(r.ev.top10)}，离散系数 ${f2(r.ev.cv)}。` + (r.improved ? '比之前都好，记为最好布局' : `没有改进，已连续 ${stale[i]} 轮`),
         draw: t => { bg(); const tw = tween(rounds[i - 1].L, r.L, ease(seg(t, 0, 0.7))); drawLayout(tw.L, { foot: tw.foot, beamAlpha: tw.beamAlpha, loadTags: t > 0.7 }); }
       });
     }
     phases.push({
       dur: 3.8, seg: 'result', nums: nums(best).concat(), chartTitle: '每轮的最忙负载，绿圈为最好的一轮', chart: () => curve(rounds.length - 1, true),
+      fx: { f: ['rec', 'eq8'], hl: ['P', 'lb'], sub: `最好布局来自第 ${best.r} 轮：${evSub(best.ev)}；下界 ⌈${n} / ${P.mmax}⌉ = ${lb}` + (gap > 0 ? `，相差 ${gap} 架` : '，已达下界'), plain: '这一步在做什么：连续 3 轮没有改进就停止，输出最好布局' },
       cap: `连续 3 轮没有改进，停止。最好布局来自第 ${best.r} 轮：${SYM.Pb} = ${best.ev.peak}，下界 ${lb}` + (gap > 0 ? `，相差 ${gap} 架` : '，已达下界'),
       draw: () => { bg(); drawLayout(best.L, { loadTags: true }); }
     });
@@ -2101,10 +2336,12 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       `<p data-seg="check"><b>先检查。</b>把波束到汇点的容量设为 ${SYM.K} 再算最大流。最大流小于 ${SYM.n}，就说明有飞机分不进去。这些飞机集中在热点，而间隔规则限制了热点处能放的中心数。</p>
 <p data-seg="stack"><b>热点叠放。</b>预留几个波束名额，用其余名额重新执行第一步；再把预留的波束逐个叠放到能接纳最多未分配飞机的中心上，与原波束指向同一处，分担热点的飞机。叠放的波束之间不检查间隔规则，由第二阶段给它们分配不同的频率槽来区分。</p>`;
     const phases = [];
+    const capSub = `min(${SYM.Pb}, ${SYM.K}) = min(${s2.Pbar}, ${K}) = <b>${s2.cap}</b>`;
     if (!s2.need) {
       phases.push({
         dur: 4, seg: 'check', nums: [[`上限 ${SYM.K}`, K], ['最大流', s2.check0.flow + ' / ' + n, 'good'], ['未分配飞机', 0, 'good'], [`${SYM.Pb}`, s2.Pbar]],
         chartTitle: '各波束的飞机数', chart: () => loadChart(C0, [kLine]),
+        fx: { f: ['eq9', 'eq11'], hl: ['sol', 'cap'], sub: `${SYM.P} 取 ${SYM.K} = ${K}：最大流 = ${s2.check0.flow} = ${SYM.n}，式（9）有解，不需要叠放；收紧时每束上限 ${capSub}`, plain: '这一步在做什么：确认每束不超过 K 也能装下全部飞机' },
         cap: `每束不超过 ${SYM.K} = ${K} 时最大流 = ${n}，全部飞机都能分进去，本组飞机不需要叠放`,
         draw: () => { bg(); drawLayout(C0, { loadTags: true }); }
       });
@@ -2113,12 +2350,14 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       phases.push({
         dur: 4, seg: 'check', nums: [[`上限 ${SYM.K}`, K, 'acc'], [`第一步 ${SYM.Pb}`, s2.Pbar1], ['最大流', s2.check0.flow + ' / ' + n, 'bad'], ['分不进去的飞机', un0.size, 'bad'], [`波束数 ${SYM.m}`, L1.beams.length], ['下界', R.lb]],
         chartTitle: `每束最多 K = ${K} 架时各波束分到的飞机数`, chart: () => loadChart(C0, [kLine]),
+        fx: { f: 'eq9', hl: ['cap', 'sol'], sub: `${SYM.P} 取 ${SYM.K} = ${K}，比第一步的 ${SYM.Pb} = ${s2.Pbar1} 小：最大流 = ${s2.check0.flow} < ${SYM.n} = ${n}，式（9）无解，${un0.size} 架分不进去`, plain: '这一步在做什么：把容量换成 K 再算一次最大流，发现热点装不下' },
         cap: `把每束上限设为 ${SYM.K} = ${K} 再算最大流：最大流 = ${s2.check0.flow} < ${n}，有 ${un0.size} 架飞机分不进去，标为红圈`,
         draw: t => { bg(); drawLayout(C0, { ring: a => (un0.has(a) && Math.sin(t * 14) > -0.4 ? RED : null), loadTags: true }); }
       });
       phases.push({
         dur: 4, seg: 'stack', nums: [[`上限 ${SYM.K}`, K, 'acc'], ['预留名额', rsv], ['重新执行第一步的波束数', mm - rsv], ['得到的最忙负载', s2.base.best.ev.peak], [`上限 ${SYM.mmax}`, mm], ['下界', R.lb]],
         chartTitle: '各波束的飞机数', chart: () => loadChart(base, [kLine]),
+        fx: { f: 'eq9', hl: ['cap'], sub: `预留 ${rsv} 个名额，用 ${SYM.m} = ${mm} − ${rsv} = ${mm - rsv} 个波束重新执行第一步，最忙负载 ${s2.base.best.ev.peak}；预留的波束将叠放到热点，给热点多开 ${rsv} 条容量 ${SYM.K} 的边`, plain: '这一步在做什么：腾出几个波束名额，准备叠放到热点' },
         cap: `预留 ${rsv} 个名额，用其余 ${mm - rsv} 个波束重新执行第一步，得到最忙负载 ${s2.base.best.ev.peak}`,
         draw: t => { bg(); const tw = tween(L1, base, ease(seg(t, 0, 0.75))); drawLayout(tw.L, { foot: tw.foot, beamAlpha: tw.beamAlpha, loadTags: t > 0.75 }); }
       });
@@ -2130,6 +2369,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
         const Lafter = chkLayout(post, st.beamsBefore.concat([copy])), unAfter = new Set(post.un);
         phases.push({
           dur: 4.5, seg: 'stack', nums: [[`上限 ${SYM.K}`, K], ['未分配飞机', un.size, 'bad'], ['叠放位置可接纳', st.cnt, 'acc'], ['已叠放', j + ' → ' + (j + 1)], [`波束数 ${SYM.m}`, Lafter.beams.length], [`上限 ${SYM.mmax}`, mm]],
+          fx: t => ({ f: 'eq9', hl: t > 0.6 ? ['cap'] : ['sol'], sub: t > 0.6 ? `在 ${dot(st.site)}叠放一束：该处波束到汇点的容量由 ${SYM.K} 变为 2 × ${SYM.K}，${SYM.m} = ${Lafter.beams.length}；最大流 = ${post.flow} / ${n}` + (unAfter.size ? `，还剩 ${unAfter.size} 架` : '，式（9）有解') : `${SYM.P} = ${SYM.K} = ${K} 时最大流 = ${st.check.flow} < ${n}，${un.size} 架未分配；${dot(st.site)}的 ${SYM.Th} 内有 ${st.cnt} 架，最多`, plain: '这一步在做什么：把预留的波束叠放到能接纳最多未分配飞机的中心上' }),
           chartTitle: `每束最多 K = ${K} 架时各波束分到的飞机数`, chart: t => loadChart(t > 0.6 ? Lafter : Lk, [kLine], t > 0.6 ? [st.site, st.copyId] : null),
           cap: t => `还有 ${un.size} 架飞机分不进去。数一数每个中心的允许范围里有几架` + (t > 0.6 ? `：${dot(st.site)}这个中心有 ${st.cnt} 架，最多，在这里叠放一个波束` + (unAfter.size ? `，之后还剩 ${unAfter.size} 架` : '，之后全部分得进去') : ''),
           draw: t => {
@@ -2147,6 +2387,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       const ex = s2.exact.L, evx = F.evaluate(ex);
       phases.push({
         dur: 4, seg: 'stack', nums: [[`上限 ${SYM.K}`, K], ['最大流', n + ' / ' + n, 'good'], [`最忙负载 ${SYM.Pb}`, s2.Pbar, 'acc'], ['下界', R.lb], [`波束数 ${SYM.m}`, ex.beams.length], ['负载离散系数', f2(evx.cv)]],
+        fx: { f: ['eq9', 'eq11'], hl: ['sol', 'cap'], sub: `叠放后最大流 = ${n} = ${SYM.n}，式（9）有解；再精确指派得 ${SYM.Pb} = ${s2.Pbar}，收紧时每束上限 ${capSub}`, plain: '这一步在做什么：叠放后全部飞机都能分进去，为收紧定下每束上限' },
         chartTitle: '叠放后各波束的飞机数，紫框为叠放的波束', chart: () => loadChart(ex, [kLine], ex.beams.filter(b => ex.beams.some(c => c !== b && c.grp === b.grp)).map(b => b.id)),
         cap: `叠放后最大流 = ${n}，全部飞机都能分进去；再做一次精确指派，最忙负载 ${SYM.Pb} = ${s2.Pbar}` + (s2.Pbar === R.lb ? '，正好等于下界' : ''),
         draw: () => { bg(); drawLayout(ex, { loadTags: true }); }
@@ -2164,8 +2405,11 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     const html = `<p data-seg="why"><b>为什么。</b>波束越窄，天线增益越高，对相邻波束的干扰也越小。负载已经达标后，应让每个波束尽量窄。</p>
 <p data-seg="how"><b>怎么做。</b>在每束不超过 min(${SYM.Pb}, ${SYM.K}) 架的前提下，用最小费用流求一个指派，使全部飞机到所属中心的距离之和最小，这里每条边的费用就是距离本身；再把各中心移到成员的最小包围圆圆心。两步交替，直到距离和不再下降。叠放的波束一起移动。</p>
 <p data-seg="effect"><b>效果。</b>距离和由 ${Math.round(Ss[0])} 降到 ${Math.round(Ss[Ss.length - 1])}，平均覆盖圈半径由 ${f1(avgOf(fStart))} 降到 ${f1(avgOf(fEnd))}。成员离中心越近，按成员范围确定的覆盖圈就越小。</p>`;
+    const capSub = `min(${SYM.Pb}, ${SYM.K}) = min(${s2.Pbar}, ${s2.K}) = <b>${cap}</b>`;
+    const SthSub = k => `∑${SYM.th}${SYM.x} = ${Ss.slice(0, k + 1).map(v => Math.round(v)).join(' → ')}`;
     const phases = [{
       dur: 2.8, seg: 'why', nums: nums(0), chartTitle: '飞机到所属中心的距离之和', chart: () => curve(0),
+      fx: { f: 'eq11', hl: ['cap'], sub: `每束上限 ${capSub}；收紧前目标值 ∑${SYM.th}${SYM.x} = ${Math.round(Ss[0])}，即全部飞机到所属中心的距离之和`, plain: '这一步在做什么：负载达标后，让飞机尽量靠近中心，波束尽量窄' },
       cap: `收紧前：每束不超过 ${cap} 架，全部飞机到所属中心的距离和为 ${Math.round(Ss[0])}`,
       draw: () => { bg(); drawLayout(tg.start.L, { links: true }); }
     }];
@@ -2174,12 +2418,14 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       if (k === 0) {
         phases.push({
           dur: 3.2, seg: 'how', nums: nums(1), chartTitle: '飞机到所属中心的距离之和', chart: t => curve(ease(seg(t, 0.2, 0.8))),
+          fx: { f: 'eq11', hl: ['obj'], sub: `中心不动，边费用就是 ${SYM.th}，最小费用流求式（11）：${SthSub(1)}，每束仍 ≤ ${cap}`, plain: '这一步在做什么：按距离和最小重新指派' },
           cap: `中心不动，用最小费用流按距离和最小重新指派：${Math.round(Ss[0])} → ${Math.round(Ss[1])}`,
           draw: t => { bg(); const tw = tween(prev, it.L, ease(seg(t, 0.2, 0.8))); drawLayout(tw.L, { foot: tw.foot, beamAlpha: tw.beamAlpha, links: true }); }
         });
       } else {
         phases.push({
           dur: 3.8, seg: 'how', nums: nums(k + 1), chartTitle: '飞机到所属中心的距离之和', chart: t => curve(k + ease(seg(t, 0.5, 0.95))),
+          fx: t => (t < 0.5 ? { f: 'eq11', hl: ['cap'], sub: `第 ${k + 1} 次迭代：先把各中心移到成员的最小包围圆圆心，每束上限仍是 ${capSub}`, plain: '这一步在做什么：移动中心，让成员离中心更近' } : { f: 'eq11', hl: ['obj'], sub: `再求一次式（11）：${SthSub(k + 1)}，目标值继续下降`, plain: '这一步在做什么：中心移完再重新指派，距离和又降一点' }),
           cap: t => (t < 0.5 ? '把各中心移到成员的最小包围圆圆心，覆盖圈随之缩小' : `再按距离和最小重新指派：${Math.round(Ss[k])} → ${Math.round(Ss[k + 1])}`),
           draw: t => {
             bg();
@@ -2192,6 +2438,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     const Lf = its[its.length - 1].L;
     phases.push({
       dur: 4, seg: 'effect', nums: nums(its.length), chartTitle: '飞机到所属中心的距离之和', chart: () => curve(Ss.length - 1),
+      fx: { f: 'eq11', hl: ['obj'], sub: `${SthSub(Ss.length - 1)}` + (tg.rejected && tg.rejected.S != null ? `，再试一次得 ${Math.round(tg.rejected.S)}，不再下降，停止` : '，再试一次不再下降，停止') + `；平均覆盖圈半径 ${f1(avgOf(fStart))} → ${f1(avgOf(fEnd))}`, plain: '这一步在做什么：距离和不再下降就停，波束已尽量窄' },
       cap: `再迭代一次距离和不再下降，停止。灰色虚线是收紧前的覆盖圈：平均半径 ${f1(avgOf(fStart))} → ${f1(avgOf(fEnd))}`,
       draw: () => {
         bg();
@@ -2220,13 +2467,21 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     };
     const loadChart = (L, from) => { const ld = loadsOf(L), ids = L.beams.map(b => b.id); cBars({ vals: ids.map(id => ld.get(id)), from: from ? ids.map(id => (from.has(id) ? from.get(id) : 0)) : null, t: 1, colors: ids.map(colorOf), alphas: ids.map(id => (region.has(id) || !from ? 0.9 : 0.9)), lines: [{ v: lb, label: '下界 ' + lb, color: RED }] }); };
     const nums = [['移出原波束', outSet.size + ' 架'], ['修补后最忙', pPatch], ['轻量修复后最忙', pRep, 'acc'], ['全部重算最忙', pFull], ['换束：修复', pct(dy.swRepair), 'good'], ['换束：重算', pct(dy.swFull), 'bad']];
+    // 式（27）代入：挑一架换了波束的飞机和一架没换的，算它们的指派费用
+    const kap = dy.cfg.kappa, repB = new Map(rep.beams.map(b => [b.id, b]));
+    const dTo = a => { const b = repB.get(rep.own[a]); return b ? Math.hypot(moved[a].x - b.x, moved[a].y - b.y) : 0; };
+    const aSw = [...swRep].sort((u, v) => u - v)[0], aSt = rep.own.findIndex((id, a) => !swRep.has(a) && region.has(id));
+    const feeText = (a, sw) => `飞机 ${a}：${SYM.d} = ${f1(dTo(a))}，${SYM.omega} = 10<sup>−4</sup> × ${f1(dTo(a))} + ${sw ? kap : 0} = <b>${(dTo(a) * EPS_DEMO + (sw ? kap : 0)).toFixed(4)}</b>`;
+    const swSub = (aSw != null ? `换束的 ${feeText(aSw, true)}` : '本例轻量修复没有飞机换束') + (aSt >= 0 ? `；没换束的 ${feeText(aSt, false)}` : '');
+    const hovSw = (hv, t) => { if (hv === 'sw' && t > 0.8) swRep.forEach(a => circS(X(moved[a].x), Y(moved[a].y), 8, { stroke: RED, lw: 2.2, alpha: blink() })); };
+    const fxBase = { f: 'eq27', hl: [], sub: `${SYM.kappa} = ${kap}，${SYM.eps} = 10<sup>−4</sup>：换一次波束的费用相当于几千个距离项，所以最忙负载相同时一定选换束少的方案`, plain: '这一步在做什么：飞机动了一小段，布局只做局部修补，不从头算' };
     const html = `<p data-seg="why"><b>为什么不每次重算。</b>飞机一直在飞，相邻两分钟之间只移动一小段。每次从头计算不仅费时，还会让大批飞机换到新波束，带来切换开销。这里以第一步得到的布局作为上一时刻的布局。</p>
 <p data-seg="patch"><b>修补。</b>中心不动：仍在原波束允许范围内的飞机留下，其余飞机分给能覆盖它的最闲波束。</p>
 <p data-seg="repair"><b>轻量修复。</b>只对最忙的几个波束及其相邻波束重新执行几轮交替优化，其余波束保持不变。指派时给换到新波束的飞机加一笔附加费用 ${SYM.kappa} = ${dy.cfg.kappa}，最忙负载相同时优先选换束少的方案。本例波束少，取最忙的 ${dy.cfg.busy} 个波束，以及中心与它们相距不超过 ${f1(dy.cfg.nbr)} 的波束，最多迭代 ${dy.cfg.rounds} 轮。</p>
 <p data-seg="switch"><b>换束比例</b>是前后两个时刻都在场的飞机中换了波束的比例，越低越好。</p>`;
     const phases = [
       {
-        dur: 3.8, seg: 'why', nums, chartTitle: '上一时刻各波束的飞机数', chart: () => loadChart(prev),
+        dur: 3.8, seg: 'why', nums, chartTitle: '上一时刻各波束的飞机数', chart: () => loadChart(prev), fx: fxBase,
         cap: '一分钟后，飞机整体向东移动了一小段。虚线圆是各波束的允许半径，中心暂时不动',
         draw: t => {
           bg(); const u = ease(t), pos = posAt(u);
@@ -2236,6 +2491,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       },
       {
         dur: 4.5, seg: 'patch', nums, chartTitle: '修补前后各波束的飞机数', chart: t => loadChart(t > 0.5 ? pt.L : prev, null),
+        fx: { f: 'eq27', hl: ['sw'], sub: `${pt.stay} 架仍在原波束 ${SYM.iprev} 的允许半径内，𝕀 = 0，不付 ${SYM.kappa}；${outSet.size} 架离开了，只能换束，𝕀 = 1`, plain: '这一步在做什么：修补，能留在原波束的都留下，离开的分给最闲的邻居' },
         cap: t => `修补：${pt.stay} 架飞机仍在原波束允许范围内，留下；${outSet.size} 架离开了，标为红圈，` + (t > 0.5 ? `分给能覆盖它的最闲波束。最忙负载 ${pPrev} → ${pPatch}` : '要重新找波束'),
         draw: t => {
           bg();
@@ -2249,6 +2505,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       },
       {
         dur: 3.4, seg: 'repair', nums, chartTitle: '修补后各波束的飞机数', chart: () => loadChart(pt.L),
+        fx: { f: 'eq27', hl: [], sub: `只对最忙的 ${dy.cfg.busy} 个波束及相距不超过 ${f1(dy.cfg.nbr)} 的邻居重新优化，共 ${region.size} 个；这 ${region.size} 个波束内的指派都按式（27）计费，${SYM.kappa} = ${kap}`, plain: '这一步在做什么：圈定要修复的局部范围，其余波束不动' },
         cap: `轻量修复只动最忙的 ${dy.cfg.busy} 个波束及其相邻波束，共 ${region.size} 个；其余 ${frozen} 个连同成员原样保留，图中变淡`,
         draw: t => {
           bg();
@@ -2257,15 +2514,23 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
         }
       },
       {
-        dur: 4.8, seg: 'repair', nums, chartTitle: '轻量修复后各波束的飞机数', chart: t => loadChart(t > 0.5 ? rep : pt.L),
+        dur: 4.8, seg: 'repair', nums, chartTitle: '轻量修复后各波束的飞机数', chart: t => loadChart(t > 0.5 ? rep : pt.L), hov: hovSw,
+        fx: t => (t > 0.8 ? { f: 'eq27', hl: ['sw', 'dcost'], sub: swSub, plain: `这一步在做什么：局部重新优化，换束的飞机每架多付 ${kap}，所以只有 ${pct(dy.swRepair)} 的飞机换束` } : { f: 'eq27', hl: ['sw'], sub: `在 ${region.size} 个波束内重新做精确指派、移动中心、删拆波束，式（10）的距离项换成式（27）：换束的飞机多付 ${SYM.kappa} = ${kap}`, plain: '这一步在做什么：局部重新优化，费用里加上换束惩罚' }),
         cap: t => `在这 ${region.size} 个波束里重新做精确指派、移动中心、删拆波束，换束加附加费用 ${SYM.kappa} = ${dy.cfg.kappa}` + (t > 0.8 ? `。最忙负载 ${pPatch} → ${pRep}，换了波束的飞机占 ${pct(dy.swRepair)}，标为蓝圈` : ''),
         draw: t => {
           bg(); const tw = tween(pt.L, rep, ease(seg(t, 0.1, 0.8)), moved, moved);
           drawLayout(tw.L, { pos: moved, foot: tw.foot, beamAlpha: id => tw.beamAlpha(id) * (region.has(id) || !pt.L.beams.some(b => b.id === id) ? 1 : 0.35), ring: a => (t > 0.8 && swRep.has(a) ? ACC : null), loadTags: t > 0.8 });
+          if (t > 0.8 && aSw != null) {
+            const p = moved[aSw], b = repB.get(rep.own[aSw]);
+            if (b) lineW(p, b, RED, 2.2, 0.9);
+            circS(X(p.x), Y(p.y), 9, { stroke: RED, lw: 2.4, alpha: 0.6 + 0.4 * Math.sin(t * 40) });
+            tag(`飞机 ${aSw} 换束：费用 10⁻⁴ × ${f1(dTo(aSw))} + ${kap}`, X(p.x) + 12, Y(p.y) - 30, { size: 12, bold: true, color: RED });
+          }
         }
       },
       {
         dur: 4.8, seg: 'switch', nums, chartTitle: '全部重算后各波束的飞机数', chart: t => loadChart(t > 0.5 ? full : rep),
+        fx: { f: 'eq27', hl: ['sw'], sub: `从头重算不计 ${SYM.kappa}：${swFull.size} 架换束，占 ${pct(dy.swFull)}；轻量修复计 ${SYM.kappa} = ${kap}：${swRep.size} 架换束，占 ${pct(dy.swRepair)}`, plain: '这一步在做什么：对比不加换束费用、每分钟从头重算会换多少束' },
         cap: t => '对比：若每分钟都从头执行第一步' + (t > 0.7 ? `，最忙负载为 ${pFull}，但 ${pct(dy.swFull)} 的飞机换了波束，标为红圈` : '……'),
         draw: t => {
           bg(); const tw = tween(rep, full, ease(seg(t, 0.1, 0.7)), moved, moved);
@@ -2273,7 +2538,8 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
         }
       },
       {
-        dur: 4, seg: 'switch', nums, chartTitle: '左：最忙负载；右：换束比例', chart: compare,
+        dur: 4, seg: 'switch', nums, chartTitle: '左：最忙负载；右：换束比例', chart: compare, hov: (hv) => hovSw(hv, 1),
+        fx: { f: 'eq27', hl: ['sw', 'dcost'], sub: swSub + `；最忙负载：修复 ${pRep}，重算 ${pFull}，下界 ${lb}`, plain: '这一步在做什么：换束费用让修复用很少的换束达到相近的均衡' },
         cap: `修补 + 轻量修复：最忙负载 ${pRep}，换束 ${pct(dy.swRepair)}；全部重算：最忙负载 ${pFull}，换束 ${pct(dy.swFull)}。` + (pRep <= pFull ? '轻量修复用少得多的换束达到了同样或更好的均衡' : `轻量修复只高 ${pRep - pFull} 架，换束却少得多`),
         draw: () => { bg(); drawLayout(rep, { pos: moved, ring: a => (swRep.has(a) ? ACC : null), loadTags: true }); }
       }
@@ -2324,10 +2590,12 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
     computeView();
     ctx.clearRect(0, 0, VW, VH);
     ph.draw(t);
+    if (ph.hov && hov()) ph.hov(hov(), t);
     cx2.clearRect(0, 0, CW, CH);
     if (ph.chart) ph.chart(t);
     setChartTitle(ph.chartTitle || '');
     setSeg(ph.seg || null);
+    setFx(typeof ph.fx === 'function' ? ph.fx(t) : ph.fx);
     setCap(typeof ph.cap === 'function' ? ph.cap(t) : ph.cap);
     const nums = typeof ph.nums === 'function' ? ph.nums(t) : ph.nums;
     if (nums) setNums(nums);
@@ -2346,6 +2614,7 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
       }
       dirty = true;
     }
+    if (HOV) dirty = true;
     if (dirty) { render(); dirty = false; }
     requestAnimationFrame(frame);
   }
@@ -2378,6 +2647,10 @@ if (typeof module !== 'undefined') module.exports = FlowAO;
   $('#btnGloss').addEventListener('click', () => showGloss(gloss.hidden));
   $('#glossClose').addEventListener('click', () => showGloss(false));
   gloss.addEventListener('click', e => { if (e.target === gloss) showGloss(false); });
+  // 悬停公式里的符号：动画中对应元素闪烁
+  const fxBox = $('#fx');
+  fxBox.addEventListener('mouseover', e => { const el = e.target.closest ? e.target.closest('[data-term]') : null; const k = el ? el.dataset.term : null; if (k !== HOV) { HOV = k; dirty = true; } });
+  fxBox.addEventListener('mouseleave', () => { HOV = null; dirty = true; });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { showGloss(false); return; }
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
