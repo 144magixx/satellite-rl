@@ -1,0 +1,125 @@
+# S1-FIX代码使用说明
+来源：codex
+
+代码只实现本次S1-FIX，不恢复旧AI17任务。正式实验由Claude在远端启动。本地已做数据抽取与小型冒烟，没有运行完整对照或完整PPO训练。
+
+静态与动态算子共用逐束半径上限，已删除间隔修复；拆分中心可沿连线外移，交替优化后继续按原预算增束。指派使用KD树邻接。本轮未执行正式远端对照或完整PPO训练。
+
+第13节修订以`adaptive_net(member_rays, k)`初始化：第k近邻排除自身，k=n取实际最远邻居，半径裁剪到[0.15°, 0.5°]；固定0.5°宽时半径为0.25°。按半径降序、飞机序号破平手开中心，通过二分选k；FLOW-AO再拆最忙束补名额。INIT仅使用自适应中心和半径上限内最近指派，不增束、不调用流量或交替优化。`N0`始终是0.5°贪心网的束数，仅供报告。逐束合法收紧可在负载不变时保留，避免一个违规中心否决全部移动；拆分失败候选只做定峰值可行性流量，接受后才求最优峰值。
+
+设计限制：上述贪心网的`N(k)`不保证单调，代码按第13节指定二分搜索，不提供全局最小k保证。例如同一大圆角度[0, 0, 0.4, 0.8, 0.8]度有N(1)=1、N(2)=2。0.5°贪心网的N0也不是最少覆盖束数证明。
+
+## 文件和数据
+
+`src/satellite_rl/coverage/s1fix/`中，`data.py`抽帧和选场景，`geom.py`处理几何，`skeleton.py`实现FLOW-AO与INIT，`bound.py`算下界，`downstream.py`连接贪心频率槽分配与SCA，`dynamic.py`实现动态算子和评价，`ppo_dyn.py`训练小型PPO，`io.py`保存CSV、布局和运行配置。小测试在`tests/test_s1fix_*.py`。
+
+本地输入都来自`D:/paper/outputs/`；输出为`D:/paper/outputs/experiments/s1_fix_20261017/`。五个日包已各读一次，每天同时生成288个静态帧和961个动态帧，五份NPZ合计144,611,816字节（约137.9 MiB）。HIST12的12景、HIST20的20景飞机数全部一致，核对数值在`data/history_counts.csv`。NPZ使用`static_`、`dynamic_`前缀，分别保存`times`、`offsets`、`icao`、`lat`、`lon`、`gs_kt`和`track_deg`；时间为UTC Unix秒，经纬度保留float64，icao为uint32。
+
+## 本地抽取与冒烟
+
+在仓库根目录用PowerShell执行：
+
+```powershell
+$env:PYTHONPATH='src'
+$env:PYTHONIOENCODING='utf-8'
+$python='C:/Users/Admin/anaconda3/envs/DQN/python.exe'
+& $python -m scripts.s1fix.extract_frames --workers 2
+& $python -m scripts.s1fix.extract_frames --verify-only
+& $python -m unittest discover -s tests -p 'test_s1fix_*.py' -v
+```
+
+## 远端运行
+
+先把数据目录及历史对照的三份CSV传到远端。以下`DATA`、`OUT`、`HIST`换成远端真实绝对路径；`HIST`下面保持`round10/science_independent_statistics_01/endpoint_metrics.csv`、`round8/analysis/actual_v4_01/analysis20x3.csv`、`round8/analysis/mechanism_01/mechanism_rows.csv`的相对路径。仓库根目录运行，先完成A的开发/确认结果，再算下界；C的effort项读取A3原布局。
+
+```bash
+export PYTHONPATH="$PWD/src"
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+DATA=/absolute/path/s1_fix_20261017/data
+OUT=/absolute/path/s1_fix_20261017
+HIST=/absolute/path/first_stage_ai_search_20261013
+
+python -m scripts.s1fix.run_A --data-dir "$DATA" --output-dir "$OUT" --history-dir "$HIST" --workers 16 --subexperiment all
+python -m scripts.s1fix.run_C --data-dir "$DATA" --output-dir "$OUT" --workers 16 --subexperiment all
+
+python -m scripts.s1fix.run_B cache --data-dir "$DATA" --output-dir "$OUT" --workers 16
+python -m scripts.s1fix.run_B baselines --data-dir "$DATA" --output-dir "$OUT" --workers 10
+python -m scripts.s1fix.run_B train --data-dir "$DATA" --output-dir "$OUT" --lam 0.2 --seed 51001
+python -m scripts.s1fix.run_B eval --data-dir "$DATA" --output-dir "$OUT"
+```
+
+A可分开选`dev`（A0/A1）、`history`、`bounds`（A2）、`effort`（A3）、`confirm`。C可选`dev`、`confirm`、`effort`。用`--limit-scenes 1 --budgets 60 --max-iters 1`可缩小A/C冒烟；A下界另可设`--milp-seconds 1`，C可设`--sca-maxiter 1 --sca-seconds 1`。这些参数用于冒烟时不代表正式结果。
+
+B共12个正式训练任务：预测版3个λ（0.05、0.2、0.8）乘3个种子（51001—51003），无预测版只用λ=0.2乘3个种子，在`train`后加`--no-forecast`。每个进程训练一个任务；full缓存必须预先完成。`--episodes 1 --episodes-per-update 1 --epochs 1 --sequence-limit 1`仅用于小型训练冒烟。评价默认读全部`*_final.pt`，不挑开发成绩最好的检查点。
+
+## 输出与实现选择
+
+- A保存静态结果、历史并列表、下界和布局；历史负载统一换算成架数，历史源文件只读。
+- C三种常规布局共用INIT的实际束数，以同一合法INIT热启动；记录原`N_budget`和实际`comparison_N`。A3的effort=10布局直接读原件单列，其实际束数照实报告。另存逐束需求、容量、功率及槽位数值，方便复核。
+- B保存逐帧/汇总评价、训练曲线与检查点。full按日期和动态帧缓存；读取时继承前帧束ID，求解耗时使用缓存原值。并行训练先写每run曲线，评价时汇总成`B/train_curves.csv`。
+- 几何检查失败的结构动作撤销；动态patch失败按规格强制升级full。算法没有证明不可行时，结果中的`feasible=False`只表示本次没有找到合法布局。
+- 下界仅算DEV24/CONF48的N=100、200，默认g=0.2°；g=0.1°敏感性只算DEV24前三个n<600的场景、N=200。LP每次限时300秒，超时保留已证下界；x上限为N，MILP也允许同格多束并保留整型性。MILP仍只算n<600，120秒由每个场景/预算共享。下界忽略间隔，主要用于衡量间隔关的算法差距；间隔代价另用同场景间隔开减间隔关衡量。
+- SCA默认最多200次迭代，时间上限仍30秒；函数与块C脚本默认一致。
+- `time_limit`是算法循环检查的软截止，正在进行的流或LP调用结束后才返回。1752架/200束预算的本地完整effort=1自测用时286.21秒，未达到30秒目标；远端正式速度仍待验证。
+- 包络宽度的1e-9余量在1°上限处封顶，避免物理接口把数值余量当成真实超宽；真实超宽仍由合法性检查拒绝。
+- `run_manifest.json`保存配置、git提交号、Python/依赖版本、主机名和起止时间。简单文件锁仅用于避免并发写覆盖；没有SHA计算、回执或预算账。既有共享物理函数内部的检查保持原样。
+
+## 半径修订本地自测（2026-10-17）
+
+DQN Python 3.11.11、NumPy 1.26.4、SciPy 1.11.4，`PYTHONPATH=src`，OMP/MKL/OpenBLAS线程均为1；同一DEV24最大帧（2024-01-12，静态142，UTC 11:52，1752架），间隔开、effort=1、默认30轮上限，无额外时间截止，四个布局全部通过最终检查。
+
+| N预算 | N_used | 峰值架数 | 总耗时/秒 |
+| --- | --- | --- | --- |
+| 60 | 60 | 55 | 25.00 |
+| 100 | 100 | 36 | 60.91 |
+| 150 | 150 | 28 | 159.36 |
+| 200 | 194 | 28 | 286.21 |
+
+开发集第一段（2024-01-12 UTC 06:00—06:30，31帧）B2+、θ=1，repair按调用后目标严格改善计接受：0/15（0%），强制full为0，含初始full缓存构建用时36.96秒。该小样本没有证明repair有效，静态200预算的30秒速度目标也未达到。原始指标、四个布局、可复跑脚本和37项测试日志保存在`D:/paper/outputs/experiments/s1_fix_20261017/radius_revision_final/`。静态计算及动态full缓存使用不同截止设置，后者仍为30秒软截止。本轮不涉及工作台前端。
+
+## 自适应初始网与repair修订自测（2026-10-17）
+
+同上1752架DEV24最大帧，DQN Python、`PYTHONPATH=src`、单线程、间隔开、effort=1、默认30轮上限、无额外时间截止，八个布局全部合法；N0均为29。INIT不拆分，四档实际束数为60/100/147/185。
+
+| N预算 | FLOW-AO实际束数 | FLOW-AO峰值/架 | FLOW-AO总耗时/秒 | INIT峰值/架 |
+| --- | --- | --- | --- | --- |
+| 60 | 60 | 32 | 4.42 | 91 |
+| 100 | 100 | 24 | 5.74 | 97 |
+| 150 | 150 | 25 | 107.48 | 102 |
+| 200 | 200 | 24 | 201.86 | 108 |
+
+200预算相对上一版194束/峰28降到200束/峰24（峰下降14.3%），仍未达到30秒目标。上述是单帧局部求解自测，不推断随预算严格单调或跨场景效果。
+
+旧动态同段失败通过外部临时计数定位：15次repair中的90次优化候选均因中心间隔拒绝，其中45次发生在重定中心后、丢弃了此前合法指派，另45次为拆分起始候选；指派不可行和冻结复核失败均为0。修复保留合法peak/balance结果，重定中心失败保留已有改善，重定中心成功后也用balance选择候选；生产代码没有计数。沿用旧首帧缓存作配对核验得到15/24次改善；最终代码重新生成首帧缓存，同一31帧B2+（θ=1）repair触发28次、改善20次（71.4%，19次降峰、1次同峰降最忙10%均值），强制full为0，全部修复结果合法。最终首帧full仍有30秒软截止，实际30.007秒，不能与上表无截止的求解混为同一计时设置。
+
+全部`tests/test_s1fix_*.py`共41项通过。新旧中间结果、最终布局、逐帧数据、诊断脚本、最终源码快照和测试日志在`D:/paper/outputs/experiments/s1_fix_20261017/adaptive_revision/`，最终静态看`static_summary.json`、动态看`repair_diagnosis/final.json`。本轮未运行完整实验、正式训练或远端调用，不涉及工作台前端。
+
+## 满预算patch修订自测（2026-10-17）
+
+第14节只修改`dynamic.py`的patch：先保留仍合法的归属，其余飞机分给合格束中负载最小者；仍有飞机无法覆盖且预算用满时，按当前负载从小到大寻找可解散束。判断使用删除该中心后重算的半径上限，要求全部当前成员都能改分；跳过不可解散的候选。解散后开新中心，并重新核算半径、补分成员，直到覆盖齐全。存续束的中心与ID不变，新束使用新ID；不预留名额，不改`skeleton.py`或`geom.py`，不重算既有缓存。补充删后半径扩大、跳过不可删最闲束、连续替换中心补覆盖和无束可解散四个回归用例，全部45项`test_s1fix_*.py`通过。
+
+自测用指定DQN Python、`PYTHONPATH=src`和单线程，取`sequence_sets(data, 'train')[10]`：2024-01-08 UTC 11:00—11:30，动态帧300—330，1808—1864架飞机。独立目录新建31帧full缓存（N=100、effort=1、30秒软截止），均100束且合法，累计求解243.337秒。三臂共用这些缓存；第0帧仅初始化，以下统计30次相邻帧转换，LB为`ceil(n/100)`，full计缓存原始求解时间，缓存读取不计耗时。
+
+| 臂 | 平均峰值−LB/架 | 平均换束比例 | 强制full次数 | 平均单帧耗时/秒 |
+| --- | --- | --- | --- | --- |
+| B0 | 7.7667 | 45.6972% | 0/30 | 7.9898 |
+| B1 | 20.8000 | 5.6067% | 0/30 | 0.0264 |
+| B2+（θ=2） | 8.6333 | 8.1402% | 0/30 | 0.6864 |
+
+三臂全部逐帧合法。B2+触发repair19次。参照`782905d`在同一序列、同一缓存上的B1和B2+均强制full29/30次，平均峰值−LB为7.6667、换束44.2127%、单帧约7.854秒。修订消除了本段的强制full，B1换束较B0低87.73%，代价是负载峰值更高；B2+修复后峰值差距接近B0。本段只验证局部修补行为，不代表完整动态实验或训练结论；没有新增前端操作，无需前端变更。
+
+缓存、修订前后逐帧CSV、修订后三臂布局、配置/汇总`summary.json`、测试日志及脚本均在`D:/paper/outputs/experiments/s1_fix_20261017/local_patch_smoke/`。在前述PowerShell环境中复跑：
+
+```powershell
+$env:OMP_NUM_THREADS='1'
+$env:MKL_NUM_THREADS='1'
+$env:OPENBLAS_NUM_THREADS='1'
+& $python D:/paper/outputs/experiments/s1_fix_20261017/local_patch_smoke/build_cache.py
+& $python D:/paper/outputs/experiments/s1_fix_20261017/local_patch_smoke/evaluate_patch.py
+```
+
+首条命令复用已有full缓存；第二条从Git读取`782905d`作修改前对照，重算三臂自测并覆盖同目录CSV与修订后布局。
+
+## 远端耗时估计
+
+初版按16核CPU估计：A静态与A3约0.5—2小时，A2约1—4小时，C约1—3小时；B的3410个唯一full缓存约2—4小时，规则臂约0.5—3小时；12个PPO任务并行约8—36小时，再做评价约1—4小时。这些旧估计按每帧0.1—数秒推算，当前大场景本地耗时已超出该假设，不能直接用于修订版排期；远端首次运行后需据实更新。
