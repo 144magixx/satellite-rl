@@ -251,6 +251,14 @@ class Scheduler:
 
     def _launch(self, job, status):
         directory = self.store.job_dir(job["run_id"])
+        if job.get("experiment_id") == "S1-AI17-R6-MODEL":
+            try:
+                from . import coverage_ai_search_r6_model, frozen_round_tasks
+                frozen_round_tasks.verify(self.store,job,coverage_ai_search_r6_model)
+                observation=coverage_ai_search_r6_model.resource_admission(self.store,job)
+                atomic_json(directory/"resource_before_launch.json",observation)
+            except Exception as error:
+                self._status(directory,status,stage="queued",queue_reason=str(error));return
         if job.get("experiment_id") == "S1-AI17-R6":
             try:
                 from . import coverage_ai_search_r6, frozen_round_tasks
@@ -354,6 +362,9 @@ class Scheduler:
                 return
         env = dict(os.environ)
         env["PYTHONPATH"] = str(Path(job["source_root"]) / "src")
+        if job.get("experiment_id") == "S1-AI17-R6-MODEL":
+            env["PYTHONPATH"] += os.pathsep + str(Path(job["source_root"]))
+            env["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         # Only SI-priority refinement jobs may use their frozen, isolated
         # solver dependencies. The frozen scientific source stays first and
         # unrelated workers keep the original single-source PYTHONPATH.
@@ -407,6 +418,11 @@ class Scheduler:
                expected_repair_commit=None):
         with self.lock:
             candidate = read_json(self.store.job_dir(run_id) / "job.json", {})
+            if candidate.get("experiment_id") == "S1-AI17-R6-MODEL":
+                if any(v is not None for v in (source_repair,repair_validation_path,repair_validation_sha256,expected_origin_commit,expected_repair_commit)):
+                    raise ValueError("R6 labels resume original frozen source only")
+                from . import coverage_ai_search_r6_model, frozen_round_tasks
+                return frozen_round_tasks.resume(self,run_id,coverage_ai_search_r6_model)
             if candidate.get("experiment_id") == "S1-AI17-R6":
                 if any(v is not None for v in (source_repair,repair_validation_path,repair_validation_sha256,expected_origin_commit,expected_repair_commit)):
                     raise ValueError("R6 labels resume original frozen source only")

@@ -39,7 +39,7 @@ def create(app,body,policy):
             verify(store,published,policy);return published
         for previous,_ in store.jobs():
             if previous.get('request_id')==request:raise ValueError('request already used by another frozen semantic task')
-        source,commit=store.freeze_source()
+        source,commit=policy.freeze_source(store) if hasattr(policy,'freeze_source') else store.freeze_source()
         if commit!=plan.get('scientific_commit'):raise ValueError('scientific epoch differs from source')
         run_id=new_id(policy.run_prefix(contract) if hasattr(policy,'run_prefix') else ('prepare_ai_search_r2' if contract['mode']=='prepare_common' else 'evaluate_ai_search_r2'))
         directory=store.job_dir(run_id);directory.mkdir()

@@ -18,6 +18,41 @@ def lane_from_archive(path):
         raise ValueError('R6 exact label or learning archive required')
     return int(parts[0])
 
+def controlled_science_command(command):
+ import shlex,re
+ try:tokens=shlex.split(command)
+ except ValueError:return False
+ if not tokens or not re.fullmatch(r'python(?:[0-9.]+)?(?:\.exe)?',PurePosixPath(tokens[0]).name):return False
+ modules={'satellite_rl.workbench.runner','satellite_rl.workbench.r6_model_eval_stage','satellite_rl.workbench.r6_model_d5_stage','satellite_rl.workbench.ai_search_r6_model_runner'}
+ index=1;program=None;kind=None
+ while index<len(tokens):
+  token=tokens[index]
+  if token in ('-c','-','-i','--help','--version','-V'):return False
+  if token=='-m':
+   if index+1>=len(tokens):return False
+   kind='module';program=tokens[index+1];index+=2;break
+  if token=='--':
+   index+=1
+   if index>=len(tokens):return False
+   kind='script';program=tokens[index];index+=1;break
+  if token in ('-W','-X'):
+   index+=2;continue
+  if token in ('-B','-u','-O','-OO','-s','-S','-E','-I','-q','-v') or token.startswith(('-W','-X')):
+   index+=1;continue
+  if token.startswith('-'):return False
+  kind='script';program=token;index+=1;break
+ recognized=program in modules if kind=='module' else bool(program and PurePosixPath(program).name=='r6_runtime_bootstrap.py')
+ return recognized and any(v in tokens[index:] for v in ('--job-dir','--request','--directory'))
+
+def belongs_to_archive(command,root):
+ # Match the exact archive as an argv token or prefix ending at its separator.
+ # /archive-other and /archive2 are foreign even when their prefix matches.
+ import shlex
+ try:tokens=shlex.split(command)
+ except ValueError:return False
+ value=str(root).rstrip('/')
+ return any(token==value or token.startswith(value+'/') for token in tokens)
+
 def observe(archive_root):
     root=Path(archive_root).resolve();port=lane_from_archive(root.as_posix())
     def query(args):
@@ -29,7 +64,7 @@ def observe(archive_root):
         if not directory.name.isdigit() or int(directory.name)==os.getpid():continue
         try:
             command=(directory/'cmdline').read_bytes().replace(b'\0',b' ').decode('utf-8','replace')
-            if 'satellite_rl.workbench.runner' not in command or str(root) in command:continue
+            if not controlled_science_command(command) or belongs_to_archive(command,root):continue
             raw=(directory/'stat').read_text()
             foreign.append({'pid':int(directory.name),'birth_ticks':int(raw[raw.rfind(')')+2:].split()[19]),'command':command[:2500]})
         except (FileNotFoundError,PermissionError,ProcessLookupError):pass
