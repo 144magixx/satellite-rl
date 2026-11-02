@@ -1,0 +1,1169 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FLOW-AO 收紧波束 · 一步不跳</title>
+<style>
+:root{--ink:#1d3142;--muted:#687a8b;--line:#dce4ea;--bg:#f3f6f8;--blue:#2a5d87;--gold:#b57600;--gold-soft:#fff3cf;--red:#c0392b;--green:#23795f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.7 "Microsoft YaHei","PingFang SC","Noto Sans SC",system-ui,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 24px;background:#fff;border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:24px}h2{font-size:16px;margin:0 0 8px}
+.eyebrow{margin:0;color:var(--muted);font-size:12px;letter-spacing:.04em}
+.links{font-size:13px;color:var(--muted)}.links a{color:var(--blue)}
+select,button{font:inherit;border:1px solid #c4d1dc;background:#fff;border-radius:7px;padding:4px 11px;color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--blue);background:#eef4f9}
+button.primary,button.on{background:var(--blue);border-color:var(--blue);color:#fff}
+button:disabled{opacity:.4;cursor:default}
+details.faq{margin:14px 24px 0;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 16px}
+details.faq summary{cursor:pointer;font-weight:700;font-size:16px}
+.faq-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin:10px 0 4px}
+.faq-item{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#fbfcfd}
+.faq-item h3{font-size:15px;color:var(--blue);margin:0 0 4px}.faq-item p{margin:4px 0;font-size:14px}
+.faq-item button{font-size:13px;padding:2px 8px;margin:4px 6px 0 0}
+.controls{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 24px 0;padding:8px 14px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+.controls input[type=range]{flex:1;min-width:140px}.controls .sep{border-left:1px solid var(--line);height:22px}
+#progress{font-size:13px;color:var(--muted);min-width:90px}
+#jumps button{font-size:13px;padding:3px 9px;margin:2px 0}
+.grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;padding:14px 24px 24px}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+svg{width:100%;height:auto;display:block;background:#fcfdfd;border-radius:6px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:24px;height:0;vertical-align:middle;margin-right:5px;border-top:2px solid #555}
+.legend i.dash{border-top:2px dashed #555}.legend i.gold{border:3px solid #d4a017;width:12px;height:12px;border-radius:50%}
+.phases{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.phases span{font-size:12px;padding:2px 8px;border-radius:5px;background:#eef2f5;color:#8a99a6}
+.phases span.on{background:var(--blue);color:#fff}
+#stepTitle{font-size:19px;line-height:1.45;margin:2px 0 8px}
+#stepBody p{margin:7px 0}#stepBody ul,#stepBody ol{margin:6px 0;padding-left:22px}
+li.em{font-weight:700;color:var(--gold)}
+.warn{background:#fff6e0;border-left:3px solid var(--gold);padding:6px 10px;border-radius:4px;margin:8px 0}
+.calc{margin-top:10px;padding:9px 12px;background:#f5f8fa;border-left:3px solid var(--blue);border-radius:4px;font-size:14.5px}
+.neg{color:var(--red)}.gold{color:#a07010;font-weight:700}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:400;font-size:12.5px}
+td.num{font-variant-numeric:tabular-nums}
+tr.hl td{background:var(--gold-soft)}
+.note{font-size:13px;color:var(--muted);margin:6px 0 0}
+#timeline{list-style:none;margin:0;padding:0;max-height:360px;overflow:auto;font-size:13.5px}
+#timeline li{padding:2px 6px;border-radius:5px;cursor:pointer;white-space:pre-wrap}
+#timeline li:hover{background:#eef4f9}#timeline li.cur{background:var(--gold-soft);font-weight:700}#timeline li.fut{color:#9aa8b4}
+footer{padding:0 24px 24px;color:var(--muted);font-size:12.5px}
+@media (max-width:1100px){.grid{grid-template-columns:1fr}}
+</style></head>
+<body>
+<header><div><p class="eyebrow">FLOW-AO 第二步 · 波束收紧：先满足每束上限，再让波束尽量窄</p><h1>收紧波束：距离和最小，一步不跳</h1></div><div class="links">前一环：<a href="24_FLOW-AO上限与叠放逐步演示.html">24 上限与叠放</a> · 移动中心：<a href="22_FLOW-AO移动中心逐步演示.html">22</a> · <a href="16_FLOW-AO算法动画演示.html">16 全流程动画</a></div></header>
+<details class="faq" open><summary>先把几个问题说清楚（每条都可以跳到例子里对应的那一步）</summary><div id="faq" class="faq-grid"></div></details>
+<section class="controls">
+ <button id="prev">← 上一步</button><button id="play" class="primary">自动播放</button><button id="next">下一步 →</button>
+ <label>速度 <select id="speed"><option value="2600">慢</option><option value="1500" selected>中</option><option value="700">快</option></select></label>
+ <span class="sep"></span><span id="jumps"></span>
+ <input id="seek" type="range" min="0" value="0" aria-label="进度"><span id="progress"></span>
+</section>
+<main class="grid">
+ <div>
+  <article class="card"><div class="card-head"><h2 id="mapTitle"></h2></div><svg id="map" role="img" aria-label="平面图"></svg><div class="legend"><span>● 飞机（颜色＝归属，空心红圈＝分不进去）</span><span>✕ 波束中心（“A ＋ A′ 叠放”＝同一位置两个波束）</span><span><i></i>覆盖圈</span><span><i class="dash"></i>允许半径／最小包围圆</span></div></article>
+  <article class="card"><div class="card-head"><h2 id="sideTitle"></h2></div><div id="side"></div></article>
+ </div>
+ <div>
+  <article class="card"><div id="phases" class="phases"></div><p id="stepMeta" class="eyebrow"></p><h2 id="stepTitle"></h2><div id="stepBody"></div><div id="stepCalc" class="calc"></div></article>
+  <article class="card"><div class="card-head"><h2 id="tlTitle"></h2></div><ol id="timeline"></ol></article>
+ </div>
+</main>
+<footer>教学小例子：13 架飞机、波束上限 6，平面距离代替离轴角；半径上限 18，中心最小间距与覆盖圈最小半径 5.4（对应 0.15°）。算法代码原样取自 16 号动画页，所有数字由本页实时算出。单文件离线可用。键盘 ← → 单步，空格播放/暂停。</footer>
+<script id="flowao-algo">
+
+// FLOW-AO 演示用算法：页面里看到的所有数字都由这里的函数实时算出。
+// 二维平面版：用平面距离代替离轴角，R 为允许半径的固定上限，dmin 为中心最小间距，rmin 为覆盖圈最小半径。
+var FlowAO = (function () {
+  'use strict';
+  const EPS = 1e-7;
+  const SC = 1e6; // 主费用的单位：距离项按 0.01 取整后总和远小于 SC，只在主费用相同时起作用
+
+  // ---------- 随机数 ----------
+  function rngOf(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gauss(rng) {
+    let u = rng();
+    while (u <= 1e-12) u = rng();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+  }
+  function shuffle(arr, rng) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  // ---------- 最大流：Dinic ----------
+  // paths 不为 null 时记录每条增广路径经过的边，供动画回放
+  class MaxFlow {
+    constructor(n) { this.n = n; this.head = new Array(n).fill(-1); this.to = []; this.cap = []; this.nxt = []; this.paths = null; }
+    addEdge(u, v, c) {
+      const e = this.to.length;
+      this.to.push(v, u); this.cap.push(c, 0); this.nxt.push(this.head[u], this.head[v]);
+      this.head[u] = e; this.head[v] = e + 1;
+      return e;
+    }
+    run(s, t) {
+      const n = this.n, level = new Int32Array(n), it = new Int32Array(n), stack = [];
+      let round = 0;
+      const bfs = () => {
+        level.fill(-1); level[s] = 0;
+        const q = [s];
+        for (let qi = 0; qi < q.length; qi++) {
+          const u = q[qi];
+          for (let e = this.head[u]; e !== -1; e = this.nxt[e]) {
+            const v = this.to[e];
+            if (this.cap[e] > 0 && level[v] < 0) { level[v] = level[u] + 1; q.push(v); }
+          }
+        }
+        return level[t] >= 0;
+      };
+      const dfs = (u, f) => {
+        if (u === t) { if (this.paths) this.paths.push({ edges: stack.slice(), f, round }); return f; }
+        for (; it[u] !== -1; it[u] = this.nxt[it[u]]) {
+          const e = it[u], v = this.to[e];
+          if (this.cap[e] > 0 && level[v] === level[u] + 1) {
+            stack.push(e);
+            const d = dfs(v, Math.min(f, this.cap[e]));
+            stack.pop();
+            if (d > 0) { this.cap[e] -= d; this.cap[e ^ 1] += d; return d; }
+          }
+        }
+        return 0;
+      };
+      let flow = 0;
+      while (bfs()) {
+        round++;
+        for (let i = 0; i < n; i++) it[i] = this.head[i];
+        let f;
+        while ((f = dfs(s, Infinity)) > 0) flow += f;
+      }
+      return flow;
+    }
+    flowOn(e) { return this.cap[e ^ 1]; }
+  }
+
+  // ---------- 最小费用流：逐次最短路，最短路用 SPFA ----------
+  class MinCostFlow {
+    constructor(n) { this.n = n; this.head = new Array(n).fill(-1); this.to = []; this.cap = []; this.cost = []; this.nxt = []; this.paths = null; }
+    addEdge(u, v, c, w) {
+      const e = this.to.length;
+      this.to.push(v, u); this.cap.push(c, 0); this.cost.push(w, -w); this.nxt.push(this.head[u], this.head[v]);
+      this.head[u] = e; this.head[v] = e + 1;
+      return e;
+    }
+    run(s, t, maxf) {
+      const n = this.n, d = new Array(n), inq = new Uint8Array(n), pe = new Int32Array(n);
+      let flow = 0, cost = 0;
+      while (flow < maxf) {
+        d.fill(Infinity); pe.fill(-1); d[s] = 0;
+        const q = [s]; inq[s] = 1;
+        for (let qi = 0; qi < q.length; qi++) {
+          const u = q[qi]; inq[u] = 0;
+          for (let e = this.head[u]; e !== -1; e = this.nxt[e]) {
+            const v = this.to[e];
+            if (this.cap[e] > 0 && d[u] + this.cost[e] < d[v]) {
+              d[v] = d[u] + this.cost[e]; pe[v] = e;
+              if (!inq[v]) { inq[v] = 1; q.push(v); }
+            }
+          }
+        }
+        if (d[t] === Infinity) break;
+        let f = maxf - flow;
+        for (let v = t; v !== s; v = this.to[pe[v] ^ 1]) f = Math.min(f, this.cap[pe[v]]);
+        for (let v = t; v !== s; v = this.to[pe[v] ^ 1]) { this.cap[pe[v]] -= f; this.cap[pe[v] ^ 1] += f; }
+        if (this.paths) {
+          const es = [];
+          for (let v = t; v !== s; v = this.to[pe[v] ^ 1]) es.push(pe[v]);
+          this.paths.push({ edges: es.reverse(), f, cost: d[t] });
+        }
+        flow += f; cost += f * d[t];
+      }
+      return { flow, cost };
+    }
+    flowOn(e) { return this.cap[e ^ 1]; }
+  }
+  // 把一条增广路径经过的边翻译成“飞机、波束”交替的节点列表；back 标记的飞机是沿反向边退回原波束、改投别的波束
+  function pathNodes(edges, pMap) {
+    const nodes = [];
+    for (const e of edges) {
+      if (pMap.has(e)) {
+        const [a, li] = pMap.get(e), last = nodes[nodes.length - 1];
+        if (!last || last.t !== 'p' || last.i !== a) nodes.push({ t: 'p', i: a });
+        nodes.push({ t: 'b', i: li });
+      } else if (pMap.has(e ^ 1)) {
+        nodes.push({ t: 'p', i: pMap.get(e ^ 1)[0], back: true });
+      }
+    }
+    return nodes;
+  }
+  // 按路径顺序回放前 upto 条，得到每架飞机当时归属的波束
+  function replayPaths(nA, paths, upto) {
+    const owner = new Array(nA).fill(-1), k = upto == null ? paths.length : upto;
+    for (let q = 0; q < k; q++) { const nd = paths[q].nodes; for (let i = 0; i + 1 < nd.length; i += 2) owner[nd[i].i] = nd[i + 1].i; }
+    return owner;
+  }
+
+  // ---------- 最小包围圆：Welzl 算法 ----------
+  function circle2(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, r: dist(a, b) / 2 }; }
+  function circle3(a, b, c) {
+    const bx = b.x - a.x, by = b.y - a.y, cx = c.x - a.x, cy = c.y - a.y;
+    const D = 2 * (bx * cy - by * cx);
+    if (Math.abs(D) < 1e-12) {
+      let best = circle2(a, b);
+      for (const cc of [circle2(a, c), circle2(b, c)]) if (cc.r > best.r) best = cc;
+      return best;
+    }
+    const B = bx * bx + by * by, C = cx * cx + cy * cy;
+    const ux = (cy * B - by * C) / D, uy = (bx * C - cx * B) / D;
+    return { x: a.x + ux, y: a.y + uy, r: Math.hypot(ux, uy) };
+  }
+  const inside = (c, p) => c.r >= 0 && dist(c, p) <= c.r + EPS;
+  function trivial(R) {
+    if (R.length === 0) return { x: 0, y: 0, r: -1 };
+    if (R.length === 1) return { x: R[0].x, y: R[0].y, r: 0 };
+    if (R.length === 2) return circle2(R[0], R[1]);
+    return circle3(R[0], R[1], R[2]);
+  }
+  function welzl(P, n, R) {
+    if (n === 0 || R.length === 3) return trivial(R);
+    const p = P[n - 1];
+    const D = welzl(P, n - 1, R);
+    if (inside(D, p)) return D;
+    return welzl(P, n - 1, R.concat([p]));
+  }
+  // 逐点加入的写法：新点在当前圆内就跳过，否则它一定在新圆的边界上，以它为边界点重新求圆。结果与递归写法相同，并记录每一步供动画使用
+  function mecTrace(points) {
+    const P = shuffle(points.map(p => ({ x: p.x, y: p.y })), rngOf(7 + points.length)), steps = [];
+    if (!P.length) return { c: { x: 0, y: 0, r: -1 }, steps, P };
+    let c = { x: P[0].x, y: P[0].y, r: 0 };
+    steps.push({ k: 0, inside: false, c, support: [0] });
+    for (let i = 1; i < P.length; i++) {
+      if (inside(c, P[i])) { steps.push({ k: i, inside: true, c, support: steps[steps.length - 1].support }); continue; }
+      c = { x: P[i].x, y: P[i].y, r: 0 };
+      let sup = [i];
+      for (let j = 0; j < i; j++) {
+        if (inside(c, P[j])) continue;
+        c = circle2(P[i], P[j]); sup = [i, j];
+        for (let k = 0; k < j; k++) if (!inside(c, P[k])) { c = circle3(P[i], P[j], P[k]); sup = [i, j, k]; }
+      }
+      steps.push({ k: i, inside: false, c, support: sup });
+    }
+    return { c, steps, P };
+  }
+  function minEnclosingCircle(points) { return mecTrace(points).c; }
+
+  // ---------- 场景 ----------
+  const W = 100, H = 64;
+  const PARAMS = { R: 18, dmin: 5.4, rmin: 5.4, mmax: 8, W, H };
+
+  function makePlanes(seed) {
+    const rng = rngOf(seed);
+    const planes = [];
+    const clampX = x => Math.min(W - 3, Math.max(3, x)), clampY = y => Math.min(H - 3, Math.max(3, y));
+    const add = (x, y, grp) => planes.push({ x: clampX(x), y: clampY(y), grp });
+    const hx = 40 + (rng() - 0.5) * 12, hy = 31 + (rng() - 0.5) * 8;
+    const nh = 18 + Math.floor(rng() * 4);
+    for (let k = 0; k < nh; k++) add(hx + gauss(rng) * 1.1, hy + gauss(rng) * 1.1, 'hot');
+    const mids = [
+      { x: 70 + (rng() - 0.5) * 8, y: 20 + (rng() - 0.5) * 8, c: 10 + Math.floor(rng() * 3), s: 4.2 },
+      { x: 22 + (rng() - 0.5) * 8, y: 46 + (rng() - 0.5) * 6, c: 7 + Math.floor(rng() * 3), s: 4.6 }
+    ];
+    for (const m of mids) for (let k = 0; k < m.c; k++) add(m.x + gauss(rng) * m.s, m.y + gauss(rng) * m.s, 'mid');
+    const anchors = [{ x: hx, y: hy }, mids[0], mids[1]];
+    const ns = 10 + Math.floor(rng() * 4);
+    let made = 0, tries = 0;
+    while (made < ns && tries < 2000) {
+      tries++;
+      const an = anchors[Math.floor(rng() * anchors.length)];
+      const ang = rng() * 2 * Math.PI, rr = 12 + rng() * 12;
+      const p = { x: an.x + rr * Math.cos(ang), y: an.y + rr * Math.sin(ang) };
+      if (p.x < 5 || p.x > W - 5 || p.y < 5 || p.y > H - 5) continue;
+      if (planes.some(q => dist(p, q) < 5.5)) continue;
+      add(p.x, p.y, 'sparse'); made++;
+    }
+    // 下一分钟的位移：热点飞机向外散开，其余飞机整体向东偏移并带随机扰动
+    const drift = { x: 1.4, y: -0.4 };
+    for (const p of planes) {
+      let vx, vy;
+      if (p.grp === 'hot') {
+        const ang = rng() * 2 * Math.PI, sp = 0.2 + rng() * 0.6;
+        vx = drift.x + sp * Math.cos(ang); vy = drift.y + sp * Math.sin(ang);
+      } else {
+        const ang = rng() * 2 * Math.PI, sp = 0.5 + rng() * 1.5;
+        vx = drift.x + sp * Math.cos(ang); vy = drift.y + sp * Math.sin(ang);
+      }
+      p.vx = vx; p.vy = vy;
+    }
+    planes.forEach((p, i) => { p.id = i; });
+    return { planes, hot: { x: hx, y: hy }, mids };
+  }
+
+  // ---------- 允许半径、允许边 ----------
+  function thetaOf(beams, P) {
+    return beams.map((b, i) => {
+      let r = P.R;
+      for (let j = 0; j < beams.length; j++) if (j !== i && beams[j].grp !== b.grp) r = Math.min(r, dist(b, beams[j]));
+      return r;
+    });
+  }
+  // 子问题：region 为可改动的波束编号集合，null 表示全部；orphan 为刚被删掉的波束，其成员也参与重新指派
+  function buildSub(planes, L, P, opt) {
+    const beams = L.beams, theta = thetaOf(beams, P), bIdx = [];
+    beams.forEach((b, i) => { if (!opt.region || opt.region.has(b.id)) bIdx.push(i); });
+    const act = new Set(bIdx.map(i => beams[i].id)), aIdx = [];
+    planes.forEach((p, a) => {
+      if (!L.own || !opt.region || act.has(L.own[a]) || (opt.orphan && opt.orphan.has(L.own[a]))) aIdx.push(a);
+    });
+    const E = [], Dm = [];
+    for (const a of aIdx) {
+      const e = [], d = [];
+      bIdx.forEach((i, li) => { const dd = dist(planes[a], beams[i]); if (dd <= theta[i] + EPS) { e.push(li); d.push(dd); } });
+      E.push(e); Dm.push(d);
+    }
+    return { theta, bIdx, aIdx, E, Dm, bIds: bIdx.map(i => beams[i].id) };
+  }
+
+  // ---------- 指派内核 ----------
+  function flowAssign(E, mB, cap) {
+    const nA = E.length, S = nA + mB, T = S + 1, g = new MaxFlow(T + 1), pe = [];
+    g.paths = [];
+    for (let a = 0; a < nA; a++) { g.addEdge(S, a, 1); for (const li of E[a]) pe.push([a, li, g.addEdge(a, nA + li, 1)]); }
+    for (let i = 0; i < mB; i++) g.addEdge(nA + i, T, Array.isArray(cap) ? cap[i] : cap);
+    const flow = g.run(S, T), owner = new Array(nA).fill(-1);
+    for (const [a, li, e] of pe) if (g.flowOn(e) > 0) owner[a] = li;
+    const pMap = new Map(pe.map(([a, li, e]) => [e, [a, li]]));
+    const paths = g.paths.map(p => ({ round: p.round, nodes: pathNodes(p.edges, pMap) }));
+    return { flow, owner, paths };
+  }
+  // slotCost 为 null 时每束一条容量为 cap 的零费用边；否则第 k 个名额费用为 slotCost(k)
+  function costAssign(E, edgeCost, mB, cap, slotCost) {
+    const nA = E.length, S = nA + mB, T = S + 1, g = new MinCostFlow(T + 1), pe = [];
+    g.paths = [];
+    for (let a = 0; a < nA; a++) {
+      g.addEdge(S, a, 1, 0);
+      E[a].forEach((li, k) => pe.push([a, li, g.addEdge(a, nA + li, 1, edgeCost[a][k])]));
+    }
+    for (let i = 0; i < mB; i++) {
+      if (slotCost) for (let k = 1; k <= cap; k++) g.addEdge(nA + i, T, 1, slotCost(k));
+      else g.addEdge(nA + i, T, cap, 0);
+    }
+    const r = g.run(S, T, nA), owner = new Array(nA).fill(-1);
+    for (const [a, li, e] of pe) if (g.flowOn(e) > 0) owner[a] = li;
+    const pMap = new Map(pe.map(([a, li, e]) => [e, [a, li]]));
+    const paths = g.paths.map(p => ({ cost: p.cost, nodes: pathNodes(p.edges, pMap) }));
+    return { flow: r.flow, cost: r.cost, owner, paths };
+  }
+  function loadsLocal(owner, mB) {
+    const c = new Array(mB).fill(0);
+    for (const o of owner) if (o >= 0) c[o]++;
+    return c;
+  }
+  // 空波束沿交替路径从负载不少于 2 的波束接一架飞机，最忙负载不升
+  function fillEmpty(E, owner, mB) {
+    const inv = Array.from({ length: mB }, () => []);
+    E.forEach((e, a) => e.forEach(li => inv[li].push(a)));
+    for (let guard = 0; guard < mB; guard++) {
+      const load = loadsLocal(owner, mB), empty = load.findIndex(v => v === 0);
+      if (empty < 0) return;
+      const par = new Array(mB).fill(null), seen = new Array(mB).fill(false);
+      seen[empty] = true;
+      const q = [empty]; let end = -1;
+      for (let qi = 0; qi < q.length && end < 0; qi++) {
+        const j = q[qi];
+        for (const a of inv[j]) {
+          const k = owner[a];
+          if (seen[k]) continue;
+          seen[k] = true; par[k] = { a, j };
+          if (load[k] >= 2) { end = k; break; }
+          q.push(k);
+        }
+      }
+      if (end < 0) return;
+      for (let cur = end; cur !== empty;) { const { a, j } = par[cur]; owner[a] = j; cur = j; }
+    }
+  }
+  function edgeCosts(sub, L, opt) {
+    const existing = new Set(L.beams.map(b => b.id)), prev = opt.prev, kappa = opt.kappa || 0;
+    return sub.E.map((e, a) => e.map((li, k) => {
+      const pa = prev ? prev[sub.aIdx[a]] : null;
+      const sw = (pa != null && existing.has(pa) && pa !== sub.bIds[li]) ? kappa : 0;
+      return SC * sw + Math.round(sub.Dm[a][k] * 100);
+    }));
+  }
+  function mapBack(L, sub, local, n) {
+    const own = L.own ? L.own.slice() : new Array(n).fill(-1);
+    sub.aIdx.forEach((a, k) => { own[a] = sub.bIds[local[k]]; });
+    return own;
+  }
+  const sqSum = loads => loads.reduce((s, v) => s + v * v, 0);
+
+  // 精确指派：对 P 二分，每次用最大流检查；再用最小费用流在 P* 内让负载平方和最小
+  function exactAssign(ctx, L) {
+    const { planes, P } = ctx;
+    const sub = buildSub(planes, L, P, ctx);
+    const { E, Dm, aIdx, bIds } = sub, nA = aIdx.length, mB = bIds.length;
+    const nearest = E.map((e, a) => { let b = 0; for (let k = 1; k < e.length; k++) if (Dm[a][k] < Dm[a][b]) b = k; return e[b]; });
+    const hi = Math.max(...loadsLocal(nearest, mB)), lo = Math.ceil(nA / mB);
+    const trials = [];
+    let l = lo, h = hi;
+    while (l < h) {
+      const mid = (l + h) >> 1, r = flowAssign(E, mB, mid), ok = r.flow === nA;
+      trials.push({ P: mid, flow: r.flow, ok, owner: r.owner, paths: r.paths, lo: l, hi: h });
+      if (ok) h = mid; else l = mid + 1;
+    }
+    const Pstar = l;
+    let ft = trials.find(t => t.ok && t.P === Pstar);
+    if (!ft) {
+      const r = flowAssign(E, mB, Pstar);
+      ft = { P: Pstar, flow: r.flow, ok: true, owner: r.owner, paths: r.paths, lo: Pstar, hi: Pstar, confirm: true };
+      trials.push(ft);
+    }
+    const bal = costAssign(E, edgeCosts(sub, L, ctx), mB, Pstar, k => SC * (2 * k - 1));
+    const balRaw = bal.owner.slice();
+    fillEmpty(E, bal.owner, mB);
+    const own = mapBack(L, sub, bal.owner, planes.length);
+    const used = new Set(own);
+    const removed = L.beams.filter(b => !used.has(b.id)).map(b => b.id);
+    if (ctx.region) removed.forEach(id => ctx.region.delete(id));
+    const distLocal = owner => owner.reduce((s, li, a) => s + Dm[a][E[a].indexOf(li)], 0);
+    return {
+      L: { beams: L.beams.filter(b => used.has(b.id)).map(b => ({ ...b })), own },
+      trace: {
+        sub, nearest, lo, hi, trials, Pstar, flowOwner: ft.owner, balOwner: bal.owner, balRaw, balPaths: bal.paths, balCost: bal.cost, removed,
+        flowOwn: mapBack(L, sub, ft.owner, planes.length),
+        nearestOwn: mapBack(L, sub, nearest, planes.length),
+        loadsFlow: loadsLocal(ft.owner, mB), loadsBal: loadsLocal(bal.owner, mB), loadsNear: loadsLocal(nearest, mB),
+        sqFlow: sqSum(loadsLocal(ft.owner, mB)), sqBal: sqSum(loadsLocal(bal.owner, mB)),
+        distFlow: distLocal(ft.owner), distBal: distLocal(bal.owner)
+      }
+    };
+  }
+  // 固定上限 cap 下检查可行，可行则给出均衡指派
+  function assignAtCap(ctx, L, cap, region, orphan) {
+    const opt = { region, orphan, prev: ctx.prev, kappa: ctx.kappa };
+    const sub = buildSub(ctx.planes, L, ctx.P, opt), nA = sub.aIdx.length, mB = sub.bIds.length;
+    const fl = flowAssign(sub.E, mB, cap);
+    if (fl.flow < nA) return { ok: false, flow: fl.flow, nA, sub, owner: fl.owner, paths: fl.paths };
+    const bal = costAssign(sub.E, edgeCosts(sub, L, opt), mB, cap, k => SC * (2 * k - 1));
+    fillEmpty(sub.E, bal.owner, mB);
+    return { ok: true, flow: fl.flow, nA, sub, owner: fl.owner, paths: fl.paths, own: mapBack(L, sub, bal.owner, ctx.planes.length) };
+  }
+
+  // ---------- 评价 ----------
+  function evaluate(L) {
+    const cnt = new Map(L.beams.map(b => [b.id, 0]));
+    for (const id of L.own) cnt.set(id, cnt.get(id) + 1);
+    const loads = L.beams.map(b => cnt.get(b.id));
+    const m = loads.length, n = L.own.length, mean = n / m;
+    const sorted = loads.slice().sort((a, b) => b - a);
+    const t = Math.max(1, Math.ceil(0.1 * m));
+    const top10 = sorted.slice(0, t).reduce((s, v) => s + v, 0) / t;
+    const sd = Math.sqrt(loads.reduce((s, v) => s + (v - mean) * (v - mean), 0) / m);
+    return { peak: sorted[0], top10, cv: sd / mean, loads, m, ids: L.beams.map(b => b.id) };
+  }
+  function better(a, b) {
+    if (a.peak !== b.peak) return a.peak < b.peak;
+    if (Math.abs(a.top10 - b.top10) > 1e-9) return a.top10 < b.top10;
+    return a.cv < b.cv - 1e-9;
+  }
+  function footprints(planes, L, P) {
+    const mx = new Map(L.beams.map(b => [b.id, 0])), pos = new Map(L.beams.map(b => [b.id, b]));
+    L.own.forEach((id, a) => { const d = dist(planes[a], pos.get(id)); if (d > mx.get(id)) mx.set(id, d); });
+    return new Map(L.beams.map(b => [b.id, Math.max(P.rmin, mx.get(b.id))]));
+  }
+  function distSum(planes, L) {
+    const pos = new Map(L.beams.map(b => [b.id, b]));
+    return L.own.reduce((s, id, a) => s + dist(planes[a], pos.get(id)), 0);
+  }
+  // 间隔规则与覆盖的完整检查，测试用
+  function validate(planes, L, P, mmax) {
+    const foot = footprints(planes, L, P), errs = [];
+    const pos = new Map(L.beams.map(b => [b.id, b]));
+    if (new Set(L.beams.map(b => b.grp)).size > mmax || L.beams.length > mmax) errs.push('波束数超过上限');
+    L.own.forEach((id, a) => { if (!pos.has(id)) errs.push('飞机 ' + a + ' 未归属'); else if (dist(planes[a], pos.get(id)) > P.R + EPS) errs.push('飞机 ' + a + ' 超出半径上限'); });
+    for (let i = 0; i < L.beams.length; i++) for (let j = i + 1; j < L.beams.length; j++) {
+      const bi = L.beams[i], bj = L.beams[j];
+      if (bi.grp === bj.grp) continue;
+      const d = dist(bi, bj);
+      if (d < P.dmin - 1e-6 || d < Math.max(foot.get(bi.id), foot.get(bj.id)) - 1e-6) errs.push('波束 ' + bi.id + ' 与 ' + bj.id + ' 违反间隔规则');
+    }
+    return errs;
+  }
+
+  // ---------- 几何操作 ----------
+  function inRegion(ctx, id) { return !ctx.region || ctx.region.has(id); }
+  function moveCenters(ctx, L) {
+    const { planes, P } = ctx;
+    const beams = L.beams.map(b => ({ ...b })), L2 = { beams, own: L.own.slice() }, events = [], groups = [];
+    for (const b of beams) if (inRegion(ctx, b.id) && !groups.includes(b.grp)) groups.push(b.grp);
+    for (const g of groups) {
+      const gb = beams.filter(b => b.grp === g), ids = new Set(gb.map(b => b.id));
+      const mem = planes.filter((p, a) => ids.has(L.own[a]));
+      if (!mem.length) continue;
+      const c = minEnclosingCircle(mem), foot = footprints(planes, L2, P);
+      const before = Math.max(...gb.map(b => foot.get(b.id))), after = Math.max(P.rmin, ...mem.map(p => dist(p, c)));
+      let ok = true, blocker = null;
+      for (const b of beams) {
+        if (b.grp === g) continue;
+        const d = dist(c, b);
+        if (d < P.dmin - EPS / 2 || d < Math.max(after, foot.get(b.id)) - EPS / 2) { ok = false; blocker = b.id; break; }
+      }
+      const from = { x: gb[0].x, y: gb[0].y };
+      if (ok) for (const b of gb) { b.x = c.x; b.y = c.y; }
+      events.push({ grp: g, ids: [...ids], from, to: { x: c.x, y: c.y }, mec: c, before, after: ok ? after : before, ok, blocker, shift: dist(from, c) });
+    }
+    return { L: L2, events };
+  }
+  function tryDelete(ctx, L, Pcur) {
+    const ev = evaluate(L), events = [];
+    const gsize = new Map();
+    L.beams.forEach(b => gsize.set(b.grp, (gsize.get(b.grp) || 0) + 1));
+    // 从最闲的波束开始试，最忙的那些不试
+    const cands = L.beams.map((b, i) => ({ id: b.id, load: ev.loads[i], grp: b.grp }))
+      .filter(c => inRegion(ctx, c.id) && gsize.get(c.grp) === 1 && c.load < Pcur)
+      .sort((a, b) => a.load - b.load || a.id - b.id);
+    for (const c of cands) {
+      const L2 = { beams: L.beams.filter(b => b.id !== c.id), own: L.own };
+      const reg = ctx.region ? new Set([...ctx.region].filter(id => id !== c.id)) : null;
+      const r = assignAtCap(ctx, L2, Pcur, reg, new Set([c.id]));
+      const ev2 = { id: c.id, load: c.load, ok: r.ok, flow: r.flow, nA: r.nA, Pcur, L: null, beams2: L2.beams, check: r };
+      events.push(ev2);
+      if (r.ok) {
+        ctx.region = reg;
+        ev2.L = { beams: L2.beams.map(b => ({ ...b })), own: r.own };
+        return { L: ev2.L, events, deleted: c.id };
+      }
+    }
+    return { L, events, deleted: null };
+  }
+  function trySplit(ctx, L, Pcur) {
+    const { planes, P } = ctx, events = [];
+    while (L.beams.length < ctx.mmax) {
+      const ev = evaluate(L);
+      const cands = L.beams.map((b, i) => ({ id: b.id, load: ev.loads[i], b }))
+        .filter(c => c.load >= 2 && inRegion(ctx, c.id))
+        .sort((a, b) => b.load - a.load || a.id - b.id).slice(0, 3);
+      let acc = false;
+      for (const c of cands) {
+        const memIdx = [];
+        L.own.forEach((id, a) => { if (id === c.id) memIdx.push(a); });
+        const pts = memIdx.map(a => planes[a]);
+        let s1 = 0, s2 = 1, dm = -1;
+        for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) { const d = dist(pts[i], pts[j]); if (d > dm) { dm = d; s1 = i; s2 = j; } }
+        let A = { x: pts[s1].x, y: pts[s1].y }, B = { x: pts[s2].x, y: pts[s2].y }, lab = null;
+        const iters = [];
+        for (let it = 0; it < 6; it++) {
+          const nl = pts.map(p => dist(p, A) <= dist(p, B) ? 0 : 1);
+          const g0 = pts.filter((_, k) => nl[k] === 0), g1 = pts.filter((_, k) => nl[k] === 1);
+          if (!g0.length || !g1.length) break;
+          lab = nl;
+          A = { x: g0.reduce((s, p) => s + p.x, 0) / g0.length, y: g0.reduce((s, p) => s + p.y, 0) / g0.length };
+          B = { x: g1.reduce((s, p) => s + p.x, 0) / g1.length, y: g1.reduce((s, p) => s + p.y, 0) / g1.length };
+          iters.push({ lab: nl, A, B });
+        }
+        if (!lab) lab = pts.map((_, k) => (k % 2));
+        const c1 = minEnclosingCircle(pts.filter((_, k) => lab[k] === 0)), c2 = minEnclosingCircle(pts.filter((_, k) => lab[k] === 1));
+        let p1 = { x: c1.x, y: c1.y }, p2 = { x: c2.x, y: c2.y };
+        const d12 = dist(p1, p2), pushed = d12 < P.dmin;
+        if (pushed) {
+          const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+          const ux = d12 > 1e-9 ? (p2.x - p1.x) / d12 : 1, uy = d12 > 1e-9 ? (p2.y - p1.y) / d12 : 0;
+          p1 = { x: mx - ux * P.dmin / 2, y: my - uy * P.dmin / 2 };
+          p2 = { x: mx + ux * P.dmin / 2, y: my + uy * P.dmin / 2 };
+        }
+        const others = L.beams.filter(b => b.id !== c.id);
+        const Lbefore = L;
+        // 间隔检查：两个新中心与其它中心都至少相距 dmin，记下第一个冲突
+        let blocker = null;
+        for (const b of others) {
+          if (dist(b, p1) < P.dmin - EPS) { blocker = { id: b.id, which: 0, d: dist(b, p1) }; break; }
+          if (dist(b, p2) < P.dmin - EPS) { blocker = { id: b.id, which: 1, d: dist(b, p2) }; break; }
+        }
+        let ok = !blocker, r = null, reason = ok ? '' : 'spacing', nb = null;
+        // 成员较多的一半沿用原波束编号，另一半用新编号
+        const n0 = lab.filter(v => v === 0).length, keep0 = n0 * 2 >= lab.length;
+        const id1 = keep0 ? c.id : ctx.nextId, id2 = keep0 ? ctx.nextId : c.id;
+        if (ok) {
+          nb = others.map(b => ({ ...b })).concat([{ id: id1, x: p1.x, y: p1.y, grp: id1 }, { id: id2, x: p2.x, y: p2.y, grp: id2 }]);
+          const reg = ctx.region ? new Set([...ctx.region].concat([id1, id2])) : null;
+          const ownTmp = L.own.map(id => id === c.id ? -2 : id);
+          r = assignAtCap(ctx, { beams: nb, own: ownTmp }, Pcur, reg, new Set([-2]));
+          ok = r.ok; if (!ok) reason = 'flow';
+          if (ok) { L = { beams: nb, own: r.own }; ctx.region = reg; ctx.nextId += 1; acc = true; }
+        }
+        events.push({ id: c.id, load: c.load, from: { x: c.b.x, y: c.b.y }, seeds: [memIdx[s1], memIdx[s2]], memIdx, lab, iters, mec: [c1, c2], p1, p2, pushed, d12, blocker, nb, cands: cands.map(x => ({ id: x.id, load: x.load })), ids: [id1, id2], ok, reason, flow: r ? r.flow : null, nA: r ? r.nA : null, check: r, Pcur, Lbefore, L: acc ? L : null });
+        if (acc) break;
+      }
+      if (!acc) break;
+    }
+    return { L, events };
+  }
+  function regionPeak(ctx, L) {
+    const ev = evaluate(L);
+    let p = 0;
+    L.beams.forEach((b, i) => { if (inRegion(ctx, b.id)) p = Math.max(p, ev.loads[i]); });
+    return p;
+  }
+  // 交替优化：精确指派 → 移动中心 → 删除空闲波束 → 拆分最忙波束 → 重新精确指派并记录
+  function aoLoop(ctx, L0, maxRounds, patience) {
+    const first = exactAssign(ctx, L0);
+    let L = first.L, ev = evaluate(L);
+    const rounds = [{ r: 0, L, ev, assign: first, improved: true }];
+    let best = rounds[0], stale = 0;
+    for (let r = 1; r <= maxRounds; r++) {
+      const Lstart = L, Pcur = regionPeak(ctx, L);
+      const mv = moveCenters(ctx, L);
+      const dl = tryDelete(ctx, mv.L, Pcur);
+      const sp = trySplit(ctx, dl.L, Pcur);
+      const as = exactAssign(ctx, sp.L);
+      L = as.L; ev = evaluate(L);
+      const rec = { r, Lstart, L, ev, move: mv, del: dl, split: sp, assign: as, Pcur, improved: better(ev, best.ev) };
+      rounds.push(rec);
+      if (rec.improved) { best = rec; stale = 0; } else if (++stale >= patience) break;
+    }
+    return { rounds, best };
+  }
+
+  // ---------- 初始中心：按局部密度放置 ----------
+  function initCenters(planes, P, mmax) {
+    const n = planes.length;
+    const nb = planes.map((p, a) => planes.map((q, b) => b === a ? Infinity : dist(p, q)).sort((x, y) => x - y));
+    const sweep = [];
+    for (let k = 1; k < n; k++) {
+      const rad = nb.map(d => Math.min(P.R, Math.max(P.dmin, d[k - 1])));
+      const order = planes.map((_, a) => a).sort((a, b) => rad[b] - rad[a] || a - b);
+      const covBy = new Array(n).fill(-1), centers = [];
+      for (const a of order) {
+        if (covBy[a] >= 0) continue;
+        centers.push(a);
+        planes.forEach((q, b) => { if (covBy[b] < 0 && dist(planes[a], q) <= rad[a] + EPS) covBy[b] = a; });
+      }
+      sweep.push({ k, count: centers.length });
+      if (centers.length <= mmax) return { sweep, k, rad, order, covBy, centers };
+    }
+    return null;
+  }
+
+  function step1(planes, P, mmax) {
+    const init = initCenters(planes, P, mmax);
+    if (!init) return null;
+    const ctx = { planes, P, mmax, region: null, prev: null, kappa: 0, nextId: init.centers.length };
+    const L0 = { beams: init.centers.map((a, i) => ({ id: i, x: planes[a].x, y: planes[a].y, grp: i })), own: null };
+    const ao = aoLoop(ctx, L0, 20, 3);
+    return { init, L0, rounds: ao.rounds, best: ao.best, lb: Math.ceil(planes.length / mmax), mmax };
+  }
+
+  // ---------- 第二步：每束上限 K、热点叠放、收紧 ----------
+  function checkK(planes, P, L, K) {
+    const sub = buildSub(planes, L, P, {});
+    const f = flowAssign(sub.E, sub.bIds.length, K);
+    return { sub, flow: f.flow, owner: f.owner, own: mapBack({ beams: L.beams, own: null }, sub, f.owner.map(o => o < 0 ? 0 : o), planes.length), un: sub.aIdx.filter((a, k) => f.owner[k] < 0) };
+  }
+  function stackWithK(planes, P, mmax, K, L1) {
+    const c0 = checkK(planes, P, L1, K);
+    if (!c0.un.length) return { K, need: false, check0: c0 };
+    for (let reserve = Math.ceil(c0.un.length / K); reserve <= mmax - 2; reserve++) {
+      const base = step1(planes, P, mmax - reserve);
+      if (!base) return null;
+      let beams = base.best.L.beams.map(b => ({ ...b }));
+      let nextId = Math.max(...beams.map(b => b.id)) + 1;
+      const steps = [];
+      for (let s = 0; s < reserve; s++) {
+        const c = checkK(planes, P, { beams, own: null }, K);
+        if (!c.un.length) break;
+        let bi = -1, bc = -1;
+        beams.forEach((b, i) => {
+          if (beams.findIndex(x => x.grp === b.grp) !== i) return;
+          const cnt = c.un.filter(a => dist(planes[a], b) <= c.sub.theta[i] + EPS).length;
+          if (cnt > bc) { bc = cnt; bi = i; }
+        });
+        const site = beams[bi], copy = { id: nextId++, x: site.x, y: site.y, grp: site.grp, copy: true };
+        steps.push({ check: c, site: site.id, grp: site.grp, cnt: bc, copyId: copy.id, beamsBefore: beams });
+        beams = beams.concat([copy]);
+      }
+      const cf = checkK(planes, P, { beams, own: null }, K);
+      if (!cf.un.length) return { K, need: true, check0: c0, reserve, base, beams, steps, final: cf };
+    }
+    return null;
+  }
+  function tighten(planes, P, L, cap) {
+    const solve = Lx => {
+      const sub = buildSub(planes, { beams: Lx.beams, own: null }, P, {});
+      const cost = sub.Dm.map(d => d.map(v => Math.round(v * 1000)));
+      const r = costAssign(sub.E, cost, sub.bIds.length, cap, null);
+      if (r.flow < sub.aIdx.length) return null;
+      fillEmpty(sub.E, r.owner, sub.bIds.length);
+      const own = mapBack({ beams: Lx.beams, own: null }, sub, r.owner, planes.length), used = new Set(own);
+      return { beams: Lx.beams.filter(b => used.has(b.id)).map(b => ({ ...b })), own };
+    };
+    const ctx = { planes, P, region: null };
+    const start = { L: L, S: distSum(planes, L), foot: footprints(planes, L, P) };
+    let cur = solve(L), S = distSum(planes, cur);
+    const iters = [{ L: cur, S, foot: footprints(planes, cur, P), move: null }];
+    let rejected = null;
+    for (let it = 0; it < 12; it++) {
+      const mv = moveCenters(ctx, cur), nx = solve(mv.L);
+      if (!nx) { rejected = { move: mv, reason: 'flow' }; break; }
+      const S2 = distSum(planes, nx);
+      if (S2 < S - 1e-6) { iters.push({ L: nx, S: S2, foot: footprints(planes, nx, P), move: mv, Lmoved: mv.L }); cur = nx; S = S2; }
+      else { rejected = { move: mv, S: S2 }; break; }
+    }
+    return { start, iters, rejected, cap };
+  }
+  function step2(planes, P, mmax, s1) {
+    const lb = s1.lb, Pbar1 = s1.best.ev.peak;
+    let res = null;
+    for (let K = Math.max(lb, Pbar1 - 2); K < Pbar1 && !res; K++) res = stackWithK(planes, P, mmax, K, s1.best.L);
+    if (!res) res = { K: Pbar1, need: false, check0: checkK(planes, P, s1.best.L, Pbar1) };
+    const Lst = res.need ? { beams: res.beams, own: null } : s1.best.L;
+    const ctx = { planes, P, mmax, region: null, prev: null, kappa: 0, nextId: 1000 };
+    const ex = exactAssign(ctx, Lst);
+    const Pbar = ex.trace.Pstar, cap = Math.min(Pbar, res.K);
+    const tg = tighten(planes, P, ex.L, cap);
+    return Object.assign(res, { Pbar1, exact: ex, Pbar, cap, tighten: tg, lb });
+  }
+
+  // ---------- 动态场景：修补 + 轻量修复 ----------
+  function patch(moved, L, P, mmax) {
+    let beams = L.beams.map(b => ({ ...b }));
+    let th = thetaOf(beams, P);
+    const n = moved.length, own = new Array(n).fill(-1), events = [];
+    let nextId = Math.max(...beams.map(b => b.id)) + 1;
+    const idx = () => new Map(beams.map((b, i) => [b.id, i]));
+    let pos = idx();
+    moved.forEach((p, a) => { const i = pos.get(L.own[a]); if (dist(p, beams[i]) <= th[i] + EPS) own[a] = L.own[a]; });
+    const stay = own.filter(o => o >= 0).length;
+    const load = () => { const c = new Map(beams.map(b => [b.id, 0])); own.forEach(id => { if (id >= 0) c.set(id, c.get(id) + 1); }); return c; };
+    const order = moved.map((_, a) => a).filter(a => own[a] < 0);
+    for (const a of order) {
+      const ld = load();
+      let best = -1;
+      beams.forEach((b, i) => {
+        if (dist(moved[a], b) > th[i] + EPS) return;
+        if (best < 0 || ld.get(b.id) < ld.get(beams[best].id) || (ld.get(b.id) === ld.get(beams[best].id) && dist(moved[a], b) < dist(moved[a], beams[best]))) best = i;
+      });
+      if (best >= 0) { own[a] = beams[best].id; events.push({ a, from: L.own[a], to: own[a], type: 'move' }); continue; }
+      if (beams.length >= mmax) {
+        // 预算已满：解散一个成员都能被别的波束接收的最闲波束
+        const cands = beams.map(b => ({ b, l: ld.get(b.id) })).sort((x, y) => x.l - y.l);
+        for (const { b } of cands) {
+          const rest = beams.filter(x => x.id !== b.id), th2 = thetaOf(rest, P);
+          const mem = own.map((id, k) => id === b.id ? k : -1).filter(k => k >= 0);
+          if (mem.every(k => rest.some((x, i) => dist(moved[k], x) <= th2[i] + EPS))) {
+            beams = rest; th = th2;
+            for (const k of mem) {
+              const l2 = load();
+              let bi = -1;
+              beams.forEach((x, i) => { if (dist(moved[k], x) <= th[i] + EPS && (bi < 0 || l2.get(x.id) < l2.get(beams[bi].id))) bi = i; });
+              own[k] = beams[bi].id; events.push({ a: k, from: b.id, to: own[k], type: 'dissolve' });
+            }
+            break;
+          }
+        }
+        // 解散后别的波束允许半径变大，先看现在能否直接接收
+        const l3 = load();
+        let bi = -1;
+        beams.forEach((x, i) => { if (dist(moved[a], x) <= th[i] + EPS && (bi < 0 || l3.get(x.id) < l3.get(beams[bi].id))) bi = i; });
+        if (bi >= 0) { own[a] = beams[bi].id; events.push({ a, from: L.own[a], to: own[a], type: 'move' }); continue; }
+      }
+      const nb = { id: nextId++, x: moved[a].x, y: moved[a].y, grp: nextId - 1 };
+      beams.push(nb); th = thetaOf(beams, P); pos = idx();
+      own[a] = nb.id; events.push({ a, from: L.own[a], to: nb.id, type: 'new' });
+    }
+    const used = new Set(own);
+    return { L: { beams: beams.filter(b => used.has(b.id)), own }, events, stay, nextId };
+  }
+  function matchIds(oldBeams, newL, P) {
+    const pairs = [];
+    newL.beams.forEach((nb, i) => oldBeams.forEach((ob, j) => { const d = dist(nb, ob); if (d <= P.R) pairs.push([d, i, j]); }));
+    pairs.sort((x, y) => x[0] - y[0]);
+    const mi = new Map(), usedOld = new Set();
+    for (const [, i, j] of pairs) if (!mi.has(i) && !usedOld.has(j)) { mi.set(i, oldBeams[j].id); usedOld.add(j); }
+    let fresh = 10000;
+    const map = new Map(newL.beams.map((b, i) => [b.id, mi.has(i) ? mi.get(i) : fresh++]));
+    return {
+      own: newL.own.map(id => map.get(id)),
+      L: { beams: newL.beams.map(b => ({ ...b, id: map.get(b.id), grp: map.get(b.id) })), own: newL.own.map(id => map.get(id)) }
+    };
+  }
+  function switchRatio(prevOwn, own) { let c = 0; own.forEach((id, a) => { if (id !== prevOwn[a]) c++; }); return c / own.length; }
+  function dynamicStep(planes, P, mmax, s1, cfg) {
+    cfg = Object.assign({ busy: 3, nbr: 1.2 * P.R, rounds: 5, kappa: 3 }, cfg || {});
+    const L = s1.best.L;
+    const moved = planes.map(p => ({ ...p, x: Math.min(W - 2, Math.max(2, p.x + p.vx)), y: Math.min(H - 2, Math.max(2, p.y + p.vy)) }));
+    const pt = patch(moved, L, P, mmax), evp = evaluate(pt.L);
+    const order = pt.L.beams.map((b, i) => ({ b, load: evp.loads[i] })).sort((x, y) => y.load - x.load || x.b.id - y.b.id);
+    const busy = order.slice(0, cfg.busy).map(o => o.b);
+    const region = new Set();
+    busy.forEach(bb => pt.L.beams.forEach(b => { if (dist(b, bb) <= cfg.nbr) region.add(b.id); }));
+    const regionInit = new Set(region);
+    const ctx = { planes: moved, P, mmax, region, prev: L.own, kappa: cfg.kappa, nextId: pt.nextId + 100 };
+    const ao = aoLoop(ctx, pt.L, cfg.rounds, 3);
+    const rep = ao.best;
+    const full = step1(moved, P, mmax);
+    if (!full) return null;
+    const fm = matchIds(L.beams, full.best.L, P);
+    return {
+      moved, prevL: L, patch: pt, evPatch: evp, busy: busy.map(b => b.id), region: regionInit, ao, repair: rep,
+      swPatch: switchRatio(L.own, pt.L.own), swRepair: switchRatio(L.own, rep.L.own),
+      full, fullL: fm.L, swFull: switchRatio(L.own, fm.own), lb: Math.ceil(planes.length / mmax), cfg
+    };
+  }
+
+  // ---------- 一次跑完整个演示 ----------
+  function runAll(seed) {
+    const P = PARAMS;
+    for (let s = seed, tries = 0; tries < 40; s++, tries++) {
+      const sc = makePlanes(s), planes = sc.planes;
+      const s1 = step1(planes, P, P.mmax);
+      if (!s1) continue;
+      const s2 = step2(planes, P, P.mmax, s1);
+      const dy = dynamicStep(planes, P, P.mmax, s1);
+      if (!dy) continue;
+      return { seed: s, P, planes, scene: sc, s1, s2, dy, n: planes.length, lb: s1.lb };
+    }
+    return null;
+  }
+
+  return {
+    rngOf, dist, MaxFlow, MinCostFlow, minEnclosingCircle, welzl, mecTrace, replayPaths, PARAMS, makePlanes, thetaOf, buildSub,
+    flowAssign, costAssign, fillEmpty, exactAssign, evaluate, better, footprints, distSum, validate,
+    moveCenters, tryDelete, trySplit, aoLoop, initCenters, step1, checkK, stackWithK, tighten, step2,
+    patch, dynamicStep, switchRatio, runAll, SC
+  };
+})();
+if (typeof module !== 'undefined') module.exports = FlowAO;
+
+
+</script>
+<script id="player">
+/* 逐步播放器与平面图画法：两页共用 */
+(function (root) {
+'use strict';
+const $ = s => document.querySelector(s);
+const SUBD = '₀₁₂₃₄₅₆₇₈₉';
+const nm = s => s.replace(/^([a-z])(\d+)$/, (_, l, d) => l + [...d].map(c => SUBD[c]).join(''));
+const f1 = x => x.toFixed(1), f2 = x => x.toFixed(2);
+const pt = p => `(${f1(p.x)}, ${f1(p.y)})`;
+
+// 世界坐标 → 屏幕坐标
+function view(rect, W, H, pad) {
+  pad = pad || 34;
+  const s = Math.min((W - 2 * pad) / (rect.x1 - rect.x0), (H - 2 * pad) / (rect.y1 - rect.y0));
+  const ox = (W - s * (rect.x1 - rect.x0)) / 2, oy = (H - s * (rect.y1 - rect.y0)) / 2;
+  return { s, X: x => ox + (x - rect.x0) * s, Y: y => oy + (y - rect.y0) * s };
+}
+function bbox(points, margin) {
+  const xs = points.map(p => p.x), ys = points.map(p => p.y);
+  return { x0: Math.min(...xs) - margin, x1: Math.max(...xs) + margin, y0: Math.min(...ys) - margin, y1: Math.max(...ys) + margin };
+}
+function Draw(v) {
+  const out = [];
+  const o = {
+    v,
+    circle(c, r, st = {}) { out.push(`<circle cx="${v.X(c.x)}" cy="${v.Y(c.y)}" r="${Math.max(0, r * v.s)}" fill="${st.fill || 'none'}" fill-opacity="${st.fo ?? 0.08}" stroke="${st.stroke || '#555'}" stroke-width="${st.w || 1.5}" ${st.dash ? `stroke-dasharray="${st.dash}"` : ''} opacity="${st.op ?? 1}"/>`); return o; },
+    line(a, b, st = {}) { out.push(`<line x1="${v.X(a.x)}" y1="${v.Y(a.y)}" x2="${v.X(b.x)}" y2="${v.Y(b.y)}" stroke="${st.stroke || '#555'}" stroke-width="${st.w || 1.5}" ${st.dash ? `stroke-dasharray="${st.dash}"` : ''} opacity="${st.op ?? 1}" ${st.arrow ? 'marker-end="url(#arr)"' : ''}/>`); return o; },
+    plane(p, st = {}) {
+      const x = v.X(p.x), y = v.Y(p.y);
+      if (st.ring) out.push(`<circle cx="${x}" cy="${y}" r="${(st.r || 6) + 4}" fill="none" stroke="${st.ring}" stroke-width="2.6" opacity="${st.op ?? 1}"/>`);
+      out.push(`<circle cx="${x}" cy="${y}" r="${st.r || 6}" fill="${st.hollow ? '#fff' : st.fill || '#555'}" stroke="${st.stroke || st.fill || '#555'}" stroke-width="1.6" opacity="${st.op ?? 1}"/>`);
+      if (st.label !== false) out.push(`<text x="${x + 9}" y="${y - 8}" font-size="${st.size || 13}" fill="${st.lc || '#333'}" opacity="${st.op ?? 1}" stroke="#fff" stroke-width="3" paint-order="stroke">${st.label || nm(p.name)}</text>`);
+      return o;
+    },
+    center(b, st = {}) {
+      const x = v.X(b.x), y = v.Y(b.y), s = st.s || 8, c = st.color || '#333';
+      out.push(`<g opacity="${st.op ?? 1}"><line x1="${x - s}" y1="${y - s}" x2="${x + s}" y2="${y + s}" stroke="${c}" stroke-width="3" ${st.dash ? 'stroke-dasharray="3 2"' : ''}/><line x1="${x - s}" y1="${y + s}" x2="${x + s}" y2="${y - s}" stroke="${c}" stroke-width="3" ${st.dash ? 'stroke-dasharray="3 2"' : ''}/>`);
+      if (st.label !== false) out.push(`<text x="${x + 10}" y="${y + 18}" font-size="${st.size || 15}" font-weight="700" fill="${c}" stroke="#fff" stroke-width="3" paint-order="stroke">${st.label || b.id}</text>`);
+      out.push('</g>'); return o;
+    },
+    text(p, s, st = {}) { out.push(`<text x="${v.X(p.x) + (st.dx || 0)}" y="${v.Y(p.y) + (st.dy || 0)}" font-size="${st.size || 13}" fill="${st.color || '#333'}" text-anchor="${st.anchor || 'start'}" font-weight="${st.bold ? 700 : 400}" stroke="#fff" stroke-width="3.5" paint-order="stroke" opacity="${st.op ?? 1}">${s}</text>`); return o; },
+    raw(s) { out.push(s); return o; },
+    svg() { return '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#333"/></marker></defs>' + out.join(''); }
+  };
+  return o;
+}
+
+function start(cfg) {
+  const { steps, faq, W, H } = cfg;
+  let idx = 0, timer = null;
+  const groups = [...new Set(steps.map(s => s.group))];
+  function render() {
+    const s = steps[idx];
+    $('#phases').innerHTML = cfg.phases.map(p => `<span class="${p === s.phase ? 'on' : ''}">${p}</span>`).join('');
+    $('#stepMeta').textContent = `${s.group} · 本组第 ${steps.filter(x => x.group === s.group).indexOf(s) + 1} 步`;
+    $('#stepTitle').innerHTML = s.title; $('#stepBody').innerHTML = s.body || ''; $('#stepCalc').innerHTML = s.calc || ''; $('#stepCalc').hidden = !s.calc;
+    const m = s.map();
+    $('#map').setAttribute('viewBox', `0 0 ${W} ${H}`); $('#map').innerHTML = m;
+    $('#mapTitle').textContent = s.mapTitle || '平面图';
+    $('#side').innerHTML = s.side ? s.side() : '';
+    $('#sideTitle').textContent = s.sideTitle || '状态';
+    const mine = steps.map((x, i) => [x, i]).filter(([x]) => x.group === s.group);
+    $('#tlTitle').textContent = `「${s.group}」的全部 ${mine.length} 步`;
+    $('#timeline').innerHTML = mine.map(([x, i], k) => `<li data-step="${i}" class="${i === idx ? 'cur' : i > idx ? 'fut' : ''}">${k + 1}. ${x.short}</li>`).join('');
+    const cur = $('#timeline .cur'); if (cur) { const pane = $('#timeline'); pane.scrollTop = cur.offsetTop - pane.offsetTop - pane.clientHeight / 2; }
+    $('#jumps').innerHTML = groups.map(g => `<button data-step="${steps.findIndex(x => x.group === g)}" class="${g === s.group ? 'on' : ''}">${g}</button>`).join(' ');
+    $('#seek').max = steps.length - 1; $('#seek').value = idx; $('#progress').textContent = `第 ${idx + 1} / ${steps.length} 步`;
+    $('#prev').disabled = idx === 0; $('#next').disabled = idx === steps.length - 1;
+  }
+  function goto(i) { idx = Math.max(0, Math.min(steps.length - 1, i)); render(); }
+  function stop() { clearInterval(timer); timer = null; $('#play').textContent = '自动播放'; }
+  function play() { if (timer) { stop(); return; } $('#play').textContent = '暂停'; timer = setInterval(() => { if (idx >= steps.length - 1) stop(); else goto(idx + 1); }, +$('#speed').value); }
+  $('#faq').innerHTML = faq.map((it, a) => `<div class="faq-item"><h3>${it.q}</h3><p>${it.a}</p>${it.go.map((g, b) => `<button data-faq="${a}-${b}">${g.t} →</button>`).join('')}</div>`).join('');
+  $('#prev').onclick = () => { stop(); goto(idx - 1); };
+  $('#next').onclick = () => { stop(); goto(idx + 1); };
+  $('#play').onclick = play;
+  $('#speed').onchange = () => { if (timer) { stop(); play(); } };
+  $('#seek').oninput = e => { stop(); goto(+e.target.value); };
+  document.addEventListener('click', e => {
+    const t = e.target.closest('[data-step]'); if (t) { stop(); goto(+t.dataset.step); return; }
+    const f = e.target.closest('[data-faq]');
+    if (f) { const [a, b] = f.dataset.faq.split('-').map(Number); stop(); goto(steps.findIndex(faq[a].go[b].f)); $('.controls').scrollIntoView({ behavior: 'smooth' }); }
+  });
+  document.addEventListener('keydown', e => {
+    if (['SELECT', 'INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); stop(); goto(idx + 1); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); stop(); goto(idx - 1); }
+    if (e.key === ' ') { e.preventDefault(); play(); }
+  });
+  const params = new URLSearchParams(location.search);
+  goto(params.has('step') ? +params.get('step') - 1 : 0);
+  if (params.has('nofaq')) $('details.faq').open = false;
+  root.STEPS = { steps, faq, goto, get idx() { return idx; } };
+}
+root.Player = { start, view, bbox, Draw, nm, f1, f2, pt };
+})(window);
+
+</script>
+<script id="scene">
+/* 24、25 两页共用的场景：13 架飞机、波束上限 6。全部计算直接调用 16 号页面的 FlowAO 程序（原样嵌入）。 */
+(function (root) {
+'use strict';
+const F = FlowAO, P = F.PARAMS, EPS = 1e-7;
+const PTS = [[42, 30.5], [37.5, 31], [42.5, 34], [38.5, 35.5], [40.5, 33.5], [40.5, 32.5], [41.5, 31.5], [60.5, 29], [57.5, 30], [57, 40], [53, 36.5], [54, 36.5], [51.5, 38.5]];
+const planes = PTS.map(([x, y], id) => ({ x, y, id, name: 'a' + (id + 1) }));
+const MMAX = 6, n = planes.length, lb = Math.ceil(n / MMAX);
+// 第一步（指派 → 移动中心 → 删除与拆分 的循环）
+const s1 = F.step1(planes, P, MMAX), L1 = s1.best.L, Pbar1 = s1.best.ev.peak;
+// 每束上限 K：与 16 号页面相同，在 [max(下界, P̄−2), P̄−1] 里从小到大试，取第一个能做到的
+let K, res = null;
+for (K = Math.max(lb, Pbar1 - 2); K < Pbar1 && !res; K++) res = F.stackWithK(planes, P, MMAX, K, L1);
+K--;
+const ctx = { planes, P, mmax: MMAX, region: null, prev: null, kappa: 0, nextId: 1000 };
+const ex = F.exactAssign(ctx, { beams: res.beams, own: null });
+const cap = Math.min(ex.trace.Pstar, K);
+
+const NAME = { 0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'A′' };
+const COLOR = { 0: '#2f7bb0', 1: '#d07a2c', 2: '#2e8b6e', 3: '#8b6daf', 4: '#a0522d', 5: '#c0457a', 6: '#5aa0d8' };
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const { nm, f1, f2, pt, Draw, view, bbox } = Player;
+const BN = id => `<b style="color:${COLOR[id]}">${NAME[id]}</b>`;
+const PN = a => nm(planes[a].name);
+const names = idx => idx.map(PN).join('、') || '—';
+const ALL = bbox(planes, 9);
+const memOf = (L, own, id) => planes.map((p, a) => a).filter(a => own[a] === id);
+const footOf = (L, own, b) => Math.max(P.rmin, ...memOf(L, own, b.id).map(a => dist(planes[a], b)));
+const loadsOf = (L, own) => Object.fromEntries(L.beams.map(b => [b.id, memOf(L, own, b.id).length]));
+const thetaMap = beams => { const th = F.thetaOf(beams, P); return Object.fromEntries(beams.map((b, i) => [b.id, th[i]])); };
+const stacked = (beams, b) => beams.filter(x => x.grp === b.grp);
+// 平面图：own 中 -1/null 表示暂无归属
+function drawL(L, own, o = {}) {
+  const d = Draw(view(o.rect || ALL, 860, 470));
+  const th = thetaMap(L.beams);
+  L.beams.forEach(b => {
+    const dim = o.focus && !o.focus.includes(b.id);
+    if (o.allowed && stacked(L.beams, b)[0] === b) d.circle(b, th[b.id], { stroke: COLOR[b.id], dash: '7 5', w: 1.6, op: dim ? 0.3 : 0.9 });
+    if (o.cover !== false && memOf(L, own, b.id).length) d.circle(b, footOf(L, own, b), { stroke: COLOR[b.id], fill: COLOR[b.id], fo: 0.05, w: 1.5, op: dim ? 0.25 : 0.85 });
+  });
+  if (o.ghost) o.ghost.forEach(g => d.circle(g.c, g.r, { stroke: '#999', dash: '2 3', w: 1.1 }));
+  planes.forEach((p, a) => {
+    const id = own[a], ok = id != null && id >= 0;
+    d.plane(p, { fill: ok ? COLOR[id] : '#fff', hollow: !ok, stroke: ok ? COLOR[id] : '#c0392b', ring: o.ring ? o.ring(a) : (!ok ? '#c0392b' : null), op: o.focusPlanes && !o.focusPlanes.includes(a) ? 0.3 : 1 });
+  });
+  const done = new Set();
+  L.beams.forEach(b => {
+    if (done.has(b.grp)) return; done.add(b.grp);
+    const grp = stacked(L.beams, b), ld = loadsOf(L, own);
+    const label = grp.map(x => NAME[x.id] + (o.loadTag ? `(${ld[x.id]})` : '')).join(' ＋ ') + (grp.length > 1 ? ' 叠放' : '');
+    d.center(b, { color: COLOR[b.id], s: 7, label, op: o.focus && !grp.some(x => o.focus.includes(x.id)) ? 0.35 : 1, size: 14 });
+  });
+  if (o.extra) o.extra(d);
+  return d.svg();
+}
+function beamTable(L, own, hl) {
+  const th = thetaMap(L.beams), ld = loadsOf(L, own);
+  return `<table><tr><th>波束</th><th>中心</th><th>成员</th><th>负载</th><th>覆盖圈半径</th><th>允许半径</th></tr>${L.beams.map(b => `<tr class="${hl && hl.includes(b.id) ? 'hl' : ''}"><td>${BN(b.id)}${stacked(L.beams, b).length > 1 ? `（与 ${stacked(L.beams, b).filter(x => x !== b).map(x => BN(x.id)).join('')} 叠放）` : ''}</td><td>${pt(b)}</td><td>${names(memOf(L, own, b.id))}</td><td class="num">${ld[b.id]}</td><td class="num">${ld[b.id] ? f2(footOf(L, own, b)) : '—'}</td><td class="num">${f2(th[b.id])}</td></tr>`).join('')}</table><p class="note">覆盖圈半径 ＝ 最远成员距离，不小于 ${P.rmin}；允许半径 ＝ min(${P.R}, 到最近的<b>非叠放</b>其它中心的距离)。</p>`;
+}
+const distSum = (L, own) => planes.reduce((s, p, a) => s + dist(p, L.beams.find(b => b.id === own[a])), 0);
+root.Scene = { F, P, EPS, planes, MMAX, n, lb, s1, L1, Pbar1, K, res, ex, cap, NAME, COLOR, BN, PN, names, ALL, dist, memOf, footOf, loadsOf, thetaMap, stacked, drawL, beamTable, distSum };
+})(window);
+
+</script>
+<script id="app">
+(function () {
+'use strict';
+const S = Scene, { F, P, EPS, planes, n, K, ex, cap, NAME, COLOR, BN, PN, names, drawL, beamTable, memOf, loadsOf, footOf, dist, distSum, stacked } = S;
+const { f2, pt } = Player;
+const L0 = ex.L;
+// 与 FlowAO.tighten 相同的“按距离和最小重新指派”：费用＝距离，每束容量 cap，没有名额费用
+function solve(Lx) {
+  const sub = F.buildSub(planes, { beams: Lx.beams, own: null }, P, {});
+  const cost = sub.Dm.map(d => d.map(v => Math.round(v * 1000)));
+  const r = F.costAssign(sub.E, cost, sub.bIds.length, cap, null);
+  if (r.flow < sub.aIdx.length) return null;
+  F.fillEmpty(sub.E, r.owner, sub.bIds.length);
+  const own = new Array(n).fill(-1); sub.aIdx.forEach((a, k) => { own[a] = sub.bIds[r.owner[k]]; });
+  const used = new Set(own);
+  return { beams: Lx.beams.filter(b => used.has(b.id)).map(b => ({ ...b })), own };
+}
+// 与 FlowAO.moveCenters 相同（叠放的同组波束一起移动），另外记下每一次间隔比较
+function moveTrace(L) {
+  const beams = L.beams.map(b => ({ ...b })), L2 = { beams, own: L.own.slice() }, groups = [], events = [];
+  for (const b of beams) if (!groups.includes(b.grp)) groups.push(b.grp);
+  for (const g of groups) {
+    const gb = beams.filter(b => b.grp === g), ids = new Set(gb.map(b => b.id));
+    const mem = planes.filter((p, a) => ids.has(L.own[a]));
+    const c = F.minEnclosingCircle(mem), foot = F.footprints(planes, L2, P);
+    const before = Math.max(...gb.map(b => foot.get(b.id))), after = Math.max(P.rmin, ...mem.map(p => dist(p, c)));
+    const checks = []; let ok = true;
+    for (const b of beams) {
+      if (b.grp === g) continue;
+      const d = dist(c, b), fo = foot.get(b.id), pass = !(d < P.dmin - EPS / 2 || d < Math.max(after, fo) - EPS / 2);
+      checks.push({ id: b.id, d, fo, need: Math.max(P.dmin, after, fo), pass });
+      if (!pass) { ok = false; break; }
+    }
+    const from = { x: gb[0].x, y: gb[0].y };
+    if (ok) for (const b of gb) { b.x = c.x; b.y = c.y; }
+    events.push({ grp: g, ids: [...ids], mem: mem.map(p => p.id), from, to: { x: c.x, y: c.y }, mecR: c.r, before, after: ok ? after : before, cand: after, ok, checks, shift: dist(from, c), Lafter: { beams: beams.map(b => ({ ...b })), own: L2.own } });
+  }
+  return { L: L2, events };
+}
+// 与 FlowAO.tighten 相同的交替：先只重新指派一次；之后每次“移动中心 → 重新指派”，距离和严格下降才接受，否则停止
+const iters = [];
+{
+  let cur = solve(L0), Sc = distSum(cur, cur.own);
+  iters.push({ k: 0, Lprev: L0, L: cur, S: Sc, Sprev: distSum(L0, L0.own), ok: true });
+  for (let it = 0; it < 12; it++) {
+    const mv = moveTrace(cur), nx = solve(mv.L);
+    const S2 = distSum(nx, nx.own), ok = S2 < Sc - 1e-6;
+    iters.push({ k: it + 1, Lprev: cur, mv, Lmoved: mv.L, Smoved: distSum(mv.L, mv.L.own), L: nx, S: S2, Sprev: Sc, ok });
+    if (!ok) break;
+    cur = nx; Sc = S2;
+  }
+}
+const final = iters.filter(x => x.ok).at(-1);
+const steps = [];
+const PH = ['准备', '移动中心', '按距离和重新指派', '比较', '结果'];
+const grpName = ids => ids.map(id => BN(id)).join('＋');
+const avgFoot = L => L.beams.reduce((s, b) => s + footOf(L, L.own, b), 0) / L.beams.length;
+
+/* ---------- 准备 ---------- */
+steps.push({ group: '准备', phase: '准备', short: '起点', mapTitle: '叠放并重新指派后的布局（连线：飞机到所属中心）', sideTitle: '各波束',
+  title: `起点：负载已达标（每束 ≤ ${cap}），现在让波束尽量窄`,
+  body: `<p>这是 24 号网页的结果：${L0.beams.length} 个波束（${BN(0)}、${BN(6)} 叠放在同一处），负载 ${L0.beams.map(b => `${BN(b.id)} ${loadsOf(L0, L0.own)[b.id]}`).join('，')}。</p><p>波束越窄，天线增益越高，对相邻波束的干扰也越小。负载目标已经达到，剩下的事就是：<b>在每束不超过 min(P*, K) ＝ ${cap} 架的前提下，让飞机尽量靠近自己的中心</b>。衡量标准是全部飞机到所属中心的<b>距离和</b>，现在是 ${f2(iters[0].Sprev)}。</p>`,
+  calc: `距离和 ＝ ${f2(iters[0].Sprev)}；每束上限 ${cap}`,
+  map: () => drawL(L0, L0.own, { loadTag: true, extra: d => planes.forEach((p, a) => d.line(p, L0.beams.find(b => b.id === L0.own[a]), { stroke: COLOR[L0.own[a]], w: 1, op: 0.5 })) }),
+  side: () => beamTable(L0, L0.own) });
+steps.push({ group: '准备', phase: '准备', short: '做法', mapTitle: '叠放并重新指派后的布局', sideTitle: '各波束',
+  title: '两件事交替做，直到距离和不再下降',
+  body: `<ol><li><b>按距离和最小重新指派</b>：中心不动，用最小费用流重新分配飞机。这次每条“飞机 → 波束”边的费用就是距离本身，每个波束容量 ${cap}，<b>不再有 1、3、5 的名额费用</b>——负载只要不超过 ${cap} 就行，不再追求平均。</li><li><b>移动中心</b>：成员不变，每个中心移到成员的最小包围圆圆心，照样检查间隔规则（见 22 号网页）。叠放在一起的波束作为一组，按它们全部成员一起移动。</li></ol><p>先只做一次第 1 件事；之后每次“先移动中心、再重新指派”，算出新的距离和：<b>比上一次严格更小才接受，否则放弃这一次、停止</b>。</p>`,
+  map: () => drawL(L0, L0.own, { loadTag: true }), side: () => beamTable(L0, L0.own) });
+
+function changes(Lold, ownOld, Lnew) {
+  return planes.map((p, a) => a).filter(a => ownOld[a] !== Lnew.own[a]).map(a => {
+    const bo = Lold.beams.find(b => b.id === ownOld[a]), bn = Lnew.beams.find(b => b.id === Lnew.own[a]);
+    return { a, from: ownOld[a], to: Lnew.own[a], d0: dist(planes[a], bo), d1: dist(planes[a], bn) };
+  });
+}
+function changeTable(ch) {
+  return ch.length ? `<table><tr><th>飞机</th><th>原波束 → 新波束</th><th>距离</th></tr>${ch.map(c => `<tr><td>${PN(c.a)}</td><td>${BN(c.from)} → ${BN(c.to)}</td><td class="num">${f2(c.d0)} → ${f2(c.d1)}</td></tr>`).join('')}</table>` : '<p>没有飞机换波束。</p>';
+}
+const sameSpot = (L, x, y) => { const bx = L.beams.find(b => b.id === x), by = L.beams.find(b => b.id === y); return dist(bx, by) < 1e-9; };
+
+/* ---------- 迭代 ---------- */
+iters.forEach(it => {
+  const grp = it.k === 0 ? '第 1 次（只指派）' : `第 ${it.k + 1} 次`;
+  if (it.k > 0) {
+    it.mv.events.forEach((e, q) => {
+      const prevL = q === 0 ? it.Lprev : it.mv.events[q - 1].Lafter, mem = e.mem;
+      const bl = e.checks.find(c => !c.pass);
+      steps.push({ group: grp, phase: '移动中心', short: `移动 ${e.ids.map(id => NAME[id]).join('＋')}：${e.ok ? (e.shift < 0.005 ? '已在圆心' : `移 ${f2(e.shift)}`) : `被 ${NAME[bl.id]} 挡住`}`, mapTitle: `${e.ids.map(id => NAME[id]).join('＋')} 的成员与最小包围圆`, sideTitle: '间隔检查（逐个其它中心）',
+        title: e.ok ? (e.shift < 0.005 ? `${grpName(e.ids)} 已经在成员的最小包围圆圆心，不用动` : `${grpName(e.ids)} 移到最小包围圆圆心 ${pt(e.to)}`) : `${grpName(e.ids)} 想移到 ${pt(e.to)}，但会违反间隔规则，保持原位`,
+        body: `<p>成员 ${names(mem)}（${mem.length} 架）。最小包围圆圆心 ${pt(e.to)}，半径 ${f2(e.mecR)}，所以移过去后的覆盖圈半径是 ${f2(e.cand)}${e.mecR < P.rmin ? `（不足 ${P.rmin} 取 ${P.rmin}）` : ''}；现在是 ${f2(e.before)}。</p>` +
+          (e.ok ? `<p>与其它中心逐个比较都通过（右表）。${e.shift < 0.005 ? '' : `中心移动 ${f2(e.shift)}，覆盖圈半径 ${f2(e.before)} → ${f2(e.after)}。`}${it.mv.events.length - 1 > q ? '后面的波束用这个新位置检查。' : ''}</p>`
+            : `<p>与 ${BN(bl.id)} 比较时不通过：距离 ${f2(bl.d)} ＜ max(${P.dmin}, 自己新覆盖圈 ${f2(e.cand)}, ${NAME[bl.id]} 的覆盖圈 ${f2(bl.fo)}) ＝ ${f2(bl.need)}。移过去会和 ${BN(bl.id)} 挤在一起，所以不动。</p>`),
+        calc: e.checks.map(c => `与 ${NAME[c.id]}：${f2(c.d)} ${c.pass ? '≥' : '＜'} ${f2(c.need)} → ${c.pass ? '通过' : '不通过'}`).join('<br>'),
+        map: () => drawL(prevL, it.Lprev.own, { focus: e.ids, focusPlanes: mem, extra: d => {
+          d.circle(e.to, e.cand, { stroke: '#222', dash: '6 4', w: 1.8 });
+          d.center(e.to, { color: '#222', s: 5, label: '最小包围圆圆心', size: 12, dash: true });
+          if (e.ok && e.shift > 0.005) d.line(e.from, e.to, { stroke: '#222', w: 1.5, arrow: true });
+          if (bl) { const b = prevL.beams.find(x => x.id === bl.id); d.line(e.to, b, { stroke: '#c0392b', w: 2 }); d.text({ x: (e.to.x + b.x) / 2, y: (e.to.y + b.y) / 2 }, `${f2(bl.d)} ＜ ${f2(bl.need)}`, { color: '#c0392b', bold: true, dy: 18 }); }
+        } }),
+        side: () => `<table><tr><th>其它中心</th><th>距离</th><th>至少要</th><th>结果</th></tr>${e.checks.map(c => `<tr class="${c.pass ? '' : 'hl'}"><td>${BN(c.id)}</td><td class="num">${f2(c.d)}</td><td class="num">${f2(c.need)}</td><td>${c.pass ? '通过' : '<span class="neg">不通过</span>'}</td></tr>`).join('')}</table><p class="note">至少要 ＝ max(最小间距 ${P.dmin}, 自己新覆盖圈半径, 对方覆盖圈半径)。叠放在同组的波束不互相比较。${e.ok ? '' : '有一项不通过就停止比较。'}</p>` });
+    });
+  }
+  const Lbase = it.k === 0 ? it.Lprev : it.Lmoved, ch = changes(Lbase, Lbase.own, it.L);
+  const swapOnly = ch.length && ch.every(c => sameSpot(it.L, c.from, c.to));
+  const Sbefore = it.k === 0 ? it.Sprev : it.Smoved;
+  steps.push({ group: grp, phase: '按距离和重新指派', short: `重新指派：距离和 ${f2(Sbefore)} → ${f2(it.S)}`, mapTitle: '重新指派后（连线：飞机到所属中心）', sideTitle: '换了波束的飞机',
+    title: `${it.k === 0 ? '中心不动，' : '在移动后的中心上，'}按距离和最小重新指派：${f2(Sbefore)} → ${f2(it.S)}`,
+    body: `<p>最小费用流：边费用＝距离，每束最多 ${cap} 架。${it.k === 0 ? '' : `中心移动后、还按原归属算，距离和是 ${f2(Sbefore)}；`}重新指派后是 ${f2(it.S)}。</p>` +
+      (ch.length === 0 ? '<p>没有飞机换波束：现在的分法已经是距离和最小的。</p>'
+        : swapOnly ? `<p>换波束的只有叠放的 ${BN(0)} 与 ${BN(6)} 之间互换成员（右表）。它们在同一位置，距离完全一样，距离和不变——距离相同的分法有好几种，最小费用流随便选了一种。</p>`
+          : `<p>有 ${ch.length} 架飞机换到了更近的波束（右表），每束仍不超过 ${cap} 架。</p>`) +
+      (it.k === 0 ? `<p>${f2(it.S)} 不会比 ${f2(Sbefore)} 大：原来的分法本身就满足每束 ≤ ${cap}，最小费用流至少能找到它。这一次直接接受。</p>` : ''),
+    calc: `距离和 ${f2(Sbefore)} → ${f2(it.S)}`,
+    map: () => drawL(it.L, it.L.own, { loadTag: true, extra: d => planes.forEach((p, a) => d.line(p, it.L.beams.find(b => b.id === it.L.own[a]), { stroke: COLOR[it.L.own[a]], w: ch.some(c => c.a === a) ? 2.4 : 1, op: ch.some(c => c.a === a) ? 1 : 0.4 })) }),
+    side: () => changeTable(ch) });
+  if (it.k > 0) {
+    steps.push({ group: grp, phase: '比较', short: it.ok ? `${f2(it.S)} ＜ ${f2(it.Sprev)}：接受` : `${f2(it.S)} 不小于 ${f2(it.Sprev)}：停止`, mapTitle: it.ok ? '接受后的布局' : '放弃这一次，保留上一次的布局', sideTitle: '距离和的变化',
+      title: it.ok ? `距离和 ${f2(it.Sprev)} → ${f2(it.S)}，严格下降，接受，继续` : `距离和 ${f2(it.S)}，没有比上一次的 ${f2(it.Sprev)} 更小：放弃这一次，收紧结束`,
+      body: it.ok ? `<p>接受这一次的中心和归属，再来一次“移动中心 → 重新指派”。</p>` : `<p>中心${it.mv.events.every(e => !e.ok || e.shift < 0.005) ? '已经移不动了（要么已在圆心，要么被间隔规则挡住）' : '的移动没有带来改善'}，距离和不再下降，再做下去也不会变好。放弃这一次的结果，保留上一次的布局作为最终结果。</p>`,
+      calc: `${f2(it.S)} ${it.ok ? '＜' : '≥'} ${f2(it.Sprev)} → ${it.ok ? '接受' : '停止'}`,
+      map: () => { const L = it.ok ? it.L : it.Lprev; return drawL(L, L.own, { loadTag: true }); },
+      side: () => `<table><tr><th>第几次</th><th>距离和</th><th>结果</th></tr><tr><td>起点</td><td class="num">${f2(iters[0].Sprev)}</td><td></td></tr>${iters.filter(x => x.k <= it.k).map(x => `<tr class="${x === it ? 'hl' : ''}"><td>第 ${x.k + 1} 次</td><td class="num">${f2(x.S)}</td><td>${x.k === 0 ? '接受（只指派）' : x.ok ? '接受' : '<span class="neg">不下降，停止</span>'}</td></tr>`).join('')}</table>` });
+  }
+});
+
+/* ---------- 结果 ---------- */
+const LF = final.L;
+steps.push({ group: '结果', phase: '结果', short: '总结', mapTitle: '收紧后（细虚线：收紧前的覆盖圈）', sideTitle: '各波束：收紧前 → 收紧后',
+  title: `收紧完成：距离和 ${f2(iters[0].Sprev)} → ${f2(final.S)}，平均覆盖圈半径 ${f2(avgFoot(L0))} → ${f2(avgFoot(LF))}`,
+  body: `<p>${iters.filter(x => x.ok && x.k > 0).length} 次“移动中心 → 重新指派”被接受，第 ${iters.length} 次不再下降而停止。热点的 ${BN(0)}＋${BN(6)}、${BN(1)} 被间隔规则挡住没能移动；右边的 ${BN(2)}、${BN(5)} 移动并交换了成员，波束都收窄了。每束仍不超过 ${cap} 架。</p><p>到这里 FLOW-AO 的“第二步”结束，得到的波束中心、宽度和归属交给第二阶段分配频率槽和功率。</p>`,
+  map: () => drawL(LF, LF.own, { loadTag: true, ghost: L0.beams.map(b => ({ c: b, r: footOf(L0, L0.own, b) })) }),
+  side: () => `<table><tr><th>波束</th><th>中心</th><th>负载</th><th>覆盖圈半径</th></tr>${LF.beams.map(b => { const b0 = L0.beams.find(x => x.id === b.id); return `<tr><td>${BN(b.id)}</td><td>${pt(b0)} → ${pt(b)}</td><td class="num">${loadsOf(L0, L0.own)[b.id]} → ${loadsOf(LF, LF.own)[b.id]}</td><td class="num">${f2(footOf(L0, L0.own, b0))} → <b>${f2(footOf(LF, LF.own, b))}</b></td></tr>`; }).join('')}</table>` });
+
+const first = pred => s => s === steps.find(pred);
+const faq = [
+  { q: '收紧波束要做什么？', a: `负载已经达标，接下来让每个波束尽量窄：在每束不超过 min(P*, K) ＝ ${cap} 架的前提下，让全部飞机到所属中心的距离和最小。波束越窄，增益越高，干扰越小。`,
+    go: [{ t: '看起点', f: first(s => s.short === '起点') }] },
+  { q: '这里的最小费用流和均衡指派有什么不同？', a: '均衡指派的名额费用是 1、3、5……，让负载尽量平均；收紧时边费用就是距离本身，每个波束只是容量不超过上限，不再追求平均。',
+    go: [{ t: '看做法', f: first(s => s.short === '做法') }, { t: '看第一次重新指派', f: first(s => s.phase === '按距离和重新指派') }] },
+  { q: '为什么要和移动中心交替做？', a: '重新指派后，成员变了，中心就不一定在成员正中；把中心移到最小包围圆圆心，覆盖圈缩小，飞机离中心更近；中心变了，又可能有飞机换到更近的波束。两件事轮流做，距离和一步步下降。',
+    go: [{ t: '看 C、F 交换成员', f: first(s => s.phase === '按距离和重新指派' && s.group === '第 2 次') }] },
+  { q: '叠放的波束怎么移动？', a: '叠放在一起的波束是一组，按它们全部成员求一个最小包围圆，一起移动；它们之间不检查间隔规则，只和其它中心比较。本例 A＋A′ 被 B 挡住没能移动。',
+    go: [{ t: '看 A＋A′ 被挡住', f: first(s => s.short.startsWith('移动 A＋A′')) }] },
+  { q: '什么时候停？', a: '每次“移动中心 → 重新指派”后算距离和，比上一次严格更小才接受；不再下降就放弃这一次、保留上一次的结果，结束（程序最多做 12 次）。',
+    go: [{ t: '看停止的那一步', f: first(s => s.short.includes('停止')) }] },
+  { q: '叠放的 A、A′ 之间互换成员是怎么回事？', a: '它们在同一位置，同一架飞机去哪个距离都一样。距离和相同的分法不止一种，最小费用流随便选一种，所以会看到两者互换成员而距离和不变。',
+    go: [{ t: '看互换', f: first(s => s.group === '第 1 次（只指派）' && s.phase === '按距离和重新指派') }] }
+];
+window.TIGHTEN_TRACE = iters;
+Player.start({ steps, faq, W: 860, H: 470, phases: PH });
+})();
+
+</script>
+</body></html>
