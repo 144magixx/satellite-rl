@@ -1,0 +1,58 @@
+{
+  "schema": "R7TypedS1PublicationWiringEngineeringV1",
+  "status": "publisher_cost_epoch_output_isolation_postfix_pure_checked_unexecuted",
+  "frozen_data_labels_source_commit": "13702ff5d4c2aac8c559ddf79bdd2d8202dec45f",
+  "prior_future_source_commit": "cbe56ced6d8512551a0f6eeb40be80e413f41ad1",
+  "pure_tests": 51,
+  "actual_model": 0,
+  "actual_optimizer": 0,
+  "actual_prepare": 0,
+  "actual_T": 0,
+  "actual_D5": 0,
+  "actual_PHY": 0,
+  "actual_geometry": 0,
+  "actual_science_POSTs": 0,
+  "formal12fixture_reruns": 0,
+  "ordinary_synthetic_publisher_calls": 4,
+  "ordinary_structural_only_S2_constructor_reads": 4,
+  "actual_production_connections": [
+    "analyze_node valid AI/RULE/RANDOM/T -> publish_terminal -> shared_layout -> typed wire/authority/actualnewS2descriptor",
+    "analyze_labels captures already executed audit_bundle T geometry result -> publish_terminal originalT only",
+    "read_for_stage2 -> UniformStage2Input.from_wire on actual publishedref"
+  ],
+  "identity_and_content": [
+    "exact original case wire SHA/content",
+    "original raw layout SHA and already executed geometry audit parentSHA",
+    "actualbeamIDs/sourceSlotIDs/anchors/centres/fullwidth/owners/count/intbps/N/Omega",
+    "source-cost/audit SHAs only inside immutablelayout; transport paths outside inrefs",
+    "invalid/unavailable outputs keep None no fabricated layout"
+  ],
+  "cost_rules": [
+    "eachvalidmethod conversion/structuralvalidation/wire/registry/descriptor time measured",
+    "node everymethod cold cost adds ownpublication and own audit + common audit/read equally",
+    "label completeoffline originalphysicalspend + independentpostprocessaudit + originalT typedpublication",
+    "final cost receipt IO separatemetadata"
+  ],
+  "original_T_labels_unchanged": true,
+  "qualified6_and_shared9_source_unchanged": true,
+  "new_geometry_search_decode_orPHY_calls_required_by_conversion": 0,
+  "pending": [
+    "independent newsource audit",
+    "root explicit independentpostprocess admission binds original frozenraw refs and new typedpubsource",
+    "no137worker hotchange",
+    "new source bridge/phase plan before future node execution"
+  ],
+  "source_file_sha256": {
+    "src/satellite_rl/workbench/r7_postprocess_source.py": "e730dc87429be50ef1faeae44d83451cc28e2caa0fbe2c5527a04b617b8c5f9e",
+    "src/satellite_rl/workbench/r7_publish.py": "39a687df9eb14598ed2e5a340c539c033fedde8d172d560f92861b966c106519",
+    "scripts/stage1_ai_search_r7/analyze_node.py": "e4c4df6c270675e4fd76653095a28eb6a69f2bac07e0189805643978b7501f02",
+    "scripts/stage1_ai_search_r7/analyze_labels.py": "44e43ffde021c11133ca5c12f1b78d0db0ffbb543498f6a533e8ce93dc5a761f"
+  },
+  "prior_publication_source_commit": "4846560b82294e834cfde439fabb290f99141f9f",
+  "postfix_related_pure_tests": 4,
+  "related_AST_files": 4,
+  "cost_rule_postfix": "everycaller measures elapsed around entire publish_terminal including internal final costwrite/hash/read; innerdescriptor measurement never claimed complete; caller final endpoint IO explicitseparatemetadata no recursive selfcharge",
+  "provenance_postfix": "newaudit/descriptor/cost/gate/qualifiedtable record actual postprocess sourceepoch+relevant codefileSHAs; originalalgorithm sourceepoch retainedseparately",
+  "output_postfix": "new independent planselected outputRoot required; any existingcontent refuses before read/audit/pub; emptynewdirectory allowed; immutable perterminal publisher refuses existingtarget",
+  "new_actual_algorithm_geometry_PHY_model_optimizer_POST_calls": 0
+}

@@ -1,0 +1,62 @@
+{
+  "schema": "R7SuccessorsBoundedImplementationV1",
+  "base_commit": "cfd234bdfc443b69af93fe216fffeb888c8d2318",
+  "design_sha256": "603e0a1e2e075bf714702ba4b1b68adef78639c2cc25529633da5d133996a916",
+  "status": "source_only_pending_independent_review_and_root_exact_phase_admission",
+  "formal_execution_allowed": false,
+  "model_identity": "S1-AI17-R7-GNNSet-D5-seed51001",
+  "actual_new_data_builds": 0,
+  "actual_W_T_D5_calls": 0,
+  "actual_model_load_or_optimizer_calls": 0,
+  "actual_heldout_array_reads": 0,
+  "actual_remote_or_API_mutations": 0,
+  "pure_checks": {"prior_R7_tests": 52, "successor_tests": 13, "failed_label_tests": 6},
+  "original_total_budget": {"builds": 656, "prepare": 676, "T": 676, "D5": 876, "updates": 6000},
+  "training": {
+    "single_seed": 51001,
+    "global_activity_seconds": 28800,
+    "train6000_additional_updates": 4000,
+    "distinct_phase_task_IDs": true,
+    "same_original_learner_root_model_identity_global_owner_and_2000_checkpoint": true,
+    "same_phase_recovery_requires_same_ID_root_known_checkpoint_and_verified_clock": true,
+    "same_normalization_qualified_table_setup_nine_refs": true,
+    "core_math_files_changed": false
+  },
+  "evaluation": {
+    "fixed6000_development": [20, 20, 60],
+    "validation": [20, 20, 60],
+    "test": [40, 40, 120],
+    "format": "cases,T,D5",
+    "four_methods": ["AI", "RULE", "RANDOM", "T"],
+    "same_case_serial_cyclic_timing": true,
+    "no_new_threshold_algorithm_or_variant": true,
+    "heldout_steps": "same original phase budget split into derive then root-frozen new dataset/authority then evaluate; no automatic transition",
+    "test_draw_matrix": "one pre-data10000x40 PCG64 seed51001 source/version-pinned matrix shared two comparisons/three metrics"
+  },
+  "pause": {
+    "uses_single_root_external_guard": true,
+    "guard_API": "require_dispatch_admission(spec,archive_root,experiment_id,mode)",
+    "create_resume_launch_worker_controller_hooks": true,
+    "setup_case_boundaries": true,
+    "train_update_boundaries_only_before_update_or_after_durable_checkpoint": true,
+    "core_pause_reason": "resource_queue",
+    "real_pause_sidecar": "user_restart_0700",
+    "no_automatic_expiry_or_resume": true,
+    "explicit_human_continue_transition_hook_only": true,
+    "no_real_continue_receipt_generated": true,
+    "partial_setup_supply": "preserved/charged; explicit root same-ID supply reconciliation required; implicit regeneration rejected"
+  },
+  "actual_hook_receipts": {"service_schema": "R7ActualServiceDeadlineHooksV1", "service_path": "guard_spec.guard_root/actual_service_hooks/servicePID.json", "GET_admission_includes_ref": true, "worker_schema": "R7ActualWorkerDeadlinePreflightV1", "worker_path": "job/worker_deadline_preflight.json", "before_CUDA": true, "actual_deployed_receipts": null},
+  "RSS": "same resource bounds/meaning; ESRCH ignored only after gone/Z/X confirmation; live PermissionError/malformed still fatal",
+  "protected_shared_9_changed": false,
+  "remaining_root_requirements": [
+    "final independent source audit and exact complete-src/scripts bridge preserving original6math and9shared qualifications",
+    "actual guard source/spec/admission/registered archive and fresh resource/source/preflight plan for train_setup then train2000",
+    "accepted574 qualified table/labels gate/initialization/sourceequivalence and generated exact setup endpoint/cache/normalization",
+    "actual2000 checkpoint/clock/globalowner and passed20 development mechanism gate before4000 extension",
+    "actual fixed6000 checkpoint and dev20 quality+jointNwidth>=5 before validation source unlock",
+    "root metadata-only original20/40-mother full-ancestor recipes and new immutable role datasets/authority after unlock",
+    "validation20 gate before test; pre-test statistical source/version/draw freeze",
+    "explicit human continue and new root operational deadline/clock transition if07:00 pause occurs"
+  ]
+}

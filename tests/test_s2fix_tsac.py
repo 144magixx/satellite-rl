@@ -30,6 +30,27 @@ class TSACFixTests(unittest.TestCase):
         self.assertEqual(transformer.train['warmup_steps'], 2000)
         self.assertEqual(mlp.train['warmup_steps'], 2000)
 
+    def test_network_size_override_and_policy_reload(self):
+        import tempfile
+        from pathlib import Path
+        from satellite_rl.s2fix.tsac import save_policy, load_policy
+        default = Power30Agent(config_for())
+        self.assertEqual(default.parameter_counts()['actor'], 419449)
+        self.assertNotIn('network_overrides', config_for())
+        size = dict(embedding_dim=32, num_heads=4, num_layers=1, feedforward_dim=128)
+        small = Power30Agent(config_for(network=size))
+        self.assertEqual(small.actor.encoder.pos_embed.shape[-1], 32)
+        self.assertEqual(len(small.actor.encoder.net.layers), 1)
+        self.assertEqual(small.parameter_counts()['actor'], 18521)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'model.pt'
+            save_policy(small, small.config, path, 0)
+            loaded = load_policy(path)
+        for name in ('actor', 'critic1', 'critic2'):
+            for a, b in zip(getattr(small, name).state_dict().values(),
+                            getattr(loaded, name).state_dict().values()):
+                self.assertTrue(torch.equal(a, b))
+
     def test_plain_v2_episode_and_restore_without_hashing(self):
         from satellite_rl.shared_interface.stages import make_case, make_layout, UniformStage2Input
         from satellite_rl.shared_interface.spherical_gaussian import PHYSICS_V2

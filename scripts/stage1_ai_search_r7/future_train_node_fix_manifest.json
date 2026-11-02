@@ -1,0 +1,131 @@
+{
+  "schema": "R7FutureTrainNodeFixEngineeringV1",
+  "status": "TN04_TN05_repaired_pure_checked_unexecuted_pending_new_independent_source_review",
+  "frozen_data_source_commit": "13702ff5d4c2aac8c559ddf79bdd2d8202dec45f",
+  "data_source_not_modified": true,
+  "pure_tests": 48,
+  "AST_files": 40,
+  "actual_prepare": 0,
+  "actual_T": 0,
+  "actual_D5": 0,
+  "actual_model_forward": 0,
+  "actual_backward": 0,
+  "actual_optimizer": 0,
+  "science_POSTs": 0,
+  "new_geometry_or_PHY_calls": 0,
+  "new_real_data_reads": 0,
+  "pure_fake_checkpoint_steps": 2,
+  "pure_mock_unavailable_node_cases": 20,
+  "unchanged_qualified_model_core_and_shared_interface": true,
+  "setup_schema": "R7TrainSetupEndpointV1",
+  "setup_input_refs": [
+    "qualified",
+    "labels_gate",
+    "initialization_receipt",
+    "source_equivalence",
+    "initial_state",
+    "authority"
+  ],
+  "setup_output_refs": [
+    "normalization",
+    "feature_cache",
+    "supply_endpoint"
+  ],
+  "training_additional_ref": "train_setup_endpoint",
+  "root_training_gate_required_fields": [
+    "group",
+    "phase=train_setup",
+    "passed",
+    "model_identity",
+    "train_setup_endpoint_ref"
+  ],
+  "owner_bindings": [
+    "original setup run_id and port74",
+    "all9 actual refs",
+    "same dataset and qualified case indices",
+    "same actual runtime",
+    "same supplystarted/PIDbirth/activity origin"
+  ],
+  "checkpoint_provenance_additions": [
+    "train_setup_endpoint_SHA",
+    "setup_training_refs_SHA",
+    "setup_activity_origin_SHA"
+  ],
+  "node_proofs": [
+    "prepare/T original request/started/WAL/guard/output/caps/status/unknown/pidbirth",
+    "cold AI/RULE/RANDOM outer original request/WAL/guard caps and actual result",
+    "inner D5 pinned request/WAL/guard and actual result + owning cold process pidbirth",
+    "raw common and individual method cold cost sums independently rebuilt"
+  ],
+  "unavailable_node": {
+    "full_denominator": 20,
+    "actual_call_slots": {
+      "prepare": 1,
+      "T": 0,
+      "D5": 0
+    },
+    "four_methods": "all explicitly unexecuted typed unavailable, no invented complete costs",
+    "gate": "fails/no6000"
+  },
+  "future_scientific_dispatch_allowed": false,
+  "required_before_execution": [
+    "independent train/node source review",
+    "new complete-source interface bridge admitted_phases for these exact phases",
+    "actual label gate and setup endpoints/owner/source bindings",
+    "new root-frozen phase plans + original fixed model endpoint refs",
+    "fresh actual DQN/CUDA/unique74 GPU and node73/74 resource admission"
+  ],
+  "source_file_sha256": {
+    "scripts/stage1_ai_search_r7/analyze_data.py": "6f6cfdb052def1aa8bc91f76af5d5a86fd3231ac657f108cc7b660b830ff9b17",
+    "scripts/stage1_ai_search_r7/analyze_labels.py": "6f010b1f6bbef9b566c6df7f0aa747685abe937a28f4a93c629e05576ab17668",
+    "scripts/stage1_ai_search_r7/analyze_node.py": "3fb0ca2b43d8de0db5eacd32a60279f14503bb11277f657debe9203a931d1201",
+    "scripts/stage1_ai_search_r7/contract.py": "c39e1681f3ac35580a806648ab300cfb3528af6c7271b116f9062f956d162dfe",
+    "scripts/stage1_ai_search_r7/controller.py": "19d354a7d61773b99a7024ed48acce9132b416f0d6e0a5a8e0f97a4704a5e8b1",
+    "scripts/stage1_ai_search_r7/data_draft.py": "ca2ed60587a66520b7c126917ccea777d99a8f9cc1f8ce4a92cbfc504ce124de",
+    "scripts/stage1_ai_search_r7/deploy.py": "8dfe5662137f6e0f9f55c028e20554de70e58d00efd5d29a548cf23c719b186d",
+    "scripts/stage1_ai_search_r7/label_audit.py": "a75e2a8ee81d5365d6119c1ee3920c164defd24f139268a36c8e5e8fe622085d",
+    "scripts/stage1_ai_search_r7/plan_builder.py": "29140a30c747b8f1db1b3cfc9e2ba2f78acdbbf99dde78239c2901e5ead032a4",
+    "scripts/stage1_ai_search_r7/preflight.py": "43a87f5d482b2331a2740cc71df1fe8bdc4633c4071e23b9babe3a30919913ab",
+    "scripts/stage1_ai_search_r7/supply.py": "0300ce56f2d69398096fd627436e23325c9579b2b7672cb584fa0db1182d16b8",
+    "scripts/stage1_ai_search_r7/__init__.py": "4bb5695386810501adf92a38ac42614645b506219a387d61742115af082b1803",
+    "src/satellite_rl/workbench/coverage_ai_search_r7.py": "3be140cb4e85fb5313b8027f0ab5a801cf21659e0562213d9c515ff62c2f9849",
+    "src/satellite_rl/workbench/r7_case_binding.py": "332d46a334432d474e109e7a9470747a27c6486186ac5d5891be5e4975223d47",
+    "src/satellite_rl/workbench/r7_case_worker.py": "ac8b652356639c2475ab966b68919e66e75b8ccfe4b3b3e1313e09da95e8cfdb",
+    "src/satellite_rl/workbench/r7_labels.py": "3e6a6156e3622551d389f2cc9c46f58591483b3652d6d4540a783e1f7d430f28",
+    "src/satellite_rl/workbench/r7_label_guard_audit.py": "ddaa45fce977b6b48d889dccac22a3f11a5fc9739fe2bb5a0bfb93c78735c6fa",
+    "src/satellite_rl/workbench/r7_model_d5_stage.py": "0b6ab8d1809d849aa828cd73cf4b5e3942532730b1de7c7cc1cab38efdae94f7",
+    "src/satellite_rl/workbench/r7_model_eval_stage.py": "d4201ad3834171eae2355f360f6d3171e0984e0a98495cfe924f2f39448b7dc1",
+    "src/satellite_rl/workbench/r7_model_freeze.py": "d6d30bc8c0a6156542bce7c0171746ac54342f144b7c4e8d43169d3260ec188a",
+    "src/satellite_rl/workbench/r7_model_io.py": "536fe3f7d6e8251818b0dc61b92615111c9318a77e374baa17282801c4902c8f",
+    "src/satellite_rl/workbench/r7_model_limits.py": "4f6f014946a451352fdb145bf91f67867adeef415e34e47c86bf09eb52210c22",
+    "src/satellite_rl/workbench/r7_model_train.py": "27d3e874e65ea2a9d28e9d44c618c49c80a4ca722e76075843a68858b579887f",
+    "src/satellite_rl/workbench/r7_node.py": "e218ab1eb434e082f2013e61a2f9ce1b828cd5834c058aabe98d93511beedc65",
+    "src/satellite_rl/workbench/r7_node_audit.py": "91fc8354ef19b8b4179793cff06148fd114268093e997ff901e3c2964de06cf6",
+    "src/satellite_rl/workbench/r7_node_guard_audit.py": "6145bda28ab7c8d01d0275745a08a72d6232067ac330af73b79bf338b33b7ab3",
+    "src/satellite_rl/workbench/r7_parallel.py": "aeb52db85b207addd589c9250d1e5ea4f30a468a405682450c9fbb817e51ae54",
+    "src/satellite_rl/workbench/r7_parent.py": "a16021518c2fc659ba1ae823382596c5655d6e98d119b090ab56a4c54e633888",
+    "src/satellite_rl/workbench/r7_publish.py": "222f80d5536aa61faacc63b8e41c1ae8597d31523fec932bc80e69457a84bc35",
+    "src/satellite_rl/workbench/r7_resources.py": "82ae0db7a011875ea218a998df91d3c22c470dd8daec0dacfaba3fea66284a48",
+    "src/satellite_rl/workbench/r7_runner.py": "0f4c9273bed883f5626db96b3915e97d7143954cc3bfe5cd1931a81a60e9814a",
+    "src/satellite_rl/workbench/r7_source_bridge.py": "ffefd013ec0fb74a77ba85cc2e4646709dfbfd18fc8fe7436c23a285977991ee",
+    "src/satellite_rl/workbench/r7_stage.py": "ae261d86178cc3977687faedfef0168b0ab082cfd262d90d904e326d7c25d5b2",
+    "src/satellite_rl/workbench/r7_training_dataset.py": "9e03a5087b7ab58355e446e5afa0c4d91cc63408c2b0cd745a4c346d3af91fae",
+    "src/satellite_rl/workbench/r7_train_binding.py": "209317e97c087fef3f96f279a1d45d22432dee37219f12d32b46080afd95ebbb",
+    "src/satellite_rl/workbench/r7_uniform_data.py": "9a7e18a49462b0cb8d097dbd4345b0278ba960b945ee9e0885181791b135f405",
+    "src/satellite_rl/workbench/frozen_round_tasks.py": "a6c06ac104f9244c762b4de7018a5079223e847d0d94233219a7f1f2cf1755e3",
+    "src/satellite_rl/workbench/runner.py": "7655a16cd70b2608184c219f8bda1d5ac9180af13756812f8d837f4b0bf13f13",
+    "src/satellite_rl/workbench/runtime.py": "00e4f6ad759e742a317c3adffbd2b864cce6ee5034b8d3942463bb20bb409d28",
+    "src/satellite_rl/workbench/server.py": "5c329a500d1c9cfefcb8e72355774d050d7eb5bad7acb72329bcfcd9a508a63e"
+  },
+  "prior_failed_review_source_commit": "f4c903973cca2ecc70e9f37360dc039e3533ac06",
+  "actual_CUDA_test_calls": 0,
+  "actual_model_or_numeric_qualification_calls": 0,
+  "runtime_entry_fix": "fresh GPU-mode R7worker configure_v3_runtime exactly once before frozen_round_tasks.verify/policy.deployment; exact identity reused downstream; preinitialized CUDA failclosed",
+  "dataset_entry_fix": "API train_setup admission + worker before supply + publish_setup + validate_setup/train source bind actualconfig.train.refSHA == labelsGate.sourceDatasetSHA == qualifiedManifest.sourceDatasetSHA; exact root authority/model/gate retained",
+  "new_pure_tests": [
+    "actual r7worker→configure→actual deployment order with fake CUDA only",
+    "original v3 pre_cuda_environment rejects already initialized fake CUDA beforeverify/train",
+    "config changed dataset SHA refuses despite internally matching gate/table",
+    "qualified orlabels gate source SHA mismatch refuses"
+  ]
+}

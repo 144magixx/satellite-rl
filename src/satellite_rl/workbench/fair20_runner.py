@@ -771,3 +771,100 @@ def run_job(job_dir, *, resume=False):
         status.update(stage="failed", error=str(error), failure_path=str(directory / "failure.json"), heartbeat_at=now())
         atomic_json(directory / "status.json", status)
         raise
+
+def execution_metadata(job):
+    return {"scientific_commit": job["git_commit"],
+            "execution_source": deepcopy(job.get("execution_source")),
+            "execution_commit": job.get("execution_source", {}).get("execution_commit", job["git_commit"])}
+
+
+def validation_only_resume_verified(job, directory, saved, log_tails):
+    """Require immutable SHA-bound evidence before excluding an unknown action.
+
+    A missing or contradictory proof retains the existing conservative recovery
+    rule. Validation cannot increment the learner interaction counter.
+    """
+    registration = job.get("validation_only_resume_proof", {})
+    try:
+        if log_tails or not registration or not job.get("execution_source"):
+            return False
+        path = Path(registration["proof_path"])
+        if digest(path) != registration["proof_sha256"]:
+            return False
+        proof = read_json(path)
+        step = saved["step"]
+        if (proof["version"] != "fair20_validation_only_resume_v1" or step != 100000
+                or saved["agent"]["interactions"] != step or step in saved["node_done"]
+                or proof["run_id"] != job["run_id"] or saved["run_id"] != job["run_id"]
+                or proof["scientific_commit"] != job["git_commit"]
+                or proof["execution_commit"] != job["execution_source"]["execution_commit"]
+                or proof["checkpoint_step"] != step or proof["agent_interactions"] != step
+                or proof["failed_phase"] != "validation_100000"
+                or proof["checkpoint_sha256"] != digest(Path(directory)/"checkpoint.pt")):
+            return False
+        records = proof["origin_records"]
+        if set(records) != {"job", "status", "config", "launch", "failure", "checkpoint"}:
+            return False
+        for reference in records.values():
+            if digest(Path(reference["path"])) != reference["sha256"]:
+                return False
+        origin_job = read_json(records["job"]["path"])
+        status = read_json(records["status"]["path"])
+        failure = read_json(records["failure"]["path"])
+        if (origin_job["run_id"] != job["run_id"] or origin_job["git_commit"] != job["git_commit"]
+                or records["checkpoint"]["sha256"] != proof["checkpoint_sha256"]
+                or records["config"]["sha256"] != saved["config_sha256"]
+                or records["config"]["sha256"] != digest(Path(directory)/"config.json")
+                or records["status"]["sha256"] != proof["failed_status_sha256"]
+                or records["failure"]["sha256"] != proof["failure_sha256"]
+                or status["run_id"] != job["run_id"] or status["stage"] != "failed"
+                or status["phase"] != "validation_100000" or status["env_step"] != step
+                or status["checkpoint_sha256"] != proof["checkpoint_sha256"]
+                or failure["run_id"] != job["run_id"] or failure["config_sha256"] != saved["config_sha256"]):
+            return False
+        stack = failure["traceback"]
+        if not all(marker in stack for marker in ("in validate_node", "in _evaluate", "in full_b_case")):
+            return False
+        if job["git_commit"] not in stack:
+            return False
+        if any(status["clock"][key] != saved["clock"][key] for key in
+               ("environment_seconds", "sampling_seconds", "update_seconds", "validation_seconds")):
+            return False
+        prior_io, measured_io = saved["clock"]["io_seconds"], status["clock"]["io_seconds"]
+        if not np.isfinite([prior_io, measured_io]).all() or measured_io < prior_io:
+            return False
+        if set(proof["training_logs"]) != set(saved["log_sizes"]):
+            return False
+        for name, size in saved["log_sizes"].items():
+            reference = proof["training_logs"][name]
+            current = Path(directory)/name
+            if (Path(reference["path"]).resolve() != current.resolve()
+                    or current.stat().st_size != size or reference["saved_size"] != size
+                    or proof["training_log_sizes"][name] != size or digest(current) != reference["sha256"]):
+                return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def validation_only_recovered_clock(job, saved):
+    """Called only after SHA-bound validation proof passes, preserving all work.
+
+    The failed status contains the measured checkpoint-write overhead that was
+    incremented after serialization. Incomplete validation wall time was never
+    recorded; persisted per-case costs remain available but cannot replace it.
+    """
+    proof = read_json(job["validation_only_resume_proof"]["proof_path"])
+    status = read_json(proof["origin_records"]["status"]["path"])
+    clock = deepcopy(saved["clock"])
+    previous_io = clock["io_seconds"]
+    clock["io_seconds"] = status["clock"]["io_seconds"]
+    metadata = {"post_checkpoint_measured_io_seconds_recovered": clock["io_seconds"]-previous_io,
+                "checkpoint_io_seconds": previous_io, "failed_status_io_seconds": clock["io_seconds"],
+                "source_failed_status_sha256": proof["failed_status_sha256"],
+                "historical_validation_wall_seconds": None,
+                "historical_validation_wall_missing_reason":
+                    "Validation failed before its wall time was committed. Original persisted Direct/A/B/overhead case timings are retained; unrecorded wall time is unavailable and is not counted as zero or reconstructed from repeat work.",
+                "validation_seconds_scope": "completed measured validation calls only; historical failed-call wall missing",
+                "training_environment_sampling_update_seconds_unchanged": True}
+    return clock, metadata

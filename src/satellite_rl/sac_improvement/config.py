@@ -29,6 +29,15 @@ DEFAULT_CONFIG = {
     "gradient_steps": 1,
     "gradient_clip": 10.0,
     "hidden_width": 128,
+    # 网络结构（默认即原 I0 的多层感知机；其余仅在 network 不是 mlp 时生效）
+    "network": "mlp",
+    "embed_dim": 128,
+    "num_layers": 2,
+    "num_heads": 8,
+    "ffn_mult": 4,
+    "pointer": False,
+    # 起点：greedy 容量感知贪心（原 I0），spread 分散摆放规则（8 组、组内按干扰挑空位）
+    "start": "greedy",
     "total_steps": 400000,
     "pilot_stop_steps": 100000,
     "pilot_max_episodes": 3125,
@@ -86,4 +95,8 @@ def validate_config(raw):
         raise ValueError("Invalid optimizer settings")
     if config["batch_size"] < 1 or config["replay_capacity"] < config["batch_size"]:
         raise ValueError("Invalid replay capacity")
+    if config["network"] not in ("mlp", "deepsets", "transformer") or config["start"] not in ("greedy", "spread"):
+        raise ValueError("Invalid I0 network or start")
+    if config["network"] == "transformer" and config["embed_dim"] % config["num_heads"]:
+        raise ValueError("embed_dim must be divisible by num_heads")
     return config

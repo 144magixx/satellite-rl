@@ -1,0 +1,47 @@
+{
+  "schema": "R7Labels74OperationalRepairEngineeringV1",
+  "status": "pure_checked_pending_root_exact_contract_source_and_fresh_sameID_API_admission",
+  "scientific_source_commit": "13702ff5d4c2aac8c559ddf79bdd2d8202dec45f",
+  "scientific_snapshot_members": 698,
+  "original_run_id": "r7_labels_20261013_234807_312cdce7",
+  "scope": "only74 sameID residual139; preserve147 complete; failed2 originaldenominator",
+  "pure_tests": 8,
+  "AST_files": 4,
+  "new_science_calls": 0,
+  "POST_resume_calls": 0,
+  "service_orworker_deployment_calls": 0,
+  "changes_to_original_scientific_files": 0,
+  "source_file_sha256": {
+    "src/satellite_rl/workbench/r7_recovery_ops.py": "69089d86fba1d64d8051fbb2783cd4219ebc42189544951135fc08f96b444a97",
+    "scripts/stage1_ai_search_r7/recovery_bootstrap.py": "a163f28b5dcbf4b3dbf7b8cfc4868f9cb46ab6da854629a4139e8a7b8827b5c1",
+    "scripts/stage1_ai_search_r7/recovery_server.py": "94161cc1d67529435120054b898ef640323697df7f7b3c0d0cb9c14bbdfbe88e",
+    "scripts/stage1_ai_search_r7/recovery_contract.py": "01ae5d8e8b242fb5437ca6f141045473329ed925b1336667adabeb03cbad2ea7"
+  },
+  "physical_recovery_slots": {
+    "prepare": 139,
+    "T": 139,
+    "D5": 139
+  },
+  "failed_original_cases": [
+    295,
+    297
+  ],
+  "original_job_config_request_owner_bytes_unchanged": true,
+  "ops_metadata": "separate operations_recovery.json sidecar and explicit bootstrap args",
+  "RSSfix": "onlyconfirmed gone/zombie /proc ESRCH ignored; permission/malformed/livePID_ESRCH remain fatal; same2GiBcase/4GiBlane meaning",
+  "original_science_stages": "stilloriginal137 W/T/D commands and functions; wrapper onlyRSS observer propagated in newcasebootstrap",
+  "pending": [
+    "root exact originaljob/config/index/owner/698/PID birth recheck",
+    "root opssource+contract+addendum acceptance",
+    "root once exactsameID resume only",
+    "new independent failure-aware postprocessor before labelgate"
+  ],
+  "prior_failed_scope_source_commit": "c096024185e5f6702a743666dcc7610d1e6fb757",
+  "fixes": [
+    "HTTPdoPOST outerexactroute allowlist + genericApplicationPOSTrefuse",
+    "schedulerstore view onlyoriginalRUN; appGET originalstore retained",
+    "failed evidence refs allpinned atworker",
+    "explicit PIDbirthkind+bootID; procticks compareactualstat notunix API",
+    "actual_operations_launch sidecar actualcmd/source3SHAs/opscommit+137; genericfrozen_source field explicitlyincomplete"
+  ]
+}

@@ -13,25 +13,10 @@ from torch import nn
 from torch.nn import functional as F
 
 from .environment import ACTION_WIDTH, STATE_WIDTH
+from .networks import CandidateNetwork, build_network
 
 
 MAX_ACTIONS = 17  # 16 complete candidate layouts plus STOP.
-
-
-class CandidateNetwork(nn.Module):
-    def __init__(self, width, action_width=ACTION_WIDTH):
-        super().__init__()
-        self.state = nn.Sequential(nn.Linear(STATE_WIDTH, width), nn.LayerNorm(width), nn.ReLU(),
-                                   nn.Linear(width, width), nn.ReLU())
-        self.action = nn.Sequential(nn.Linear(action_width, width // 2), nn.ReLU())
-        self.head = nn.Sequential(nn.Linear(width + width // 2, width), nn.ReLU(), nn.Linear(width, 1))
-
-    def forward(self, state, features):
-        if state.ndim != 2 or features.ndim != 3 or features.shape[0] != state.shape[0]:
-            raise ValueError("Candidate network input dimensions differ")
-        common = self.state(state).unsqueeze(1).expand(-1, features.shape[1], -1)
-        encoded = self.action(features)
-        return self.head(torch.cat((common, encoded), dim=-1)).squeeze(-1)
 
 
 def pack_actions(environment):
@@ -108,11 +93,10 @@ class ImprovementSAC:
     def __init__(self, config):
         self.config = config
         self.device = torch.device(config["device"])
-        width = config["hidden_width"]
         action_width = ACTION_WIDTH + (config["schema_version"] == "s2fix_i0_v1")
-        self.actor = CandidateNetwork(width, action_width).to(self.device)
-        self.critic1 = CandidateNetwork(width, action_width).to(self.device)
-        self.critic2 = CandidateNetwork(width, action_width).to(self.device)
+        self.actor = build_network(config, action_width).to(self.device)
+        self.critic1 = build_network(config, action_width).to(self.device)
+        self.critic2 = build_network(config, action_width).to(self.device)
         self.target1 = copy.deepcopy(self.critic1).eval()
         self.target2 = copy.deepcopy(self.critic2).eval()
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=config["actor_lr"])

@@ -1,5 +1,23 @@
 # 卫星资源分配实验
 
+源码仓库：[144magixx/satellite-rl](https://github.com/144magixx/satellite-rl)（公开）。
+
+## 当前代码入口（2026-11-03）
+
+三阶段代码已在同一仓库整理：第一阶段规划波束覆盖与飞机归属，第二阶段分配频率槽和功率，第三阶段在固定频率方案上细调功率。各轮实验保留自己的物理参数、需求和评价口径，结果以对应报告为准。
+
+| 内容 | 源码 | 配套文档 |
+| --- | --- | --- |
+| 第一阶段 FLOW-AO、下界与动态重配置 | [coverage/s1fix](src/satellite_rl/coverage/s1fix/) | [S1-FIX](docs/Claude维护/S1-FIX第一阶段纠偏/) |
+| 第二阶段当前主线：S2-LAB | [s2lab](src/satellite_rl/s2lab/) | [口径与报告](docs/Claude维护/S2-LAB/) |
+| 第三阶段功率细调：S3-LAB | [s3lab](src/satellite_rl/s3lab/) | [方案与报告](docs/Claude维护/S3-LAB/) |
+| 历史第二阶段需求压力与 T-SAC 变体 | [s2fix](src/satellite_rl/s2fix/)、[sac_improvement](src/satellite_rl/sac_improvement/) | [S2-FIX](docs/Claude维护/S2-FIX第二阶段需求压力/)、[原版框架复现](docs/Claude维护/原版框架复现/) |
+| 文献方法对照 | [litcmp](src/satellite_rl/litcmp/) | [文献对照](docs/Claude维护/文献对照/)、[脚本说明](scripts/litcmp/README.md) |
+
+`main` 汇总可用开发代码；`archive/*` 标签保留各开发线的原始提交。实验结果、网页生成数据和新训练权重分别在本地 `outputs/`、`models/runs/`，按现有规则不随源码上传；文档指向这些目录的链接需要相应本地归档。仓库内已有的输入数据和原预训练权重继续保留。
+
+下文保留早期实验入口和说明；最新实验进展从 [EXPERIMENT_STATUS.md](EXPERIMENT_STATUS.md) 进入。
+
 **2026-10-14 束宽对照已获实施授权：**[方案26](docs/第二阶段/方案/26_T0架构下束宽变量与状态空间对照方案.md)保留原T0架构、奖励和训练机制，比较原状态、加束宽、加干扰关系和两者都加四组；未选信息不构建。用户已授权20418/20424实施，实际进展、来源与恢复入口见[W26运行记录](docs/第二阶段/实验规范/02_W26束宽状态对照运行记录.md)。方案25的多项算法改动保留为历史。
 
 基于 PyTorch 的卫星波束频率、频率槽及功率分配研究，包含 Transformer/CNN/MLP SAC、两种 PPO、DQN 与启发式基线。

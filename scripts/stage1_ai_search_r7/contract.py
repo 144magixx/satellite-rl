@@ -24,6 +24,11 @@ PHASES = {
 }
 FIRST_PHASES = ('data_train_dev', 'labels', 'train_setup', 'train2000', 'node2000')
 SEALED_PHASES = tuple(p for p in PHASES if p not in FIRST_PHASES)
+IMPLEMENTED_PHASES = tuple(PHASES)
+EVALUATION_PHASES = ('node2000','fixed6000_development','validation','test')
+MODEL_IDENTITY = 'S1-AI17-R7-GNNSet-D5-seed51001'
+ROLE_COUNTS = dict(train=576,development=20,validation=20,test=40)
+ROLE_DATES = dict(train=('2024-01-08','2024-01-09'),development=('2024-01-12',),validation=('2024-02-17','2024-02-18'),test=('2024-02-19','2024-02-20'))
 PRIOR = {'data_train_dev': 'shared_interface', 'labels': 'data_train_dev',
          'train_setup': 'labels', 'train2000': 'train_setup', 'node2000': 'train2000',
          'train6000': 'node2000', 'fixed6000_development': 'train6000',
@@ -46,3 +51,13 @@ def sealed_phase_interface(phase):
 
 def total_budget():
     return {key: sum(p[key] for p in PHASES.values()) for key in ('builds','prepare','T','D5','updates')}
+
+def phase_budget(phase,heldout_stage=None):
+    if phase not in IMPLEMENTED_PHASES:raise ValueError('original frozen phase required')
+    result={k:PHASES[phase][k] for k in ('builds','prepare','T','D5','updates')}
+    if phase in ('validation','test'):
+        if heldout_stage=='derive':result.update(prepare=0,T=0,D5=0)
+        elif heldout_stage=='evaluate':result['builds']=0
+        else:raise ValueError('derive then independent root freeze then evaluate; no implicit heldout read')
+    elif heldout_stage is not None:raise ValueError('heldout step only validation/test')
+    return result

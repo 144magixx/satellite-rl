@@ -113,6 +113,10 @@ class Power30Env:
         if len(action)!=3 or any(isinstance(x,(bool,np.bool_)) or not isinstance(x,(int,np.integer)) for x in action):raise ValueError('three integer action indices required')
         f,l,p=map(int,action);mask=self.action_mask()
         if not (0<=f<100 and 0<=l<10 and 0<=p<len(self.power_table) and mask['frequency_slots'][f,l] and mask['power'][p]):raise ValueError('illegal action; clipping forbidden')
+        return self._place(f,l,p,action,step_started)
+
+    def _place(self,f,l,p,action,step_started):
+        """Apply a validated action; shared with the optional group-choice environment."""
         c=int(self.indices[self.beam_idx]);bid=self.ids[c];self.starts[c]=f;self.counts[c]=l+1;self.powers[c]=self.power_table[p]
         self.occupied[self.groups[c],f:f+l+1]=True
         self.requested.append(dict(beam_id=bid,frequency_index=f,count_index=l,power_index=p,start=f,count=l+1,power_w=self.power_table[p]))

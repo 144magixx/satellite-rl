@@ -76,6 +76,7 @@ class Power30Agent(WorkbenchAgent):
     def __init__(self,config,device=None,call_hook=None):
         menu=config['menu'];group=config['group'];table=power_table(menu)
         expected=build_config(menu,group,device or config['training']['device'],config.get('phase','scientific'),config['training']['seed'])
+        expected['network'].update(config.get('network_overrides',{}))
         for section,keys in {
             'network':('kind','embedding_dim','num_heads','num_layers','feedforward_dim','activation','dropout',
                        'sac_policy_structure','sac_critic_structure','temporal_mode','graph_mode',
