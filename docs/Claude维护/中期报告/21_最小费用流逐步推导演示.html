@@ -1,401 +1,683 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>最小费用流 · 逐边看懂分配与退流</title><style>:root{--ink:#182d40;--muted:#607589;--blue:#245b86;--blue-soft:#eaf2f8;--gold:#b87400;--gold-soft:#fff3cc;--red:#bd4345;--green:#227864;--line:#dbe3e9;--paper:#fff;--bg:#f3f6f8}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:var(--bg);font:15px/1.6 "Microsoft YaHei","Noto Sans SC",system-ui,sans-serif}header{padding:18px 24px 12px;display:flex;justify-content:space-between;align-items:center;gap:16px;background:#fff;border-bottom:1px solid var(--line)}h1{font-size:25px;margin:0;letter-spacing:.05em}h2{font-size:17px;line-height:1.5;margin:0 0 10px}h3{font-size:16px;margin:14px 0 6px}p{margin:8px 0}.eyebrow{font-size:12px;color:var(--muted);letter-spacing:.06em;margin:0 0 2px}.header-actions,.control-buttons,.settings,.switches{display:flex;align-items:center;flex-wrap:wrap;gap:8px}button,select{font:inherit;border:1px solid #c5d2dd;background:#fff;color:var(--ink);border-radius:7px;padding:6px 12px;cursor:pointer}button:hover{background:var(--blue-soft);border-color:var(--blue)}button:focus-visible,select:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:3px solid #e3ac38;outline-offset:2px}button.primary,button.active{background:var(--blue);border-color:var(--blue);color:#fff}button:disabled{opacity:.4;cursor:default}button.small{font-size:12px;padding:3px 7px}.context{font-size:13px;background:#e9f1f6;padding:8px 24px;color:#31546c}.dot{display:inline-block;width:7px;height:7px;margin-right:8px;border-radius:50%;background:var(--blue)}.chapters{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:12px 24px 8px}.chapters button{font-size:13px;padding:5px 10px}#roundNav{display:flex;flex-wrap:wrap;gap:6px}.reroute-nav{border-bottom:3px solid #bd4345}.divider{height:24px;border-left:1px solid #becad3;margin:0 4px}.controls{background:#fff;position:sticky;top:0;z-index:10;margin:0 24px 14px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;box-shadow:0 4px 12px #142c4410}.controls button{font-size:13px}.settings{margin-left:auto;font-size:12px}select{max-width:100%;font-size:13px;padding:5px 6px}.controls input[type=range]{flex:1;min-width:100px;accent-color:var(--blue)}#seek{flex-basis:75%}#progress{font-size:12px;color:var(--muted);min-width:145px;text-align:right}main{padding:0 24px 24px;max-width:1920px;margin:auto}.main-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(420px,.85fr);gap:16px;align-items:start}.left-column,.right-column{min-width:0;display:grid;gap:14px}.card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:14px 16px;min-width:0}.card-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:9px}.card-head h2{margin:0}.switches,.hint{font-size:12px;color:var(--muted)}.switches{gap:8px}.graph-card{padding:12px 10px 10px}.graph-card .card-head{padding:0 5px}.graph-card h2{font-size:16px}#graph{display:block;width:100%;height:auto;background:linear-gradient(#fff,#fbfcfd);border-radius:8px}#graphWrap{min-width:0}.legend{display:flex;flex-wrap:wrap;gap:6px 15px;font-size:11px;color:var(--muted);padding:5px 8px}.line{display:inline-block;width:18px;border-top:2px solid;margin-right:5px;vertical-align:middle}.gray{color:#a6b5c0}.red{color:var(--red)}.line.red{border-top-style:dashed}.gold{color:var(--gold)}.blue{color:var(--blue)}.edge-caption{background:#f2f6f9;border-radius:6px;padding:8px 10px;font-size:13px;min-height:46px}.story-card{border-top:3px solid var(--blue)}#eventTitle{margin:4px 0 10px;font-size:20px}#narration{font-size:14px;line-height:1.8;min-height:90px}#narration p.current{border-left:3px solid var(--gold);padding:8px 10px;background:var(--gold-soft);border-radius:0 5px 5px 0}.calculation{background:#f2f6fa;border-radius:6px;margin:12px 0;padding:10px 12px;overflow-wrap:anywhere}.formula{font:19px/1.8 Georgia,"Times New Roman","Microsoft YaHei",serif}.formula .bad{color:var(--red)}.formula .good{color:var(--green)}.muted{color:var(--muted)}.metric-row{display:flex;gap:8px;flex-wrap:wrap}.metric{flex:1;min-width:90px;border:1px solid var(--line);border-radius:6px;padding:6px 9px}.metric span{display:block;font-size:11px;color:var(--muted)}.metric strong{font-size:18px;font-variant-numeric:tabular-nums}.table-scroll{max-width:100%;overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;background:#f1f5f8;color:#50677b;font-weight:500;white-space:nowrap}th,td{padding:6px 8px;border-bottom:1px solid #e5ebef;vertical-align:top}tr.changed{background:var(--gold-soft)}tr.selected{background:var(--blue-soft)}tr.min-row{background:#eaf6ef}td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}#labels td{padding:4px 7px}#labels th{font-size:12px;padding:5px 7px}#labels tr{cursor:pointer}.queue{font-size:12px;background:#f2f6f8;padding:6px 10px;margin-top:8px;border-radius:6px;min-height:31px}.note{color:var(--muted);font-size:12px;margin-top:8px}.allocations{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.beam-allocation{padding:8px;border:1px solid var(--line);border-top:3px solid var(--beam);border-radius:5px;min-width:0}.beam-allocation h3{margin:0 0 4px;font-size:14px}.air-chip{display:inline-block;border-radius:4px;background:#edf2f6;padding:1px 6px;margin:2px 2px 2px 0;font-size:13px}.air-chip.arrived{background:#dff1e7;color:#14543d}.air-chip.left{background:#f9e2e3;text-decoration:line-through;color:#9c383b}.badge{font-size:11px;color:var(--blue);border:1px solid #cbdce9;background:#edf5fb;padding:2px 7px;border-radius:4px}.lower-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}.history{max-height:230px;overflow:auto}.history button{border:0;border-radius:0;display:block;text-align:left;width:100%;padding:6px 8px;font-size:12px;background:transparent}.history button.active{background:var(--gold-soft);color:var(--ink)}#inspector{font-size:13px;min-height:130px}#inspector table{font-size:12px}#inspector .active-edge{color:var(--gold);font-weight:600}.candidates{margin-bottom:16px}.candidate-summary{font-size:13px;margin:8px 0 12px}.candidate-scroll{max-height:360px}#paths th{position:sticky;top:0;z-index:1}#paths tr[data-path]{cursor:pointer}#paths tr[data-path]:hover{background:#fff3cc}#paths td.route{min-width:250px;font-size:12px}.path-math{min-width:210px;font-size:12px;white-space:normal}.negative{color:var(--red);font-weight:600}.question-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.question-grid button{text-align:left;font-size:13px;padding:10px}.question-grid button span{display:block;font-size:11px;color:var(--muted);margin-top:3px}footer{padding:20px 0 0;font-size:11px;color:var(--muted)}.sym{border-bottom:1px dotted #7392a8;cursor:help;white-space:nowrap}.sym:hover,.sym:focus{background:#e2edf5}#tooltip{position:fixed;z-index:1000;width:300px;max-width:calc(100vw - 20px);padding:11px 14px;border:1px solid #bed0df;border-left:4px solid var(--blue);border-radius:7px;background:#fff;box-shadow:0 7px 24px #173c6025;pointer-events:none;font-size:13px}#tooltip strong{display:block;font-size:17px;margin-bottom:5px}#tooltip .unit{font-size:11px;color:var(--muted);margin-top:5px}dialog{max-width:900px;width:calc(100vw - 40px);max-height:85vh;border:1px solid var(--line);border-radius:12px;padding:20px;box-shadow:0 15px 80px #102c4650;color:var(--ink)}dialog::backdrop{background:#102c4660}.dialog-top{display:flex;align-items:center;justify-content:space-between;gap:10px;position:sticky;top:-20px;background:#fff;padding:6px 0 12px;z-index:1}.dialog-top h2{margin:0}#dialogBody{font-size:14px}.reading{max-width:760px;line-height:1.9}.reading li{margin:8px 0}.flow-node{cursor:pointer}.flow-node text{font-family:"Microsoft YaHei",sans-serif}.flow-node circle,.flow-node rect{transition:fill .2s}.node-distance{font:12px "Consolas",monospace!important;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round}.edge-label{font:11px "Consolas",monospace;paint-order:stroke;stroke:white;stroke-width:4px}.edge-hit{cursor:help}.query-edge{stroke-dasharray:8 5;animation:dash 1.6s linear infinite}@keyframes dash{to{stroke-dashoffset:-26}}@media(prefers-reduced-motion:reduce){.query-edge{animation:none}}@media(min-width:1700px){.main-grid{grid-template-columns:minmax(0,1.25fr) minmax(480px,.75fr)}}@media(max-width:1050px){header{align-items:flex-start}h1{font-size:22px}.main-grid{grid-template-columns:minmax(0,1fr) minmax(340px,.8fr)}main{padding:0 14px 20px}.context,.chapters{padding-left:14px;padding-right:14px}.controls{margin-left:14px;margin-right:14px}.card{padding:12px}.allocations{grid-template-columns:repeat(2,1fr)}.switches{display:none}}@media(max-width:760px){header{padding:12px;display:block}.header-actions{margin-top:10px}.main-grid,.lower-grid{grid-template-columns:1fr}.question-grid{grid-template-columns:1fr 1fr}.controls{position:static}.settings{margin-left:0}.chapters{gap:4px}.card-head{align-items:flex-start;flex-wrap:wrap}.allocations{grid-template-columns:repeat(4,1fr)}.control-buttons{gap:4px}.control-buttons button{font-size:12px;padding:5px 8px}.context{font-size:12px}.right-column{gap:12px}.candidate-scroll{max-height:400px}.formula{font-size:17px}}
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>最小费用流 · 一步不跳</title>
+<style>
+:root{--ink:#1d3142;--muted:#687a8b;--line:#dce4ea;--bg:#f3f6f8;--blue:#2a5d87;--gold:#b57600;--gold-soft:#fff3cf;--red:#c0443f;--green:#23795f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.7 "Microsoft YaHei","PingFang SC","Noto Sans SC",system-ui,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 24px;background:#fff;border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:24px}h2{font-size:16px;margin:0 0 8px}h3{margin:0}
+.eyebrow{margin:0;color:var(--muted);font-size:12px;letter-spacing:.04em}
+select,button{font:inherit;border:1px solid #c4d1dc;background:#fff;border-radius:7px;padding:4px 11px;color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--blue);background:#eef4f9}
+button.primary,button.on{background:var(--blue);border-color:var(--blue);color:#fff}
+button:disabled{opacity:.4;cursor:default}
+details.faq{margin:14px 24px 0;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 16px}
+details.faq summary{cursor:pointer;font-weight:700;font-size:16px}
+.faq-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin:10px 0 4px}
+.faq-item{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#fbfcfd}
+.faq-item h3{font-size:15px;color:var(--blue);margin-bottom:4px}.faq-item p{margin:4px 0;font-size:14px}
+.faq-item button{font-size:13px;padding:2px 8px;margin:4px 6px 0 0}
+.controls{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 24px 0;padding:8px 14px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+.controls input[type=range]{flex:1;min-width:140px}.controls .sep{border-left:1px solid var(--line);height:22px}
+#progress{font-size:13px;color:var(--muted);min-width:90px}
+.grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;padding:14px 24px 24px}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.badge{font-size:12px;padding:2px 9px;border-radius:20px;background:#e8f0f6;color:var(--blue);white-space:nowrap}
+.badge.exec{background:#fde8e6;color:var(--red)}.badge.done{background:#e2f3ec;color:var(--green)}
+svg{width:100%;height:auto;display:block}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted);margin-top:4px}
+.legend i{display:inline-block;width:26px;height:0;vertical-align:middle;margin-right:5px;border-top:2px solid #9fb0bd}
+.legend i.used{border-top:5px solid rgba(42,93,135,.35)}.legend i.rev{border-top:2px dashed var(--red)}.legend i.hot{border-top:4px solid var(--gold)}
+.queue{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;padding:8px 10px;background:#f7f9fb;border-radius:8px;font-size:14px}
+.queue .ql{color:var(--muted);margin-right:4px}
+.chip{display:inline-block;padding:1px 10px;border-radius:14px;border:1px solid #c4d1dc;background:#fff;font-weight:700}
+.chip.new{border-color:var(--gold);background:var(--gold-soft)}.chip.out{text-decoration:line-through;color:var(--muted);font-weight:400}
+.chip.req{border-color:var(--red);background:#fde8e6}
+.phases{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.phases span{font-size:12px;padding:2px 8px;border-radius:5px;background:#eef2f5;color:#8a99a6}
+.phases span.on{background:var(--blue);color:#fff}
+#stepTitle{font-size:19px;line-height:1.45;margin:2px 0 8px}
+#stepBody p{margin:7px 0}#stepBody ul{margin:6px 0;padding-left:22px}
+.warn{background:#fff6e0;border-left:3px solid var(--gold);padding:6px 10px;border-radius:4px;margin:8px 0}
+.calc{margin-top:10px;padding:9px 12px;background:#f5f8fa;border-left:3px solid var(--blue);border-radius:4px;font-size:14.5px}
+.calc div{margin:2px 0}.good{color:var(--green);font-weight:700}.bad{color:var(--muted)}
+.neg{color:var(--red)}.muted{color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left}
+th{color:var(--muted);font-weight:400;font-size:12.5px}
+td.num{font-variant-numeric:tabular-nums}
+tr.hl td{background:var(--gold-soft)}tr.ch td{background:#fdeceb}
+.z{color:#b0bcc6}.one{font-weight:700}
+.owners{display:flex;flex-wrap:wrap;gap:10px}
+.beam-box{flex:1;min-width:130px;border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.beam-box b{display:block;font-size:14px}
+.note{font-size:13px;color:var(--muted);margin:6px 0 0}
+#timeline{list-style:none;margin:0;padding:0;max-height:330px;overflow:auto;font-size:13.5px}
+#timeline li.ph{font-weight:700;color:var(--blue);padding:6px 4px 2px;cursor:default}
+#timeline li{padding:2px 6px;border-radius:5px;cursor:pointer}
+#timeline li:hover{background:#eef4f9}#timeline li.cur{background:var(--gold-soft);font-weight:700}#timeline li.fut{color:#9aa8b4}
+.route .arr{margin:0 3px}.route .arr.rv{color:var(--red);font-weight:700}
+.dist td,.dist th{text-align:center}
+footer{padding:0 24px 24px;color:var(--muted);font-size:12.5px}
+@media (max-width:1100px){.grid{grid-template-columns:1fr}}
 </style></head>
 <body>
-<header><div><p class="eyebrow">FLOW-AO · 固定中心后的均衡指派</p><h1>最小费用流，逐边看懂</h1></div><div class="header-actions"><label>例子 <select id="example"></select></label><button id="symbols">符号与名词</button><button id="guide">怎么看</button></div></header>
-<div class="context"><span class="dot"></span>全部飞机一开始就在网络里。每一轮搜索一条最便宜的完整路径；搜索结束后才更改归属。</div>
-<nav class="chapters" aria-label="教学阶段"><button data-setup="0">① 读懂例子</button><button data-setup="1">② 建立网络</button><button data-setup="2">③ 费用怎么放</button><span class="divider"></span><div id="roundNav"></div><button id="finalJump">最终核对</button></nav>
-<section class="controls" aria-label="播放控制"><div class="control-buttons"><button id="prev">← 上一步</button><button id="play" class="primary">播放</button><button id="next">下一步 →</button><button id="nextUpdate">下次费用改写</button><button id="endSearch">看本轮选中路径</button><button id="nextReroute">跳到退流</button></div><div class="settings"><label>步进 <select id="detail"><option value="edges">每条可用边</option><option value="key">关键变化</option><option value="all">所有边含容量为零</option></select></label><label>速度 <select id="speed"><option value="2000">慢 · 2秒</option><option value="1100" selected>正常 · 1.1秒</option><option value="400">快 · 0.4秒</option></select></label></div><input id="seek" type="range" min="0" value="0" aria-label="演示进度"><output id="progress"></output></section>
-<main>
-<section class="main-grid">
-<div class="left-column"><article class="card graph-card"><div class="card-head"><h2 id="graphTitle">给定的覆盖关系</h2><div class="switches"><label><input id="showReverse" type="checkbox" checked>可撤销的反向边</label><label><input id="showCost" type="checkbox">全部边费用</label></div></div><div id="graphWrap"><svg id="graph" viewBox="0 0 850 590" role="img" aria-label="源点、飞机、波束和汇点构成的残量网络"></svg></div><div class="legend"><span><i class="line gray"></i>可走的正向边</span><span><i class="line red"></i>撤销旧流量</span><span><i class="line gold"></i>当前检查 / 选中路线</span><span><i class="line blue"></i>已有归属</span></div><div id="edgeCaption" class="edge-caption" aria-live="polite"></div></article>
-<article class="card"><div class="card-head"><h2>已经执行的分配</h2><span id="executionBadge" class="badge"></span></div><div id="allocations" class="allocations"></div><div id="assignmentNote" class="note"></div></article>
-</div>
-<div class="right-column"><article class="card story-card"><div id="eventMeta" class="eyebrow"></div><h2 id="eventTitle"></h2><div id="narration" aria-live="polite"></div><div id="calculation" class="calculation"></div><div id="liveMetrics" class="metric-row"></div></article>
-<article class="card label-card"><div class="card-head"><h2 id="nodeHeading">每个节点都记账</h2><span class="hint">点节点查看其出边</span></div><div class="table-scroll"><table id="labels"><thead><tr><th>节点</th><th>更新前</th><th>目前最低费用</th><th>从哪里来</th><th>待检查</th></tr></thead><tbody></tbody></table></div><div id="queue" class="queue"></div><div class="note">数值是从 S 到这里的路径费用。飞机节点和波束节点使用相同的更新规则。</div></article>
-</div>
+<header>
+ <div><p class="eyebrow">FLOW-AO 均衡指派用到的算法 · 逐次最短路求最小费用流</p><h1>最小费用流，一步不跳</h1></div>
+ <label>例子 <select id="example"></select></label>
+</header>
+
+<details class="faq" open><summary>先把七个问题说清楚（每条都可以跳到例子里对应的那一步）</summary><div id="faq" class="faq-grid"></div></details>
+
+<section class="controls">
+ <button id="prev">← 上一步</button><button id="play" class="primary">自动播放</button><button id="next">下一步 →</button>
+ <label>速度 <select id="speed"><option value="2600">慢</option><option value="1500" selected>中</option><option value="700">快</option></select></label>
+ <span class="sep"></span><span id="jumps"></span>
+ <input id="seek" type="range" min="0" value="0" aria-label="进度"><span id="progress"></span>
 </section>
-<section class="lower-grid"><article class="card"><div class="card-head"><h2 id="inspectorTitle">这条边为什么这样处理</h2><button id="clearSelection" class="small">跟随当前步骤</button></div><div id="inspector"></div></article><article class="card"><div class="card-head"><h2>本轮怎么走到这一步</h2><span class="hint">点击一行回看</span></div><div id="history" class="history"></div></article></section>
-<section class="card candidates"><div class="card-head"><div><h2>展开本轮所有完整候选路径</h2><p class="hint">这张表只用于对照讲解；求解器使用逐边更新，不靠这张表枚举。</p></div><label>从哪架飞机开始 <select id="candidatePlane"><option value="all">全部</option></select></label></div><div id="candidateSummary" class="candidate-summary"></div><div class="table-scroll candidate-scroll"><table id="paths"><thead><tr><th>序号</th><th>完整路径 · 悬停在图上追踪</th><th>逐项费用</th><th>净增费用</th><th>改道</th></tr></thead><tbody></tbody></table></div></section>
-<section class="card"><div class="card-head"><h2>带着这些问题看</h2></div><div id="questions" class="question-grid"></div></section>
-<footer>教学小例子 · 距离由表格给定，图上连线长度不代表距离 · 所有路径与费用由本页算法实时计算 · 单文件离线可用</footer>
+
+<main class="grid">
+ <div>
+  <article class="card">
+   <div class="card-head"><h2 id="graphTitle"></h2><span id="graphBadge" class="badge"></span></div>
+   <svg id="graph" viewBox="0 0 860 430" role="img" aria-label="残量网络"></svg>
+   <div class="legend"><span><i></i>还能走的正向边（剩余 1）</span><span><i class="used"></i>已用掉的正向边（剩余 0，不能走，代表当前归属）</span><span><i class="rev"></i>反向边（能走，走它＝撤销一条已用的边）</span><span><i class="hot"></i>这一步涉及的边</span></div>
+   <div id="queue" class="queue"></div>
+  </article>
+  <article class="card">
+   <div class="card-head"><h2>残量网络：每条边还剩多少</h2><span class="badge">只有“执行”才会改这张表</span></div>
+   <table id="resid"></table>
+   <p class="note">剩余 ＝ 这条边还能走几次，剩余为 0 的边不能走。每条正向边都配一条反方向的孪生边：正向剩余 ＋ 反向剩余 ＝ 1。执行一条路线时，路线上每条边剩余 −1，它的孪生边 ＋1；搜索期间这张表一个数都不变。</p>
+  </article>
+ </div>
+ <div>
+  <article class="card">
+   <div id="phases" class="phases"></div>
+   <p id="stepMeta" class="eyebrow"></p>
+   <h2 id="stepTitle"></h2>
+   <div id="stepBody"></div>
+   <div id="stepCalc" class="calc"></div>
+  </article>
+  <article class="card">
+   <div class="card-head"><h2>记账表（本轮搜索用，每轮清空重算）</h2></div>
+   <table id="ledger"></table>
+   <p class="note">D ＝ 本轮目前找到的、从 S 走到这个节点的最低费用；“上一站”＝这条最便宜路线到达它之前经过的节点。D 只会变小，不会变大。</p>
+  </article>
+  <article class="card">
+   <div class="card-head"><h2>当前归属</h2><span id="ownBadge" class="badge"></span></div>
+   <div id="owners" class="owners"></div><p id="ownNote" class="note"></p>
+  </article>
+  <article class="card">
+   <div class="card-head"><h2 id="tlTitle"></h2></div>
+   <ol id="timeline"></ol>
+  </article>
+ </div>
 </main>
-<div id="tooltip" role="tooltip" hidden></div>
-<dialog id="dialog"><div class="dialog-top"><h2 id="dialogTitle"></h2><button id="closeDialog" aria-label="关闭">关闭 ×</button></div><div id="dialogBody"></div></dialog>
-<script id="flow-core">/* 来源：codex。教学用固定网络；整数费用保证退流和比较不受浮点误差影响。 */
+<footer>教学小例子：距离由表格给定，图上连线长短不代表距离。所有数字由本页内置算法实时算出，最终结果与穷举全部分法核对。单文件离线可用。键盘 ← → 单步，空格播放/暂停。</footer>
+
+<script id="flow-core">
+/* 逐次最短路求最小费用流（队列版 Bellman-Ford，即 SPFA），逐步记录每一个动作。费用用整数（单位 0.1），避免小数误差。 */
 (function (root) {
-  'use strict';
-  const SCALE = 10000;
-  const examples = [
-    { id: 'branch', name: '主例 · 7 架飞机 / 4 个波束', cap: 2, beams: ['A','B','C','D'],
-      planes: ['a1','a2','a3','a4','a5','a6','a7'],
-      distances: [{A:1,B:4},{B:2,C:5},{A:3},{A:6},{C:10,D:3},{D:4},{D:7}],
-      intro: '先让有多个选择的飞机进入便宜名额，再通过两次连续改道，给只能去某一波束的飞机找到位置。' },
-    { id: 'familiar', name: '复习 · 4 架飞机 / 3 个波束', cap: 2, beams: ['A','B','C'],
-      planes: ['a1','a2','a3','a4'], distances: [{A:1,B:4},{B:2,C:5},{A:3},{A:6}],
-      intro: '沿用刚才的四机例子：第三轮同时调整两架飞机，第四轮的反向分支走不通。' },
-    { id: 'blocked', name: '对照 · 有空位也可能分不完', cap: 2, beams: ['A','B','C','D'],
-      planes: ['a1','a2','a3','a4','a5','a6','a7'],
-      distances: [{A:1},{B:2,C:5},{A:3},{A:6},{C:10,D:3},{D:4},{D:7}],
-      intro: '只去掉 a1 → B 这条可选归属。a1、a3、a4 都只能去 A，而 A 只有两个名额；其他波束的空位救不了它们。' }
-  ];
-  const clone = a => a.slice();
-  const fmt = n => n === null || n === Infinity ? '∞' : (n / SCALE).toFixed(4).replace(/\.?0+$/, '') || '0';
-  const signed = n => (n < 0 ? '−' : '+') + fmt(Math.abs(n));
-  function buildNetwork(ex) {
-    const nodes = [{id:'S',kind:'source',label:'源点 S'}];
-    ex.planes.forEach((id,i)=>nodes.push({id,kind:'plane',plane:i,label:id}));
-    ex.beams.forEach((id,i)=>nodes.push({id,kind:'beam',beam:i,label:id}));
-    nodes.push({id:'T',kind:'sink',label:'汇点 T'});
-    const ix = Object.fromEntries(nodes.map((x,i)=>[x.id,i]));
-    const edges=[], adj=nodes.map(()=>[]);
-    function add(u,v,capacity,cost,kind,extra={}) {
-      const id=edges.length;
-      edges.push({id,u:ix[u],v:ix[v],capacity,cost,kind,rev:id+1,forward:true,...extra});
-      edges.push({id:id+1,u:ix[v],v:ix[u],capacity:0,cost:-cost,kind,rev:id,forward:false,...extra});
-      adj[ix[u]].push(id); adj[ix[v]].push(id+1);
-    }
-    ex.planes.forEach(id=>add('S',id,1,0,'supply',{plane:ex.planes.indexOf(id)}));
-    ex.distances.forEach((row,a)=>Object.entries(row).forEach(([beam,d])=>add(ex.planes[a],beam,1,d,'assign',{plane:a,beam:ex.beams.indexOf(beam),d})));
-    ex.beams.forEach((b,i)=>{for(let k=1;k<=ex.cap;k++)add(b,'T',1,(2*k-1)*SCALE,'slot',{beam:i,slot:k});});
-    return {ex,nodes,ix,edges,adj,S:ix.S,T:ix.T};
-  }
-  function assignment(net, capacities) {
-    const own=net.ex.planes.map(()=>null),loads=net.ex.beams.map(()=>0);
-    for(const e of net.edges)if(e.forward&&e.kind==='assign'&&capacities[e.id]===0){own[e.plane]=net.ex.beams[e.beam];loads[e.beam]++;}
-    let total=0; for(const e of net.edges)if(e.forward)total+=(e.capacity-capacities[e.id])*e.cost;
-    const quota=loads.reduce((s,l)=>s+l*l,0)*SCALE;
-    return {own,loads,total,quota,distance:total-quota,count:own.filter(x=>x!==null).length};
-  }
-  function pathName(net, ids, slots=true) {
-    if(!ids.length)return '尚无路径';
-    let out=net.nodes[net.edges[ids[0]].u].id;
-    for(const id of ids){const e=net.edges[id];out+= e.kind==='slot'&&e.forward&&slots ? ' → '+net.nodes[e.v].id+'［'+net.nodes[e.u].id+' 名额'+e.slot+'］' : ' → '+net.nodes[e.v].id;}
-    return out;
-  }
-  // 仅供教学页展开完整路径，对求解器的搜索结果没有影响。
-  function allPaths(net, caps) {
-    const paths=[],seen=new Set([net.S]);
-    function visit(u,ids,cost){
-      if(u===net.T){paths.push({ids:ids.slice(),cost,reverse:ids.filter(id=>!net.edges[id].forward&&net.edges[id].kind==='assign').length});return;}
-      for(const id of net.adj[u]){const e=net.edges[id];if(caps[id]<=0||seen.has(e.v))continue;seen.add(e.v);ids.push(id);visit(e.v,ids,cost+e.cost);ids.pop();seen.delete(e.v);}
-    }
-    visit(net.S,[],0);
-    paths.sort((a,b)=>a.cost-b.cost||a.ids.join(',').localeCompare(b.ids.join(',')));
-    return paths;
-  }
-  function predecessorPath(net,pred,v) {
-    const ids=[],seen=new Set();
-    while(v!==net.S&&pred[v]!==null){if(seen.has(v))break;seen.add(v);const id=pred[v];ids.unshift(id);v=net.edges[id].u;}
-    return v===net.S?ids:[];
-  }
-  function solve(ex) {
-    const net=buildNetwork(ex),caps=net.edges.map(e=>e.capacity),events=[],rounds=[];
-    let total=0,flow=0;
-    const setup=['example','network','costs'];
-    setup.forEach(kind=>events.push({kind,round:-1,caps:caps.slice(),flow,total,dist:net.nodes.map(()=>null),pred:net.nodes.map(()=>null),queue:[]}));
-    while(flow<ex.planes.length){
-      const index=rounds.length,dist=net.nodes.map(()=>null),pred=net.nodes.map(()=>null),witness=net.nodes.map(()=>null),queue=[net.S],inQ=new Set(queue);
-      witness[net.S]=[];
-      const before=assignment(net,caps);
-      const round={index,number:index+1,before,beforeCaps:caps.slice(),candidates:allPaths(net,caps),start:events.length,checks:0,updates:0,blocked:0};
-      rounds.push(round);dist[net.S]=0;
-      function emit(kind,data={}){events.push({kind,round:index,flow,total,dist:clone(dist),pred:clone(pred),witness:witness.map(p=>p&&p.slice()),queue:clone(queue),...data});}
-      emit('start');
-      while(queue.length){
-        const u=queue.shift();inQ.delete(u);emit('pop',{u});
-        if(u===net.T)emit('sink',{u});
-        for(const id of net.adj[u]){
-          const e=net.edges[id];
-          if(caps[id]===0){round.blocked++;emit('blocked',{u,v:e.v,edge:id});continue;}
-          round.checks++;const old=dist[e.v],oldPred=pred[e.v],proposal=dist[u]+e.cost;
-          const route=witness[u].concat(id);
-          if(old===null||proposal<old){
-            const alreadyQueued=inQ.has(e.v);dist[e.v]=proposal;pred[e.v]=id;witness[e.v]=route.slice();round.updates++;
-            if(!alreadyQueued){queue.push(e.v);inQ.add(e.v);}
-            emit('relax',{u,v:e.v,edge:id,old,oldPred,proposal,route,alreadyQueued});
-          }else emit('reject',{u,v:e.v,edge:id,old,proposal,route});
-        }
-      }
-      if(dist[net.T]===null){round.feasible=false;round.path=[];round.end=events.length;round.after=before;emit('infeasible');break;}
-      round.feasible=true;round.path=predecessorPath(net,pred,net.T);round.delta=dist[net.T];round.reverse=round.path.filter(id=>!net.edges[id].forward&&net.edges[id].kind==='assign').length;
-      emit('choose',{path:round.path.slice(),delta:round.delta});
-      let sum=0;
-      round.path.forEach((id,part)=>{sum+=net.edges[id].cost;emit('path',{edge:id,path:round.path.slice(),part,sum,delta:round.delta});});
-      for(const id of round.path){caps[id]--;caps[net.edges[id].rev]++;}
-      flow++;total+=round.delta;round.afterCaps=caps.slice();round.after=assignment(net,caps);
-      emit('commit',{caps:caps.slice(),path:round.path.slice(),delta:round.delta});round.end=events.length-1;
-    }
-    const final=assignment(net,caps);
-    events.push({kind:'finish',round:rounds.length-1,caps:caps.slice(),flow,total,dist:net.nodes.map(()=>null),pred:net.nodes.map(()=>null),queue:[]});
-    return {net,events,rounds,final};
-  }
-  // 小例子枚举对照，既枚举部分归属，也枚举完整归属。
-  function brute(ex) {
-    const best=Array(ex.planes.length+1).fill(Infinity),solutions=Array(ex.planes.length+1).fill(0),owner=Array(ex.planes.length).fill(null),loads=ex.beams.map(()=>0);
-    let visits=0;
-    function go(a,f,dist){
-      if(a===ex.planes.length){visits++;const cost=loads.reduce((s,l)=>s+l*l*SCALE,dist);if(cost<best[f]){best[f]=cost;solutions[f]=1;}else if(cost===best[f])solutions[f]++;return;}
-      owner[a]=null;go(a+1,f,dist);
-      for(const [b,d] of Object.entries(ex.distances[a])){const i=ex.beams.indexOf(b);if(loads[i]===ex.cap)continue;loads[i]++;owner[a]=b;go(a+1,f+1,dist+d);loads[i]--;}
-    }
-    go(0,0,0);return {best,solutions,visits};
-  }
-  const api={SCALE,examples,fmt,signed,buildNetwork,assignment,allPaths,predecessorPath,pathName,solve,brute};
-  if(typeof module!=='undefined'&&module.exports)module.exports=api;
-  root.FlowLab=api;
-})(typeof window!=='undefined'?window:globalThis);
-</script><script id="flow-app">/* 来源：codex。网页只播放求解器记录的真实事件；候选路径表是独立的教学对照。 */
-(function(){
 'use strict';
-const F=window.FlowLab, $=s=>document.querySelector(s), esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const colors=['#2776a8','#d38035','#379481','#8b6daf'];
-const dict={
- S:['源点 S','每条通向飞机的边容量为 1。一次增广从一架尚未分配的飞机开始。',''],
- T:['汇点 T','接收已分配的流量。每到达一单位流量，就新增一架得到服务的飞机。',''],
- a:['飞机 aᵢ','飞机编号。所有飞机一开始就已知，不是按真实时间逐架到来。','每架需要 1 单位流量'],
- beam:['波束 A、B、C、D','固定的波束中心。只有表中允许的飞机归属才能建立边。','每束最多 P 架'],
- n:['n','场景内飞机总数，也是全覆盖时要求的流量。','架'],
- m:['m','固定的波束数。','个'],
- P:['P','当前每个波束最多接收的飞机数，本页固定 P=2。FLOW-AO 中先由最大流与二分查找求出 P*，再做均衡指派。','架'],
- L:['Lᵢ','波束 i 当前已服务的飞机数。它的平方是该波束的名额费用之和。','架'],
- eps:['ε','距离费用的权重。本页取 0.0001；全体距离项小于 1，不会颠倒整数负载平方和的优先级。','本页 0.0001'],
- d:['dₐᵢ','飞机 a 到波束 i 的给定距离代价。以表格为准，不从图上边的长度计算。','教学距离单位'],
- x:['xₐᵢ','飞机 a 归属波束 i 时为 1，否则为 0。','0 或 1'],
- D:['D(v)','本次搜索目前找到的、从源点 S 到节点 v 的最低路径费用。它是临时记录，还能被更低的值更新。','费用'],
- c:['c(u,v)','残量网络中这一条有向边的费用。撤销旧流量的反向边费用等于原边费用的负数。','费用'],
- v:['u、v','一条被检查的边的起点、终点，可以是源点、飞机、波束或汇点。','节点'],
- prev:['前驱','目前最低费用路径到达该节点之前的节点。沿前驱从 T 倒着找，就能还原选中的路径。',''],
- residual:['剩余容量','当前这条边还能增加多少流量。大于 0 才能走；反向边有余量表示原流量可以撤销。','单位流量'],
- k:['k','波束到汇点的名额序号。第 k 个名额费用为 2k−1。','本页 k=1、2'],
- sum:['∑','把各项相加。∑Lᵢ² 是全部波束的负载平方和。',''],
- inf:['∞','目前尚未找到从源点到这个节点的路径。',''],
- delta:['净增费用','沿选中的增广路径把正费用和反向边的负费用相加，得到本轮总费用的变化量。','费用'],
- negative:['反向边 / 退流','撤销已用边上的一单位流量，并退回原边费用。它要属于一条完整的增广路径，不能单独撤销后把飞机丢下。',''],
- spfa:['SPFA','一种求最短路的方法。把费用有更新的节点放进队列，逐条检查其出边；直到不再有费用可更新。',''],
- relax:['松弛 / 更新','比较 D(u)+c(u,v) 与 D(v)。更小才替换 D(v) 和前驱，并继续传播这个改进。',''],
- path:['增广路径','从 S 到 T、每条边都有剩余容量的一条路线。沿它增加流量时可同时撤销若干已有归属。','本页每次新增服务 1 架'],
- queue:['队列','等待检查出边的节点。节点最低费用更新后，需要再检查其出边；已经在队列中的不重复放入。',''],
- maxflow:['最大流','只问当前网络最多能分配多少架飞机。若小于 n，就无法全覆盖。','架'],
- mincost:['最小费用流','在分配指定数量的飞机时，让全部已用边的费用之和最小。归属边费用加上名额费用，即本页的目标。','']
-};
-function sym(key,label){return `<span class="sym" tabindex="0" data-sym="${key}">${label||esc(dict[key][0])}</span>`;}
-const sub=s=>s.replace(/^a(\d+)$/,'a<sub>$1</sub>');
-function node(i){const nd=run.net.nodes[i];return sym(nd.kind==='plane'?'a':nd.kind==='beam'?'beam':nd.id,sub(nd.id));}
-function routeHTML(ids){if(!ids||!ids.length)return '尚未找到';let h=node(run.net.edges[ids[0]].u);for(const id of ids){const e=run.net.edges[id];h+=` <span class="${e.forward?'':'negative'}">→</span> ${node(e.v)}`;if(e.kind==='slot'&&e.forward)h+=` <small>用 ${run.net.nodes[e.u].id} 的名额 ${e.slot}</small>`;}return h;}
-function routeCosts(ids){return ids.map(id=>run.net.edges[id].cost).filter(x=>x!==0).map((c,i)=>`<span class="${c<0?'negative':''}">${i===0?(c<0?'−':''):(c<0?' − ':' + ')}${F.fmt(Math.abs(c))}</span>`).join('')||'0';}
-let run,oracle,idx=0,timer=null,selectedNode=null,pinnedPath=null,hoverPath=null,visible=[],tooltipPinned=false;
-let candidateRound=-2,historyRound=-2;
-const params=new URLSearchParams(location.search);
-$('#example').innerHTML=F.examples.map(e=>`<option value="${e.id}">${e.name}</option>`).join('');
-function event(){return run.events[idx];}
-function currentRound(){return event().round>=0?run.rounds[event().round]:null;}
-function capacities(){const e=event();return e.caps||currentRound().beforeCaps;}
-function state(){return F.assignment(run.net,capacities());}
-function modeIndices(){const mode=$('#detail').value;visible=run.events.map((e,i)=>({e,i})).filter(({e})=>mode==='all'||(mode==='edges'?!['blocked','pop'].includes(e.kind):['example','network','costs','start','relax','choose','path','commit','infeasible','finish'].includes(e.kind))).map(x=>x.i);}
-function load(id){stop();run=F.solve(F.examples.find(e=>e.id===id));oracle=F.brute(run.net.ex);idx=0;selectedNode=null;pinnedPath=null;hoverPath=null;candidateRound=-2;historyRound=-2;modeIndices();$('#seek').max=run.events.length-1;$('#example').value=id;
- $('#roundNav').innerHTML=run.rounds.map(r=>`<button data-round="${r.index}" class="${r.reverse?'reroute-nav':''}" title="${r.reverse?'本轮有退流':'本轮直接分配'}">第 ${r.number} 轮${r.reverse?' ↶':''}</button>`).join('');
- $('#candidatePlane').innerHTML='<option value="all">全部</option>'+run.net.ex.planes.map((p,i)=>`<option value="${i}">${p}</option>`).join('');
- render();}
-function goto(i){idx=Math.max(0,Math.min(run.events.length-1,i));selectedNode=null;pinnedPath=null;hoverPath=null;tooltipPinned=false;hideTip();render();}
-function step(direction){const next=direction>0?visible.find(i=>i>idx):visible.slice().reverse().find(i=>i<idx);if(next===undefined){stop();return;}goto(next);}
-function play(){if(timer){stop();return;}$('#play').textContent='暂停';timer=setInterval(()=>step(1),+$('#speed').value);}
-function stop(){clearInterval(timer);timer=null;$('#play').textContent='播放';}
-function isSearch(e){return ['start','pop','sink','blocked','relax','reject','choose','path'].includes(e.kind);}
-function numbers(){const s=state();return `<div class="metric"><span>已分配 / 全部</span><strong>${s.count} / ${run.net.ex.planes.length}</strong></div><div class="metric"><span>已执行总费用</span><strong>${F.fmt(s.total)}</strong></div><div class="metric"><span>本轮可用边检查</span><strong>${roundCheckCount()}</strong></div>`;}
-function roundCheckCount(){const r=currentRound();if(!r)return 0;return run.events.slice(r.start,idx+1).filter(e=>['relax','reject'].includes(e.kind)).length;}
-function dataTable(){const ex=run.net.ex;return `<table><thead><tr><th>飞机</th>${ex.beams.map(b=>`<th>${b}</th>`).join('')}</tr></thead><tbody>${ex.planes.map((p,a)=>`<tr><td>${sym('a',sub(p))}</td>${ex.beams.map(b=>`<td>${ex.distances[a][b]===undefined?'—':ex.distances[a][b]}</td>`).join('')}</tr>`).join('')}</tbody></table><p class="note">表内为距离 ${sym('d','d<sub>ai</sub>')}。— 表示不能归属；距离费用 = ${sym('eps','ε')} × 距离。图是关系网络，线段长度不代表距离。</p>`;}
-function ownerLine(s){return run.net.ex.beams.map((b,i)=>`${b}：${s.own.map((x,a)=>x===b?run.net.ex.planes[a]:null).filter(Boolean).join('、')||'空'}，负载 ${s.loads[i]}`).join('；');}
-function edgeMeaning(e){const {net}=run;const u=net.nodes[e.u].id,v=net.nodes[e.v].id;
- if(e.kind==='supply')return e.forward?`${v} 从未分配变成参与一条分配路径，费用为 0。`:`允许撤销 ${u} 已占用的源点流量。当前网络没有负费用环，通常不会降低源点的费用 0。`;
- if(e.kind==='assign')return e.forward?`允许把 ${u} 分给 ${v}；距离费用 ${e.d} × 0.0001 = ${F.fmt(e.cost)}。`:`可以撤销 ${v} → ${u} 的旧归属，退回距离费用 ${F.fmt(-e.cost)}。先前用过这条边，才会有这条可走的反向边。`;
- return e.forward?`${u} 的第 ${e.slot} 个名额，费用 2 × ${e.slot} − 1 = ${2*e.slot-1}。`:`可以撤销 ${v} 的第 ${e.slot} 个名额，退回费用 ${2*e.slot-1}。这是名额边的反向边。`;
+const examples = [
+ {id:'basic', name:'例1 · 2 架飞机、2 个波束（先看这个）', cap:2, planes:['a1','a2'], beams:['A','B'], d:[{A:1,B:4},{A:2}],
+  intro:'a₁ 可以去 A（距离 1）或 B（距离 4），离 A 更近；a₂ 只能去 A（距离 2）。每个波束最多 2 架。',
+  hint:'两架都进 A 总距离最短，但 A 挤 2 架、B 空着，不均衡。看第 2 轮算法怎样把 a₁ 换到 B。'},
+ {id:'requeue', name:'例2 · 3 架飞机：节点重新排队', cap:2, planes:['a1','a2','a3'], beams:['A','B'], d:[{A:3},{A:1,B:1},{A:2,B:3}],
+  intro:'a₁ 只能去 A（距离 3）；a₂ 去 A、B 都是距离 1；a₃ 去 A 距离 2、去 B 距离 3。每个波束最多 2 架。',
+  hint:'重点看两处：第 2 轮 B 被取出检查后费用又变小，重新排队；第 3 轮搜索经过了两条反向边，但那条路线更贵，没有被选中。'},
+ {id:'blocked', name:'例3 · 分不完时怎么停', cap:1, planes:['a1','a2'], beams:['A','B'], d:[{A:1},{A:2}],
+  intro:'a₁、a₂ 都只能去 A；每个波束只有 1 个名额。B 有空名额，但谁也去不了 B。',
+  hint:'看第 2 轮：队列空了 D(T) 仍是 ∞，算法据此确认再也分不进去，停止。',
+  stopWhy:'能到达的波束只有 A，A 唯一的名额已被 a₁ 占用；让 a₁ 让出 A 也没用，因为 a₁ 没有别的波束可去。B 虽然有空名额，但没有任何飞机能连到 B。'}
+];
+function build(ex) {
+ const nodes = [{id:'S', kind:'S'}];
+ ex.planes.forEach((p, i) => nodes.push({id:p, kind:'plane', i}));
+ ex.beams.forEach((b, i) => nodes.push({id:b, kind:'beam', i}));
+ nodes.push({id:'T', kind:'T'});
+ const ix = Object.fromEntries(nodes.map((n, i) => [n.id, i])), edges = [];
+ function add(u, v, cost, type, extra) {
+  const id = edges.length;
+  edges.push({id, u:ix[u], v:ix[v], cap:1, cost, type, fwd:true, rev:id + 1, ...extra});
+  edges.push({id:id + 1, u:ix[v], v:ix[u], cap:0, cost:-cost, type, fwd:false, rev:id, ...extra});
+ }
+ ex.planes.forEach(p => add('S', p, 0, 'supply', {plane:p}));
+ ex.planes.forEach((p, a) => Object.entries(ex.d[a]).forEach(([b, d]) => add(p, b, d, 'assign', {plane:p, beam:b, d})));
+ ex.beams.forEach(b => { for (let k = 1; k <= ex.cap; k++) add(b, 'T', (2 * k - 1) * 10, 'slot', {beam:b, slot:k}); });
+ // 每个节点的出边：先正向边，后反向边
+ const adj = nodes.map((_, i) => [...edges.filter(e => e.u === i && e.fwd), ...edges.filter(e => e.u === i && !e.fwd)].map(e => e.id));
+ return {ex, nodes, ix, edges, adj, S:ix.S, T:ix.T};
 }
-function story(){const e=event(),r=currentRound(),s=state(),net=run.net,ex=net.ex;let title='',html='',calc='',meta='先理解网络';
- if(e.kind==='example'){
-  title=`${ex.planes.length} 架飞机，${ex.beams.length} 个波束，允许关系一开始就已知`;
-  html=`<p class="current">${ex.intro}</p><p>表中的数字是距离；每个波束最多收 ${sym('P','P')} = ${ex.cap} 架。先保证全部飞机有归属，再让负载均衡，同样均衡时优先总距离更短。</p>${dataTable()}`;
-  calc=`<div class="formula">${sym('n','n')} = ${ex.planes.length}，${sym('m','m')} = ${ex.beams.length}，${sym('P','P')} = ${ex.cap}</div><div>点击“下一步”建网络；也可直接点上方某一轮。</div>`;
- }else if(e.kind==='network'){
-  title='三类边，表达三种限制';html=`<p class="current">S → 飞机：每架只能分配 1 次。飞机 → 波束：只保留表中允许的归属。波束 → T：两个名额，每个能送 1 架。</p><p>整个网络的 ${sym('maxflow','最大流')} 等于 ${ex.planes.length}，才代表全部飞机能分进去。${sym('mincost','最小费用流')} 还要在这些可行安排中比较费用。</p><p>每次最终执行的是一条完整路径；搜索中可以有分支，下一轮也可以撤销原来的归属再安排。</p>`;
-  calc=`<div class="formula">${sym('residual','边的剩余容量')} > 0 → 才能走这条边</div><div>节点旁的 ${sym('D','D(v)')} 稍后会显示从 S 到该节点的最低到达费用。</div>`;
- }else if(e.kind==='costs'){
-  title='把“均衡优先、距离其次”放进边费用';html=`<p class="current">飞机 → 波束：费用为 ${sym('eps','ε')}${sym('d','d<sub>ai</sub>')}。波束 → T 的第 ${sym('k','k')} 个名额：费用 2k−1。两个名额从一开始都存在，费用依次 1、3。</p><p>用 1 个名额花 1 = 1²；用 2 个名额花 1+3 = 2²。因此名额费用总和就是负载平方和。</p><p>本例全部距离费用不超过 ${(ex.planes.length*Math.max(...ex.distances.flatMap(x=>Object.values(x)))/F.SCALE).toFixed(4)}，远小于整数平方和的最小差别。距离近不能压过名额费用从 1 涨到 3。</p>`;
-  calc=`<div class="formula">最小化 ${sym('sum','∑')}${sym('L','L<sub>i</sub>²')} + ${sym('eps','ε')}${sym('sum','∑')}${sym('d','d<sub>ai</sub>')}${sym('x','x<sub>ai</sub>')}</div><div>ε = 0.0001；反向边的费用 = −原边费用。</div>`;
- }else if(e.kind==='finish'){
-  meta='完整求解结束';title=s.count===ex.planes.length?'全部飞机都已分配，核对最优总费用':'已找到最大可分配数量，仍有飞机无法安置';
-  const maxf=oracle.best.reduce((best,c,i)=>Number.isFinite(c)?i:best,0);
-  html=`<p class="current">${ownerLine(s)}。最大可分配数量为 ${maxf}，当前流量为 ${s.count}。</p><p>${s.count===ex.planes.length?'对这个固定网络，完整求解得到全局最低总费用。穷举所有允许的部分归属也得到相同结果。':'这个例子中 a1、a3、a4 都只能去 A，而 A 只能收两架。其他波束还有空位也不能替代 A，找不到增广路径。'}</p><p>先分配的飞机可以改投，但每次执行完整路径后，已服务飞机仍有归属。最优总费用由约束与费用决定，不由谁“先到”决定。</p>`;
-  calc=`<div class="formula">${s.loads.map(l=>l+'²').join(' + ')} + 0.0001 × ${s.distance} = ${F.fmt(s.total)}</div><div>逐次最短路：${F.fmt(s.total)}　独立枚举基准：${F.fmt(oracle.best[s.count])}</div>`;
- }else{
-  meta=`第 ${r.number} 轮分配 · ${r.before.count} 架已有归属`;
-  if(e.kind==='start'){
-   title='重新搜索，不锁定某一架飞机';html=`<p class="current">把 ${sym('D','D(S)')} 设为 0，其余设为 ${sym('inf','∞')}，将 S 放入${sym('queue','待检查队列')}。所有未分配飞机都能从 S 开始竞争本轮的最便宜路径。</p><p>本轮搜索期间，已有归属和剩余容量不变。只有费用记录和前驱会变化。</p>`;
-   calc=`<div class="formula">D(S) = 0；D(其他节点) = ∞</div><div>本轮有 ${r.candidates.length} 条完整简单候选路径，可在下方逐条展开。</div>`;
-  }else if(e.kind==='pop'){
-   title=`取出 ${net.nodes[e.u].id}，开始检查它的出边`;html=`<p class="current">目前到 ${node(e.u)} 的最低费用是 ${F.fmt(e.dist[e.u])}。逐条查看从这个节点还能走哪些边，是否能让后续节点变得更便宜。</p><p>如果它的费用以后再次降低，还会重新进入队列；取出一次不代表永久定案。</p>`;
-   calc=`<div class="formula">候选费用 = ${sym('D','D(u)')} + ${sym('c','c(u,v)')}</div>`;
-  }else if(e.kind==='sink'){
-   title='已经搜到汇点，但还没有执行分配';html=`<p class="current">当前找到一条到 T 的路径，费用为 ${F.fmt(e.dist[net.T])}。队列尚未处理完时，后面仍可能找到更低的到达费用。</p><p>标准 SPFA 继续检查残量边，包括 T 发出的退回旧名额的反向边。这些仍只是搜索记录；最终执行的是 S 到 T 的完整路径。</p>`;
-   calc=`<div class="formula">${sym('D','D(T)')} = ${F.fmt(e.dist[net.T])}，继续检查队列</div>`;
-  }else if(['blocked','relax','reject'].includes(e.kind)){
-   const edge=net.edges[e.edge],u=net.nodes[edge.u].id,v=net.nodes[edge.v].id;
-   if(e.kind==='blocked'){
-    title=`${u} → ${v}：剩余容量为 0，不能走`;html=`<p class="current">这条边现在不能再增加流量，跳过；继续检查 ${node(edge.u)} 的下一条边。</p><p>${edgeMeaning(edge)}</p>`;
-    calc=`<div class="formula">${sym('residual','剩余容量')} = 0 → 不计算候选到达费用</div>`;
-   }else{
-    const improved=e.kind==='relax';title=`${u} → ${v}：${improved?'找到更便宜的到达方式':'没有更便宜，保留原记录'}`;
-    html=`<p class="current">${edgeMeaning(edge)}<br>从 ${node(edge.u)} 接上这条边，到 ${node(edge.v)} 的候选费用为 ${F.fmt(e.proposal)}；原记录为 ${F.fmt(e.old)}。</p><p>${improved?`更新 ${node(edge.v)} 的最低费用和${sym('prev','前驱')}。${e.alreadyQueued?'它已经在待检查队列里，不重复加入。':'把它加入待检查队列，继续传播更便宜的费用。'}`:`${e.proposal===e.old?'两条路线费用相同，保留先找到的那条。':'原来的到达方式更便宜，舍弃这次候选。'} 图和节点表中的实际归属没有变化。`}</p>`;
-    calc=`<div class="formula">${sym('D',`D(${u})`)} + ${sym('c',`c(${u},${v})`)}<br>${F.fmt(e.dist[edge.u])} ${edge.cost<0?'−':'+'} ${F.fmt(Math.abs(edge.cost))} = <b>${F.fmt(e.proposal)}</b> ${improved?'&lt;':'≥'} ${F.fmt(e.old)}</div><div class="${improved?'good':'muted'}">${improved?`D(${v})：${F.fmt(e.old)} → ${F.fmt(e.proposal)}`:'不更新费用和前驱'}</div>`;
+// 教学对照：列出残量网络里所有不重复经过节点的 S→T 路线。算法本身不用它。
+function allPaths(net, caps) {
+ const out = [], seen = new Set([net.S]);
+ (function go(u, ids, cost) {
+  if (u === net.T) { out.push({ids:ids.slice(), cost}); return; }
+  for (const id of net.adj[u]) { const e = net.edges[id]; if (caps[id] === 0 || seen.has(e.v)) continue; seen.add(e.v); ids.push(id); go(e.v, ids, cost + e.cost); ids.pop(); seen.delete(e.v); }
+ })(net.S, [], 0);
+ return out.sort((a, b) => a.cost - b.cost);
+}
+function solve(ex) {
+ const net = build(ex), caps = net.edges.map(e => e.cap), n = net.nodes.length, steps = [], rounds = [];
+ let flow = 0, total = 0, round = 0, dist = Array(n).fill(null), pred = Array(n).fill(null), queue = [], popD = new Map();
+ const snap = (kind, data = {}) => { steps.push({kind, round, flow, total, caps:caps.slice(), dist:dist.slice(), pred:pred.slice(), queue:queue.slice(), popped:[...popD.keys()], ...data}); return steps.length - 1; };
+ snap('intro'); snap('build'); snap('cost');
+ for (;;) {
+  round++; dist = Array(n).fill(null); pred = Array(n).fill(null); queue = []; popD = new Map();
+  const R = {number:round, start:steps.length, beforeCaps:caps.slice(), flowBefore:flow, totalBefore:total, candidates:allPaths(net, caps), tHistory:[]};
+  rounds.push(R);
+  snap('residual');
+  dist[net.S] = 0; queue = [net.S]; snap('init');
+  while (queue.length) {
+   const qBefore = queue.slice(), u = queue.shift(), again = popD.has(u), lastD = popD.get(u);
+   popD.set(u, dist[u]);
+   const out = net.adj[u].filter(id => caps[id] > 0), gone = net.adj[u].filter(id => caps[id] === 0 && net.edges[id].fwd);
+   snap('pop', {u, qBefore, out, gone, again, lastD});
+   out.forEach((id, j) => {
+    const e = net.edges[id], v = e.v, old = dist[v], cand = dist[u] + e.cost, better = old === null || cand < old, lastPopD = popD.get(v);
+    let action = 'keep';
+    if (better) {
+     dist[v] = cand; pred[v] = id;
+     if (v === net.T) action = 'sink';            // 终点只记账，不排队
+     else if (queue.includes(v)) action = 'inqueue';
+     else { action = popD.has(v) ? 'requeue' : 'enqueue'; queue.push(v); }
+    }
+    const i = snap('check', {u, v, edge:id, old, cand, better, action, j, of:out.length, rest:out.slice(j + 1), lastPopD});
+    if (action === 'sink') R.tHistory.push({cand, edge:id, step:i});
+   });
+  }
+  if (dist[net.T] === null) { R.feasible = false; R.end = snap('nopath'); break; }
+  R.feasible = true;
+  const path = [];
+  for (let v = net.T; v !== net.S; v = net.edges[pred[v]].u) path.unshift(pred[v]);
+  Object.assign(R, {path, delta:dist[net.T], reverse:path.filter(id => !net.edges[id].fwd).length});
+  snap('found', {path});
+  for (let h = 0; h < path.length; h++) snap('back', {path, edge:path[path.length - 1 - h], hop:h});
+  snap('sum', {path});
+  path.forEach((id, i) => { const e = net.edges[id], before = [caps[id], caps[e.rev]]; caps[id]--; caps[e.rev]++; snap('push', {path, edge:id, i, before}); });
+  flow++; total += R.delta;
+  snap('read', {path});
+  R.end = snap('outer');
+  if (flow === ex.planes.length) break;
+ }
+ snap('final');
+ return {net, steps, rounds};
+}
+// 穷举全部飞机都分配的分法，核对最低总费用
+function brute(ex) {
+ let best = Infinity, count = 0; const loads = Object.fromEntries(ex.beams.map(b => [b, 0]));
+ (function go(a, ds) {
+  if (a === ex.planes.length) { count++; best = Math.min(best, ex.beams.reduce((s, b) => s + loads[b] * loads[b] * 10, ds)); return; }
+  for (const [b, d] of Object.entries(ex.d[a])) { if (loads[b] === ex.cap) continue; loads[b]++; go(a + 1, ds + d); loads[b]--; }
+ })(0, 0);
+ return {best, count};
+}
+const api = {examples, build, allPaths, solve, brute};
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+root.FlowCore = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+
+<script id="flow-app">
+(function () {
+'use strict';
+const C = window.FlowCore, $ = s => document.querySelector(s);
+const SUB = {1:'₁', 2:'₂', 3:'₃', 4:'₄'};
+const lab = id => id.replace(/^a(\d)$/, (_, d) => 'a' + SUB[d]);
+const fmt = n => n === null || n === undefined ? '∞' : (n < 0 ? '−' : '') + String(Math.abs(n) / 10);
+let run, oracle, idx = 0, timer = null;
+const E = id => run.net.edges[id];
+const N = i => lab(run.net.nodes[i].id);
+const slotTag = e => e.type === 'slot' ? (e.fwd ? `（名额${e.slot}）` : `（退名额${e.slot}）`) : '';
+const EN = id => { const e = E(id); return `${N(e.u)}→${N(e.v)}${slotTag(e)}`; };
+const q = arr => arr.length ? arr.map(N).join('、') : '空';
+const plus = (a, c) => `${fmt(a)} ${c < 0 ? '−' : '+'} ${fmt(Math.abs(c))}`;
+const P = p => lab(p);
+
+function owners(caps) {
+ const own = {}, loads = {};
+ run.net.ex.planes.forEach(p => own[p] = null); run.net.ex.beams.forEach(b => loads[b] = 0);
+ for (const e of run.net.edges) if (e.fwd && e.type === 'assign' && caps[e.id] === 0) { own[e.plane] = e.beam; loads[e.beam]++; }
+ return {own, loads, count:Object.values(own).filter(Boolean).length};
+}
+const usedCost = caps => run.net.edges.reduce((s, e) => e.fwd ? s + (e.cap - caps[e.id]) * e.cost : s, 0);
+
+function meaning(e) {
+ const u = N(e.u), v = N(e.v);
+ if (e.type === 'supply') return e.fwd ? `${u}→${v}：让 ${v} 出发去找波束。容量 1，保证每架飞机只分配一次；费用 0。`
+  : `${u}→${v} 是 ${v}→${u} 的反向边：走它等于撤销“${u} 已分配”，把 ${u} 退回未分配；费用 0。`;
+ if (e.type === 'assign') return e.fwd ? `${u}→${v}：${u} 归属 ${v}。费用 ＝ 0.1 × 距离 ${e.d} ＝ ${fmt(e.cost)}。`
+  : `${u}→${v} 是 ${v}→${u} 的反向边：走它等于“${v} 让出 ${u}”，退回当初付的 ${fmt(-e.cost)}，所以费用是 ${fmt(e.cost)}。`;
+ return e.fwd ? `${u}→T（名额${e.slot}）：占用 ${u} 的第 ${e.slot} 个名额，费用 2×${e.slot}−1 ＝ ${fmt(e.cost)}。`
+  : `T→${v}（退名额${e.slot}）：撤销 ${v} 的第 ${e.slot} 个名额，费用 ${fmt(e.cost)}。`;
+}
+function goneWhy(id) {
+ const e = E(id);
+ if (e.type === 'supply') return `S→${P(e.plane)} 已用掉（剩余 0）：${P(e.plane)} 已经分配了，不会再作为新飞机出发；但它仍可能在后面被反向边挪动。`;
+ if (e.type === 'assign') return `${P(e.plane)}→${e.beam} 已用掉（剩余 0）：${P(e.plane)} 现在就在 ${e.beam}，不能再进一次。`;
+ return `${e.beam}→T（名额${e.slot}）已用掉（剩余 0）：这个名额被占着。`;
+}
+function pairState(f, c) { // f 为正向边，c 为它的剩余
+ if (f.type === 'supply') return c ? `${P(f.plane)} 未分配` : `${P(f.plane)} 已分配`;
+ if (f.type === 'assign') return c ? `${P(f.plane)} 不在 ${f.beam}` : `${P(f.plane)} 在 ${f.beam}（可经 ${f.beam}→${P(f.plane)} 让出）`;
+ return c ? `${f.beam} 名额${f.slot} 空着` : `${f.beam} 名额${f.slot} 已占用`;
+}
+function revUse(f) {
+ if (f.type === 'supply') return `走它＝把 ${P(f.plane)} 退回未分配（这种边永远不会让费用变小）`;
+ if (f.type === 'assign') return `走它＝让 ${P(f.plane)} 让出 ${f.beam}`;
+ return 'T 是终点，搜索不从 T 往外走，这类边不会被检查';
+}
+function routeHTML(ids) {
+ let h = N(E(ids[0]).u);
+ for (const id of ids) { const e = E(id); h += `<span class="arr${e.fwd ? '' : ' rv'}">→</span>${N(e.v)}${e.type === 'slot' && e.fwd ? `<small>（${e.beam}名额${e.slot}）</small>` : ''}`; }
+ return `<span class="route">${h}</span>`;
+}
+const routeCosts = ids => ids.map((id, i) => { const c = E(id).cost; return i === 0 ? fmt(c) : `${c < 0 ? ' − ' : ' + '}${fmt(Math.abs(c))}`; }).join('');
+function routeWords(ids) {
+ const w = [];
+ for (const id of ids) { const e = E(id);
+  if (e.type === 'supply' && e.fwd) w.push(`${P(e.plane)} 出发（本轮新增的就是它）`);
+  if (e.type === 'assign') w.push(e.fwd ? `${P(e.plane)} 进 ${e.beam}` : `<span class="neg">${P(e.plane)} 让出 ${e.beam}</span>`);
+  if (e.type === 'slot' && e.fwd) w.push(`用 ${e.beam} 的名额${e.slot}`);
+ }
+ return w.join(' → ');
+}
+function distTable() {
+ const ex = run.net.ex;
+ return `<table class="dist"><tr><th>距离</th>${ex.beams.map(b => `<th>波束 ${b}</th>`).join('')}</tr>${ex.planes.map((p, a) => `<tr><td><b>${P(p)}</b></td>${ex.beams.map(b => `<td>${ex.d[a][b] ?? '—（不能去）'}</td>`).join('')}</tr>`).join('')}</table>`;
+}
+
+const PHASES = ['准备', '① 搜索：只记账，不改归属', '② 倒推出路线', '③ 执行：改剩余量和归属', '④ 要不要再来一轮', '结果'];
+const phaseOf = k => ({intro:0, build:0, cost:0, residual:1, init:1, pop:1, check:1, found:1, nopath:1, back:2, sum:2, push:3, read:3, outer:4, final:5})[k];
+
+function describe(s) {
+ const net = run.net, ex = net.ex, R = run.rounds[s.round - 1], n = ex.planes.length;
+ let meta = '', title = '', body = '', calc = '';
+ const rm = R ? `第 ${R.number} 轮 · ${PHASES[phaseOf(s.kind)]}` : '';
+ switch (s.kind) {
+ case 'intro': {
+  meta = '准备 1/3'; title = `例子：${n} 架飞机，${ex.beams.length} 个波束`;
+  body = `<p>${ex.intro}</p>${distTable()}<p>${ex.hint}</p><p>目标：所有飞机都分配；在此前提下各波束负载尽量均衡（各波束架数的平方和最小）；均衡程度一样时，总距离越短越好。</p>`;
+  calc = `<div>飞机 ${n} 架，波束 ${ex.beams.length} 个，每个波束最多 ${ex.cap} 架</div>`;
+  break; }
+ case 'build': {
+  meta = '准备 2/3'; title = '把问题画成一张网：三类边';
+  body = `<p>把每架飞机看成 1 单位“流”：从源点 S 出发，经过它归属的波束，占用这个波束的一个名额，流到汇点 T。<b>流到 T 的数量 ＝ 已分配的飞机数。</b></p>
+<ul><li><b>S → 飞机</b>：每架一条。容量 1，保证每架飞机最多分配一次。</li><li><b>飞机 → 波束</b>：只连表里允许的组合，容量 1。</li><li><b>波束 → T</b>：每个名额一条边，容量 1。本例每个波束 ${ex.cap} 个名额，所以每个波束有 ${ex.cap} 条。</li></ul>
+<p>容量 1 的意思：这条边最多走 1 次，走过一次就“用掉”了。左图现在什么都没用，所有边都是灰色的“还能走”。</p>`;
+  calc = `<div>S→飞机 ${n} 条，飞机→波束 ${ex.d.reduce((s, r) => s + Object.keys(r).length, 0)} 条，名额 ${ex.beams.length * ex.cap} 条</div>`;
+  break; }
+ case 'cost': {
+  meta = '准备 3/3'; title = '每条边一个费用：先均衡，再看距离';
+  const maxD = ex.d.reduce((s, r) => s + Math.max(...Object.values(r)), 0);
+  body = `<ul><li>S → 飞机：0。</li><li>飞机 → 波束：0.1 × 距离。</li><li>波束的第 k 个名额：2k−1。${ex.cap > 1 ? '名额1 费用 1，名额2 费用 3。' : '本例每束只有 1 个名额，费用 1。'}</li></ul>
+<p>为什么名额费用是 1、3、5……：一个波束收 1 架花 1 ＝ 1²，收 2 架花 1+3 ＝ 4 ＝ 2²。所以名额费用加起来正好是各波束架数的平方和。两架挤一个波束（4）比两个波束各收一架（1+1 ＝ 2）贵，算法自然倾向均衡。</p>
+<p>本例全部距离费用加起来最多 ${fmt(maxD)}，小于 1，压不过名额费用的差别，只在均衡程度相同时起作用。（FLOW-AO 里距离系数更小；这里取 0.1 只为数字好读。）</p>
+<p>算法的做法：每一轮找一条从 S 到 T 最便宜的路线，送一架飞机进去，直到送完或送不进去。</p>`;
+  calc = `<div>总费用 ＝ Σ（各波束架数²） ＋ 0.1 × Σ距离</div>`;
+  break; }
+ case 'residual': {
+  meta = `${rm} · 第 1 步`;
+  if (R.number === 1) {
+   title = '第 1 轮开始：残量网络就是原网络';
+   body = `<p><b>残量网络 ＝ 现在还能走的边。</b>还没执行过任何路线，所以所有正向边剩余都是 1、都能走；反向边剩余都是 0，一条也不存在。</p><p>左下的“残量网络”表逐条列出每条边还剩多少。本轮搜索期间，这张表一个数都不会变。</p>`;
+  } else {
+   const prev = run.rounds[R.number - 2].beforeCaps, lines = [];
+   for (const f of net.edges) if (f.fwd && prev[f.id] !== s.caps[f.id]) {
+    const r = E(f.rev);
+    lines.push(s.caps[f.id] === 0
+     ? `<li>${EN(f.id)} 剩余 1→0，不能再走（${pairState(f, 0).replace(/（.*）/, '')}）；反向边 <b>${EN(r.id)}</b> 剩余 0→1，<b>出现了</b>，费用 ${fmt(r.cost)}：${revUse(f)}。</li>`
+     : `<li>${EN(f.id)} 剩余 0→1，又能走了（${pairState(f, 1)}）；反向边 ${EN(r.id)} 剩余 1→0，消失。</li>`);
    }
-  }else if(e.kind==='choose'){
-   title=`选定最低净费用路径${r.reverse?`，其中有 ${r.reverse} 次退流`:''}`;
-   html=`<p class="current">待检查队列已空，本轮最低费用为 ${F.fmt(r.delta)}。从 T 沿前驱往回找，得到下面这条完整路径。</p><p>${routeHTML(r.path)}</p><p>下一步逐段看费用怎样累加。此时仍未改变已有归属；选择“执行整条路径”所在步骤后才会一起更新。</p>`;
-   calc=`<div class="formula">${routeCosts(r.path)} = <b>${F.fmt(r.delta)}</b></div><div>这是总费用的净变化，反向边的退款已经计入。</div>`;
-  }else if(e.kind==='path'){
-   const edge=net.edges[e.edge];title=`沿选中路径读第 ${e.part+1} 段：${net.nodes[edge.u].id} → ${net.nodes[edge.v].id}`;
-   html=`<p class="current">${edgeMeaning(edge)}</p><p>${routeHTML(r.path)}</p><p>这一步预览整条路径的费用变化。先前飞机的退出与改投会在整条路径执行时一起生效。</p>`;
-   calc=`<div class="formula">走到这里：${routeCosts(r.path.slice(0,e.part+1))} = <b>${F.fmt(e.sum)}</b></div><div>整条路径净增费用 = ${F.fmt(r.delta)}</div>`;
-  }else if(e.kind==='commit'){
-   title=`执行整条路径：新增服务 1 架${r.reverse?`，调整 ${r.reverse} 架已有飞机`:''}`;
-   const changes=r.after.own.map((b,a)=>r.before.own[a]!==b?`${sym('a',sub(ex.planes[a]))}：${r.before.own[a]||'未分配'} → ${b}`:null).filter(Boolean);
-   html=`<p class="current">${changes.join('；')}。</p><p>现在才更新边容量和实际归属。已服务飞机仍各有一个波束，负载不超过 ${ex.cap}。用过的边可以反向撤销，取消的旧归属又可以正向选用。</p><p>下一轮重新清空最低费用记录，针对更新后的网络再找最短路。</p>`;
-   calc=`<div class="formula">${F.fmt(r.before.total)} + ${F.fmt(r.delta)} = <b>${F.fmt(r.after.total)}</b></div><div>流量 ${r.before.count} → ${r.after.count}；枚举同样服务 ${r.after.count} 架的最低费用 = ${F.fmt(oracle.best[r.after.count])}</div>`;
-  }else if(e.kind==='infeasible'){
-   title='没有到汇点的路径，本轮无法再增加服务量';html=`<p class="current">队列处理完后 D(T) 仍为 ∞。所有可用分支都已检查，仍找不到一条完整增广路径。</p><p>这里 a1、a3、a4 都只能去 A。A 的两个名额已满，里面的飞机也没有其他波束可去。最大流小于飞机数，当前约束下无法全覆盖。</p>`;calc=`<div class="formula">最大流 ${s.count} &lt; ${sym('n','n')} = ${ex.planes.length}</div>`;
+   title = `第 ${R.number} 轮开始：上一轮执行后，残量网络变了 ${lines.length} 处`;
+   body = `<p><b>残量网络 ＝ 现在还能走的边。</b>上一轮执行路线时，路线上每条边剩余 −1、孪生边 ＋1，所以有这些变化：</p><ul>${lines.join('')}</ul><p>本轮就在这个新网络上搜索。左图红色虚线就是能走的反向边。</p>`;
+  }
+  calc = `<div>能走的边：${s.caps.filter(c => c > 0).length} 条（其中反向边 ${net.edges.filter(e => !e.fwd && s.caps[e.id] > 0).length} 条）</div><div>已分配：${s.flow} / ${n} 架</div>`;
+  break; }
+ case 'init': {
+  meta = `${rm} · 第 2 步`; title = '清空记账：D(S) ＝ 0，其他都是 ∞，S 排进队列';
+  body = `<p>D(v) 表示：本轮目前找到的、从 S 到 v 的最便宜路线要花多少。S 是起点，花 0；其他节点还没找到路，记 ∞。“上一站”全部清空。${R.number > 1 ? '上一轮的记账全部作废：网络变了，旧数字不再成立。' : ''}</p>
+<p><b>队列</b>是一张待办清单，排着“费用刚变小、还没把新费用往后传”的节点。现在只有 S。</p>
+<p>接下来反复做同一件事，直到队列空：<b>从队首取出一个节点 → 逐条检查它能走的出边 → 哪个邻居因此变便宜，就更新它并让它排队。</b></p>`;
+  calc = `<div>D(S) ＝ 0；其他 D ＝ ∞</div><div>队列：S</div>`;
+  break; }
+ case 'pop': {
+  const u = N(s.u);
+  meta = `${rm} · 取出节点`;
+  title = s.again ? `再次取出 ${u}：它的费用后来变小了，要按新费用重查` : `从队首取出 ${u}`;
+  body = `<p>队列原来是 ${q(s.qBefore)}，取出最前面的 ${u}（D(${u}) ＝ ${fmt(s.dist[s.u])}）。取出后队列：${q(s.queue)}。</p>`;
+  if (s.again) body += `<p class="warn">${u} 上次被取出时 D 是 ${fmt(s.lastD)}，后来降到 ${fmt(s.dist[s.u])}。从它出发的每条边都要按新费用重新算一遍。</p>`;
+  body += s.out.length ? `<p>${u} 在残量网络里能走的出边有 ${s.out.length} 条：${s.out.map(EN).join('、')}。接下来逐条检查，每条一步。</p>`
+   : `<p>${u} 在残量网络里没有能走的出边，这一步什么也不用做，接着看队列里的下一个。</p>`;
+  if (s.gone.length) body += `<p class="muted">${s.gone.map(goneWhy).join('<br>')}</p>`;
+  calc = `<div>取出：${u}，D(${u}) ＝ ${fmt(s.dist[s.u])}</div><div>要检查的出边：${s.out.length} 条</div><div>队列现在：${q(s.queue)}</div>`;
+  break; }
+ case 'check': {
+  const e = E(s.edge), u = N(s.u), v = N(s.v), isT = s.v === net.T, old = s.old;
+  meta = `${rm} · 检查 ${u} 的第 ${s.j + 1}/${s.of} 条出边`;
+  title = `检查 ${EN(s.edge)}`;
+  let res = '', warn = '';
+  if (!s.better) {
+   title += '：不更便宜，不改';
+   res = s.cand === old ? `算出来 ${fmt(s.cand)}，和原来记的 ${fmt(old)} 一样。一样便宜时保留先找到的那条，不改${isT ? '' : '，也不排队'}。`
+    : `算出来 ${fmt(s.cand)}，比原来记的 ${fmt(old)} 贵，不改 D(${v})${isT ? '' : '，也不排队'}。`;
+   if (s.v === net.S) res += `这条边通往起点 S，等于把 ${u} 退回未分配。S 的费用是 0，绕一圈回到 S 只会更贵，所以这类边永远不会被更新。`;
+  } else if (isT) {
+   title += old === null ? '：第一次到达终点 T' : '：找到更便宜的到 T 路线';
+   res = `${fmt(s.cand)} 比原来的 ${old === null ? '∞（还没路）' : fmt(old)} 小，所以 D(T) 改成 ${fmt(s.cand)}，上一站记为 ${u}。${old === null ? '' : `原来那条 ${fmt(old)} 的路线作废。`}T 是终点，没有要往后检查的边，所以 T 不排队。`;
+   const left = [...(s.rest.length ? [`${u} 剩下的出边 ${s.rest.map(EN).join('、')}`] : []), ...(s.queue.length ? [`队列里的 ${q(s.queue)}`] : [])];
+   warn = `<p class="warn">到了 T <b>不代表分配了</b>：这只是记账表上多了一条到 T 的路线，归属一点没变。${left.length ? `后面还要检查${left.join('，以及')}，可能找到更便宜的路线，所以搜索继续。` : '后面已经没有要检查的了，下一步本轮搜索结束。'}</p>`;
+  } else {
+   title += `：D(${v}) ${fmt(old)} → ${fmt(s.cand)}`;
+   res = `${fmt(s.cand)} 比原来的 ${old === null ? '∞（还没路）' : fmt(old)} 小，所以 D(${v}) 改成 ${fmt(s.cand)}，上一站记为 ${u}。`;
+   if (s.action === 'enqueue') res += `${v} 的费用变了，从 ${v} 出发的边算出来也可能变便宜，所以把 ${v} 排到队尾。`;
+   if (s.action === 'inqueue') res += `${v} 本来就在队列里排着，轮到它时会按新费用检查，所以不重复排队。`;
+   if (s.action === 'requeue') warn = `<p class="warn"><b>${v} 之前已经被取出过</b>，那时按 D(${v}) ＝ ${fmt(s.lastPopD)} 检查了它的出边。现在它更便宜了，那些出边要按新费用重算，所以把 ${v} <b>重新排到队尾</b>。这就是同一个节点会被检查两次的原因。</p>`;
+   if (!e.fwd) warn += `<p class="warn">这只是在记账表上<b>假设</b>“${N(e.v)} 让出 ${N(e.u)}”，${N(e.v)} 现在仍在 ${N(e.u)}。只有本轮最终选中的路线经过这条边，执行时才真的让出。</p>`;
+  }
+  body = `<p>${meaning(e)}</p><p>${res}</p>${warn}`;
+  calc = `<div>D(${u}) ＋ 边费用 ＝ ${plus(s.dist[s.u], e.cost)} ＝ <b>${fmt(s.cand)}</b></div><div>原来 D(${v}) ＝ ${fmt(old)}</div><div class="${s.better ? 'good' : 'bad'}">${s.better ? `${fmt(s.cand)} ＜ ${fmt(old)} → 更新` : `${fmt(s.cand)} ≥ ${fmt(old)} → 不更新`}</div><div>队列现在：${q(s.queue)}</div>`;
+  break; }
+ case 'found': {
+  meta = `${rm} · 搜索结束`; title = `队列空了，第 ${R.number} 轮搜索结束：D(T) ＝ ${fmt(R.delta)}`;
+  const hist = R.tHistory.map(h => `${fmt(h.cand)}（经 ${EN(h.edge)}）`).join(' → ');
+  body = `<p><b>为什么现在才停：</b>队列空表示没有哪个节点的费用刚变小、还没往后传。此时再检查任何一条边，记账表上的数字都不会再变，所以 D(T) 就是本轮从 S 到 T 的最低费用。</p>
+<p>本轮 D(T) 的记录：${hist}。${R.tHistory.length > 1 ? '第一次碰到 T 时没有停下，正是因为后面找到了更便宜的路线。' : ''}</p>
+<p>D(T) 不是 ∞，说明这一轮能再送进一架飞机。<b>到这一步为止，归属一点没变。</b>下一步从 T 沿“上一站”往回倒推，找出这条路线。</p>
+<p class="muted">对照（算法本身不列路线，这里只为了让你核对）：本轮残量网络里所有完整路线——</p>
+<table><tr><th>路线</th><th>逐段费用</th><th>合计</th></tr>${R.candidates.map(p => `<tr class="${p.ids.join() === R.path.join() ? 'hl' : ''}"><td>${routeHTML(p.ids)}</td><td>${routeCosts(p.ids)}</td><td class="num"><b>${fmt(p.cost)}</b>${p.ids.join() === R.path.join() ? ' ✓' : ''}</td></tr>`).join('')}</table>`;
+  calc = `<div>队列：空 → 本轮搜索结束</div><div>D(T) ＝ ${fmt(R.delta)}（≠ ∞，有路线）</div>`;
+  break; }
+ case 'nopath': {
+  meta = `${rm} · 搜索结束`; title = `队列空了，D(T) 仍是 ∞：送不进第 ${s.flow + 1} 架，算法结束`;
+  const reached = net.nodes.map((_, i) => i).filter(i => i !== net.S && s.dist[i] !== null);
+  body = `<p>队列空表示所有能走的边都已检查完、记账不会再变。本轮能到达的节点：${reached.map(i => `${N(i)}（D ＝ ${fmt(s.dist[i])}）`).join('、')}；T 始终没有被到达。</p><p>${ex.stopWhy}</p>
+<p>D(T) ＝ ∞ 意味着：无论怎样让已分配的飞机改投，都腾不出一条到 T 的路。网络不会再变，再搜一轮结果也一样，所以整个算法停止。</p>`;
+  calc = `<div>队列：空 → 本轮搜索结束</div><div>D(T) ＝ ∞ → 无路线 → 停止</div><div>最多分配 ${s.flow} 架 ＜ ${n} 架</div>`;
+  break; }
+ case 'back': {
+  const e = E(s.edge);
+  meta = `${rm} · 倒推第 ${s.hop + 1}/${s.path.length} 步`;
+  title = `${N(e.v)} 的上一站是 ${N(e.u)}`;
+  body = `<p>看记账表 ${N(e.v)} 那一行的“上一站”：经 ${EN(s.edge)} 从 ${N(e.u)} 来。${e.fwd ? '' : '<span class="neg">这是一条反向边。</span>'}</p>`;
+  body += e.u === net.S ? `<p>到 S 了，倒推结束。整条路线（从 S 往 T 读）：${routeHTML(s.path)}</p>` : `<p>接着看 ${N(e.u)} 的上一站。</p>`;
+  calc = `<div>已倒推：${routeHTML(s.path.slice(s.path.length - 1 - s.hop))}</div>`;
+  break; }
+ case 'sum': {
+  meta = `${rm} · 选中路线`; title = `本轮选中的路线，净费用 ${fmt(R.delta)}`;
+  body = `<p>${routeHTML(s.path)}</p><p>用大白话说：${routeWords(s.path)}。</p>`;
+  const direct = R.candidates.find(p => p.ids.every(id => E(id).fwd)), viaRev = R.candidates.find(p => p.ids.some(id => !E(id).fwd));
+  if (R.reverse) body += direct ? `<p><b>为什么要让飞机改投：</b>不让任何飞机改投的最便宜路线是 ${routeHTML(direct.ids)}，费用 ${routeCosts(direct.ids)} ＝ ${fmt(direct.cost)}，比选中的路线贵 ${fmt(direct.cost - R.delta)}。改投并不是一条单独的规则，只是这条经过反向边的路线恰好最便宜。</p>`
+   : '<p>不经过反向边的路线一条也没有，只能让别的飞机改投。</p>';
+  else body += viaRev ? `<p>这条路线没有经过反向边，没有飞机改投。经过反向边（让已分配的飞机改投）的路线最便宜也要 ${fmt(viaRev.cost)}，比它贵，所以本轮不改投。</p>` : '<p>这条路线没有经过反向边，没有飞机改投。</p>';
+  body += '<p>下一步开始执行：沿这条路线逐段修改剩余量。</p>';
+  calc = `<div>逐段费用：${routeCosts(s.path)} ＝ <b>${fmt(R.delta)}</b></div><div>这就是执行后总费用增加的量</div>`;
+  break; }
+ case 'push': {
+  const e = E(s.edge), r = E(e.rev);
+  meta = `${rm} · 执行第 ${s.i + 1}/${s.path.length} 段`; title = `执行 ${EN(s.edge)}`;
+  body = `<p>${s.i === 0 ? '执行 ＝ 沿选中的路线送 1 单位流，从第一段开始逐段做。' : ''}这条边剩余 ${s.before[0]} → ${s.before[0] - 1}；它的孪生边 ${EN(r.id)} 剩余 ${s.before[1]} → ${s.before[1] + 1}。</p>`;
+  if (e.type === 'supply') body += `<p>${P(e.plane)} 被纳入分配。S→${P(e.plane)} 用掉，以后不会再从 S 出发去选 ${P(e.plane)}。</p>`;
+  if (e.type === 'assign' && e.fwd) body += `<p>${P(e.plane)} 归属 ${e.beam}。<b>同时反向边 ${e.beam}→${P(e.plane)} 剩余变成 1：反向边就是在这一刻出现的。</b>以后的轮次可以经它让 ${P(e.plane)} 让出 ${e.beam}。</p>`;
+  if (e.type === 'assign' && !e.fwd) body += `<p class="warn">这是反向边：它剩余 1→0，孪生的 ${P(e.plane)}→${e.beam} 剩余 0→1，又能走了，说明 <b>${P(e.plane)} 不再属于 ${e.beam}</b>。“反向／退流”真正发生在这一刻。此时 ${P(e.plane)} 暂时没有归属，路线的下一段会把它送进新的波束——所以必须把整条路线执行完才算数。</p>`;
+  if (e.type === 'slot') body += `<p>占用 ${e.beam} 的名额${e.slot}。名额边 ${EN(r.id)} 出现，但 T 是终点，搜索不会从 T 往外走。</p>`;
+  body += '<p class="muted">图中最粗的金色边是这一段；深金色是已执行的段，浅金色是还没执行的段。</p>';
+  calc = `<div>${EN(s.edge)}：剩余 ${s.before[0]} → ${s.before[0] - 1}</div><div>${EN(r.id)}：剩余 ${s.before[1]} → ${s.before[1] + 1}</div>`;
+  break; }
+ case 'read': {
+  const before = owners(R.beforeCaps), now = owners(s.caps), ch = [];
+  ex.planes.forEach(p => { if (before.own[p] !== now.own[p]) ch.push(before.own[p] ? `${P(p)} 从 ${before.own[p]} 改投 ${now.own[p]}（仍有服务）` : `新增 ${P(p)} → ${now.own[p]}`); });
+  const lines = net.edges.filter(e => e.fwd && e.type === 'assign' && (s.caps[e.id] === 0 || R.beforeCaps[e.id] === 0))
+   .map(e => s.caps[e.id] === 0 ? `${P(e.plane)}→${e.beam} 剩余 0 → ${P(e.plane)} 在 ${e.beam}` : `${P(e.plane)}→${e.beam} 剩余恢复为 1 → ${P(e.plane)} 已不在 ${e.beam}`);
+  meta = `${rm} · 执行完成`; title = `第 ${R.number} 轮执行完：分配成功，已分配 ${s.flow}/${n} 架`;
+  body = `<p><b>这就是“分配成功”的时刻：</b>整条路线的每一段都执行完了。本轮变化：${ch.join('；')}。</p>
+<p>怎样从残量网络读出归属：看每条“飞机→波束”正向边，剩余 0（已用掉）就表示这架飞机在这个波束。</p><ul>${lines.map(l => `<li>${l}</li>`).join('')}</ul>
+<p>负载：${ex.beams.map(b => `${b} ${now.loads[b]} 架`).join('，')}。每架已分配的飞机都恰好在一个波束里，没有波束超过 ${ex.cap} 架。</p>`;
+  calc = `<div>已分配：${R.flowBefore} → ${s.flow} 架</div><div>总费用：${fmt(R.totalBefore)} ＋ ${fmt(R.delta)} ＝ <b>${fmt(s.total)}</b></div>`;
+  break; }
+ case 'outer': {
+  const done = s.flow === n;
+  meta = `${rm}`; title = done ? `已分配 ${s.flow} 架 ＝ 飞机总数：全部分配完，算法结束` : `已分配 ${s.flow} 架 ＜ ${n} 架：进入第 ${R.number + 1} 轮`;
+  body = `<p>每轮执行完都只问一句：所有飞机都分配了吗？</p>` + (done ? '<p>是，整个算法结束。（另一种结束情况见例3：某轮搜索后 D(T) 仍是 ∞。）</p>'
+   : `<p>还没有。下一轮从头再来：先看新的残量网络（本轮执行改过的那几条边），再清空记账、S 排队、重新搜索。</p>`);
+  calc = `<div>已分配 ${s.flow} / ${n} → ${done ? '结束' : '继续'}</div>`;
+  break; }
+ case 'final': {
+  const o = owners(s.caps), ok = o.count === n;
+  meta = '结果'; title = ok ? '最终结果：全部分配' : `最终结果：最多只能分配 ${o.count} 架`;
+  const sq = ex.beams.map(b => o.loads[b] * o.loads[b]).reduce((a, b) => a + b, 0), ds = net.edges.filter(e => e.fwd && e.type === 'assign' && s.caps[e.id] === 0).map(e => e.d);
+  body = `<p>${ex.beams.map(b => `${b}：${ex.planes.filter(p => o.own[p] === b).map(P).join('、') || '空'}`).join('；')}${ok ? '' : `；未分配：${ex.planes.filter(p => !o.own[p]).map(P).join('、')}`}。</p>`;
+  body += `<p>每轮做了什么：</p><ul>${run.rounds.map(r => `<li>第 ${r.number} 轮：${r.feasible ? `${routeWords(r.path)}，净费用 ${fmt(r.delta)}` : 'D(T) ＝ ∞，送不进去，停止'}</li>`).join('')}</ul>`;
+  body += ok ? `<p>把所有 ${oracle.count} 种可行分法都穷举一遍，最低总费用也是 ${fmt(oracle.best)}，和算法一致。</p><p>先分配的飞机可能在后面的轮次被调整（改投到另一个允许的波束），但始终有服务；最终答案只由覆盖关系、名额和费用决定，与谁先进来无关。</p>`
+   : `<p>穷举：让 ${n} 架全部分配的分法有 ${oracle.count} 种，即根本不存在。算法在第 ${run.rounds.length} 轮发现 D(T) ＝ ∞ 时就得出了同样的结论。</p>`;
+  calc = `<div>名额费用 ${ex.beams.map(b => o.loads[b] + '²').join(' + ')} ＝ ${sq}</div><div>距离费用 0.1 × (${ds.join(' + ') || 0}) ＝ ${fmt(ds.reduce((a, b) => a + b, 0))}</div><div>总费用 ＝ <b>${fmt(s.total)}</b></div>`;
+  break; }
+ }
+ return {meta, title, body, calc};
+}
+
+function short(s) {
+ const n = run.net;
+ switch (s.kind) {
+ case 'intro': return '读懂例子'; case 'build': return '建网络'; case 'cost': return '定费用';
+ case 'residual': return '看本轮的残量网络'; case 'init': return '清空记账，S 排队';
+ case 'pop': return `${s.again ? '再次' : ''}取出 ${N(s.u)}${s.out.length ? '' : '（无出边）'}`;
+ case 'check': { const v = N(s.v); return `　${EN(s.edge)}：` + (s.better ? `D(${v}) ${fmt(s.old)}→${fmt(s.cand)}${s.action === 'enqueue' ? '，排队' : s.action === 'requeue' ? '，重新排队' : s.action === 'inqueue' ? '，已在队列' : ''}` : `${fmt(s.cand)} 不更小，不改`); }
+ case 'found': return `队列空，搜索结束，D(T)＝${fmt(s.dist[n.T])}`;
+ case 'nopath': return '队列空，D(T)＝∞，停止';
+ case 'back': return `${N(E(s.edge).v)} ← ${N(E(s.edge).u)}`;
+ case 'sum': return '读出整条路线与净费用';
+ case 'push': return `执行 ${EN(s.edge)}`;
+ case 'read': return '读出归属：分配成功';
+ case 'outer': return s.flow === n.ex.planes.length ? '全部分配，结束' : '没分完，进入下一轮';
+ case 'final': return '最终结果';
+ }
+}
+
+/* ---------- 画图 ---------- */
+function pos(i) {
+ const nd = run.net.nodes[i], ex = run.net.ex;
+ if (nd.kind === 'S') return {x:60, y:200};
+ if (nd.kind === 'T') return {x:800, y:200};
+ if (nd.kind === 'plane') { const n = ex.planes.length; return {x:280, y:200 + (nd.i - (n - 1) / 2) * (n > 2 ? 125 : 150)}; }
+ return {x:560, y:200 + (nd.i - (ex.beams.length - 1) / 2) * 150};
+}
+function geom(e) {
+ const a = pos(e.u), b = pos(e.v);
+ let bend;
+ if (e.type === 'slot') { const base = (e.slot - (run.net.ex.cap + 1) / 2) * 44, off = base + (base < 0 ? -28 : 28); bend = e.fwd ? base : -off; }
+ else bend = e.fwd ? 0 : 30;
+ const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy), cx = (a.x + b.x) / 2 - dy / len * bend, cy = (a.y + b.y) / 2 + dx / len * bend;
+ const t1 = Math.hypot(cx - a.x, cy - a.y), t2 = Math.hypot(b.x - cx, b.y - cy), r = 27;
+ const sx = a.x + (cx - a.x) / t1 * r, sy = a.y + (cy - a.y) / t1 * r, tx = b.x - (b.x - cx) / t2 * r, ty = b.y - (b.y - cy) / t2 * r;
+ return {d:`M${sx} ${sy}Q${cx} ${cy} ${tx} ${ty}`, lx:(sx + 2 * cx + tx) / 4, ly:(sy + 2 * cy + ty) / 4};
+}
+const COLORS = ['#2f7bb0', '#d07a2c', '#379481'];
+function drawGraph(s) {
+ const net = run.net, caps = s.caps, ph = phaseOf(s.kind), o = owners(caps), R = run.rounds[s.round - 1];
+ const hot = new Set(), path = new Set(['found', 'sum', 'read'].includes(s.kind) ? s.path : []), soft = new Set(), changed = new Set();
+ if (s.edge !== undefined) hot.add(s.edge);
+ if (s.kind === 'push') { s.path.slice(0, s.i).forEach(id => path.add(id)); s.path.slice(s.i + 1).forEach(id => soft.add(id)); }
+ if (s.kind === 'back') s.path.slice(s.path.length - 1 - s.hop).forEach(id => path.add(id));
+ if (s.kind === 'pop') s.out.forEach(id => soft.add(id));
+ if (s.kind === 'residual' && R.number > 1) { const prev = run.rounds[R.number - 2].beforeCaps; net.edges.forEach(e => { if (prev[e.id] !== caps[e.id]) changed.add(e.id); }); }
+ let h = '<defs>' + [['g', '#9fb0bd'], ['r', '#c0443f'], ['y', '#b57600'], ['b', '#7d9bb5']].map(([k, c]) => `<marker id="m${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="${c}"/></marker>`).join('') + '</defs>';
+ h += [['源点', 60], ['飞机', 280], ['波束', 560], ['汇点', 800]].map(([t, x]) => `<text x="${x}" y="18" text-anchor="middle" font-size="12" fill="#7a8a98">${t}</text>`).join('');
+ const order = net.edges.slice().sort((a, b) => (hot.has(a.id) || path.has(a.id) ? 1 : 0) - (hot.has(b.id) || path.has(b.id) ? 1 : 0));
+ for (const e of order) {
+  const c = caps[e.id];
+  if (!e.fwd && c === 0 && !hot.has(e.id) && !path.has(e.id) && !soft.has(e.id)) continue;
+  const g = geom(e), isHot = hot.has(e.id), inPath = path.has(e.id), isSoft = soft.has(e.id), isCh = changed.has(e.id);
+  let stroke, width, dash = '', mk, op = 1, label = true;
+  if (!e.fwd) { stroke = '#c0443f'; width = 1.8; dash = '6 4'; mk = 'r'; }
+  else if (c > 0) { stroke = '#9fb0bd'; width = 1.6; mk = 'g'; }
+  else { stroke = '#2a5d87'; width = 6; op = .28; mk = null; label = false; }
+  if (isCh) { width = Math.max(width, 3.2); op = Math.max(op, .55); }
+  if (isSoft) { stroke = '#d9a440'; width = 2.4; mk = 'y'; op = .8; label = true; }
+  if (inPath) { stroke = '#b57600'; width = 3.2; mk = 'y'; op = 1; label = true; }
+  if (isHot) { stroke = '#b57600'; width = 4.5; mk = 'y'; op = 1; label = true; }
+  const tip = `${EN(e.id)}　剩余 ${c}　费用 ${fmt(e.cost)}\n${meaning(e)}`;
+  h += `<path d="${g.d}" fill="none" stroke="${stroke}" stroke-width="${width}" opacity="${op}" ${dash ? `stroke-dasharray="${dash}"` : ''} ${mk ? `marker-end="url(#m${mk})"` : ''}><title>${tip}</title></path>`;
+  if (label) {
+   const txt = e.type === 'slot' ? (e.fwd ? `名额${e.slot}·${fmt(e.cost)}` : `退${e.slot}·${fmt(e.cost)}`) : fmt(e.cost);
+   const col = isHot || inPath ? '#9a6400' : !e.fwd ? '#c0443f' : '#6d7f8e';
+   h += `<text x="${g.lx}" y="${g.ly - 5}" text-anchor="middle" font-size="12" fill="${col}" stroke="#fff" stroke-width="3" paint-order="stroke" font-weight="${isHot || inPath || isCh ? 700 : 400}">${txt}</text>`;
   }
  }
- $('#eventMeta').textContent=meta;$('#eventTitle').textContent=title;$('#narration').innerHTML=html;$('#calculation').innerHTML=calc;$('#liveMetrics').innerHTML=numbers();
-}
-function pos(nd){const n=run.net.ex.planes.length,m=run.net.ex.beams.length;if(nd.kind==='source')return{x:62,y:283};if(nd.kind==='sink')return{x:792,y:283};if(nd.kind==='plane')return{x:230,y:65+nd.plane*(430/Math.max(1,n-1))};return{x:554,y:95+nd.beam*(370/Math.max(1,m-1))};}
-function geom(e){const a=pos(run.net.nodes[e.u]),b=pos(run.net.nodes[e.v]);let bend=0;
- if(e.kind==='slot')bend=(e.slot-(run.net.ex.cap+1)/2)*50+(e.forward?0:12);
- else if(!e.forward)bend=-28;
- const dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy),cx=(a.x+b.x)/2-dy/len*bend,cy=(a.y+b.y)/2+dx/len*bend;
- const trim=25;const sx=a.x+dx/len*trim,sy=a.y+dy/len*trim,tx=b.x-dx/len*trim,ty=b.y-dy/len*trim;
- return {d:`M ${sx} ${sy} Q ${cx} ${cy} ${tx} ${ty}`,label:{x:(sx+2*cx+tx)/4,y:(sy+2*cy+ty)/4-5}};
-}
-function drawGraph(){const e=event(),net=run.net,caps=capacities(),s=state(),r=currentRound();const shownPath=hoverPath||pinnedPath||e.path||[],active=new Set(shownPath);if(e.edge!==undefined)active.add(e.edge);const showReverse=$('#showReverse').checked,showCost=$('#showCost').checked;
- const setup=e.round<0,selected=selectedNode;
- let h=`<defs><marker id="arr-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#a7b7c3"/></marker><marker id="arr-gold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#b87400"/></marker><marker id="arr-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#bd4345"/></marker><marker id="arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#245b86"/></marker></defs>`;
- h+='<text x="60" y="22" text-anchor="middle" fill="#61778b" font-size="12">源点</text><text x="230" y="22" text-anchor="middle" fill="#61778b" font-size="12">飞机 · 每架 1 单位流量</text><text x="554" y="22" text-anchor="middle" fill="#61778b" font-size="12">波束 · 哪些飞机能归属它</text><text x="780" y="22" text-anchor="middle" fill="#61778b" font-size="12">名额 → 汇点</text>';
- const sorted=net.edges.slice().sort((a,b)=>Number(active.has(a.id))-Number(active.has(b.id)));
- for(const edge of sorted){const on=active.has(edge.id),used=edge.forward&&caps[edge.id]<edge.capacity;
-  if(!edge.forward&&caps[edge.id]===0&&!on)continue;
-  if(!edge.forward&&!showReverse&&!on)continue;
-  const g=geom(edge),incident=selected!==null&&(edge.u===selected||edge.v===selected);
-  let color=on?'#b87400':!edge.forward?'#bd4345':used?'#245b86':'#b8c5cf';
-  let opacity=on?1:incident?.9:active.size?.19:!edge.forward?.5:used?.82:.55;
-  const marker=on?'gold':!edge.forward?'red':used?'blue':'gray';
-  h+=`<path d="${g.d}" fill="none" stroke="${color}" stroke-width="${on?3.8:incident?2.7:used?2.3:1.3}" opacity="${opacity}" marker-end="url(#arr-${marker})" ${!edge.forward?'stroke-dasharray="6 4"':''} ${on?'class="query-edge"':''}/>`;
-  h+=`<path d="${g.d}" fill="none" stroke="transparent" stroke-width="12" class="edge-hit" tabindex="0" data-edge="${edge.id}" aria-label="${net.nodes[edge.u].id} 到 ${net.nodes[edge.v].id} 费用 ${F.fmt(edge.cost)} 剩余容量 ${caps[edge.id]}"/>`;
-  if(showCost||on||setup&&edge.kind==='slot')h+=`<text class="edge-label" x="${g.label.x}" y="${g.label.y}" text-anchor="middle" fill="${color}">${F.fmt(edge.cost)}${edge.kind==='slot'?' · 名额'+edge.slot:''}</text>`;
+ const showD = ph === 1 || ph === 2;
+ for (let i = 0; i < net.nodes.length; i++) {
+  const nd = net.nodes[i], p = pos(i), cur = (s.kind === 'pop' || s.kind === 'check') && s.u === i, tgt = s.kind === 'check' && s.v === i;
+  const accent = nd.kind === 'beam' ? COLORS[nd.i] : nd.kind === 'plane' && o.own[nd.id] ? COLORS[run.net.ex.beams.indexOf(o.own[nd.id])] : '#4f6a80';
+  const fill = cur ? '#ffe9a8' : tgt ? '#fff6dc' : '#fff', stroke = cur || tgt ? '#b57600' : accent, sw = cur || tgt ? 3 : 2;
+  h += nd.kind === 'beam' ? `<rect x="${p.x - 25}" y="${p.y - 23}" width="50" height="46" rx="9" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>` : `<circle cx="${p.x}" cy="${p.y}" r="24" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+  h += `<text x="${p.x}" y="${p.y + 6}" font-size="18" text-anchor="middle" fill="${accent}" font-weight="700">${lab(nd.id)}</text>`;
+  if (nd.kind === 'beam') h += `<text x="${p.x}" y="${p.y + (showD ? 59 : 42)}" text-anchor="middle" font-size="12" fill="${accent}">已收 ${o.loads[nd.id]}/${run.net.ex.cap} 架</text>`;
+  if (nd.kind === 'plane' && ph !== 0) h += `<text x="${p.x - 34}" y="${p.y + 4}" font-size="12" text-anchor="end" fill="${accent}">${o.own[nd.id] ? '在 ' + o.own[nd.id] : '未分配'}</text>`;
+  if (showD) h += `<text x="${p.x}" y="${p.y + 42}" text-anchor="middle" font-size="13" fill="${tgt ? '#9a6400' : '#3d566b'}" font-weight="${tgt ? 700 : 400}">D=${fmt(s.dist[i])}</text>`;
+  const qi = s.queue.indexOf(i);
+  if (ph === 1 && qi >= 0) h += `<rect x="${p.x - 26}" y="${p.y - 46}" width="52" height="18" rx="9" fill="#fff3cf" stroke="#d9a440"/><text x="${p.x}" y="${p.y - 33}" text-anchor="middle" font-size="11.5" fill="#8a5a00">排队第${qi + 1}</text>`;
  }
- for(let i=0;i<net.nodes.length;i++){const nd=net.nodes[i],p=pos(nd),isHot=e.v===i||e.u===i||i===selected;const accent=nd.kind==='beam'?colors[nd.beam]:nd.kind==='plane'&&s.own[nd.plane]?colors[net.ex.beams.indexOf(s.own[nd.plane])]:'#506b80';
- h+=`<g class="flow-node" data-node="${i}" tabindex="0" role="button" aria-label="查看 ${nd.id} 节点">`;
- h+=nd.kind==='beam'?`<rect x="${p.x-24}" y="${p.y-22}" width="48" height="44" rx="9" fill="${isHot?'#fff0bb':'#fff'}" stroke="${isHot?'#b87400':accent}" stroke-width="${isHot?3:2}"/>`:`<circle cx="${p.x}" cy="${p.y}" r="23" fill="${isHot?'#fff0bb':nd.kind==='plane'?'#fff':'#edf3f7'}" stroke="${isHot?'#b87400':accent}" stroke-width="${isHot?3:2}"/>`;
- h+=`<text x="${p.x}" y="${p.y+6}" font-size="17" text-anchor="middle" fill="${accent}">${nd.id}</text>`;
- if(nd.kind==='beam')h+=`<text x="${p.x+32}" y="${p.y+3}" font-size="12" fill="${accent}">${s.loads[nd.beam]}/${net.ex.cap} 架</text>`;
- if(!setup&&!['finish','commit'].includes(e.kind))h+=`<text x="${p.x}" y="${p.y+41}" text-anchor="middle" class="node-distance" data-sym="D" tabindex="0" fill="${e.v===i?'#a16600':'#496278'}">D=${F.fmt(e.dist[i])}</text>`;
- h+='</g>';
- }
- const banner=setup?'线表示允许的关系；不按连线长短计算距离':e.kind==='commit'?'本轮已执行：归属与残量容量一起更新':e.kind==='finish'?'最终归属与所有使用过的名额':`搜索中：已执行归属仍为 ${s.count} 架，当前高亮仅表示候选或预览`;
- h+=`<text x="425" y="562" text-anchor="middle" font-size="13" fill="#50677c">${banner}</text>`;
- $('#graph').innerHTML=h;
- $('#graphTitle').textContent=setup?'原始网络与允许归属':e.kind==='commit'||e.kind==='finish'?'执行后的归属与残量网络':`第 ${r.number} 轮 · 残量网络`;
- if(e.edge!==undefined){const ed=net.edges[e.edge];$('#edgeCaption').innerHTML=`${node(ed.u)} → ${node(ed.v)}　${sym('residual','剩余容量')} ${caps[ed.id]}　${sym('c','边费用')} <b class="${ed.cost<0?'negative':''}">${F.fmt(ed.cost)}</b>　${ed.forward?'正向边':'反向边：撤销已有流量'}`;}
- else $('#edgeCaption').innerHTML=shownPath.length?routeHTML(shownPath):'蓝色表示已有归属，红色虚线表示可撤销的方向。悬停边看费用，点击节点看它所有的出边。';
+ const banner = ph === 0 ? '每条线是一条边；线的长短不代表距离。鼠标停在边上可看说明。' : ph === 1 || ph === 2 ? '搜索／倒推中：只在记账表上算数，剩余量和归属都不变' : ph === 3 ? '执行中：正在逐段修改剩余量，归属随之改变' : ph === 4 ? '本轮执行完毕' : '最终的残量网络与归属';
+ h += `<text x="430" y="${run.net.ex.planes.length > 2 ? 420 : 380}" text-anchor="middle" font-size="13" fill="#5d7183">${banner}</text>`;
+ $('#graph').innerHTML = h;
+ $('#graph').setAttribute('viewBox', `0 0 860 ${run.net.ex.planes.length > 2 ? 432 : 392}`);
+ $('#graphTitle').textContent = ph === 0 ? '原始网络' : ph === 5 ? '最终残量网络' : `第 ${s.round} 轮 · 残量网络`;
+ const b = $('#graphBadge');
+ b.className = 'badge' + (ph === 3 ? ' exec' : ph >= 4 ? ' done' : '');
+ b.textContent = ph === 0 ? '准备' : ph === 1 ? '搜索中：网络不变' : ph === 2 ? '倒推中：网络不变' : ph === 3 ? '执行中：网络在变' : ph === 4 ? '本轮执行完毕' : '结束';
 }
-function drawLabels(){const e=event(),net=run.net;
- $('#nodeHeading').textContent=e.kind==='commit'?'执行前的搜索记录 · 下轮重算':'每个节点都记账';
- $('#labels tbody').innerHTML=net.nodes.map((nd,i)=>{const change=e.kind==='relax'&&e.v===i;const old=e.v===i&&['relax','reject'].includes(e.kind)?e.old:e.dist[i];const pred=e.pred[i]!==null?net.nodes[net.edges[e.pred[i]].u].id:'—';return `<tr data-node="${i}" class="${change?'changed':i===selectedNode?'selected':''}"><td>${node(i)}</td><td class="num">${F.fmt(old)}</td><td class="num"><b>${F.fmt(e.dist[i])}</b></td><td>${pred}</td><td>${e.queue.includes(i)?'队列中':e.u===i?'正在检查':'—'}</td></tr>`;}).join('');
- $('#queue').innerHTML=`${sym('queue','待检查队列')}：${e.queue.length?e.queue.map(i=>node(i)).join(' → '):'空'}`;
+function drawQueue(s) {
+ const ph = phaseOf(s.kind);
+ if (ph !== 1) { $('#queue').innerHTML = `<span class="ql">队列：</span><span class="muted">${ph === 0 ? '搜索开始后才用到' : '本轮搜索已结束，队列不再使用'}</span>`; return; }
+ let chips = '';
+ if (s.kind === 'pop') chips += `<span class="chip out">${N(s.u)}</span> `;
+ const last = s.kind === 'check' && ['enqueue', 'requeue'].includes(s.action) ? s.v : null;
+ chips += s.queue.map(i => `<span class="chip ${i === last ? (s.action === 'requeue' ? 'req' : 'new') : ''}">${N(i)}</span>`).join(' ');
+ $('#queue').innerHTML = `<span class="ql">队列（左边先取出）：</span>${chips || '<span class="muted">空</span>'}${s.kind === 'pop' ? '<span class="muted">（划线的是刚取出的）</span>' : ''}`;
 }
-function drawAssignment(){const s=state(),r=currentRound(),committed=event().kind==='commit';$('#allocations').innerHTML=run.net.ex.beams.map((b,i)=>{const members=s.own.map((x,a)=>x===b?a:-1).filter(a=>a>=0);const left=committed?r.before.own.map((x,a)=>x===b&&s.own[a]!==b?a:-1).filter(a=>a>=0):[];return `<div class="beam-allocation" style="--beam:${colors[i]}"><h3>${sym('beam',b)} · ${s.loads[i]}/${run.net.ex.cap}</h3>${members.length?members.map(a=>`<span class="air-chip ${committed&&r.before.own[a]!==b?'arrived':''}">${sym('a',sub(run.net.ex.planes[a]))}</span>`).join(''):'<span class="muted">空</span>'}${left.map(a=>`<span class="air-chip left">${run.net.ex.planes[a]} → ${s.own[a]}</span>`).join('')}</div>`;}).join('');
- const un=run.net.ex.planes.filter((_,a)=>s.own[a]===null);$('#assignmentNote').innerHTML=`尚未分配：${un.join('、')||'无'}。名额费用 ${F.fmt(s.quota)} + 距离费用 ${F.fmt(s.distance)} = 总费用 ${F.fmt(s.total)}。`;
- $('#executionBadge').textContent=isSearch(event())?'搜索期间保持不变':committed?'整条路径刚刚执行':'当前方案';
+function drawResid(s) {
+ const net = run.net, R = run.rounds[s.round - 1], hl = new Set(), ch = new Set();
+ if (s.edge !== undefined) { hl.add(s.edge); hl.add(E(s.edge).rev); }
+ if (s.kind === 'residual' && R.number > 1) { const prev = run.rounds[R.number - 2].beforeCaps; net.edges.forEach(e => { if (prev[e.id] !== s.caps[e.id]) ch.add(e.id); }); }
+ if (s.kind === 'read') net.edges.forEach(e => { if (R.beforeCaps[e.id] !== s.caps[e.id]) ch.add(e.id); });
+ const cell = c => `<td class="num ${c ? 'one' : 'z'}">${c}</td>`;
+ $('#resid').innerHTML = '<tr><th>正向边</th><th>剩余</th><th>反向边</th><th>剩余</th><th>现在表示</th></tr>' + net.edges.filter(e => e.fwd).map(f => {
+  const r = E(f.rev);
+  return `<tr class="${hl.has(f.id) ? 'hl' : ch.has(f.id) ? 'ch' : ''}"><td>${EN(f.id)}</td>${cell(s.caps[f.id])}<td class="${s.caps[r.id] ? 'neg' : 'z'}">${EN(r.id)}　${fmt(r.cost)}</td>${cell(s.caps[r.id])}<td>${pairState(f, s.caps[f.id])}</td></tr>`;
+ }).join('');
 }
-function drawInspector(){const e=event(),net=run.net,caps=capacities();
- if(selectedNode!==null){const nd=net.nodes[selectedNode];$('#inspectorTitle').textContent=`${nd.id} 节点：不只波束，飞机也这样记账`;
-  const path=e.witness?.[selectedNode]||[];
-  $('#inspector').innerHTML=`<p>目前最低到达费用 ${sym('D',`D(${nd.id})`)} = <b>${F.fmt(e.dist[selectedNode])}</b>。${path.length?'写下此费用时的路径：'+routeHTML(path):'尚无到达路径。'}</p><table><thead><tr><th>出边</th><th>余量</th><th>边费用</th><th>能否检查</th></tr></thead><tbody>${net.adj[selectedNode].map(id=>{const ed=net.edges[id];return `<tr class="${e.edge===id?'active-edge':''}"><td>${nd.id} → ${net.nodes[ed.v].id}${ed.kind==='slot'?' · 名额'+ed.slot:''}</td><td>${caps[id]}</td><td>${F.fmt(ed.cost)}</td><td>${caps[id]>0?'可走'+(!ed.forward?' · 撤销方向':''):'无余量'}</td></tr>`;}).join('')}</tbody></table>`;
- }else if(e.edge!==undefined){const ed=net.edges[e.edge];$('#inspectorTitle').textContent='这条边为什么这样处理';const prior=e.oldPred!==undefined&&e.oldPred!==null?net.nodes[net.edges[e.oldPred].u].id:null;
-  $('#inspector').innerHTML=`<p>${edgeMeaning(ed)}</p>${e.route?`<p>本次候选前半段：${routeHTML(e.route)}</p>`:''}${prior?`<p>旧记录最后从 ${prior} 进入；如果本次更便宜，就更换前驱。后面共享的出边无需为每条旧路线分别展开。</p>`:''}<p class="note">搜索只写账，不占用名额。反向边上的负费用表示退回原费用，整条路径的净增费用才决定是否划算。</p>`;
- }else{ $('#inspectorTitle').textContent='可以从任意节点的角度检查';$('#inspector').innerHTML=`<p>点击左图或费用表中的飞机、波束节点，查看它的最低到达费用、前驱和所有出边。</p><p>${sym('D','D(v)')} 是到节点的临时路径费用；${sym('d','d<sub>ai</sub>')} 是飞机到中心的距离，二者含义不同。</p><p>同一轮所有候选面对相同的容量和费用。执行选中的整条路径以后，下一轮才换成更新后的网络。</p>`;}
+function drawLedger(s) {
+ const net = run.net, ph = phaseOf(s.kind);
+ if (ph !== 1 && ph !== 2) { $('#ledger').innerHTML = `<tr><td class="muted">${ph === 0 ? '每轮搜索开始时才建立。' : ph === 5 ? '算法已结束。' : '本轮搜索已结束；记账表下一轮清空重算。'}</td></tr>`; return; }
+ const backSet = new Set(s.kind === 'back' ? s.path.slice(s.path.length - 1 - s.hop).flatMap(id => [E(id).u, E(id).v]) : []);
+ $('#ledger').innerHTML = '<tr><th>节点</th><th>D</th><th>上一站</th><th>状态</th></tr>' + net.nodes.map((nd, i) => {
+  const changed = s.kind === 'check' && s.v === i && s.better, pe = s.pred[i];
+  const d = changed ? `<s class="muted">${fmt(s.old)}</s> → <b>${fmt(s.dist[i])}</b>` : fmt(s.dist[i]);
+  const from = pe === null ? '—' : `${N(E(pe).u)}${E(pe).fwd ? '' : ' <span class="neg">(反向边)</span>'}${E(pe).type === 'slot' ? `（名额${E(pe).slot}）` : ''}`;
+  const qi = s.queue.indexOf(i);
+  let st = s.dist[i] === null ? '还没到达' : i === net.T ? '终点：只记账，不排队' : qi >= 0 ? `排队中（第 ${qi + 1} 个）` : (s.kind === 'pop' || s.kind === 'check') && s.u === i ? '正在检查它的出边' : s.popped.includes(i) ? '已取出检查过' : '';
+  return `<tr class="${changed || backSet.has(i) ? 'hl' : (s.kind === 'pop' || s.kind === 'check') && s.u === i ? 'ch' : ''}"><td><b>${N(i)}</b></td><td class="num">${d}</td><td>${from}</td><td>${st}</td></tr>`;
+ }).join('');
 }
-function shortEvent(e){const net=run.net;if(e.kind==='relax')return `${net.nodes[e.u].id}→${net.nodes[e.v].id}：${F.fmt(e.old)} → ${F.fmt(e.proposal)}`;if(e.kind==='reject')return `${net.nodes[e.u].id}→${net.nodes[e.v].id}：${F.fmt(e.proposal)} 不优于 ${F.fmt(e.old)}`;if(e.kind==='choose')return '队列处理完，沿前驱找到最低费用路径';if(e.kind==='commit')return '执行整条路径，更新归属和反向边';if(e.kind==='start')return '开始本轮，费用记录清零重算';if(e.kind==='infeasible')return '到不了汇点，无法再增广';return e.kind;}
-function drawHistory(){const e=event(),r=currentRound();if(!r){$('#history').innerHTML='<p class="note">进入搜索后，这里按发生顺序列出费用更新。点击可以回看。</p>';return;}
- const events=run.events.map((e,i)=>({e,i})).filter(x=>x.e.round===r.index&&['start','relax','choose','commit','infeasible'].includes(x.e.kind));
- $('#history').innerHTML=events.map(x=>`<button data-event="${x.i}" class="${x.i===idx?'active':''}" ${x.i>idx?'style="opacity:.45"':''}>${x.i>idx?'○':'✓'} ${shortEvent(x.e)}</button>`).join('');
- const active=$('#history .active');if(active){const pane=$('#history');const delta=active.getBoundingClientRect().bottom-pane.getBoundingClientRect().bottom;if(delta>0)pane.scrollTop+=delta;}
+function drawOwners(s) {
+ const o = owners(s.caps), ex = run.net.ex, ph = phaseOf(s.kind);
+ $('#owners').innerHTML = ex.beams.map((b, i) => `<div class="beam-box" style="border-color:${COLORS[i]}"><b style="color:${COLORS[i]}">波束 ${b} · ${o.loads[b]}/${ex.cap}</b>${ex.planes.filter(p => o.own[p] === b).map(p => `<span class="chip">${P(p)}</span>`).join(' ') || '<span class="muted">空</span>'}</div>`).join('');
+ const un = ex.planes.filter(p => !o.own[p]).map(P);
+ $('#ownNote').innerHTML = `已分配 ${o.count} / ${ex.planes.length} 架；未分配：${un.join('、') || '无'}。已用边的费用合计 ${fmt(usedCost(s.caps))}。`;
+ const b = $('#ownBadge');
+ b.className = 'badge' + (ph === 3 ? ' exec' : ph >= 4 ? ' done' : '');
+ b.textContent = ph === 1 || ph === 2 ? '搜索期间一直不变' : ph === 3 ? '执行中：可能是半完成状态' : ph === 4 ? '本轮执行完毕' : ph === 5 ? '最终' : '尚未开始';
 }
-function drawCandidates(force=false){const r=currentRound();if(!r){$('#candidateSummary').innerHTML='进入第 1 轮后，展示该轮残量网络中所有不重复节点的 S → T 路径。每个名额边分别计为一条选择。';$('#paths tbody').innerHTML='';candidateRound=-2;return;}
- const plane=$('#candidatePlane').value;
- const chosen=r.path?r.path.join(','):null;
- $('#candidateSummary').innerHTML=`本轮共 <b>${r.candidates.length}</b> 条完整简单候选路径。${r.feasible?`最低净费用 <b>${F.fmt(r.delta)}</b>；选中路径${r.reverse?`需要撤销 ${r.reverse} 条旧归属边`:'直接分配'}。`:'没有完整路径可以到汇点。'}　搜索实际检查可用边 ${roundCheckCount()} 次，费用已改写 ${run.events.slice(r.start,idx+1).filter(e=>e.kind==='relax').length} 次。`;
- const rows=r.candidates.map((p,i)=>({p,i})).filter(({p})=>plane==='all'||run.net.edges[p.ids[0]].plane===+plane);
- if(candidateRound===r.index&&!force)return;
- candidateRound=r.index;
- $('#paths tbody').innerHTML=rows.map(({p,i})=>`<tr data-path="${i}" tabindex="0" class="${p.ids.join(',')===chosen?'min-row':''}"><td>${i+1}${p.ids.join(',')===chosen?' ✓':''}</td><td class="route">${routeHTML(p.ids)}</td><td class="path-math">${routeCosts(p.ids)}</td><td class="num"><b>${F.fmt(p.cost)}</b></td><td>${p.reverse?p.reverse+' 架':'无'}</td></tr>`).join('')||'<tr><td colspan="5">没有符合筛选条件的完整路径。</td></tr>';
+function drawTimeline(s) {
+ let ids, title;
+ if (s.kind === 'final') { ids = [idx]; title = '结果'; }
+ else if (s.round === 0) { ids = [0, 1, 2]; title = '准备阶段的全部步骤'; }
+ else { const R = run.rounds[s.round - 1]; ids = []; for (let i = R.start; i <= R.end; i++) ids.push(i); title = `第 ${R.number} 轮的全部 ${ids.length} 步（一步不省）`; }
+ $('#tlTitle').textContent = title;
+ let last = -1, h = '';
+ ids.forEach((i, k) => { const st = run.steps[i], ph = phaseOf(st.kind);
+  if (ph !== last && s.round > 0 && s.kind !== 'final') { h += `<li class="ph">${PHASES[ph]}</li>`; last = ph; }
+  h += `<li data-step="${i}" class="${i === idx ? 'cur' : i > idx ? 'fut' : ''}">${k + 1}. ${short(st)}</li>`; });
+ $('#timeline').innerHTML = h;
+ const cur = $('#timeline .cur'); if (cur) { const pane = $('#timeline'); pane.scrollTop = cur.offsetTop - pane.offsetTop - pane.clientHeight / 2; }
 }
-const questions=[
- ['early','先分配的飞机会吃亏吗？','看一次完整改道前后，谁保持服务、谁换了波束。'],
- ['node','为什么每个节点只记最低费用？','同一后半段接在更便宜的前半段后，总费用也更低。'],
- ['plane','为什么看波束，不只看飞机？','飞机和波束都记账，比较的是完整增广路径。'],
- ['branch','有分支，就要枚举所有路径吗？','候选路径表用于教学，求解器逐边传播费用更新。'],
- ['global','得到的是全局最优吗？','核对每个流量的结果与全部可行归属枚举。'],
- ['distance','距离费用会压过均衡吗？','用整数名额费用和小数距离费用分别核算。']
+function drawJumps(s) {
+ const items = [['准备', 0], ...run.rounds.map(r => [`第 ${r.number} 轮${r.reverse ? '（有改投）' : r.feasible ? '' : '（送不进）'}`, r.start]), ['结果', run.steps.length - 1]];
+ $('#jumps').innerHTML = items.map(([t, i]) => { const on = t === '准备' ? s.round === 0 : t === '结果' ? s.kind === 'final' : s.kind !== 'final' && run.steps[i].round === s.round && s.round > 0; return `<button data-step="${i}" class="${on ? 'on' : ''}">${t}</button>`; }).join(' ');
+}
+function render() {
+ const s = run.steps[idx], d = describe(s), ph = phaseOf(s.kind);
+ $('#phases').innerHTML = PHASES.map((p, i) => `<span class="${i === ph ? 'on' : ''}">${p}</span>`).join('');
+ $('#stepMeta').textContent = d.meta; $('#stepTitle').textContent = d.title; $('#stepBody').innerHTML = d.body; $('#stepCalc').innerHTML = d.calc;
+ drawGraph(s); drawQueue(s); drawResid(s); drawLedger(s); drawOwners(s); drawTimeline(s); drawJumps(s);
+ $('#seek').value = idx; $('#progress').textContent = `第 ${idx + 1} / ${run.steps.length} 步`;
+ $('#prev').disabled = idx === 0; $('#next').disabled = idx === run.steps.length - 1;
+}
+
+/* ---------- 七个问题 ---------- */
+const FAQ = [
+ {q:'残量网络是什么？', a:'就是“现在还能走哪些边”。每条边都配一条反方向的孪生边：正向边的剩余 ＝ 还能再用几次；反向边的剩余 ＝ 正向边已经用了几次。剩余为 0 的边不能走。每轮执行完一条路线，残量网络变一次，下一轮就在新的残量网络上搜索；搜索期间它不变。',
+  go:[{t:'看第 2 轮开始时的残量网络', f:s => s.kind === 'residual' && s.round === 2}]},
+ {q:'反向边什么时候出现？', a:'正向边被执行（真正用掉）的那一刻。例如执行 a₁→A 后，a₁→A 剩余变 0，A→a₁ 剩余变 1，于是多出一条费用为负的反向边 A→a₁，意思是“以后可以让 a₁ 让出 A，并退回当初付的距离费用”。搜索阶段只是算账，不会让反向边出现或消失。',
+  go:[{t:'看反向边出现的那一步', f:s => s.kind === 'push' && E(s.edge).type === 'assign' && E(s.edge).fwd}]},
+ {q:'什么时候“反向”，也就是让已分配的飞机改投？', a:'没有专门的判断规则。搜索时反向边和普通边一样比价；只有本轮最便宜的完整路线恰好经过它，执行这条路线时才真正撤销旧归属。路线经过 A→a₁ 之后必然接着 a₁→另一个波束，所以 a₁ 不会被丢下，只是换了波束。',
+  go:[{t:'搜索时经过反向边（只是算账）', f:s => s.kind === 'check' && !E(s.edge).fwd && s.better && E(s.edge).type === 'assign'}, {t:'为什么选它', f:s => s.kind === 'sum' && run.rounds[s.round - 1].reverse}, {t:'执行时真正撤销', f:s => s.kind === 'push' && !E(s.edge).fwd}]},
+ {q:'队列是干什么的？', a:'队列是待办清单，排着“费用刚变小、还没把新费用往后传”的节点。规则只有三条：① 每次从最前面取一个，逐条检查它能走的出边；② 哪个邻居的 D 因此变小，就更新它，并排到队尾（已经在排队的不重复排）；③ 已经取出过的节点如果后来又变小，要重新排队。T 是终点，只记账不排队。',
+  go:[{t:'第一次取出节点', f:s => s.kind === 'pop'}, {t:'已取出的节点重新排队', f:s => s.kind === 'check' && s.action === 'requeue', alt:'requeue'}, {t:'已在队列里，不重复排', f:s => s.kind === 'check' && s.action === 'inqueue', alt:'requeue'}]},
+ {q:'一轮搜索什么时候结束？', a:'队列空了才结束，不是第一次碰到 T 就结束。第一次到 T 时记下的费用可能被后面更便宜的路线改小（例1第2轮：D(T) 先记 3.2，后来改成 1.5）。队列空意味着没有任何节点的费用还会再变，这时 D(T) 就是本轮最低。',
+  go:[{t:'D(T) 被改小', f:s => s.kind === 'check' && s.action === 'sink' && s.old !== null}, {t:'队列空，搜索结束', f:s => s.kind === 'found' && s.round === 2}]},
+ {q:'什么时候算分配成功？', a:'三件事都做完才算：① 本轮搜索结束且 D(T) 不是 ∞；② 从 T 沿“上一站”倒推出完整路线；③ 把路线每一段都执行完（正向剩余 −1、反向剩余 ＋1）。这时新增 1 架飞机得到服务。在此之前，哪怕 D(T) 已经有数，归属也一点没变；执行到一半时可能有飞机暂时没归属，所以必须整条执行完。',
+  go:[{t:'执行完、读出归属', f:s => s.kind === 'read'}]},
+ {q:'整个算法什么时候停？', a:'只有两种情况：已分配架数等于飞机总数，成功结束；或者某一轮队列空了 D(T) 仍是 ∞，说明怎样让别的飞机改投都腾不出路，停止（例3）。',
+  go:[{t:'全部分配完', f:s => s.kind === 'outer' && s.flow === run.net.ex.planes.length}, {t:'送不进去，停止', f:s => s.kind === 'nopath', alt:'blocked'}]}
 ];
-$('#questions').innerHTML=questions.map(([key,title,desc])=>`<button data-question="${key}">${title}<span>${desc}</span></button>`).join('');
-function question(key){const r=run.rounds.find(x=>x.reverse),last=run.rounds.filter(x=>x.reverse).at(-1);
- const bodies={
- early:`<p>最终要求是每架得到服务、唯一归属、每束不超上限。搜索中允许重新考虑旧安排；没有“先到就永久占位”的约束。</p>${r?`<p>本例第 ${r.number} 轮：${routeHTML(r.path)}</p><table><thead><tr><th>飞机</th><th>之前</th><th>之后</th><th>含义</th></tr></thead><tbody>${run.net.ex.planes.map((p,a)=>`<tr><td>${p}</td><td>${r.before.own[a]||'未分配'}</td><td>${r.after.own[a]||'未分配'}</td><td>${r.before.own[a]===r.after.own[a]?'保持':r.before.own[a]?'换到另一个允许波束，仍然服务':'本轮新增服务'}</td></tr>`).join('')}</tbody></table>`:''}<p>有选择余地的飞机可能被调远，这是整体均衡目标的取舍。完整执行以后，不会把已经服务的飞机留下不管。最后得到的最优总费用不取决于分配顺序；同费用的具体归属可能有多个。</p>${r?`<button class="primary" data-jump="${run.events.findIndex(e=>e.round===r.index&&e.kind==='choose')}">从第一次退流逐段看</button>`:''}`,
- node:`<p>假设两条路线到达 B 的费用分别是 2 和 5。B 后面接一段费用 1 的路线，完整费用分别为 3 和 6；换成费用 4 的后半段，分别为 6 和 9。只要网络在本轮搜索期间不变，较贵前半段不需要重复展开。</p><p>费用标签不是第一次写下就固定。如果先找到 5，后来找到 2，就改成 2，再检查 B 的出边。</p><p>飞机节点也同样处理。含负费用反向边时，SPFA 可能多次检查同一节点；它不是访问一次就结束。标准逐次最短路维持残量网络没有负费用环，因此绕圈不会给出更低的路径。</p><p>页面中“更新前 / 目前最低费用 / 从哪里来”三列，就是这件事的实时过程。</p>`,
- plane:`<p>这里给所有节点记最低到达费用：S、每架飞机、每个波束、T。波束节点表达共享容量，飞机节点表达它可以归属哪里。</p><p>若只看新飞机自己，就容易只看到“去 A 要用第二个名额，费用 3”。完整路径还会检查“让 A 里面的一架改投别处，能不能只新增一个费用 1 的名额”。</p><p>最终比较的是从 S 到 T 的净增费用。到飞机或波束的数值都是中间账目，不是为某一方单独决定。</p>`,
- branch:`<p>点开下方候选表，可以看到本轮所有完整简单路径。这个小例子专门枚举它们，帮助你核对。</p><p>求解器本身调用 SPFA：取出一个节点，检查有剩余容量的出边，用 D(u)+c(u,v) 更新 D(v)。不同路线到达同一个节点时，较贵记录被合并掉。</p><p>每次最后执行一条完整路径，它可以连续退流很多次。很多轮执行后的总体归属会分布在多个波束上。</p><p>“每条可用边”模式展示算法实际检查的每条边；“所有边含容量为零”还能看到被跳过的边。</p>`,
- global:`<p>下面分别枚举服务 0、1、2……架飞机的所有允许归属，计算最低总费用，与逐次最短路每轮的结果比较。</p><table><thead><tr><th>服务架数</th><th>逐次最短路</th><th>枚举最优费用</th><th>一致</th></tr></thead><tbody>${oracle.best.map((c,f)=>{const actual=f===0?0:run.rounds.find(r=>r.after&&r.after.count===f)?.after.total;return `<tr><td>${f}</td><td>${actual===undefined?'无法达到':F.fmt(actual)}</td><td>${c===Infinity?'无可行方案':F.fmt(c)}</td><td>${actual===c?'✓':c===Infinity?'不可行':'—'}</td></tr>`;}).join('')}</tbody></table><p>这个保证只针对固定允许边、固定波束数与名额上限、固定费用的指派问题。若移动波束中心，可选边和距离都会变，成为另一个问题。</p>`,
- distance:`<p>每个波束的名额费用为 1、3。服务 L 架时的累计名额费用是 L²。因此总费用 = ∑Lᵢ² + 0.0001∑dₐᵢxₐᵢ。</p><p>本例全部距离费用小于 1，而负载平方和是整数。先比较负载平方和，平方和相同才由距离决定。</p><p>退流时取消旧归属边，退回旧的距离费用；新归属边另付距离费用。反向边费用为负，必须和整条路径的其他费用一起算。</p><p>同一波束内只是换人、人数不变时，原来的名额边无需改变；不能把名额费用重复加一次。</p>`
- };
- openDialog(questions.find(x=>x[0]===key)[1],`<div class="reading">${bodies[key]}</div>`);
+function drawFaq() {
+ const cases = Object.fromEntries(C.examples.map((e, i) => [e.id, `例${i + 1}`]));
+ $('#faq').innerHTML = FAQ.map((it, a) => `<div class="faq-item"><h3>${it.q}</h3><p>${it.a}</p>${it.go.map((g, b) => { const here = run.steps.findIndex(g.f) >= 0; const alt = g.alt || 'basic'; return `<button data-faq="${a}-${b}">${g.t}${here ? '' : `（切到${cases[alt]}）`} →</button>`; }).join('')}</div>`).join('');
 }
-function wrapSymbols(root){
- const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes=[];let t;
- while(t=walker.nextNode()){if(t.parentElement&&!t.parentElement.closest('.sym,svg,select,button,script,style'))nodes.push(t);}
- const re=/D\([A-Za-z0-9]+\)|c\([A-Za-z0-9]+,[A-Za-z0-9]+\)|(?<![A-Za-z0-9_])(?:a\d+|SPFA|[ABCDSTPLnmkuv])(?![A-Za-z0-9_])|ε|∞|∑/g;
- for(const text of nodes){const s=text.nodeValue;const matches=[...s.matchAll(re)];if(!matches.length)continue;const frag=document.createDocumentFragment();let from=0;
-  for(const match of matches){const label=match[0];frag.append(document.createTextNode(s.slice(from,match.index)));const span=document.createElement('span');span.className='sym';span.tabIndex=0;span.dataset.sym=label.startsWith('D(')?'D':label.startsWith('c(')?'c':/^a\d+$/.test(label)?'a':label==='SPFA'?'spfa':/[ABCD]/.test(label)?'beam':label==='ε'?'eps':label==='∞'?'inf':label==='∑'?'sum':/[uv]/.test(label)?'v':label;span.textContent=label;frag.append(span);from=match.index+label.length;}
-  frag.append(document.createTextNode(s.slice(from)));text.replaceWith(frag);
- }
+function faqJump(a, b) {
+ const g = FAQ[a].go[b];
+ let i = run.steps.findIndex(g.f);
+ if (i < 0) { load(g.alt || 'basic'); i = run.steps.findIndex(g.f); }
+ goto(i); $('.controls').scrollIntoView({behavior:'smooth'});
 }
-function openDialog(title,html){stop();hideTip();$('#dialogTitle').textContent=title;$('#dialogBody').innerHTML=html;wrapSymbols($('#dialogBody'));$('#dialog').showModal();}
-function symbols(){openDialog('符号与名词 · 本页的意思',`<table><thead><tr><th>符号 / 名词</th><th>代表什么</th><th>单位或取值</th></tr></thead><tbody>${Object.values(dict).map(([s,d,u])=>`<tr><td>${esc(s)}</td><td>${d}</td><td>${u||'—'}</td></tr>`).join('')}</tbody></table>`);}
-function guide(){openDialog('建议这样看，过程就不会跳步',`<div class="reading"><ol><li>先看“读懂例子”和“费用怎么放”，认清哪些飞机只能去一个波束。</li><li>用“每条可用边”模式按下一步。图中金色边、右侧费用算式、节点表和待检查队列会同时更新。</li><li>到了 T 也先别认为已经分配。继续搜索到队列为空，再沿前驱确定完整最短路径。</li><li>点“看本轮选中路径”，逐段读正费用与反向边退款，再看整条路径执行后的归属。</li><li>主例的第 4 轮和第 7 轮有连续退流。按钮“跳到退流”直接带你到这些轮次。</li><li>下方列出该轮全部完整候选路径。悬停一行在网络中追踪，点击可固定对照。</li><li>所有符号都有即时含义提示。键盘 ← → 单步，空格播放或暂停，Esc 关闭解释窗口。</li></ol><p>例子是为讲解而固定的距离表。屏幕上的动画只改变强调的边和节点；搜索阶段不会实际挪走任何飞机。</p></div>`);}
-function render(){const e=event();story();drawGraph();drawLabels();drawAssignment();drawInspector();drawHistory();drawCandidates();$('#seek').value=idx;$('#progress').textContent=`步骤 ${idx+1} / ${run.events.length}`;$('#prev').disabled=idx===0;$('#next').disabled=idx===run.events.length-1;
- document.querySelectorAll('[data-round]').forEach(b=>b.classList.toggle('active',+b.dataset.round===e.round));document.querySelectorAll('[data-setup]').forEach(b=>b.classList.toggle('active',+b.dataset.setup===idx));$('#finalJump').classList.toggle('active',e.kind==='finish');
- ['narration','calculation','edgeCaption','liveMetrics','assignmentNote','queue','inspector','candidateSummary','paths','labels'].forEach(id=>wrapSymbols($('#'+id)));
+
+/* ---------- 控制 ---------- */
+function load(id) {
+ stop();
+ const ex = C.examples.find(e => e.id === id);
+ run = C.solve(ex); oracle = C.brute(ex); idx = 0;
+ $('#example').value = id; $('#seek').max = run.steps.length - 1;
+ drawFaq(); render();
 }
-function hideTip(){if(!tooltipPinned)$('#tooltip').hidden=true;}
-function showTip(target,x,y){let title,text,unit='';if(target.dataset.sym){[title,text,unit]=dict[target.dataset.sym];}else if(target.dataset.edge){const ed=run.net.edges[+target.dataset.edge];title=`${run.net.nodes[ed.u].id} → ${run.net.nodes[ed.v].id}`;text=edgeMeaning(ed);unit=`边费用 ${F.fmt(ed.cost)}；剩余容量 ${capacities()[ed.id]}`;}else if(target.dataset.node){const nd=run.net.nodes[+target.dataset.node];title=nd.id;text=nd.kind==='plane'?`飞机 ${nd.id} 可以归属：${Object.entries(run.net.ex.distances[nd.plane]).map(([b,d])=>b+' · 距离 '+d).join('，')}。点击看全部出边。`:nd.kind==='beam'?`波束 ${nd.id} 最多服务 ${run.net.ex.cap} 架。点击查看最低到达费用与出边。`:dict[nd.id][1];}else return;
- const tip=$('#tooltip');tip.innerHTML=`<strong>${esc(title)}</strong><div>${text}</div>${unit?`<div class="unit">${unit}</div>`:''}`;tip.hidden=false;const rect=target.getBoundingClientRect(),px=x??rect.left+rect.width/2,py=y??rect.bottom;tip.style.left=Math.max(10,Math.min(innerWidth-tip.offsetWidth-10,px+14))+'px';tip.style.top=Math.max(10,Math.min(innerHeight-tip.offsetHeight-10,py+15))+'px';
-}
-$('#example').addEventListener('change',e=>load(e.target.value));$('#next').onclick=()=>{stop();step(1);};$('#prev').onclick=()=>{stop();step(-1);};$('#play').onclick=play;
-$('#speed').onchange=()=>{if(timer){stop();play();}};$('#detail').onchange=modeIndices;$('#seek').oninput=e=>{stop();goto(+e.target.value);};
-$('#nextUpdate').onclick=()=>{stop();const i=run.events.findIndex((e,i)=>i>idx&&['relax','commit','infeasible','finish'].includes(e.kind));if(i>=0)goto(i);};
-$('#endSearch').onclick=()=>{stop();const round=Math.max(0,event().round);const i=run.events.findIndex((e,i)=>e.round===round&&['choose','infeasible'].includes(e.kind));if(i>=0)goto(i);};
-$('#nextReroute').onclick=()=>{stop();const points=run.events.map((e,i)=>({e,i})).filter(x=>x.e.kind==='choose'&&run.rounds[x.e.round].reverse);const target=points.find(x=>x.i>idx)||points[0];if(target)goto(target.i);};
-$('#finalJump').onclick=()=>{stop();goto(run.events.length-1);};$('#showReverse').onchange=drawGraph;$('#showCost').onchange=drawGraph;$('#candidatePlane').onchange=()=>drawCandidates(true);$('#clearSelection').onclick=()=>{selectedNode=null;pinnedPath=null;drawGraph();drawInspector();};
-$('#symbols').onclick=symbols;$('#guide').onclick=guide;$('#closeDialog').onclick=()=>$('#dialog').close();
- document.addEventListener('click',e=>{const b=e.target.closest('[data-round],[data-setup],[data-event],[data-node],[data-path],[data-question],[data-jump]');if(b){stop();if(b.dataset.round!==undefined)goto(run.rounds[+b.dataset.round].start);else if(b.dataset.setup!==undefined)goto(+b.dataset.setup);else if(b.dataset.event!==undefined)goto(+b.dataset.event);else if(b.dataset.node!==undefined){selectedNode=+b.dataset.node;drawGraph();drawLabels();drawInspector();}else if(b.dataset.path!==undefined){pinnedPath=currentRound().candidates[+b.dataset.path].ids;drawGraph();}else if(b.dataset.question)question(b.dataset.question);else if(b.dataset.jump!==undefined){$('#dialog').close();goto(+b.dataset.jump);}}
- const t=e.target.closest('[data-sym]');if(t){tooltipPinned=!tooltipPinned;if(tooltipPinned)showTip(t,e.clientX,e.clientY);else hideTip();} });
- document.addEventListener('mouseover',e=>{const p=e.target.closest('#paths [data-path]');if(p){hoverPath=currentRound().candidates[+p.dataset.path].ids;drawGraph();}const t=e.target.closest('[data-sym],[data-edge],[data-node]');if(t&&!tooltipPinned)showTip(t,e.clientX,e.clientY);});
- document.addEventListener('mouseout',e=>{if(e.target.closest('#paths [data-path]')&&!e.relatedTarget?.closest('#paths [data-path]')){hoverPath=null;drawGraph();}if(!e.relatedTarget?.closest('[data-sym],[data-edge],[data-node]'))hideTip();});
- document.addEventListener('focusin',e=>{const t=e.target.closest('[data-sym],[data-edge],[data-node]');if(t&&!tooltipPinned)showTip(t);});document.addEventListener('focusout',hideTip);
- document.addEventListener('keydown',e=>{if(e.key==='Escape'){tooltipPinned=false;hideTip();return;}if($('#dialog').open||['SELECT','INPUT','TEXTAREA','BUTTON'].includes(e.target.tagName))return;if(e.key==='ArrowRight'){e.preventDefault();stop();step(1);}if(e.key==='ArrowLeft'){e.preventDefault();stop();step(-1);}if(e.key===' '){e.preventDefault();play();}});
- const initial=F.examples.some(e=>e.id===params.get('case'))?params.get('case'):'branch';load(initial);
- if(params.has('event'))goto(+params.get('event'));
- else if(params.has('round')){const r=run.rounds[+params.get('round')-1];if(r){const type=params.get('type')||'start';const i=run.events.findIndex(e=>e.round===r.index&&e.kind===type);if(i>=0)goto(i);}}
- if(params.has('symbols'))symbols();if(params.has('guide'))guide();
- window.FLOW_DETAIL={get run(){return run;},get oracle(){return oracle;},get index(){return idx;},get dict(){return dict;},goto,load,stop,render,question};
+function goto(i) { idx = Math.max(0, Math.min(run.steps.length - 1, i)); render(); }
+function stop() { clearInterval(timer); timer = null; $('#play').textContent = '自动播放'; }
+function play() { if (timer) { stop(); return; } $('#play').textContent = '暂停'; timer = setInterval(() => { if (idx >= run.steps.length - 1) stop(); else goto(idx + 1); }, +$('#speed').value); }
+$('#example').innerHTML = C.examples.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+$('#example').onchange = e => load(e.target.value);
+$('#prev').onclick = () => { stop(); goto(idx - 1); };
+$('#next').onclick = () => { stop(); goto(idx + 1); };
+$('#play').onclick = play;
+$('#speed').onchange = () => { if (timer) { stop(); play(); } };
+$('#seek').oninput = e => { stop(); goto(+e.target.value); };
+document.addEventListener('click', e => {
+ const t = e.target.closest('[data-step]'); if (t) { stop(); goto(+t.dataset.step); return; }
+ const f = e.target.closest('[data-faq]'); if (f) { const [a, b] = f.dataset.faq.split('-').map(Number); faqJump(a, b); }
+});
+document.addEventListener('keydown', e => {
+ if (['SELECT', 'INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+ if (e.key === 'ArrowRight') { e.preventDefault(); stop(); goto(idx + 1); }
+ if (e.key === 'ArrowLeft') { e.preventDefault(); stop(); goto(idx - 1); }
+ if (e.key === ' ') { e.preventDefault(); play(); }
+});
+const params = new URLSearchParams(location.search);
+load(C.examples.some(e => e.id === params.get('case')) ? params.get('case') : 'basic');
+if (params.has('step')) goto(+params.get('step') - 1);
+if (params.has('nofaq')) $('details.faq').open = false;
+window.FLOW_STEPS = {get run() { return run; }, goto, load, describe};
 })();
 </script>
 </body></html>
