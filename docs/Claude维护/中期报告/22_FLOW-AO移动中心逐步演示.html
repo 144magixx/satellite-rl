@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FLOW-AO 移动中心 · 一步不跳</title>
+<style>
+:root{--ink:#1d3142;--muted:#687a8b;--line:#dce4ea;--bg:#f3f6f8;--blue:#2a5d87;--gold:#b57600;--gold-soft:#fff3cf;--red:#c0392b;--green:#23795f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.7 "Microsoft YaHei","PingFang SC","Noto Sans SC",system-ui,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 24px;background:#fff;border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:24px}h2{font-size:16px;margin:0 0 8px}
+.eyebrow{margin:0;color:var(--muted);font-size:12px;letter-spacing:.04em}
+.links{font-size:13px;color:var(--muted)}.links a{color:var(--blue)}
+select,button{font:inherit;border:1px solid #c4d1dc;background:#fff;border-radius:7px;padding:4px 11px;color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--blue);background:#eef4f9}
+button.primary,button.on{background:var(--blue);border-color:var(--blue);color:#fff}
+button:disabled{opacity:.4;cursor:default}
+details.faq{margin:14px 24px 0;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 16px}
+details.faq summary{cursor:pointer;font-weight:700;font-size:16px}
+.faq-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin:10px 0 4px}
+.faq-item{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#fbfcfd}
+.faq-item h3{font-size:15px;color:var(--blue);margin:0 0 4px}.faq-item p{margin:4px 0;font-size:14px}
+.faq-item button{font-size:13px;padding:2px 8px;margin:4px 6px 0 0}
+.controls{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 24px 0;padding:8px 14px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.05)}
+.controls input[type=range]{flex:1;min-width:140px}.controls .sep{border-left:1px solid var(--line);height:22px}
+#progress{font-size:13px;color:var(--muted);min-width:90px}
+#jumps button{font-size:13px;padding:3px 9px;margin:2px 0}
+.grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;padding:14px 24px 24px}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+svg{width:100%;height:auto;display:block;background:#fcfdfd;border-radius:6px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:24px;height:0;vertical-align:middle;margin-right:5px;border-top:2px solid #555}
+.legend i.dash{border-top:2px dashed #555}.legend i.gold{border:3px solid #d4a017;width:12px;height:12px;border-radius:50%}
+.phases{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.phases span{font-size:12px;padding:2px 8px;border-radius:5px;background:#eef2f5;color:#8a99a6}
+.phases span.on{background:var(--blue);color:#fff}
+#stepTitle{font-size:19px;line-height:1.45;margin:2px 0 8px}
+#stepBody p{margin:7px 0}#stepBody ul,#stepBody ol{margin:6px 0;padding-left:22px}
+li.em{font-weight:700;color:var(--gold)}
+.warn{background:#fff6e0;border-left:3px solid var(--gold);padding:6px 10px;border-radius:4px;margin:8px 0}
+.calc{margin-top:10px;padding:9px 12px;background:#f5f8fa;border-left:3px solid var(--blue);border-radius:4px;font-size:14.5px}
+.neg{color:var(--red)}.gold{color:#a07010;font-weight:700}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:400;font-size:12.5px}
+td.num{font-variant-numeric:tabular-nums}
+tr.hl td{background:var(--gold-soft)}
+.note{font-size:13px;color:var(--muted);margin:6px 0 0}
+#timeline{list-style:none;margin:0;padding:0;max-height:360px;overflow:auto;font-size:13.5px}
+#timeline li{padding:2px 6px;border-radius:5px;cursor:pointer;white-space:pre-wrap}
+#timeline li:hover{background:#eef4f9}#timeline li.cur{background:var(--gold-soft);font-weight:700}#timeline li.fut{color:#9aa8b4}
+footer{padding:0 24px 24px;color:var(--muted);font-size:12.5px}
+@media (max-width:1100px){.grid{grid-template-columns:1fr}}
+</style></head>
+<body>
+<header><div><p class="eyebrow">FLOW-AO 第一步 · 每轮“指派 → 移动中心 → 删除与拆分 → 再指派”中的一环</p><h1>移动中心：最小包围圆，一步不跳</h1></div><div class="links">上一环：<a href="16_FLOW-AO算法动画演示.html">16 全流程动画</a> · 下一环：<a href="23_FLOW-AO删除与拆分逐步演示.html">23 删除与拆分</a></div></header>
+<details class="faq" open><summary>先把几个问题说清楚（每条都可以跳到例子里对应的那一步）</summary><div id="faq" class="faq-grid"></div></details>
+<section class="controls">
+ <button id="prev">← 上一步</button><button id="play" class="primary">自动播放</button><button id="next">下一步 →</button>
+ <label>速度 <select id="speed"><option value="2600">慢</option><option value="1500" selected>中</option><option value="700">快</option></select></label>
+ <span class="sep"></span><span id="jumps"></span>
+ <input id="seek" type="range" min="0" value="0" aria-label="进度"><span id="progress"></span>
+</section>
+<main class="grid">
+ <div>
+  <article class="card"><div class="card-head"><h2 id="mapTitle"></h2></div><svg id="map" role="img" aria-label="平面图"></svg><div class="legend"><span>● 飞机（颜色＝归属）</span><span>✕ 波束中心</span><span><i></i>覆盖圈（罩住全部成员）</span><span><i class="dash"></i>最小包围圆／允许半径／候选覆盖圈</span><span><i class="gold"></i>确定当前圆的边界点</span><span>绿／红圈：被检查的点在圆内／圆外</span></div></article>
+  <article class="card"><div class="card-head"><h2 id="sideTitle"></h2></div><div id="side"></div></article>
+ </div>
+ <div>
+  <article class="card"><div id="phases" class="phases"></div><p id="stepMeta" class="eyebrow"></p><h2 id="stepTitle"></h2><div id="stepBody"></div><div id="stepCalc" class="calc"></div></article>
+  <article class="card"><div class="card-head"><h2 id="tlTitle"></h2></div><ol id="timeline"></ol></article>
+ </div>
+</main>
+<footer>教学小例子：平面距离代替离轴角，半径上限 18、中心最小间距与覆盖圈最小半径都取 5.4（对应 0.15°），与 16 号动画页的参数一致；判断规则与 16 号页面的程序相同，所有数字由本页内置程序实时算出。单文件离线可用。键盘 ← → 单步，空格播放/暂停。</footer>
+<script id="geo-core">
+/* FLOW-AO 移动中心 / 删除 / 拆分 教学版内核：规则与 16_FLOW-AO算法动画演示.html 中 moveCenters、tryDelete、trySplit 一致，
+   另外把每一个判断都记成一步。坐标为平面距离单位，R 为允许半径上限，DMIN 为中心最小间距，RMIN 为覆盖圈最小半径。 */
+(function (root) {
+'use strict';
+const P = { R: 18, DMIN: 5.4, RMIN: 5.4 };
+const EPS = 1e-7;
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const circle2 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, r: dist(a, b) / 2 });
+function circle3(a, b, c) {
+  const bx = b.x - a.x, by = b.y - a.y, cx = c.x - a.x, cy = c.y - a.y, D = 2 * (bx * cy - by * cx);
+  const B = bx * bx + by * by, C = cx * cx + cy * cy, ux = (cy * B - by * C) / D, uy = (bx * C - cx * B) / D;
+  return { x: a.x + ux, y: a.y + uy, r: Math.hypot(ux, uy) };
+}
+const inside = (c, p) => dist(c, p) <= c.r + EPS;
+
+// 逐点加入的 Welzl：每一次“在不在圆里”的判断都记成一步
+function mecSteps(pts) {
+  const st = [];
+  let c = { x: pts[0].x, y: pts[0].y, r: 0 };
+  st.push({ t: 'first', i: 0, c, sup: [0] });
+  for (let i = 1; i < pts.length; i++) {
+    const d = dist(c, pts[i]);
+    if (inside(c, pts[i])) { st.push({ t: 'in', i, c, d, sup: st.at(-1).sup }); continue; }
+    st.push({ t: 'out', i, cOld: c, d });
+    c = { x: pts[i].x, y: pts[i].y, r: 0 };
+    st.push({ t: 'reset', i, c, sup: [i] });
+    for (let j = 0; j < i; j++) {
+      const dj = dist(c, pts[j]);
+      if (inside(c, pts[j])) { st.push({ t: 'jin', i, j, c, d: dj, sup: st.at(-1).sup }); continue; }
+      const cOld = c; c = circle2(pts[i], pts[j]);
+      st.push({ t: 'jout', i, j, cOld, c, d: dj, sup: [i, j] });
+      for (let k = 0; k < j; k++) {
+        const dk = dist(c, pts[k]);
+        if (inside(c, pts[k])) { st.push({ t: 'kin', i, j, k, c, d: dk, sup: st.at(-1).sup }); continue; }
+        const cOld2 = c; c = circle3(pts[i], pts[j], pts[k]);
+        st.push({ t: 'kout', i, j, k, cOld: cOld2, c, d: dk, sup: [i, j, k] });
+      }
+    }
+    st.push({ t: 'done-i', i, c, sup: st.at(-1).sup });
+  }
+  return { c, steps: st };
+}
+function minCircle(pts) { return mecSteps(pts).c; }
+
+const membersOf = (L, id) => L.planes.filter((_, a) => L.own[a] === id);
+const footOf = (L, b) => Math.max(P.RMIN, ...membersOf(L, b.id).map(p => dist(p, b)));
+function thetaAll(beams) {
+  return beams.map(b => {
+    let r = P.R, near = null;
+    for (const o of beams) if (o !== b && dist(o, b) < r) { r = dist(o, b); near = o.id; }
+    return { id: b.id, theta: r, near };
+  });
+}
+// 移动中心：逐个波束求最小包围圆，检查间隔规则，通过就移、不通过保持原位
+function moveCenters(L, order) {
+  const beams = L.beams.map(b => ({ ...b })), cur = { ...L, beams }, events = [];
+  for (const id of order) {
+    const b = beams.find(x => x.id === id), mem = membersOf(L, id);
+    const before = footOf(cur, b);
+    const mec = mecSteps(mem.map(p => ({ x: p.x, y: p.y, name: p.name })));
+    const c = mec.c, after = Math.max(P.RMIN, ...mem.map(p => dist(p, c)));
+    const checks = [];
+    let ok = true;
+    for (const o of beams) {
+      if (o.id === id) continue;
+      const d = dist(c, o), fo = footOf(cur, o), need = Math.max(P.DMIN, after, fo), pass = d >= need - EPS / 2;
+      checks.push({ id: o.id, d, fo, after, need, pass });
+      if (!pass) { ok = false; break; }
+    }
+    const from = { x: b.x, y: b.y }, thetaBefore = thetaAll(beams);
+    if (ok) { b.x = c.x; b.y = c.y; }
+    events.push({ id, mem, mec, from, to: { x: c.x, y: c.y }, before, after: ok ? after : before, mecR: c.r, ok, checks, thetaBefore, beamsAfter: beams.map(x => ({ ...x })) });
+  }
+  return { L: cur, events };
+}
+
+// 最大流（每次用 BFS 找一条增广路径），记录每条路径，供页面逐条列出
+function maxFlow(planes, beams, cap) {
+  const th = thetaAll(beams), nA = planes.length, mB = beams.length, S = nA + mB, T = S + 1, N = T + 1;
+  const g = Array.from({ length: N }, () => []), to = [], c = [];
+  const add = (u, v, w) => { g[u].push(to.length); to.push(v); c.push(w); g[v].push(to.length); to.push(u); c.push(0); return to.length - 2; };
+  const allow = planes.map(p => beams.map((b, i) => dist(p, b) <= th[i].theta + EPS ? i : -1).filter(i => i >= 0));
+  const pe = [];
+  planes.forEach((p, a) => { add(S, a, 1); allow[a].forEach(i => pe.push([a, i, add(a, nA + i, 1)])); });
+  beams.forEach((b, i) => add(nA + i, T, cap));
+  const paths = [];
+  for (;;) {
+    const prev = new Array(N).fill(-1); prev[S] = -2; const q = [S];
+    for (let h = 0; h < q.length && prev[T] === -1; h++) for (const e of g[q[h]]) if (c[e] > 0 && prev[to[e]] === -1) { prev[to[e]] = e; q.push(to[e]); }
+    if (prev[T] === -1) break;
+    const es = []; for (let v = T; v !== S; v = to[prev[v] ^ 1]) es.unshift(prev[v]);
+    es.forEach(e => { c[e]--; c[e ^ 1]++; });
+    // 翻成“飞机 → 波束 ← 飞机 → 波束 …”的说法：偶数编号是正向边，奇数编号是反向边（撤销一条旧归属）
+    const hops = es.filter(e => { const u = to[e ^ 1], v = to[e]; return u < nA + mB && v < nA + mB; })
+      .map(e => { const u = to[e ^ 1], v = to[e]; return e % 2 === 0 ? { a: u, b: v - nA, back: false } : { a: v, b: u - nA, back: true }; });
+    paths.push(hops);
+  }
+  const own = new Array(nA).fill(-1);
+  for (const [a, i, e] of pe) if (c[e ^ 1] > 0) own[a] = i;
+  return { flow: paths.length, nA, paths, own, allow, th };
+}
+// 均衡指派：最小费用流，第 k 个名额费用 2k−1（乘大系数），距离只作同分时的取舍
+function balance(planes, beams, cap) {
+  const th = thetaAll(beams), nA = planes.length, mB = beams.length, S = nA + mB, T = S + 1, N = T + 1, SC = 1e6;
+  const g = Array.from({ length: N }, () => []), to = [], c = [], w = [];
+  const add = (u, v, cp, cost) => { g[u].push(to.length); to.push(v); c.push(cp); w.push(cost); g[v].push(to.length); to.push(u); c.push(0); w.push(-cost); return to.length - 2; };
+  const pe = [];
+  planes.forEach((p, a) => { add(S, a, 1, 0); beams.forEach((b, i) => { if (dist(p, b) <= th[i].theta + EPS) pe.push([a, i, add(a, nA + i, 1, Math.round(dist(p, b) * 100))]); }); });
+  beams.forEach((b, i) => { for (let k = 1; k <= cap; k++) add(nA + i, T, 1, SC * (2 * k - 1)); });
+  for (let f = 0; f < nA; f++) {
+    const d = new Array(N).fill(Infinity), pr = new Array(N).fill(-1), inq = new Array(N).fill(false); d[S] = 0; const q = [S];
+    while (q.length) { const u = q.shift(); inq[u] = false; for (const e of g[u]) if (c[e] > 0 && d[u] + w[e] < d[to[e]]) { d[to[e]] = d[u] + w[e]; pr[to[e]] = e; if (!inq[to[e]]) { inq[to[e]] = true; q.push(to[e]); } } }
+    if (d[T] === Infinity) break;
+    for (let v = T; v !== S; v = to[pr[v] ^ 1]) { c[pr[v]]--; c[pr[v] ^ 1]++; }
+  }
+  const own = new Array(nA).fill(-1);
+  for (const [a, i, e] of pe) if (c[e ^ 1] > 0) own[a] = i;
+  return own.map(i => beams[i].id);
+}
+const loadsOf = L => Object.fromEntries(L.beams.map(b => [b.id, L.own.filter(x => x === b.id).length]));
+
+// 删除：从最闲的波束开始试（负载必须低于本轮开始时的最忙 Pcur），最大流通过就删，删掉一个就停
+function tryDelete(L, Pcur) {
+  const ld = loadsOf(L), events = [];
+  const cands = L.beams.filter(b => ld[b.id] < Pcur).sort((a, b) => ld[a.id] - ld[b.id] || a.order - b.order);
+  for (const b of cands) {
+    const beams2 = L.beams.filter(x => x.id !== b.id);
+    const thBefore = thetaAll(L.beams), thAfter = thetaAll(beams2);
+    const mf = maxFlow(L.planes, beams2, Pcur), ok = mf.flow === L.planes.length;
+    const ev = { id: b.id, load: ld[b.id], beams2, thBefore, thAfter, mf, ok, cands: cands.map(x => x.id) };
+    events.push(ev);
+    if (ok) { ev.L = { ...L, beams: beams2, own: balance(L.planes, beams2, Pcur) }; return { L: ev.L, events }; }
+  }
+  return { L, events };
+}
+// 拆分：波束数没到上限时，取最忙的三个候选；两堆聚类 → 两堆的最小包围圆圆心 → 太近推开 → 间隔检查 → 最大流
+function trySplit(L, Pcur, mmax, newIds) {
+  const events = [];
+  while (L.beams.length < mmax) {
+    const ld = loadsOf(L);
+    const cands = L.beams.filter(b => ld[b.id] >= 2).sort((a, b) => ld[b.id] - ld[a.id] || a.order - b.order).slice(0, 3);
+    let acc = false;
+    for (const b of cands) {
+      const mem = L.planes.map((p, a) => a).filter(a => L.own[a] === b.id), pts = mem.map(a => L.planes[a]);
+      const pairs = [];
+      for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) pairs.push({ i, j, d: dist(pts[i], pts[j]) });
+      let best = pairs[0]; for (const pp of pairs) if (pp.d > best.d) best = pp;
+      let A = { x: pts[best.i].x, y: pts[best.i].y }, B = { x: pts[best.j].x, y: pts[best.j].y }, lab = null;
+      const iters = [];
+      for (let it = 0; it < 6; it++) {
+        const dA = pts.map(p => dist(p, A)), dB = pts.map(p => dist(p, B));
+        const nl = pts.map((p, k) => dA[k] <= dB[k] ? 0 : 1);
+        const g0 = pts.filter((_, k) => nl[k] === 0), g1 = pts.filter((_, k) => nl[k] === 1);
+        if (!g0.length || !g1.length) break;
+        lab = nl;
+        const A2 = { x: g0.reduce((s, p) => s + p.x, 0) / g0.length, y: g0.reduce((s, p) => s + p.y, 0) / g0.length };
+        const B2 = { x: g1.reduce((s, p) => s + p.x, 0) / g1.length, y: g1.reduce((s, p) => s + p.y, 0) / g1.length };
+        iters.push({ A, B, dA, dB, lab: nl, A2, B2 });
+        A = A2; B = B2;
+      }
+      const c1 = minCircle(pts.filter((_, k) => lab[k] === 0)), c2 = minCircle(pts.filter((_, k) => lab[k] === 1));
+      let p1 = { x: c1.x, y: c1.y }, p2 = { x: c2.x, y: c2.y };
+      const d12 = dist(p1, p2), pushed = d12 < P.DMIN;
+      if (pushed) {
+        const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2, ux = (p2.x - p1.x) / d12, uy = (p2.y - p1.y) / d12;
+        p1 = { x: mx - ux * P.DMIN / 2, y: my - uy * P.DMIN / 2 }; p2 = { x: mx + ux * P.DMIN / 2, y: my + uy * P.DMIN / 2 };
+      }
+      const others = L.beams.filter(x => x.id !== b.id), spacing = [];
+      let blocked = false;
+      for (const o of others) {
+        const d1 = dist(o, p1), d2 = dist(o, p2), pass = d1 >= P.DMIN - EPS && d2 >= P.DMIN - EPS;
+        spacing.push({ id: o.id, d1, d2, pass });
+        if (!pass) { blocked = true; break; }
+      }
+      const n0 = lab.filter(v => v === 0).length, keep0 = n0 * 2 >= lab.length, nid = newIds[0];
+      const id1 = keep0 ? b.id : nid, id2 = keep0 ? nid : b.id;
+      const ev = { id: b.id, load: ld[b.id], cands: cands.map(x => ({ id: x.id, load: ld[x.id] })), mem, pairs, seed: best, iters, lab, mecs: [c1, c2], d12, pushed, p1, p2, spacing, ids: [id1, id2], Lbefore: L };
+      if (!blocked) {
+        const nb = others.map(x => ({ ...x })).concat([{ id: id1, x: p1.x, y: p1.y, order: b.order }, { id: id2, x: p2.x, y: p2.y, order: 99 + events.length }]);
+        ev.nb = nb; ev.mf = maxFlow(L.planes, nb, Pcur); ev.ok = ev.mf.flow === L.planes.length;
+        if (ev.ok) { L = { ...L, beams: nb, own: balance(L.planes, nb, Pcur) }; ev.L = L; newIds.shift(); acc = true; }
+      } else ev.ok = false;
+      events.push(ev);
+      if (acc) break;
+    }
+    if (!acc) break;
+  }
+  return { L, events };
+}
+const api = { P, dist, circle2, circle3, mecSteps, minCircle, membersOf, footOf, thetaAll, moveCenters, maxFlow, balance, loadsOf, tryDelete, trySplit };
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+root.Geo = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="player">
+/* 逐步播放器与平面图画法：两页共用 */
+(function (root) {
+'use strict';
+const $ = s => document.querySelector(s);
+const SUBD = '₀₁₂₃₄₅₆₇₈₉';
+const nm = s => s.replace(/^([a-z])(\d)$/, (_, l, d) => l + SUBD[d]);
+const f1 = x => x.toFixed(1), f2 = x => x.toFixed(2);
+const pt = p => `(${f1(p.x)}, ${f1(p.y)})`;
+
+// 世界坐标 → 屏幕坐标
+function view(rect, W, H, pad) {
+  pad = pad || 34;
+  const s = Math.min((W - 2 * pad) / (rect.x1 - rect.x0), (H - 2 * pad) / (rect.y1 - rect.y0));
+  const ox = (W - s * (rect.x1 - rect.x0)) / 2, oy = (H - s * (rect.y1 - rect.y0)) / 2;
+  return { s, X: x => ox + (x - rect.x0) * s, Y: y => oy + (y - rect.y0) * s };
+}
+function bbox(points, margin) {
+  const xs = points.map(p => p.x), ys = points.map(p => p.y);
+  return { x0: Math.min(...xs) - margin, x1: Math.max(...xs) + margin, y0: Math.min(...ys) - margin, y1: Math.max(...ys) + margin };
+}
+function Draw(v) {
+  const out = [];
+  const o = {
+    v,
+    circle(c, r, st = {}) { out.push(`<circle cx="${v.X(c.x)}" cy="${v.Y(c.y)}" r="${Math.max(0, r * v.s)}" fill="${st.fill || 'none'}" fill-opacity="${st.fo ?? 0.08}" stroke="${st.stroke || '#555'}" stroke-width="${st.w || 1.5}" ${st.dash ? `stroke-dasharray="${st.dash}"` : ''} opacity="${st.op ?? 1}"/>`); return o; },
+    line(a, b, st = {}) { out.push(`<line x1="${v.X(a.x)}" y1="${v.Y(a.y)}" x2="${v.X(b.x)}" y2="${v.Y(b.y)}" stroke="${st.stroke || '#555'}" stroke-width="${st.w || 1.5}" ${st.dash ? `stroke-dasharray="${st.dash}"` : ''} opacity="${st.op ?? 1}" ${st.arrow ? 'marker-end="url(#arr)"' : ''}/>`); return o; },
+    plane(p, st = {}) {
+      const x = v.X(p.x), y = v.Y(p.y);
+      if (st.ring) out.push(`<circle cx="${x}" cy="${y}" r="${(st.r || 6) + 4}" fill="none" stroke="${st.ring}" stroke-width="2.6" opacity="${st.op ?? 1}"/>`);
+      out.push(`<circle cx="${x}" cy="${y}" r="${st.r || 6}" fill="${st.hollow ? '#fff' : st.fill || '#555'}" stroke="${st.stroke || st.fill || '#555'}" stroke-width="1.6" opacity="${st.op ?? 1}"/>`);
+      if (st.label !== false) out.push(`<text x="${x + 9}" y="${y - 8}" font-size="${st.size || 13}" fill="${st.lc || '#333'}" opacity="${st.op ?? 1}" stroke="#fff" stroke-width="3" paint-order="stroke">${st.label || nm(p.name)}</text>`);
+      return o;
+    },
+    center(b, st = {}) {
+      const x = v.X(b.x), y = v.Y(b.y), s = st.s || 8, c = st.color || '#333';
+      out.push(`<g opacity="${st.op ?? 1}"><line x1="${x - s}" y1="${y - s}" x2="${x + s}" y2="${y + s}" stroke="${c}" stroke-width="3" ${st.dash ? 'stroke-dasharray="3 2"' : ''}/><line x1="${x - s}" y1="${y + s}" x2="${x + s}" y2="${y - s}" stroke="${c}" stroke-width="3" ${st.dash ? 'stroke-dasharray="3 2"' : ''}/>`);
+      if (st.label !== false) out.push(`<text x="${x + 10}" y="${y + 18}" font-size="${st.size || 15}" font-weight="700" fill="${c}" stroke="#fff" stroke-width="3" paint-order="stroke">${st.label || b.id}</text>`);
+      out.push('</g>'); return o;
+    },
+    text(p, s, st = {}) { out.push(`<text x="${v.X(p.x) + (st.dx || 0)}" y="${v.Y(p.y) + (st.dy || 0)}" font-size="${st.size || 13}" fill="${st.color || '#333'}" text-anchor="${st.anchor || 'start'}" font-weight="${st.bold ? 700 : 400}" stroke="#fff" stroke-width="3.5" paint-order="stroke" opacity="${st.op ?? 1}">${s}</text>`); return o; },
+    raw(s) { out.push(s); return o; },
+    svg() { return '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#333"/></marker></defs>' + out.join(''); }
+  };
+  return o;
+}
+
+function start(cfg) {
+  const { steps, faq, W, H } = cfg;
+  let idx = 0, timer = null;
+  const groups = [...new Set(steps.map(s => s.group))];
+  function render() {
+    const s = steps[idx];
+    $('#phases').innerHTML = cfg.phases.map(p => `<span class="${p === s.phase ? 'on' : ''}">${p}</span>`).join('');
+    $('#stepMeta').textContent = `${s.group} · 本组第 ${steps.filter(x => x.group === s.group).indexOf(s) + 1} 步`;
+    $('#stepTitle').innerHTML = s.title; $('#stepBody').innerHTML = s.body || ''; $('#stepCalc').innerHTML = s.calc || ''; $('#stepCalc').hidden = !s.calc;
+    const m = s.map();
+    $('#map').setAttribute('viewBox', `0 0 ${W} ${H}`); $('#map').innerHTML = m;
+    $('#mapTitle').textContent = s.mapTitle || '平面图';
+    $('#side').innerHTML = s.side ? s.side() : '';
+    $('#sideTitle').textContent = s.sideTitle || '状态';
+    const mine = steps.map((x, i) => [x, i]).filter(([x]) => x.group === s.group);
+    $('#tlTitle').textContent = `「${s.group}」的全部 ${mine.length} 步`;
+    $('#timeline').innerHTML = mine.map(([x, i], k) => `<li data-step="${i}" class="${i === idx ? 'cur' : i > idx ? 'fut' : ''}">${k + 1}. ${x.short}</li>`).join('');
+    const cur = $('#timeline .cur'); if (cur) { const pane = $('#timeline'); pane.scrollTop = cur.offsetTop - pane.offsetTop - pane.clientHeight / 2; }
+    $('#jumps').innerHTML = groups.map(g => `<button data-step="${steps.findIndex(x => x.group === g)}" class="${g === s.group ? 'on' : ''}">${g}</button>`).join(' ');
+    $('#seek').max = steps.length - 1; $('#seek').value = idx; $('#progress').textContent = `第 ${idx + 1} / ${steps.length} 步`;
+    $('#prev').disabled = idx === 0; $('#next').disabled = idx === steps.length - 1;
+  }
+  function goto(i) { idx = Math.max(0, Math.min(steps.length - 1, i)); render(); }
+  function stop() { clearInterval(timer); timer = null; $('#play').textContent = '自动播放'; }
+  function play() { if (timer) { stop(); return; } $('#play').textContent = '暂停'; timer = setInterval(() => { if (idx >= steps.length - 1) stop(); else goto(idx + 1); }, +$('#speed').value); }
+  $('#faq').innerHTML = faq.map((it, a) => `<div class="faq-item"><h3>${it.q}</h3><p>${it.a}</p>${it.go.map((g, b) => `<button data-faq="${a}-${b}">${g.t} →</button>`).join('')}</div>`).join('');
+  $('#prev').onclick = () => { stop(); goto(idx - 1); };
+  $('#next').onclick = () => { stop(); goto(idx + 1); };
+  $('#play').onclick = play;
+  $('#speed').onchange = () => { if (timer) { stop(); play(); } };
+  $('#seek').oninput = e => { stop(); goto(+e.target.value); };
+  document.addEventListener('click', e => {
+    const t = e.target.closest('[data-step]'); if (t) { stop(); goto(+t.dataset.step); return; }
+    const f = e.target.closest('[data-faq]');
+    if (f) { const [a, b] = f.dataset.faq.split('-').map(Number); stop(); goto(steps.findIndex(faq[a].go[b].f)); $('.controls').scrollIntoView({ behavior: 'smooth' }); }
+  });
+  document.addEventListener('keydown', e => {
+    if (['SELECT', 'INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); stop(); goto(idx + 1); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); stop(); goto(idx - 1); }
+    if (e.key === ' ') { e.preventDefault(); play(); }
+  });
+  const params = new URLSearchParams(location.search);
+  goto(params.has('step') ? +params.get('step') - 1 : 0);
+  if (params.has('nofaq')) $('details.faq').open = false;
+  root.STEPS = { steps, faq, goto, get idx() { return idx; } };
+}
+root.Player = { start, view, bbox, Draw, nm, f1, f2, pt };
+})(window);
+
+</script>
+<script id="app">
+(function () {
+'use strict';
+const G = Geo, { Draw, view, bbox, nm, f1, f2, pt } = Player, P = G.P;
+const W = 860, H = 470;
+const COL = { A: '#2f7bb0', B: '#d07a2c', C: '#2e8b6e' };
+// 上一步指派给定的归属；成员按名字顺序就是“打乱后的加入顺序”
+const planes = [
+  { name: 'a1', x: 26, y: 33, b: 'A' }, { name: 'a2', x: 13, y: 26, b: 'A' }, { name: 'a3', x: 20, y: 31, b: 'A' },
+  { name: 'a4', x: 18, y: 39, b: 'A' }, { name: 'a5', x: 23, y: 25, b: 'A' },
+  { name: 'b1', x: 46, y: 26, b: 'B' }, { name: 'b2', x: 48, y: 36, b: 'B' }, { name: 'b3', x: 54, y: 30, b: 'B' },
+  { name: 'c1', x: 54.5, y: 25, b: 'C' }, { name: 'c2', x: 54.5, y: 37, b: 'C' }, { name: 'c3', x: 59.5, y: 31, b: 'C' }
+];
+const beams0 = [{ id: 'A', x: 20, y: 30 }, { id: 'B', x: 51, y: 32 }, { id: 'C', x: 62, y: 31 }];
+const own = planes.map(p => p.b);
+const ORDER = ['A', 'B', 'C'];
+const res = G.moveCenters({ beams: beams0, planes, own }, ORDER);
+const ALL = bbox(planes.concat(beams0), 7);
+
+const L = beams => ({ beams, planes, own });
+const foot = (beams, id) => G.footOf(L(beams), beams.find(b => b.id === id));
+const far = (beams, id) => { const b = beams.find(x => x.id === id); let best = null; planes.forEach(p => { if (p.b === id && (!best || G.dist(p, b) > G.dist(best, b))) best = p; }); return best; };
+const thetaOf = (beams, id) => G.thetaAll(beams).find(t => t.id === id);
+const B = (id) => `<b style="color:${COL[id]}">${id}</b>`;
+const names = arr => arr.map(p => nm(p.name)).join('、');
+
+function base(d, beams, o = {}) {
+  for (const b of beams) {
+    const dim = o.focus && o.focus !== b.id;
+    if (o.allowed) d.circle(b, thetaOf(beams, b.id).theta, { stroke: COL[b.id], dash: '7 5', w: 1.6, op: dim ? 0.25 : 0.9 });
+    if (o.cover !== false) d.circle(b, foot(beams, b.id), { stroke: COL[b.id], fill: COL[b.id], fo: 0.06, w: 1.6, op: dim ? 0.25 : o.coverOp ?? 0.9 });
+  }
+  planes.forEach(p => { if (!o.skipPlanes || !o.skipPlanes(p)) d.plane(p, { fill: COL[p.b], op: o.focus && o.focus !== p.b ? 0.25 : 1 }); });
+  for (const b of beams) d.center(b, { color: COL[b.id], op: o.focus && o.focus !== b.id ? 0.3 : 1, label: o.hideCenter === b.id ? false : undefined, s: 7 });
+}
+function beamTable(beams, status, hl) {
+  return `<table><tr><th>波束</th><th>中心</th><th>成员</th><th>覆盖圈半径</th><th>允许半径</th><th>状态</th></tr>${beams.map(b => {
+    const t = thetaOf(beams, b.id), fp = far(beams, b.id), fv = foot(beams, b.id);
+    return `<tr class="${b.id === hl ? 'hl' : ''}"><td>${B(b.id)}</td><td>${pt(b)}</td><td>${names(planes.filter(p => p.b === b.id))}</td><td class="num">${f2(fv)}${G.dist(fp, b) < P.RMIN ? '（取下限）' : `（最远 ${nm(fp.name)}）`}</td><td class="num">${f2(t.theta)}${t.near ? `（到 ${t.near}）` : '（上限）'}</td><td>${status[b.id]}</td></tr>`;
+  }).join('')}</table><p class="note">覆盖圈半径 ＝ 最远成员到中心的距离，不小于 ${P.RMIN}。允许半径 ＝ min(${P.R}, 到最近其它中心的距离)。</p>`;
+}
+
+const steps = [];
+const PH = ['准备', '求最小包围圆', '检查间隔规则', '移动或不动', '结果'];
+let status = { A: '待处理', B: '待处理', C: '待处理' };
+const st = () => ({ ...status });
+
+/* ---------- 准备 ---------- */
+{
+  const s0 = st();
+  steps.push({ group: '准备', phase: '准备', short: '看场景', mapTitle: '指派完成后的布局', sideTitle: '各波束现在的情况',
+    title: '起点：上一步指派刚做完，每架飞机已有归属',
+    body: `<p>3 个波束 ${B('A')}、${B('B')}、${B('C')}，11 架飞机。颜色表示归属，叉号是波束中心，实线圆是<b>覆盖圈</b>：以中心为圆心、刚好罩住最远成员的圆。</p><p>指派只决定“谁归谁”，并不保证中心在成员的正中间。比如 ${B('A')} 的中心 (20, 30) 偏左上，最远的成员 a₄ 离它 9.22，覆盖圈因此很大。</p><p>移动中心要做的就是：<b>成员一个都不换，只挪中心</b>，让覆盖圈尽量小。覆盖圈越小，波束越窄，信号越集中。</p>`,
+    calc: '覆盖圈半径 ＝ max（各成员到中心的距离，最小半径 5.4）', map: () => { const d = Draw(view(ALL, W, H)); base(d, beams0); return d.svg(); }, side: () => beamTable(beams0, s0) });
+  steps.push({ group: '准备', phase: '准备', short: '两个半径', mapTitle: '实线：覆盖圈；虚线：允许半径', sideTitle: '各波束现在的情况',
+    title: '分清两个半径：覆盖圈和允许半径',
+    body: `<p><b>覆盖圈半径</b>（实线）：现在实际罩住成员所需的半径，由最远的成员决定，下限 ${P.RMIN}（对应 0.15°）。它决定束宽。</p><p><b>允许半径</b>（虚线）：下一次指派时，这个波束<b>最远能接收</b>多远的飞机。它等于 ${P.R} 和“到最近的其它中心的距离”中较小的那个。${B('B')}、${B('C')} 相距 11.05，所以二者的允许半径都是 11.05；${B('A')} 离谁都远，取上限 ${P.R}。</p><p>移动中心直接改的是覆盖圈；中心一动，各中心之间的距离变了，允许半径也会跟着变，最后一步会看到。</p>`,
+    map: () => { const d = Draw(view(bbox(planes.concat(beams0), 14), W, H)); base(d, beams0, { allowed: true }); return d.svg(); }, side: () => beamTable(beams0, s0) });
+  steps.push({ group: '准备', phase: '准备', short: '每个波束做什么', mapTitle: '指派完成后的布局', sideTitle: '各波束现在的情况',
+    title: '按 A → B → C 的顺序，每个波束做三件事',
+    body: `<ol><li><b>求成员的最小包围圆</b>：能把全部成员圈住的最小的圆。它的圆心就是候选的新中心，它的半径就是新的覆盖圈半径（不足 ${P.RMIN} 取 ${P.RMIN}）。用 Welzl 算法逐点求，下面每一次“在不在圆里”的判断都单独一步。</li><li><b>检查间隔规则</b>：新中心和其它每个中心比一次，三个条件都满足才行。</li><li><b>通过就移过去，不通过就留在原地</b>。</li></ol><p>一次只处理一个波束；后面的波束做检查时，用的是前面波束<b>已经移动后</b>的位置。</p>`,
+    map: () => { const d = Draw(view(ALL, W, H)); base(d, beams0); return d.svg(); }, side: () => beamTable(beams0, s0) });
+}
+
+/* ---------- 每个波束 ---------- */
+let beamsNow = beams0.map(b => ({ ...b }));
+res.events.forEach(e => {
+  const X = e.id, grp = `波束 ${X}`, mem = planes.filter(p => p.b === X), N = k => nm(mem[k].name);
+  const bNow = beamsNow.map(b => ({ ...b })), fp = far(bNow, X), bX = bNow.find(b => b.id === X);
+  status[X] = '处理中'; const sP = st();
+  const zoom = bbox(mem.concat([bX, e.to]), 5);
+  steps.push({ group: grp, phase: '求最小包围圆', short: `开始处理 ${X}`, mapTitle: `波束 ${X}（其它波束变淡）`, sideTitle: '各波束现在的情况',
+    title: `开始处理波束 ${B(X)}：${mem.length} 架成员`,
+    body: `<p>${B(X)} 的成员：${names(mem)}。中心现在在 ${pt(bX)}，最远的成员是 ${nm(fp.name)}，距离 ${f2(G.dist(fp, bX))}，所以覆盖圈半径是 ${f2(e.before)}${G.dist(fp, bX) < P.RMIN ? `（不足 ${P.RMIN} 取下限）` : ''}。</p><p>下面用 Welzl 算法求这 ${mem.length} 个点的最小包围圆。程序会先把成员顺序随机打乱；本页按 ${names(mem)} 的顺序逐个加入（换顺序最后的圆完全一样，只是中间过程不同）。</p>`,
+    calc: `${X} 覆盖圈半径 ＝ ${nm(fp.name)} 到中心的距离 ＝ ${f2(e.before)}`,
+    map: () => { const d = Draw(view(ALL, W, H)); base(d, bNow, { focus: X }); d.line(bX, fp, { stroke: COL[X], dash: '4 3', w: 2 }); d.text({ x: (bX.x + fp.x) / 2, y: (bX.y + fp.y) / 2 }, f2(G.dist(fp, bX)), { color: COL[X], bold: true, dx: 6 }); return d.svg(); },
+    side: () => beamTable(bNow, sP, X) });
+
+  // Welzl 每一步
+  const S = e.mec.steps;
+  const forced = s => s.t === 'reset' || s.t === 'jin' || s.t === 'jout' ? [s.i] : s.t === 'kin' || s.t === 'kout' ? [s.i, s.j] : [];
+  S.forEach((s, n) => {
+    const shown = s.t === 'out' ? s.cOld : s.c, focusK = s.k ?? s.j ?? s.i, inside = ['first', 'in', 'jin', 'kin', 'reset', 'done-i'].includes(s.t);
+    const before = mem.slice(0, s.i).map(p => nm(p.name)).join('、');
+    let title, body, short;
+    const cdesc = c => `圆心 ${pt(c)}，半径 ${f2(c.r)}`;
+    switch (s.t) {
+      case 'first': short = `加入 ${N(0)}`; title = `加入 ${N(0)}：圆就是这个点`; body = `<p>先只看第一个点。能圈住一个点的最小圆就是这个点本身，半径 0。</p>`; break;
+      case 'in': short = `加入 ${N(s.i)}：圈内，跳过`; title = `加入 ${N(s.i)}：在圆内，圆不变`; body = `<p>${N(s.i)} 到当前圆心的距离 ${f2(s.d)} ≤ 半径 ${f2(s.c.r)}，已经被圈住。前 ${s.i + 1} 个点的最小圆还是这个圆，什么都不用改。</p>`; break;
+      case 'out': short = `加入 ${N(s.i)}：圈外`; title = `加入 ${N(s.i)}：在圆外，要重新求圆`;
+        body = `<p>${N(s.i)} 到当前圆心的距离 ${f2(s.d)} ＞ 半径 ${f2(s.cOld.r)}，圈不住。</p><p class="warn"><b>关键规律：把 ${N(s.i)} 也圈进来的新最小圆，边界一定经过 ${N(s.i)}。</b>理由：假如新圆没碰到 ${N(s.i)}（${N(s.i)} 在圆的内部），那这个圆就只靠 ${before} 撑着，它应该就是这些点原来的最小圆——也就是当前这个圆；可当前的圆圈不住 ${N(s.i)}，矛盾。</p><p>所以接下来在“${N(s.i)} 必须在边上”的前提下重新求圆：从只圈 ${N(s.i)} 的圆开始，把之前加入的 ${before} 按顺序再检查一遍。</p>`; break;
+      case 'reset': short = `以 ${N(s.i)} 为边界重来`; title = `以 ${N(s.i)} 为边界点重来：先只圈 ${N(s.i)}`; body = `<p>圆先缩成 ${N(s.i)} 这一个点（半径 0）。下面依次检查 ${before}：在圆内就跳过，不在就把圆扩大到经过它。</p>`; break;
+      case 'jin': short = `　查 ${N(s.j)}：圈内，跳过`; title = `检查 ${N(s.j)}：在圆内，跳过`; body = `<p>${N(s.j)} 到圆心的距离 ${f2(s.d)} ≤ 半径 ${f2(s.c.r)}，已被圈住。</p>`; break;
+      case 'jout': {
+        short = `　查 ${N(s.j)}：圈外，取 ${N(s.i)}${N(s.j)} 为直径`; title = `检查 ${N(s.j)}：在圆外，圆改为以 ${N(s.i)}、${N(s.j)} 为直径`;
+        body = `<p>${N(s.j)} 到圆心的距离 ${f2(s.d)} ＞ 半径 ${f2(s.cOld.r)}，圈不住。同样的道理，新圆必须同时经过 ${N(s.i)} 和 ${N(s.j)}。</p><p>经过两个点的最小圆，就是以两点连线为直径的圆：圆心是两点的中点 ${pt(s.c)}，半径是两点距离的一半 ${f2(s.c.r)}。</p>` +
+          (s.j > 0 ? `<p>圆换了，${N(s.j)} 之前检查过的 ${mem.slice(0, s.j).map(p => nm(p.name)).join('、')} 不一定还在圈里，要在“${N(s.i)}、${N(s.j)} 都在边上”的前提下再逐个检查。</p>` : `<p>${N(s.j)} 前面没有别的点，不用再查。</p>`); break; }
+      case 'kin': short = `　　查 ${N(s.k)}：圈内，跳过`; title = `检查 ${N(s.k)}：在圆内，跳过`; body = `<p>${N(s.k)} 到圆心的距离 ${f2(s.d)} ≤ 半径 ${f2(s.c.r)}，已被圈住。</p>`; break;
+      case 'kout': short = `　　查 ${N(s.k)}：圈外，取三点圆`; title = `检查 ${N(s.k)}：在圆外，圆改为过 ${N(s.i)}、${N(s.j)}、${N(s.k)} 三点`;
+        body = `<p>${N(s.k)} 到圆心的距离 ${f2(s.d)} ＞ 半径 ${f2(s.cOld.r)}，圈不住。新圆必须同时经过 ${N(s.i)}、${N(s.j)}、${N(s.k)}。过三个点的圆只有一个（三角形的外接圆）：圆心 ${pt(s.c)}，半径 ${f2(s.c.r)}。</p><p>三个点已经把圆完全定死。${s.k < s.j - 1 ? `接着检查 ${mem.slice(s.k + 1, s.j).map(p => nm(p.name)).join('、')}。` : ''}</p>`; break;
+      case 'done-i': short = `前 ${s.i + 1} 个点的圆已定`; title = `前 ${s.i + 1} 个点（${mem.slice(0, s.i + 1).map(p => nm(p.name)).join('、')}）的最小圆求好了`;
+        body = `<p>以 ${N(s.i)} 为边界点的检查做完，所有已加入的点都在圈里：${cdesc(s.c)}。确定它的边界点是 ${s.sup.map(N).join('、')}。</p><p>${s.i < mem.length - 1 ? `接着加入下一个点 ${N(s.i + 1)}。` : `全部 ${mem.length} 个成员都处理完了。`}</p>`; break;
+    }
+    const added = s.t === 'first' ? 1 : s.i + 1;
+    const nowC = s.t === 'out' ? s.cOld : s.c;
+    steps.push({ group: grp, phase: '求最小包围圆', short, mapTitle: `${X} 的成员（放大）：Welzl 第 ${n + 1}/${S.length} 次判断`, sideTitle: `Welzl 记录（${X}）`,
+      title, body, calc: `当前圆：${cdesc(nowC)}${s.d !== undefined ? `<br>被检查的点到圆心 ${f2(s.d)} ${inside ? '≤' : '＞'} 半径 ${f2((s.cOld || s.c).r)} → ${inside ? '在圆内' : '在圆外'}` : ''}`,
+      map: () => {
+        const d = Draw(view(zoom, W, H));
+        if (s.cOld && s.t !== 'out') d.circle(s.cOld, s.cOld.r, { stroke: '#999', dash: '3 4', w: 1.2 });
+        d.circle(nowC, nowC.r, { stroke: '#222', dash: '7 4', w: 2, fill: '#222', fo: 0.04 });
+        d.center(nowC, { color: '#444', s: 5, label: '圆心', size: 12 });
+        mem.forEach((p, k) => {
+          const isAdded = k < added, sup = (s.sup || []).includes(k) && s.t !== 'out';
+          d.plane(p, { fill: COL[X], hollow: !isAdded, stroke: isAdded ? COL[X] : '#aaa', ring: k === focusK && s.t !== 'reset' && s.t !== 'done-i' ? (inside ? '#2e8b57' : '#c0392b') : sup ? '#d4a017' : null, label: `${nm(p.name)}${isAdded ? '' : '（未加入）'}`, lc: isAdded ? '#222' : '#999' });
+        });
+        forced(s).forEach(k => d.text(mem[k], '必须在边上', { dx: 9, dy: 22, size: 12, color: '#a07010', bold: true }));
+        if (s.d !== undefined) { const q = mem[focusK], c0 = s.cOld || s.c; d.line(c0, q, { stroke: inside ? '#2e8b57' : '#c0392b', w: 1.6, dash: '4 3' }); d.text({ x: (c0.x + q.x) / 2, y: (c0.y + q.y) / 2 }, f2(s.d), { color: inside ? '#2e8b57' : '#c0392b', bold: true, dx: 5, dy: -4 }); }
+        return d.svg();
+      },
+      side: () => `<p>当前圆：${cdesc(nowC)}。<span class="gold">金圈</span>＝确定这个圆的边界点。</p><table><tr><th>加入顺序</th><th>飞机</th><th>状态</th><th>到当前圆心</th><th>在圆内？</th></tr>${mem.map((p, k) => { const dd = G.dist(p, nowC); return `<tr class="${k === focusK && s.t !== 'reset' && s.t !== 'done-i' ? 'hl' : ''}"><td>${k + 1}</td><td>${nm(p.name)}</td><td>${k < added ? '已加入' : '未加入'}${(s.sup || []).includes(k) && s.t !== 'out' ? '，边界点' : ''}</td><td class="num">${k < added ? f2(dd) : '—'}</td><td>${k < added ? (dd <= nowC.r + 1e-7 ? '是' : '<span class="neg">否</span>') : '—'}</td></tr>`; }).join('')}</table>`
+    });
+  });
+  // 结果
+  const floor = e.mecR < P.RMIN;
+  steps.push({ group: grp, phase: '求最小包围圆', short: '得到最小包围圆', mapTitle: `${X}：最小包围圆（虚线）与原覆盖圈（实线）`, sideTitle: '各波束现在的情况',
+    title: `${B(X)} 成员的最小包围圆：圆心 ${pt(e.to)}，半径 ${f2(e.mecR)}`,
+    body: `<p>这就是候选的新中心。如果移过去，最远成员到中心的距离从 ${f2(e.before)} 降到 ${f2(e.mecR)}${floor ? `；但覆盖圈半径不能小于 ${P.RMIN}（对应 0.15°），所以新的覆盖圈半径取 <b>${P.RMIN}</b>` : '，这也是新的覆盖圈半径'}。</p><p>还不能直接移：下一步先检查间隔规则。</p>`,
+    calc: `覆盖圈半径：${f2(e.before)} → max(${f2(e.mecR)}, ${P.RMIN}) ＝ ${f2(Math.max(P.RMIN, e.mecR))}`,
+    map: () => { const d = Draw(view(ALL, W, H)); base(d, bNow, { focus: X }); d.circle(e.to, Math.max(P.RMIN, e.mecR), { stroke: '#222', dash: '7 4', w: 2 }); d.center(e.to, { color: '#222', s: 6, label: '候选新中心', size: 12, dash: true }); d.line(bX, e.to, { stroke: '#222', w: 1.4, arrow: true, op: 0.7 }); return d.svg(); },
+    side: () => beamTable(bNow, sP, X) });
+
+  // 间隔检查：逐个其它波束
+  const after = Math.max(P.RMIN, e.mecR);
+  e.checks.forEach((c, k) => {
+    const o = bNow.find(b => b.id === c.id), moved = status[c.id] === '已移动';
+    const reasons = [`最小间距 ${P.DMIN}`, `${X} 的新覆盖圈半径 ${f2(after)}（不满足 → ${c.id} 的中心落进 ${X} 的新覆盖圈）`, `${c.id} 的覆盖圈半径 ${f2(c.fo)}（不满足 → ${X} 的新中心落进 ${c.id} 的覆盖圈）`];
+    const which = c.need === P.DMIN ? 0 : c.need === after ? 1 : 2;
+    steps.push({ group: grp, phase: '检查间隔规则', short: `与 ${c.id} 比：${c.pass ? '通过' : '不通过'}`, mapTitle: `${X} 的候选新中心 与 ${c.id}`, sideTitle: '各波束现在的情况',
+      title: `间隔检查 ${k + 1}：候选新中心与 ${B(c.id)} ${c.pass ? '离得够远，通过' : '太近，不通过'}`,
+      body: `<p>候选新中心到 ${B(c.id)} 中心${moved ? `（${c.id} 已经移动过，用移动后的位置）` : ''}的距离是 <b>${f2(c.d)}</b>。它必须不小于下面三者中最大的那个：</p><ul>${reasons.map((r, q) => `<li${q === which ? ' class="em"' : ''}>${r}</li>`).join('')}</ul><p>最大的是 ${f2(c.need)}。${c.pass ? `${f2(c.d)} ≥ ${f2(c.need)}，通过。` : `${f2(c.d)} ＜ ${f2(c.need)}，<b>不通过</b>：${which === 1 ? `${c.id} 的中心会落进 ${X} 的新覆盖圈` : which === 2 ? `${X} 的新中心会落进 ${c.id} 的覆盖圈` : '两个中心太近'}。只要有一个不通过就不能移，后面的波束不用再查。`}</p>`,
+      calc: `距离 ${f2(c.d)} ${c.pass ? '≥' : '＜'} max(${P.DMIN}, ${f2(after)}, ${f2(c.fo)}) ＝ ${f2(c.need)} → ${c.pass ? '通过' : '不通过'}`,
+      map: () => {
+        const d = Draw(view(bbox(planes.filter(p => p.b === X || p.b === c.id).concat([o, e.to, bX]), 9), W, H));
+        base(d, bNow, { focus: X, coverOp: 0.25 });
+        d.circle(o, c.fo, { stroke: COL[c.id], w: 2.4 });
+        d.circle(e.to, after, { stroke: COL[X], dash: '7 4', w: 2.4 });
+        d.center(o, { color: COL[c.id], s: 7 }); d.center(e.to, { color: COL[X], s: 7, dash: true, label: `${X} 候选新中心`, size: 12 });
+        d.line(e.to, o, { stroke: c.pass ? '#2e8b57' : '#c0392b', w: 2.4 });
+        d.text({ x: (e.to.x + o.x) / 2, y: (e.to.y + o.y) / 2 }, `${f2(c.d)}${c.pass ? ' ≥ ' : ' ＜ '}${f2(c.need)}`, { color: c.pass ? '#2e8b57' : '#c0392b', bold: true, dy: 26, anchor: 'middle', size: 14 });
+        return d.svg();
+      },
+      side: () => beamTable(bNow, sP, X) });
+  });
+  // 决定
+  status[X] = e.ok ? '已移动' : '保持原位';
+  const bAfter = e.beamsAfter.map(b => ({ ...b })), sD = st();
+  steps.push({ group: grp, phase: '移动或不动', short: e.ok ? `移动 ${X}` : `${X} 保持原位`, mapTitle: e.ok ? `${X} 移到新中心` : `${X} 留在原地`, sideTitle: '各波束现在的情况',
+    title: e.ok ? `全部通过：${B(X)} 移到 ${pt(e.to)}` : `有一项不通过：${B(X)} 保持原位`,
+    body: e.ok ? `<p>中心 ${pt(e.from)} → ${pt(e.to)}，成员不变。覆盖圈半径 ${f2(e.before)} → ${f2(e.after)}，束宽（直径）${f2(2 * e.before)} → ${f2(2 * e.after)}。</p>${X !== ORDER.at(-1) ? `<p>后面的波束做间隔检查时，用 ${X} 的这个新位置。</p>` : ''}`
+      : `<p>${B(X)} 的中心留在 ${pt(e.from)}，覆盖圈半径仍是 ${f2(e.before)}。这不是错误：间隔规则保证相邻波束不互相套进覆盖圈。成员和邻居位置在后面的轮次里还会变，下一轮会再试一次。</p>`,
+    calc: e.ok ? `${X}：覆盖圈半径 ${f2(e.before)} → ${f2(e.after)}` : `${X}：不动，覆盖圈半径 ${f2(e.before)}`,
+    map: () => { const d = Draw(view(ALL, W, H)); base(d, bAfter); if (e.ok) d.line(e.from, e.to, { stroke: '#222', w: 1.6, arrow: true }); else d.text(e.from, '保持原位', { color: '#c0392b', bold: true, dx: 10, dy: -14 }); return d.svg(); },
+    side: () => beamTable(bAfter, sD, X) });
+  beamsNow = bAfter;
+});
+
+/* ---------- 结果 ---------- */
+{
+  const th0 = G.thetaAll(beams0), th1 = G.thetaAll(beamsNow), sE = st();
+  steps.push({ group: '结果', phase: '结果', short: '允许半径变了', mapTitle: '移动后：实线覆盖圈，虚线允许半径', sideTitle: '允许半径：移动前 → 移动后',
+    title: '中心动了，允许半径也跟着变',
+    body: `<p>允许半径 ＝ min(${P.R}, 到最近其它中心的距离)。${B('B')} 往左移了，离 ${B('C')} 远了，两者的允许半径都从 ${f2(th0[1].theta)} 变成 ${f2(th1[1].theta)}；${B('A')} 仍取上限 ${P.R}。</p><p>移动中心本身不改归属。允许半径变大，下一次指派时这些波束能接收更远的飞机，负载就有可能分得更匀；变小则相反。</p>`,
+    map: () => { const d = Draw(view(bbox(planes.concat(beamsNow), 14), W, H)); base(d, beamsNow, { allowed: true }); return d.svg(); },
+    side: () => `<table><tr><th>波束</th><th>移动前</th><th>移动后</th><th>最近的其它中心</th></tr>${th1.map((t, i) => `<tr><td>${B(t.id)}</td><td class="num">${f2(th0[i].theta)}</td><td class="num"><b>${f2(t.theta)}</b></td><td>${t.near ? `${t.near}，距离 ${f2(t.theta)}` : `都超过 ${P.R}，取上限`}</td></tr>`).join('')}</table>` });
+  const fb = Object.fromEntries(beams0.map(b => [b.id, foot(beams0, b.id)])), fa = Object.fromEntries(beamsNow.map(b => [b.id, foot(beamsNow, b.id)]));
+  steps.push({ group: '结果', phase: '结果', short: '总结', mapTitle: '移动后的布局（细线为移动前的覆盖圈）', sideTitle: '各波束：移动前 → 移动后',
+    title: '移动中心做完：两个波束变窄，一个因间隔规则不动',
+    body: `<p>平均覆盖圈半径 ${f2((fb.A + fb.B + fb.C) / 3)} → ${f2((fa.A + fa.B + fa.C) / 3)}。归属一架都没变。</p><p>在 FLOW-AO 的每一轮里，接下来是“删除空闲波束、拆分最忙波束”（见 23 号网页），然后用新的中心和允许半径重新做一次指派，比较这一轮是否变好。</p>`,
+    map: () => { const d = Draw(view(ALL, W, H)); beams0.forEach(b => d.circle(b, fb[b.id], { stroke: COL[b.id], w: 1, dash: '2 3', op: 0.6 })); base(d, beamsNow); res.events.filter(e => e.ok).forEach(e => d.line(e.from, e.to, { stroke: '#222', w: 1.4, arrow: true })); return d.svg(); },
+    side: () => `<table><tr><th>波束</th><th>中心</th><th>覆盖圈半径</th><th>结果</th></tr>${res.events.map(e => `<tr><td>${B(e.id)}</td><td>${pt(e.from)} → ${pt(e.ok ? e.to : e.from)}</td><td class="num">${f2(e.before)} → <b>${f2(e.after)}</b></td><td>${e.ok ? '移动' : '<span class="neg">保持原位</span>'}</td></tr>`).join('')}</table>` });
+}
+
+const first = (pred) => s => s === steps.find(pred);
+const faq = [
+  { q: '移动中心改变什么，不改变什么？', a: '成员一个都不换，只把每个波束的中心挪到它成员的“最小包围圆”圆心，让覆盖圈（罩住全部成员所需的圆）尽量小，波束因此变窄。中心挪动后，各中心之间的距离变了，允许半径也随之变化，影响下一次指派。',
+    go: [{ t: '看起点', f: first(s => s.group === '准备') }, { t: '看结果', f: first(s => s.short === '总结') }] },
+  { q: '覆盖圈半径和允许半径有什么区别？', a: '覆盖圈半径是“现在罩住成员需要多大”，由最远成员决定，下限 5.4；它决定束宽。允许半径是“下次指派最远能接多远的飞机”，等于 min(18, 到最近其它中心的距离)。移动中心直接改前者，间接改后者。',
+    go: [{ t: '看两个半径', f: first(s => s.short === '两个半径') }, { t: '看允许半径怎么变', f: first(s => s.short === '允许半径变了') }] },
+  { q: '最小包围圆怎么求（Welzl 算法）？', a: '逐个加入成员。新点在当前圆内：跳过。在圆外：新圆一定经过它，于是从“只圈它”的圆开始，把之前的点再逐个检查；又遇到圈外的点，就改成以这两点为直径的圆，再往前查；第三次遇到，就取过三点的圆。每次判断在本页都是单独一步。',
+    go: [{ t: '从 A 的第一步看', f: first(s => s.group === '波束 A' && s.phase === '求最小包围圆' && s.short.startsWith('加入')) }, { t: '看取三点圆的一步', f: first(s => s.short.includes('三点圆')) }] },
+  { q: '为什么圆外的点一定在新圆的边上？', a: '假如包含新点的最小圆没碰到它，这个圆就只靠旧点撑着，那它应该就是旧点原来的最小圆；可旧圆圈不住新点，矛盾。所以新点必在边上，求圆时可以把它当作已知的边界点。',
+    go: [{ t: '看这条理由出现的那一步', f: first(s => s.short.endsWith('圈外') && s.group === '波束 A') }] },
+  { q: '为什么有的波束不移动？', a: '移动前要过间隔规则：候选新中心到每个其它中心的距离，必须不小于三者最大值——最小间距 5.4、自己新覆盖圈的半径（否则对方中心落进来）、对方覆盖圈的半径（否则自己落进对方圈里）。有一项不满足就留在原地，下一轮再试。',
+    go: [{ t: '看 C 不通过的那一步', f: first(s => s.phase === '检查间隔规则' && s.short.includes('不通过')) }, { t: '看 C 保持原位', f: first(s => s.short === 'C 保持原位') }] },
+  { q: '覆盖圈为什么有下限？', a: '波束不能无限窄，最窄对应 0.15°，本页折合半径 5.4。B 的最小包围圆半径只有 5.37，覆盖圈仍取 5.4。',
+    go: [{ t: '看 B 的结果', f: first(s => s.group === '波束 B' && s.short === '得到最小包围圆') }] },
+  { q: '波束按什么顺序处理？前面的会影响后面的吗？', a: '一个一个处理（A → B → C）。后面的波束做间隔检查时，用前面波束已经移动后的位置和覆盖圈。本例中 C 就是因为 B 移过来之后才离得太近。',
+    go: [{ t: '看 C 与移动后的 B 比较', f: first(s => s.phase === '检查间隔规则' && s.short.startsWith('与 B') && s.group === '波束 C') }] }
+];
+Player.start({ steps, faq, W, H, phases: PH });
+})();
+
+</script>
+</body></html>
