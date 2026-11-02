@@ -500,9 +500,12 @@ spl.events.forEach(e => {
     body: `<p>只要波束数还没到上限，就拆最忙的波束。候选：负载至少 2 架的波束里最忙的三个，从忙到闲排：${e.cands.map(c => `${B(c.id)}（${c.load} 架）`).join(' → ')}${e.cands.length < 3 ? `（${Lb.beams.filter(b => ldb[b.id] < 2).map(b => B(b.id)).join('、')} 只有 1 架，拆不了）` : ''}。</p><p>先试 ${B(e.id)}；通不过才换下一个。</p>`,
     map: () => draw(Lb, { loadTag: true, focus: e.cands.map(c => c.id) }), side: () => beamTable(Lb, e.cands.map(c => c.id)) });
   const sorted = e.pairs.slice().sort((x, y) => y.d - x.d);
-  steps.push({ group: grp, phase: '拆分最忙波束', short: '找相距最远的两架', mapTitle: `${e.id} 的 ${mem.length} 架成员（放大）`, sideTitle: `${e.id} 成员两两之间的距离（从大到小）`,
-    title: `${B(e.id)} 的成员里相距最远的是 ${N(e.seed.i)} 和 ${N(e.seed.j)}（${f2(e.seed.d)}），用它们作两堆的起点`,
-    body: `<p>要把 ${mem.length} 架分成两堆。先算出两两距离（右表，共 ${e.pairs.length} 对），取最远的一对 ${N(e.seed.i)}、${N(e.seed.j)} 作两堆的起始中心——它们最不该分在同一堆。</p>`,
+  steps.push({ group: grp, phase: '拆分最忙波束', short: '选种子：相距最远的两架', mapTitle: `${e.id} 的 ${mem.length} 架成员（放大）`, sideTitle: `${e.id} 成员两两之间的距离（从大到小）`,
+    title: `选种子：${B(e.id)} 的成员里相距最远的是 ${N(e.seed.i)} 和 ${N(e.seed.j)}（${f2(e.seed.d)}），用它们作两堆的起点`,
+    body: `<p>要把 ${B(e.id)} 的 ${mem.length} 架成员分成两堆，每堆变成一个新波束。分堆之前先要有两个起点，这两个起点就叫<b>种子</b>：从成员里挑出的两架飞机，一架代表第一堆，一架代表第二堆，后面的归堆都从它们出发。</p>
+<p><b>怎么选：</b>把 ${mem.length} 架成员两两配对，共 ${e.pairs.length} 对，逐对算距离（右表，从大到小排），取最远的一对：${N(e.seed.i)} 作第一堆的种子，${N(e.seed.j)} 作第二堆的种子。</p>
+<p><b>为什么选最远的一对：</b>波束要罩住全部成员，束宽由相距最远的成员决定。${N(e.seed.i)} 和 ${N(e.seed.j)} 若留在同一个波束，这个波束至少要跨 ${f2(e.seed.d)}；让它们各领一堆，两堆就沿成员分布最长的方向切开，各自更紧凑，新波束更窄。</p>
+<p class="note">正式代码为省计算，不算全部两两距离，而是分两步：先找离第一架成员最远的一架，再找离这一架最远的一架，这两架就是种子，通常就是最远的一对。</p>`,
     calc: `最远一对：${N(e.seed.i)}–${N(e.seed.j)}，距离 ${f2(e.seed.d)}`,
     map: () => draw(Lb, { rect, cover: false, ring: p => p === mem[e.seed.i] || p === mem[e.seed.j] ? '#d4a017' : null, extra: d => d.line(mem[e.seed.i], mem[e.seed.j], { stroke: '#a07010', dash: '5 4', w: 2 }) }),
     side: () => `<table><tr><th>两架飞机</th><th>距离</th></tr>${sorted.map((x, q) => `<tr class="${q === 0 ? 'hl' : ''}"><td>${N(x.i)}–${N(x.j)}</td><td class="num">${f2(x.d)}</td></tr>`).join('')}</table>` });
@@ -513,7 +516,7 @@ spl.events.forEach(e => {
     const cA = it.A, cB = it.B, label0 = t === 0 ? `起点 ${N(e.seed.i)}` : '堆1中心', label1 = t === 0 ? `起点 ${N(e.seed.j)}` : '堆2中心';
     steps.push({ group: grp, phase: '拆分最忙波束', short: `第 ${t + 1} 次归堆${same ? '：与上次相同' : ''}`, mapTitle: `第 ${t + 1} 次归堆（颜色＝所归的堆）`, sideTitle: `第 ${t + 1} 次归堆：到两个中心的距离`,
       title: same ? `第 ${t + 1} 次归堆：分组和上一次完全一样` : `第 ${t + 1} 次归堆：每架飞机归到离自己近的那个中心`,
-      body: `<p>两个中心：堆1 ${pt(cA)}，堆2 ${pt(cB)}${t === 0 ? `（就是 ${N(e.seed.i)}、${N(e.seed.j)} 的位置）` : '（上一次各堆的平均位置）'}。每架飞机比较到两个中心的距离，归近的那堆（右表）。</p><p>结果：堆1 ${names(mem.filter((_, k) => it.lab[k] === 0))}，堆2 ${names(mem.filter((_, k) => it.lab[k] === 1))}。</p>` +
+      body: `<p>两个中心：堆1 ${pt(cA)}，堆2 ${pt(cB)}${t === 0 ? `（就是两颗种子 ${N(e.seed.i)}、${N(e.seed.j)} 的位置）` : '（上一次各堆的平均位置）'}。每架飞机比较到两个中心的距离，归近的那堆（右表）。</p><p>结果：堆1 ${names(mem.filter((_, k) => it.lab[k] === 0))}，堆2 ${names(mem.filter((_, k) => it.lab[k] === 1))}。</p>` +
         (same ? `<p class="warn">分组没变，再算平均位置也一样，后面怎么算都不会再变——两堆就此定下。（程序固定算满 6 次，后几次结果与这次相同。）</p>` : ''),
       map: () => draw(Lb, { rect, cover: false, extra: d => {
         mem.forEach((p, k) => d.line(p, it.lab[k] === 0 ? cA : cB, { stroke: it.lab[k] === 0 ? COL[e.ids[0]] : COL[e.ids[1]], w: 1.3, op: 0.7 }));
@@ -607,8 +610,10 @@ const faq = [
     go: [{ t: '看不通过（试删 D）', f: first(s => s.group === '试删 D' && s.short.startsWith('最大流')) }, { t: '看通过（试删 C）', f: first(s => s.group === '试删 C' && s.short.startsWith('最大流')) }] },
   { q: '拆分的候选怎么选？', a: '波束数没到上限时才拆。候选是负载至少 2 架的波束中最忙的三个，从最忙的开始试，通不过就换下一个。',
     go: [{ t: '看拆分候选', f: first(s => s.short === '拆分的条件与候选') }] },
-  { q: '怎样把一个波束拆成两个？', a: '取成员里相距最远的两架作两堆的起点；每架飞机归到近的那个中心，再把中心换成每堆的平均位置，反复直到分组不变；两堆各求最小包围圆，圆心作新中心；两个新中心不足 5.4 就沿连线推开到 5.4。',
-    go: [{ t: '从找种子开始看', f: first(s => s.short === '找相距最远的两架') }, { t: '看推开', f: first(s => s.short.includes('推开')) }] },
+  { q: '拆分里的“种子”是什么，怎么选？', a: '种子就是两堆各自的起点：从被拆波束的成员里挑出的两架飞机，一架代表第一堆，一架代表第二堆。选法是把成员两两配对、逐对算距离，取相距最远的一对。理由：束宽由相距最远的成员决定，这两架留在同一波束最费束宽，让它们各领一堆，两堆沿最长方向切开，新波束最窄。（正式代码用“先找离第一架最远的一架，再找离它最远的一架”两步近似这一对，省去两两比较。）',
+    go: [{ t: '看选种子这一步', f: first(s => s.short === '选种子：相距最远的两架') }] },
+  { q: '怎样把一个波束拆成两个？', a: '先选种子（上一问）；每架飞机归到近的那个中心，再把中心换成每堆的平均位置，反复直到分组不变；两堆各求最小包围圆，圆心作新中心；两个新中心不足 5.4 就沿连线推开到 5.4。',
+    go: [{ t: '从找种子开始看', f: first(s => s.short === '选种子：相距最远的两架') }, { t: '看推开', f: first(s => s.short.includes('推开')) }] },
   { q: '拆分要过哪几关？什么时候停？', a: `两关：一是两个新中心与其它中心都至少相距 ${P.DMIN}；二是最大流（每束 ${PCUR}）全部分得进去。都过才接受并重新均衡。拆分一直重复，直到波束数用满上限，或三个候选都通不过。`,
     go: [{ t: '看第一关', f: first(s => s.short.startsWith('第一关')) }, { t: '看第二关', f: first(s => s.short.startsWith('第二关')) }, { t: '看停止', f: first(s => s.short.includes('停止拆分')) }] }
 ];

@@ -2344,7 +2344,9 @@ window.FLOW_SYM = window.SymKit([
 <p data-seg="del"><b>删除空闲波束。</b>从最闲的波束开始试。删掉它后，它的飞机要由别的波束接收。注意图中实线圆是波束目前实际罩住成员的覆盖圈，不是它能接收的范围；能不能接收看允许半径，即半径上限 ${P.R} 与到最近其它中心距离的较小值。删掉一个波束后，它邻居的最近其它中心变远，允许半径随之变大，所以原来不在任何圈里的飞机常常能被邻居接住。</p>
 <p data-seg="delcheck"><b>怎么确认。</b>删掉后把全部飞机重新放进网络，波束到汇点的容量设为本轮开始时的最忙负载 ${r1.Pcur}，跑一次最大流：等于 ${SYM.n} 说明每架飞机都有波束接收且没有波束超过 ${r1.Pcur}，删除；小于 ${SYM.n} 就保留，接着试下一个较闲的。</p>
 <p data-seg="reassign"><b>删除后重新指派。</b>删除通过后，用最小费用流重新均衡全部飞机。上一步移动中心已经改变了允许半径，这次重新指派让各波束的负载重新分布` + (peakAfterDel != null && peakAfterDel < peak0 ? `，最忙波束从 ${peak0} 架降到 ${peakAfterDel} 架` : '') + `。</p>
-<p data-seg="split"><b>拆分最忙波束。</b>按负载从高到低取三个候选，先试最忙的，不行再试次忙的。拆法：取相距最远的两架飞机作种子，其余飞机归离自己近的种子，再把种子换成每堆的中心点，反复几次分成两堆。两堆各自的最小包围圆圆心就是两个新中心；两个新中心太近时沿连线推开到最小间距 ${P.dmin}。</p>
+<p data-seg="split"><b>拆分最忙波束。</b>按负载从高到低取三个候选，先试最忙的，不行再试次忙的。拆分就是把这个波束的成员飞机分成两堆，每堆变成一个新波束。</p>
+<p data-seg="seed"><b>种子是什么、怎么选。</b>种子就是两堆各自的起点，是被拆波束里的两架成员飞机。选法：把成员两两配对、逐对量距离，取相距最远的那一对，一架作第一堆的起点，另一架作第二堆的起点。选最远的一对，是因为这两架最不该留在同一个波束里；从它们出发，两堆沿成员分布最长的方向切开，各自最紧凑，新波束最窄。</p>
+<p data-seg="cluster"><b>有了种子以后。</b>每架成员归离自己近的那个起点，得到两堆；再把两个起点换成各堆的平均位置，重新归堆；共做 6 次。两堆各自的最小包围圆圆心就是两个新中心；两个新中心太近时沿连线推开到最小间距 ${P.dmin}。正式代码的两处小差别：为省计算，种子用“先找离第一架成员最远的一架，再找离这一架最远的一架”两步得到，通常就是最远的一对；迭代时起点换成各堆的最小包围圆圆心，最多 10 次，不再变化就停。</p>
 <p data-seg="splitcheck"><b>拆分要过两关。</b>一是间隔：两个新中心与其它中心都至少相距 ${P.dmin}；二是最大流：每束容量 ${r1.Pcur} 时全部飞机都能分进去。两关都过才接受，否则放弃，换下一个候选。拆分一直进行到波束数用满上限。</p>`;
     const flowFx = (chk, prog, Pcur, ok, flow, what) => t => {
       const pr = prog(t), base = `${SYM.P} = 本轮开始时最忙 <b>${Pcur}</b>，${SYM.n} = ${chk.nA}`;
@@ -2464,11 +2466,31 @@ window.FLOW_SYM = window.SymKit([
       const dim = { beamAlpha: id => (id === e.id ? 1 : 0.3), planeAlpha: a => (mem.has(a) ? 1 : 0.3) };
       const colAt = (lab, a) => colorOf(e.ids[lab[mem.get(a)]]);
       const extra = [['候选', `${j + 1} / ${e.cands.length}`], ['被拆波束负载', e.load]];
+      // 选种子：成员两两量距离，最远的一对作两堆的起点
+      const nPairs = pts.length * (pts.length - 1) / 2, dSeed = Math.hypot(s0.x - s1p.x, s0.y - s1p.y), allPairs = [];
+      pts.forEach((p, i) => pts.forEach((q, k) => { if (k > i) allPairs.push([p, q]); }));
+      phases.push({
+        dur: 4.5, seg: 'seed', nums: nums(Lb, extra.concat([['成员', e.load + ' 架'], ['两两配对', nPairs + ' 对'], ['最远一对相距', f1(dSeed)]])), chartTitle, chart: () => loadChart(Lb, [e.id], 1),
+        fx: { f: 'bw', hl: ['bw'], sub: `${dot(e.id)}的 ${e.load} 架成员两两配对共 ${nPairs} 对，最远的一对相距 ${f1(dSeed)}，用它们作两堆的起点`, plain: '这一步在做什么：选出两堆的起点，即种子' },
+        cap: t => t < 0.55 ? `${dot(e.id)}要一分为二，先选两堆的起点，叫种子。把它的 ${e.load} 架成员两两配对，共 ${nPairs} 对，逐对量距离`
+          : `最远的一对相距 ${f1(dSeed)}，这两架就是种子：一架是第一堆的起点，另一架是第二堆的起点。它们最不该留在同一个波束里`,
+        draw: t => {
+          bg(); drawLayout(Lb, dim);
+          const shown = Math.round(seg(t, 0.08, 0.5) * nPairs);
+          for (let k = 0; k < shown; k++) lineW(allPairs[k][0], allPairs[k][1], MUTED, 0.6, t < 0.55 ? 0.35 : 0.12);
+          if (t >= 0.55) {
+            const al = seg(t, 0.55, 0.7);
+            lineW(s0, s1p, INK, 2, al, [5, 3]);
+            planeDot(s0.x, s0.y, colorOf(e.ids[0]), { ring: INK, alpha: al }); planeDot(s1p.x, s1p.y, colorOf(e.ids[1]), { ring: INK, alpha: al });
+            tag(`最远的一对，相距 ${f1(dSeed)}：种子`, (X(s0.x) + X(s1p.x)) / 2 + 8, (Y(s0.y) + Y(s1p.y)) / 2 - 30, { size: 12, bold: true, alpha: al });
+          }
+        }
+      });
       // 两堆聚类的迭代过程
       phases.push({
-        dur: 2 + 0.9 * e.iters.length, seg: 'split', nums: t => nums(Lb, extra.concat([['聚类迭代', Math.min(e.iters.length, Math.max(0, Math.floor(seg(t, 0.3, 0.95) * e.iters.length + 0.999))) + ' / ' + e.iters.length], ['分成两堆', g0 + ' + ' + g1]])), chartTitle, chart: () => loadChart(Lb, [e.id], 1),
+        dur: 2 + 0.9 * e.iters.length, seg: 'cluster', nums: t => nums(Lb, extra.concat([['聚类迭代', Math.min(e.iters.length, Math.max(0, Math.floor(seg(t, 0.3, 0.95) * e.iters.length + 0.999))) + ' / ' + e.iters.length], ['分成两堆', g0 + ' + ' + g1]])), chartTitle, chart: () => loadChart(Lb, [e.id], 1),
         fx: { f: 'bw', hl: ['bw'], sub: `${dot(e.id)}负载 ${e.load}，${e.iters.length} 次迭代后分成 ${g0} + ${g1} 架；两堆各自的最小包围圆半径 ${f1(e.mec[0].r)} 和 ${f1(e.mec[1].r)}，即两个新波束的 ${SYM.b} / 2`, plain: '这一步在做什么：把成员分成两堆，每堆成为一个新波束' },
-        cap: t => `${dot(e.id)}试拆候选 ${j + 1}，它有 ${e.load} 架飞机。` + (t < 0.3 ? '先取相距最远的两架作种子' : (() => { const it = Math.min(e.iters.length - 1, Math.floor(seg(t, 0.3, 0.95) * e.iters.length)); const nl = e.iters[it].lab, a0 = nl.filter(v => v === 0).length; return `第 ${it + 1} 次迭代：每架飞机归离自己近的那个中心，分成 ${a0} + ${nl.length - a0} 架，再把中心换成每堆的平均位置`; })()),
+        cap: t => `${dot(e.id)}试拆候选 ${j + 1}，它有 ${e.load} 架飞机。` + (t < 0.3 ? '从两颗种子出发：两架种子就是两堆的起点' : (() => { const it = Math.min(e.iters.length - 1, Math.floor(seg(t, 0.3, 0.95) * e.iters.length)); const nl = e.iters[it].lab, a0 = nl.filter(v => v === 0).length; return `第 ${it + 1} 次迭代：每架飞机归离自己近的那个中心，分成 ${a0} + ${nl.length - a0} 架，再把中心换成每堆的平均位置`; })()),
         draw: t => {
           bg();
           const it = t < 0.3 ? -1 : Math.min(e.iters.length - 1, Math.floor(seg(t, 0.3, 0.95) * e.iters.length));
@@ -2478,7 +2500,7 @@ window.FLOW_SYM = window.SymKit([
           if (it < 0) {
             lineW(s0, s1p, INK, 1.2, al * 0.7, [4, 3]);
             planeDot(s0.x, s0.y, colorOf(e.ids[0]), { ring: INK, alpha: al }); planeDot(s1p.x, s1p.y, colorOf(e.ids[1]), { ring: INK, alpha: al });
-            tag('相距最远的两架作种子', (X(s0.x) + X(s1p.x)) / 2 + 8, (Y(s0.y) + Y(s1p.y)) / 2 - 30, { size: 12, alpha: al });
+            tag('种子：两堆的起点', (X(s0.x) + X(s1p.x)) / 2 + 8, (Y(s0.y) + Y(s1p.y)) / 2 - 30, { size: 12, alpha: al });
           } else {
             const cur = e.iters[it], prevC = it > 0 ? e.iters[it - 1] : { A: s0, B: s1p };
             const u = ease(clamp01((seg(t, 0.3, 0.95) * e.iters.length - it) * 1.6));
@@ -2491,7 +2513,7 @@ window.FLOW_SYM = window.SymKit([
       });
       // 两堆的最小包围圆圆心作为新中心，太近则推开
       phases.push({
-        dur: 2.6, seg: 'split', nums: nums(Lb, extra.concat([['分成两堆', g0 + ' + ' + g1], ['新中心间距', f1(e.pushed ? P.dmin : e.d12) + (e.pushed ? '，推开后' : '')]])), chartTitle, chart: () => loadChart(Lb, [e.id], 1),
+        dur: 2.6, seg: 'cluster', nums: nums(Lb, extra.concat([['分成两堆', g0 + ' + ' + g1], ['新中心间距', f1(e.pushed ? P.dmin : e.d12) + (e.pushed ? '，推开后' : '')]])), chartTitle, chart: () => loadChart(Lb, [e.id], 1),
         fx: { f: 'bw', hl: ['dmin'], sub: `两个新中心的 ${SYM.thij} 对应距离 ${f1(e.d12)}` + (e.pushed ? ` < ${P.dmin}，违反 ${SYM.thij} ≥ 0.15°，沿连线推开到 <b>${P.dmin}</b>` : ` ≥ ${P.dmin}，满足 ${SYM.thij} ≥ 0.15°，不用推开`), plain: '这一步在做什么：两堆的最小包围圆圆心作新中心，太近就推开' },
         cap: `分成 ${g0} 架和 ${g1} 架两堆。两堆各自的最小包围圆圆心就是两个新中心` + (e.pushed ? `，二者相距 ${f1(e.d12)} 小于最小间距 ${P.dmin}，沿连线推开到 ${P.dmin}` : `，相距 ${f1(e.d12)}，不小于最小间距 ${P.dmin}，不用推开`),
         draw: t => {
