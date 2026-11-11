@@ -45,8 +45,43 @@
   ],
   "figures": [
     {
-      "path": "outputs/weekly_reports_2026/figures/W08.png",
-      "caption": "图1 九组模型在100个独立场景上的需求满足率和供需匹配程度"
+      "path": "outputs/weekly_reports_2026/figures/W05_七模型终点对比.png",
+      "caption": "图1 七个模型和两个基线在1月18日100个场景上的需求满足率和供需匹配程度"
+    },
+    {
+      "path": "outputs/weekly_reports_2026/figures/W05_过供欠供来源.png",
+      "caption": "图2 供需匹配程度的缺口里，七成以上来自容量给多了"
+    },
+    {
+      "path": "outputs/weekly_reports_2026/figures/W06_五档状态终点对比.png",
+      "caption": "图3 五档状态维数和几个参照模型在1月19日100个场景上的需求满足率和供需匹配程度"
+    },
+    {
+      "path": "outputs/weekly_reports_2026/figures/W06_验证回报分面.png",
+      "caption": "图4 每档状态的训练回报和固定验证回报随训练步数的变化",
+      "width_cm": 16
+    },
+    {
+      "path": "outputs/weekly_reports_2026/figures/W07_四组终点对比.png",
+      "caption": "图5 联合动作四组和两个基线在1月23日100个场景上的需求满足率和供需匹配程度"
+    },
+    {
+      "path": "outputs/weekly_reports_2026/figures/W07_奖励训练与验证.png",
+      "caption": "图6 四组模型的训练回报和固定验证回报，用联合Q的两组中途掉了下来",
+      "width_cm": 15
+    },
+    {
+      "path": "outputs/weekly_reports_2026/figures/W08_九组终点对比.png",
+      "caption": "图7 九组模型和15万步参照在1月24日100个场景上的需求满足率和供需匹配程度"
+    },
+    {
+      "path": "outputs/weekly_reports_2026/figures/W08_同场景差值.png",
+      "caption": "图8 相邻两组在同一批场景上相比的平均差：需求满足率、供需匹配程度和功率"
+    },
+    {
+      "path": "outputs/weekly_reports_2026/figures/W08_T组训练与验证.png",
+      "caption": "图9 固定温度两组的训练回报、固定验证回报和终态服务随训练步数的变化",
+      "width_cm": 16
     }
   ],
   "plan_check": [

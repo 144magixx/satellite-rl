@@ -62,10 +62,15 @@ def add_figure(doc, fig):
     p.paragraph_format.space_before = Pt(6)
     p.paragraph_format.space_after = Pt(2)
     p.paragraph_format.keep_with_next = True
-    p.add_run().add_picture(str(ROOT / fig["path"]), width=Cm(14))
+    p.add_run().add_picture(str(ROOT / fig["path"]), width=Cm(fig.get("width_cm", 14)))
     c = doc.add_paragraph()
     c.alignment = WD_ALIGN_PARAGRAPH.CENTER
     set_font(c.add_run(fig["caption"]), size=9)
+
+
+def week_figures(w):
+    """周报图：优先用 figures 列表，没有就退回旧的单张 figure。"""
+    return w.get("figures") or ([w["figure"]] if w.get("figure") else [])
 
 
 def build_week(doc, w):
@@ -84,8 +89,8 @@ def build_week(doc, w):
         table(doc, tb["header"], tb["rows"], tb["widths_cm"])
         if w.get("table_note"):
             para(doc, w["table_note"], indent=False).runs[0].font.size = Pt(9)
-    if w.get("figure"):
-        add_figure(doc, w["figure"])
+    for fig in week_figures(w):
+        add_figure(doc, fig)
     heading(doc, "四、存在问题")
     for n, t in enumerate(w["issues"], 1):
         bullet(doc, n, "", t)
@@ -120,7 +125,26 @@ def build_month(doc, m):
         bullet(doc, n, "", t)
 
 
+def keep_tables_together(doc):
+    """每张表尽量整张放在同一页：行不拆开，除最后一行外都和下一行粘住；表后紧跟的“注：”也粘在表上。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    for tbl in doc.tables:
+        rows = tbl.rows
+        nxt = tbl._tbl.getnext()
+        note_follows = nxt is not None and nxt.tag == qn("w:p") and "".join(nxt.itertext()).startswith("注")
+        for i, row in enumerate(rows):
+            trPr = row._tr.get_or_add_trPr()
+            if trPr.find(qn("w:cantSplit")) is None:
+                trPr.append(OxmlElement("w:cantSplit"))
+            if i < len(rows) - 1 or note_follows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        p.paragraph_format.keep_with_next = True
+
+
 def finish(doc, path, created, modified, revision):
+    keep_tables_together(doc)
     cp = doc.core_properties
     cp.author = cp.last_modified_by = "闵昱为"
     cp.title = ""
